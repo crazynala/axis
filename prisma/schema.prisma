@@ -219,3 +219,12 @@ model Job {
     assemblies  Assembly[]
     Variant     Variant[]
 }
+
+model SavedView {
+    id        Int      @id @default(autoincrement())
+    module    String
+    name      String
+    params    Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}

@@ -91,7 +91,7 @@ export default function CompaniesRoute() {
                     { value: "other", label: "Other" },
                   ]}
                   w={180}
-                  allowDeselect
+                  clearable
                   value={field.value ?? null}
                   onChange={(v) => field.onChange(v ?? null)}
                 />
