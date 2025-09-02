@@ -1,0 +1,221 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+enum ProductType {
+    CMT
+    Fabric
+    Finished
+    Trim
+    Service
+}
+
+enum CompanyType {
+    vendor
+    customer
+    other
+}
+
+enum UsageType {
+    cut
+    make
+}
+
+model Product {
+    id                   Int                   @id @default(autoincrement())
+    code                 String                @unique
+    sku                  String?               @unique
+    name                 String?
+    description          String?
+    type                 ProductType?
+    supplierId           Int?
+    customerId           Int?
+    costPrice            Float?
+    currencyId           Int?
+    purchaseTaxId        Int?
+    categoryId           Int?
+    subCategory          String?
+    pricingGroupId       Int?
+    manualSalePrice      Float?
+    autoSalePrice        Float?
+    variantSetId         Int?
+    stockTrackingEnabled Boolean               @default(false)
+    batchTrackingEnabled Boolean               @default(false)
+    is_active            Boolean?
+    notes                String?
+    supplier             Company?              @relation("Supplier", fields: [supplierId], references: [id])
+    customer             Company?              @relation("Customer", fields: [customerId], references: [id])
+    currency             ValueList?            @relation("Currency", fields: [currencyId], references: [id])
+    purchaseTax          ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
+    category             ValueList?            @relation("Category", fields: [categoryId], references: [id])
+    pricingGroup         SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
+    variantSet           VariantSet?           @relation(fields: [variantSetId], references: [id])
+    assemblies           Assembly[]
+    productLines         ProductLine[]         @relation("ParentProduct")
+    batches              Batch[]
+    productMovements     ProductMovementLine[]
+    Costing              Costing[]
+    ProductLine          ProductLine[]
+    Variant              Variant[]
+}
+
+model Company {
+    id                Int                    @id @default(autoincrement())
+    name              String?
+    type              CompanyType?
+    address           String?
+    city              String?
+    state             String?
+    zip               String?
+    country           String?
+    phone             String?
+    email             String?
+    website           String?
+    notes             String?
+    is_active         Boolean?
+    productsSupplied  Product[]              @relation("Supplier")
+    productsPurchased Product[]              @relation("Customer")
+    pricingGroups     SupplierPricingGroup[]
+}
+
+model VariantSet {
+    id       Int       @id @default(autoincrement())
+    name     String?
+    variants String[]
+    products Product[]
+}
+
+model SupplierPricingGroup {
+    id         Int       @id @default(autoincrement())
+    name       String?
+    supplierId Int?
+    products   Product[]
+    supplier   Company?  @relation(fields: [supplierId], references: [id])
+}
+
+model ValueList {
+    id               Int       @id @default(autoincrement())
+    code             String?
+    label            String?
+    value            Float?
+    type             String?
+    productsCurrency Product[] @relation("Currency")
+    productsTax      Product[] @relation("Tax")
+    productsCategory Product[] @relation("Category")
+}
+
+model Assembly {
+    id       Int       @id @default(autoincrement())
+    name     String?
+    variants Variant[]
+    products Product[]
+    Costing  Costing[]
+    Batch    Batch[]
+    Job      Job?      @relation(fields: [jobId], references: [id])
+    jobId    Int?
+}
+
+model Variant {
+    id         Int       @id @default(autoincrement())
+    productId  Int?
+    jobId      Int?
+    status     String?
+    is_active  Boolean?
+    notes      String?
+    product    Product?  @relation(fields: [productId], references: [id])
+    job        Job?      @relation(fields: [jobId], references: [id])
+    costings   Costing[]
+    batches    Batch[]
+    Assembly   Assembly? @relation(fields: [assemblyId], references: [id])
+    assemblyId Int?
+}
+
+model Costing {
+    id              Int          @id @default(autoincrement())
+    assemblyId      Int?
+    componentId     Int?
+    usageType       UsageType?
+    componentType   ProductType?
+    quantityPerUnit Float?
+    unitCost        Float?
+    notes           String?
+    assembly        Assembly?    @relation(fields: [assemblyId], references: [id])
+    component       Product?     @relation(fields: [componentId], references: [id])
+    Variant         Variant?     @relation(fields: [variantId], references: [id])
+    variantId       Int?
+}
+
+model ProductLine {
+    id       Int      @id @default(autoincrement())
+    parentId Int?
+    childId  Int?
+    quantity Float?
+    unitCost Float?
+    parent   Product? @relation("ParentProduct", fields: [parentId], references: [id])
+    child    Product? @relation(fields: [childId], references: [id])
+}
+
+model Location {
+    id              Int               @id @default(autoincrement())
+    name            String?
+    notes           String?
+    batches         Batch[]
+    ProductMovement ProductMovement[]
+}
+
+model Batch {
+    id                  Int                   @id @default(autoincrement())
+    productId           Int?
+    locationId          Int?
+    assemblyId          Int?
+    batchCode           String?
+    quantity            Float?
+    receivedAt          DateTime?
+    notes               String?
+    product             Product?              @relation(fields: [productId], references: [id])
+    location            Location?             @relation(fields: [locationId], references: [id])
+    assembly            Assembly?             @relation(fields: [assemblyId], references: [id])
+    ProductMovementLine ProductMovementLine[]
+    Variant             Variant?              @relation(fields: [variantId], references: [id])
+    variantId           Int?
+}
+
+model ProductMovement {
+    id           Int                   @id @default(autoincrement())
+    movementType String?
+    date         DateTime?
+    locationId   Int?
+    notes        String?
+    lines        ProductMovementLine[]
+    location     Location?             @relation(fields: [locationId], references: [id])
+}
+
+model ProductMovementLine {
+    id         Int              @id @default(autoincrement())
+    movementId Int?
+    productId  Int?
+    batchId    Int?
+    quantity   Float?
+    notes      String?
+    movement   ProductMovement? @relation(fields: [movementId], references: [id])
+    product    Product?         @relation(fields: [productId], references: [id])
+    batch      Batch?           @relation(fields: [batchId], references: [id])
+}
+
+model Job {
+    id          Int        @id @default(autoincrement())
+    name        String?
+    description String?
+    start_date  DateTime?
+    end_date    DateTime?
+    status      String?
+    is_active   Boolean?
+    notes       String?
+    assemblies  Assembly[]
+    Variant     Variant[]
+}
