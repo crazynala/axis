@@ -13,6 +13,9 @@ pnpm-debug.log*
 .env
 .env.*
 
+#DDRs
+ddrs/
+
 # Build outputs
 build/
 dist/
