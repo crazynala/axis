@@ -1,0 +1,3 @@
+[submodule "packages/timber"]
+	path = packages/timber
+	url = https://github.com/crazynala/timber
