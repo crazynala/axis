@@ -138,7 +138,10 @@ export async function action({ request }: ActionFunctionArgs) {
       };
 
       const normalizeKey = (s: any) =>
-        String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        String(s)
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_");
       const truthy = new Set(["y", "yes", "true", "1", "t", "on", "x"]);
       const asBool = (v: any) =>
         typeof v === "string" ? truthy.has(v.trim().toLowerCase()) : Boolean(v);
@@ -277,7 +280,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] variant_sets ${i}/${total}`);
           }
-          console.log(`[import] done variant_sets file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done variant_sets file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "variant_sets",
@@ -489,7 +494,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] products ${i}/${total}`);
           }
-          console.log(`[import] done products file="${file.name}" imported=${imported} created=${created} updated=${updated} skippedNoId=${skippedNoId}`);
+          console.log(
+            `[import] done products file="${file.name}" imported=${imported} created=${created} updated=${updated} skippedNoId=${skippedNoId}`
+          );
           batchResults.push({
             file: file.name,
             target: "products",
@@ -593,7 +600,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] companies ${i}/${total}`);
           }
-          console.log(`[import] done companies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done companies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "companies",
@@ -745,7 +754,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] jobs ${i}/${total}`);
           }
-          console.log(`[import] done jobs file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done jobs file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "jobs",
@@ -867,7 +878,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] assemblies ${i}/${total}`);
           }
-          console.log(`[import] done assemblies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done assemblies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "assemblies",
@@ -893,9 +906,9 @@ export async function action({ request }: ActionFunctionArgs) {
             missingComponent = 0;
           for (let i = 0; i < rows.length; i++) {
             const r = rows[i];
-            const costingId = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as
-              | number
-              | null;
+            const costingId = asNum(
+              pick(r, ["a__Serial", "a_Serial", "id"])
+            ) as number | null;
             const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as
               | number
               | null;
@@ -983,7 +996,9 @@ export async function action({ request }: ActionFunctionArgs) {
                 await prisma.costing.update({ where: { id: costingId }, data });
                 updated++;
               } else {
-                await prisma.costing.create({ data: { id: costingId, ...data } });
+                await prisma.costing.create({
+                  data: { id: costingId, ...data },
+                });
                 created++;
               }
             } else {
@@ -1005,7 +1020,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] costings ${i}/${total}`);
           }
-          console.log(`[import] done costings file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done costings file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "costings",
@@ -1148,7 +1165,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] assembly_activities ${i}/${total}`);
           }
-          console.log(`[import] done assembly_activities file="${file.name}" created=${created} skipped=${skipped}`);
+          console.log(
+            `[import] done assembly_activities file="${file.name}" created=${created} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "assembly_activities",
@@ -1198,7 +1217,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] locations ${i}/${total}`);
           }
-          console.log(`[import] done locations file="${file.name}" created=${created} updated=${updated} skippedNoName=${skippedNoName}`);
+          console.log(
+            `[import] done locations file="${file.name}" created=${created} updated=${updated} skippedNoName=${skippedNoName}`
+          );
           batchResults.push({
             file: file.name,
             target: "locations",
@@ -1289,7 +1310,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] product_batches ${i}/${total}`);
           }
-          console.log(`[import] done product_batches file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done product_batches file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "product_batches",
@@ -1374,7 +1397,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] product_locations ${i}/${total}`);
           }
-          console.log(`[import] done product_locations file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done product_locations file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "product_locations",
@@ -1455,7 +1480,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] product_movements ${i}/${total}`);
           }
-          console.log(`[import] done product_movements file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
+          console.log(
+            `[import] done product_movements file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "product_movements",
@@ -1532,7 +1559,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] product_movement_lines ${i}/${total}`);
           }
-          console.log(`[import] done product_movement_lines file="${file.name}" created=${created} skipped=${skipped}`);
+          console.log(
+            `[import] done product_movement_lines file="${file.name}" created=${created} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "product_movement_lines",
@@ -1604,7 +1633,9 @@ export async function action({ request }: ActionFunctionArgs) {
             if (i > 0 && i % 100 === 0)
               console.log(`[import] product_lines ${i}/${total}`);
           }
-          console.log(`[import] done product_lines file="${file.name}" created=${created} skipped=${skipped}`);
+          console.log(
+            `[import] done product_lines file="${file.name}" created=${created} skipped=${skipped}`
+          );
           batchResults.push({
             file: file.name,
             target: "product_lines",
