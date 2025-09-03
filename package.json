@@ -1,6 +1,9 @@
 {
   "name": "--no-git",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "remix build",
     "debug": "node --inspect-brk server.js",
@@ -8,12 +11,18 @@
     "start": "cross-env NODE_ENV=production node server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "db:who": "npx dotenv -e .env -- sh -c 'echo DATABASE_URL=$DATABASE_URL; psql \"$DATABASE_URL\" -c \"\\\\conninfo\"'",
+    "db:truncate": "npx dotenv -e .env -- sh -c 'psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f scripts/truncate-db.sql'",
+    "db:truncate:confirm": "npx node -e \"const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});rl.question('This will TRUNCATE all public tables (except _prisma_migrations). Continue? [y/N] ', a=>{if(a.toLowerCase()==='y'){process.exit(0)}else{process.exit(1)}})\" && npm run db:truncate"
   },
   "dependencies": {
-    "@mantine/core": "^8.2.8",
-    "@mantine/hooks": "^8.2.8",
-    "@mantine/notifications": "^8.2.8",
+    "@mantine/core": "^8.2.0",
+    "@mantine/dates": "^8.2.0",
+    "@mantine/dropzone": "^8.2.0",
+    "@mantine/hooks": "^8.2.0",
+    "@mantine/modals": "^8.2.0",
+    "@mantine/notifications": "^8.2.0",
     "@prisma/client": "^5.18.0",
     "@remix-run/express": "^2.17.0",
     "@remix-run/node": "^2.17.0",
@@ -24,11 +33,10 @@
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
-    "mantine-datatable": "^8.2.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "mantine-datatable": "^7.15.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "react-hook-form": "^7.62.0",
-    "react-router-dom": "^6.15.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -39,6 +47,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.2",
+    "dotenv-cli": "^10.0.0",
     "postcss": "^8.5.6",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",

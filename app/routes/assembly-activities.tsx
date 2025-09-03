@@ -1,7 +1,5 @@
-import type { MetaFunction } from "@remix-run/node";
+import { Outlet } from "@remix-run/react";
 
-export const meta: MetaFunction = () => [{ title: "Assembly Activities" }];
-
-export default function AssemblyActivitiesRoute() {
-  return <h1>Assembly Activities</h1>;
+export default function AssemblyActivitiesLayout() {
+  return <Outlet />;
 }

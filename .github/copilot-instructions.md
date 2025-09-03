@@ -19,11 +19,11 @@
 
 ### Active Migration Map
 
-- [ ] contacts -> app/routes/contacts.tsx (loader/action wiring)
-- [ ] companies -> app/routes/companies.tsx
-- [ ] products -> app/routes/products.tsx
-- [ ] costings -> app/routes/costings.tsx
-- [ ] jobs -> app/routes/jobs.tsx
-- [ ] assembly -> app/routes/assembly.tsx
-- [ ] assembly-activities -> app/routes/assembly-activities.tsx
-- [ ] admin -> app/routes/admin.tsx
+- [x] contacts -> app/routes/contacts.tsx (loader/action wiring)
+- [x] companies -> app/routes/companies.tsx
+- [x] products -> app/routes/products.tsx
+- [x] costings -> app/routes/costings.tsx
+- [x] jobs -> app/routes/jobs.tsx
+- [x] assembly -> app/routes/assembly.tsx
+- [x] assembly-activities -> app/routes/assembly-activities.tsx
+- [x] admin -> app/routes/admin.tsx

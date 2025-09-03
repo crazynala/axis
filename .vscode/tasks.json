@@ -1,39 +1,53 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Build Remix Project",
-      "type": "shell",
-      "command": "npm run build",
-      "isBackground": false,
-      "problemMatcher": ["$tsc"],
-      "group": "build"
-    },
-    {
-      "label": "Dev: Start server",
-      "type": "shell",
-      "command": "npm run dev",
-      "isBackground": true
-    },
-    {
-      "label": "Prod: Start server",
-      "type": "shell",
-      "command": "npm start",
-      "isBackground": true,
-      "group": "test"
-    },
-    {
-      "label": "Docs: Mark tasks complete",
-      "type": "shell",
-      "command": "node -e \"const fs=require('fs');const p='.github/copilot-instructions.md';let s=fs.readFileSync(p,'utf8');s=s.replace('- [ ] Compile the Project','- [x] Compile the Project').replace('- [ ] Create and Run Task','- [x] Create and Run Task').replace('- [ ] Launch the Project','- [x] Launch the Project');fs.writeFileSync(p,s);console.log('Updated checklist.');\"",
-      "isBackground": false
-    },
-    {
-      "label": "Prod: Build and start",
-      "type": "shell",
-      "command": "npm start",
-      "dependsOn": ["Build Remix Project"],
-      "isBackground": true
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build Remix Project",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Dev: Start server",
+			"type": "shell",
+			"command": "npm run dev",
+			"isBackground": true
+		},
+		{
+			"label": "Prod: Start server",
+			"type": "shell",
+			"command": "npm start",
+			"isBackground": true,
+			"group": "test"
+		},
+		{
+			"label": "Docs: Mark tasks complete",
+			"type": "shell",
+			"command": "node -e \"const fs=require('fs');const p='.github/copilot-instructions.md';let s=fs.readFileSync(p,'utf8');s=s.replace('- [ ] Compile the Project','- [x] Compile the Project').replace('- [ ] Create and Run Task','- [x] Create and Run Task').replace('- [ ] Launch the Project','- [x] Launch the Project');fs.writeFileSync(p,s);console.log('Updated checklist.');\"",
+			"isBackground": false
+		},
+		{
+			"label": "Prod: Build and start",
+			"type": "shell",
+			"command": "npm start",
+			"dependsOn": [
+				"Build Remix Project"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Typecheck & Build",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		}
+	]
 }

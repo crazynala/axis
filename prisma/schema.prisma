@@ -28,7 +28,6 @@ enum UsageType {
 
 model Product {
     id                   Int                   @id @default(autoincrement())
-    code                 String                @unique
     sku                  String?               @unique
     name                 String?
     description          String?
@@ -46,7 +45,7 @@ model Product {
     variantSetId         Int?
     stockTrackingEnabled Boolean               @default(false)
     batchTrackingEnabled Boolean               @default(false)
-    is_active            Boolean?
+    isActive             Boolean?
     notes                String?
     supplier             Company?              @relation("Supplier", fields: [supplierId], references: [id])
     customer             Company?              @relation("Customer", fields: [customerId], references: [id])
@@ -55,13 +54,20 @@ model Product {
     category             ValueList?            @relation("Category", fields: [categoryId], references: [id])
     pricingGroup         SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
     variantSet           VariantSet?           @relation(fields: [variantSetId], references: [id])
-    assemblies           Assembly[]
     productLines         ProductLine[]         @relation("ParentProduct")
     batches              Batch[]
     productMovements     ProductMovementLine[]
     Costing              Costing[]
     ProductLine          ProductLine[]
     Variant              Variant[]
+    // Removed: back-relations to assemblies and activities to decouple history
+    // Optional inverse for assemblies' primary product relation
+    // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
+    // Metadata
+    createdBy            String?
+    modifiedBy           String?
+    createdAt            DateTime?             @default(now())
+    updatedAt            DateTime?             @updatedAt
 }
 
 model Company {
@@ -77,17 +83,29 @@ model Company {
     email             String?
     website           String?
     notes             String?
-    is_active         Boolean?
+    isActive          Boolean?
     productsSupplied  Product[]              @relation("Supplier")
     productsPurchased Product[]              @relation("Customer")
     pricingGroups     SupplierPricingGroup[]
+    jobs              Job[]
+    // Metadata
+    createdBy         String?
+    modifiedBy        String?
+    createdAt         DateTime?              @default(now())
+    updatedAt         DateTime?              @updatedAt
 }
 
 model VariantSet {
-    id       Int       @id @default(autoincrement())
-    name     String?
-    variants String[]
-    products Product[]
+    id         Int        @id @default(autoincrement())
+    name       String?
+    variants   String[]
+    products   Product[]
+    assemblies Assembly[]
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime?  @default(now())
+    updatedAt  DateTime?  @updatedAt
 }
 
 model SupplierPricingGroup {
@@ -96,6 +114,11 @@ model SupplierPricingGroup {
     supplierId Int?
     products   Product[]
     supplier   Company?  @relation(fields: [supplierId], references: [id])
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime? @default(now())
+    updatedAt  DateTime? @updatedAt
 }
 
 model ValueList {
@@ -107,17 +130,37 @@ model ValueList {
     productsCurrency Product[] @relation("Currency")
     productsTax      Product[] @relation("Tax")
     productsCategory Product[] @relation("Category")
+    // Metadata
+    createdBy        String?
+    modifiedBy       String?
+    createdAt        DateTime? @default(now())
+    updatedAt        DateTime? @updatedAt
 }
 
 model Assembly {
-    id       Int       @id @default(autoincrement())
-    name     String?
-    variants Variant[]
-    products Product[]
-    Costing  Costing[]
-    Batch    Batch[]
-    Job      Job?      @relation(fields: [jobId], references: [id])
-    jobId    Int?
+    id                  Int                @id @default(autoincrement())
+    name                String?
+    status              String?
+    quantity            Float?
+    // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
+    qtyOrderedBreakdown Int[]              @default([])
+    notes               String?
+    variants            Variant[]
+    // Removed direct Batch relation; batches are independent of assemblies
+    job                 Job?               @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
+    jobId               Int?
+    // Link Assembly to original Product by id only (no relation)
+    productId           Int?
+    // Optional link to a Variant Set (may mirror the Product's variant set)
+    variantSetId        Int?
+    variantSet          VariantSet?        @relation(fields: [variantSetId], references: [id])
+    activities          AssemblyActivity[] @relation("Assembly_Activities")
+    costings            Costing[]
+    // Metadata
+    createdBy           String?
+    modifiedBy          String?
+    createdAt           DateTime?          @default(now())
+    updatedAt           DateTime?          @updatedAt
 }
 
 model Variant {
@@ -125,7 +168,7 @@ model Variant {
     productId  Int?
     jobId      Int?
     status     String?
-    is_active  Boolean?
+    isActive   Boolean?
     notes      String?
     product    Product?  @relation(fields: [productId], references: [id])
     job        Job?      @relation(fields: [jobId], references: [id])
@@ -133,56 +176,99 @@ model Variant {
     batches    Batch[]
     Assembly   Assembly? @relation(fields: [assemblyId], references: [id])
     assemblyId Int?
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime? @default(now())
+    updatedAt  DateTime? @updatedAt
 }
 
 model Costing {
-    id              Int          @id @default(autoincrement())
-    assemblyId      Int?
-    componentId     Int?
-    usageType       UsageType?
-    componentType   ProductType?
-    quantityPerUnit Float?
-    unitCost        Float?
-    notes           String?
-    assembly        Assembly?    @relation(fields: [assemblyId], references: [id])
-    component       Product?     @relation(fields: [componentId], references: [id])
-    Variant         Variant?     @relation(fields: [variantId], references: [id])
-    variantId       Int?
+    id                            Int          @id @default(autoincrement())
+    assemblyId                    Int?
+    componentId                   Int?
+    usageType                     UsageType?
+    componentType                 ProductType?
+    quantityPerUnit               Float?
+    unitCost                      Float?
+    notes                         String?
+    activityUsed                  String?
+    salePricePerItem              Float?
+    salePricePerUnit              Float?
+    flagAssembly                  Boolean?
+    flagDefinedInProduct          Boolean?
+    flagIsBillableDefaultOrManual Boolean?
+    flagIsBillableManual          Boolean?
+    flagIsInvoiceableManual       Boolean?
+    flagStockTracked              Boolean?
+    assembly                      Assembly?    @relation(fields: [assemblyId], references: [id])
+    component                     Product?     @relation(fields: [componentId], references: [id])
+    Variant                       Variant?     @relation(fields: [variantId], references: [id])
+    variantId                     Int?
+    // Metadata
+    createdBy                     String?
+    modifiedBy                    String?
+    createdAt                     DateTime?    @default(now())
+    updatedAt                     DateTime?    @updatedAt
 }
 
 model ProductLine {
-    id       Int      @id @default(autoincrement())
-    parentId Int?
-    childId  Int?
-    quantity Float?
-    unitCost Float?
-    parent   Product? @relation("ParentProduct", fields: [parentId], references: [id])
-    child    Product? @relation(fields: [childId], references: [id])
+    id               Int       @id @default(autoincrement())
+    parentId         Int?
+    childId          Int?
+    quantity         Float?
+    unitCost         Float?
+    unitCostManual   Float?
+    activityUsed     String?
+    flagAssemblyOmit Boolean?
+    parent           Product?  @relation("ParentProduct", fields: [parentId], references: [id])
+    child            Product?  @relation(fields: [childId], references: [id])
+    // Metadata
+    createdBy        String?
+    modifiedBy       String?
+    createdAt        DateTime? @default(now())
+    updatedAt        DateTime? @updatedAt
 }
 
 model Location {
-    id              Int               @id @default(autoincrement())
-    name            String?
-    notes           String?
-    batches         Batch[]
-    ProductMovement ProductMovement[]
+    id                    Int                @id @default(autoincrement())
+    name                  String?
+    type                  String?
+    is_active             Boolean?
+    notes                 String?
+    batches               Batch[]
+    ProductMovement       ProductMovement[]
+    jobsIn                Job[]              @relation("Job_LocationIn")
+    jobsOut               Job[]              @relation("Job_LocationOut")
+    assemblyActivitiesIn  AssemblyActivity[] @relation("AssemblyActivity_LocationIn")
+    assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
+    // Metadata
+    createdBy             String?
+    modifiedBy            String?
+    createdAt             DateTime?          @default(now())
+    updatedAt             DateTime?          @updatedAt
 }
 
 model Batch {
     id                  Int                   @id @default(autoincrement())
     productId           Int?
     locationId          Int?
-    assemblyId          Int?
     batchCode           String?
+    name                String?
+    source              String?
     quantity            Float?
     receivedAt          DateTime?
     notes               String?
     product             Product?              @relation(fields: [productId], references: [id])
     location            Location?             @relation(fields: [locationId], references: [id])
-    assembly            Assembly?             @relation(fields: [assemblyId], references: [id])
     ProductMovementLine ProductMovementLine[]
     Variant             Variant?              @relation(fields: [variantId], references: [id])
     variantId           Int?
+    // Metadata
+    createdBy           String?
+    modifiedBy          String?
+    createdAt           DateTime?             @default(now())
+    updatedAt           DateTime?             @updatedAt
 }
 
 model ProductMovement {
@@ -193,6 +279,11 @@ model ProductMovement {
     notes        String?
     lines        ProductMovementLine[]
     location     Location?             @relation(fields: [locationId], references: [id])
+    // Metadata
+    createdBy    String?
+    modifiedBy   String?
+    createdAt    DateTime?             @default(now())
+    updatedAt    DateTime?             @updatedAt
 }
 
 model ProductMovementLine {
@@ -205,26 +296,86 @@ model ProductMovementLine {
     movement   ProductMovement? @relation(fields: [movementId], references: [id])
     product    Product?         @relation(fields: [productId], references: [id])
     batch      Batch?           @relation(fields: [batchId], references: [id])
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime?        @default(now())
+    updatedAt  DateTime?        @updatedAt
 }
 
 model Job {
-    id          Int        @id @default(autoincrement())
-    name        String?
-    description String?
-    start_date  DateTime?
-    end_date    DateTime?
-    status      String?
-    is_active   Boolean?
-    notes       String?
-    assemblies  Assembly[]
-    Variant     Variant[]
+    id                      Int                @id @default(autoincrement())
+    projectCode             String?            @unique
+    name                    String?
+    description             String?
+    startDate               DateTime?
+    endDate                 DateTime?
+    status                  String?
+    jobType                 String?
+    isActive                Boolean?
+    notes                   String?
+    endCustomerName         String?
+    companyId               Int?
+    company                 Company?           @relation(fields: [companyId], references: [id])
+    locationInId            Int?
+    locationOutId           Int?
+    locationIn              Location?          @relation("Job_LocationIn", fields: [locationInId], references: [id])
+    locationOut             Location?          @relation("Job_LocationOut", fields: [locationOutId], references: [id])
+    customerOrderDate       DateTime?
+    customerOrderDateManual DateTime?
+    cutSubmissionDate       DateTime?
+    dropDeadDate            DateTime?
+    finishDate              DateTime?
+    finishDateManual        DateTime?
+    firstInvoiceDate        DateTime?
+    targetDate              DateTime?
+    Variant                 Variant[]
+    assemblyActivities      AssemblyActivity[]
+    assemblies              Assembly[]         @relation("Job_Assemblies")
+    // Metadata
+    createdBy               String?
+    modifiedBy              String?
+    createdAt               DateTime?          @default(now())
+    updatedAt               DateTime?          @updatedAt
 }
 
 model SavedView {
-    id        Int      @id @default(autoincrement())
-    module    String
-    name      String
-    params    Json
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    id         Int      @id @default(autoincrement())
+    module     String
+    name       String
+    params     Json
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+    createdBy  String?
+    modifiedBy String?
+}
+
+model AssemblyActivity {
+    id                       Int       @id @default(autoincrement())
+    assemblyId               Int?
+    jobId                    Int?
+    name                     String?
+    description              String?
+    activityType             String?
+    activityDate             DateTime?
+    startTime                DateTime?
+    endTime                  DateTime?
+    status                   String?
+    notes                    String?
+    productId                Int?
+    locationInId             Int?
+    locationOutId            Int?
+    locationIn               Location? @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
+    locationOut              Location? @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
+    quantity                 Float?
+    qtyFabricConsumed        Float?
+    qtyFabricConsumedPerUnit Float?
+    qtyBreakdown             Int[]     @default([])
+    assembly                 Assembly? @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
+    job                      Job?      @relation(fields: [jobId], references: [id])
+    // Metadata
+    createdBy                String?
+    modifiedBy               String?
+    createdAt                DateTime? @default(now())
+    updatedAt                DateTime? @updatedAt
 }

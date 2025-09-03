@@ -7,6 +7,10 @@ import rollupReplace from "@rollup/plugin-replace";
 export default defineConfig({
   server: {
     port: 3000,
+    fs: {
+      // allow serving workspace packages like packages/timber in dev
+      allow: ["..", "./packages"],
+    },
   },
   plugins: [
     rollupReplace({

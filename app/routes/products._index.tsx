@@ -1,7 +1,27 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSearchParams, useNavigate, Form } from "@remix-run/react";
-import { Button, Checkbox, NumberInput, TextInput, Group, Stack, Title, Select } from "@mantine/core";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSearchParams,
+  useNavigate,
+  Form,
+} from "@remix-run/react";
+import {
+  Button,
+  Checkbox,
+  NumberInput,
+  TextInput,
+  Group,
+  Stack,
+  Title,
+  Select,
+} from "@mantine/core";
 import { prisma } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { DataTable } from "mantine-datatable";
@@ -31,19 +51,25 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   const prismaArgs = buildPrismaArgs<any>(effective, {
     defaultSort: { field: "id", dir: "asc" },
-    searchableFields: ["code", "name", "sku", "type"],
+    searchableFields: ["name", "sku", "type"],
     filterMappers: {
-      code: (v: string) => ({ code: { contains: v, mode: "insensitive" } }),
       sku: (v: string) => ({ sku: { contains: v, mode: "insensitive" } }),
       name: (v: string) => ({ name: { contains: v, mode: "insensitive" } }),
       type: (v: string) => ({ type: v as any }),
-      stock: (v: string) => ({ stockTrackingEnabled: v === "1" || v === "true" }),
-      batch: (v: string) => ({ batchTrackingEnabled: v === "1" || v === "true" }),
+      stock: (v: string) => ({
+        stockTrackingEnabled: v === "1" || v === "true",
+      }),
+      batch: (v: string) => ({
+        batchTrackingEnabled: v === "1" || v === "true",
+      }),
       minCost: (v: string) => ({ costPrice: { gte: Number(v) } }),
       maxCost: (v: string) => ({ costPrice: { lte: Number(v) } }),
     },
   });
-  const [rows, total] = await Promise.all([prisma.product.findMany({ ...prismaArgs }), prisma.product.count({ where: prismaArgs.where })]);
+  const [rows, total] = await Promise.all([
+    prisma.product.findMany({ ...prismaArgs }),
+    prisma.product.count({ where: prismaArgs.where }),
+  ]);
   return json({
     rows,
     total,
@@ -77,7 +103,11 @@ export async function action({ request }: ActionFunctionArgs) {
       if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
       filters[k] = v;
     }
-    await saveView({ module: "products", name, params: { page, perPage, sort, dir, q, filters } });
+    await saveView({
+      module: "products",
+      name,
+      params: { page, perPage, sort, dir, q, filters },
+    });
     return redirect(`/products?view=${encodeURIComponent(name)}`);
   }
 
@@ -85,14 +115,21 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ProductsIndexRoute() {
-  const { rows, total, page, perPage, q, filters, views, activeView } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, views, activeView } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
 
-  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || "id";
-  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || "asc";
+  const sortAccessor =
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("sort")
+      : null) || "id";
+  const sortDirection =
+    ((typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("dir")
+      : null) as any) || "asc";
 
   return (
     <Stack gap="lg">
@@ -108,15 +145,69 @@ export default function ProductsIndexRoute() {
         {/* Filters */}
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="code" label="Code" defaultValue={filters?.code || ""} w={160} />
-            <TextInput name="sku" label="SKU" defaultValue={filters?.sku || ""} w={160} />
-            <TextInput name="name" label="Name" defaultValue={filters?.name || ""} w={220} />
-            <TextInput name="q" label="Search" placeholder="Any field" defaultValue={q || ""} w={200} />
-            <Select name="type" label="Type" data={["CMT", "Fabric", "Finished", "Trim", "Service"].map((v) => ({ value: v, label: v }))} defaultValue={filters?.type || null} clearable w={160} />
-            <Checkbox name="stock" label="Stock" defaultChecked={filters?.stock === "1" || (filters?.stock as any) === true} onChange={() => {}} />
-            <Checkbox name="batch" label="Batch" defaultChecked={filters?.batch === "1" || (filters?.batch as any) === true} onChange={() => {}} />
-            <NumberInput name="minCost" label="Min Cost" w={140} defaultValue={filters?.minCost ? Number(filters.minCost) : undefined} allowDecimal />
-            <NumberInput name="maxCost" label="Max Cost" w={140} defaultValue={filters?.maxCost ? Number(filters.maxCost) : undefined} allowDecimal />
+            <TextInput
+              name="sku"
+              label="SKU"
+              defaultValue={filters?.sku || ""}
+              w={160}
+            />
+            <TextInput
+              name="name"
+              label="Name"
+              defaultValue={filters?.name || ""}
+              w={220}
+            />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Any field"
+              defaultValue={q || ""}
+              w={200}
+            />
+            <Select
+              name="type"
+              label="Type"
+              data={["CMT", "Fabric", "Finished", "Trim", "Service"].map(
+                (v) => ({ value: v, label: v })
+              )}
+              defaultValue={filters?.type || null}
+              clearable
+              w={160}
+            />
+            <Checkbox
+              name="stock"
+              label="Stock"
+              defaultChecked={
+                filters?.stock === "1" || (filters?.stock as any) === true
+              }
+              onChange={() => {}}
+            />
+            <Checkbox
+              name="batch"
+              label="Batch"
+              defaultChecked={
+                filters?.batch === "1" || (filters?.batch as any) === true
+              }
+              onChange={() => {}}
+            />
+            <NumberInput
+              name="minCost"
+              label="Min Cost"
+              w={140}
+              defaultValue={
+                filters?.minCost ? Number(filters.minCost) : undefined
+              }
+              allowDecimal
+            />
+            <NumberInput
+              name="maxCost"
+              label="Max Cost"
+              w={140}
+              defaultValue={
+                filters?.maxCost ? Number(filters.maxCost) : undefined
+              }
+              allowDecimal
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
@@ -127,7 +218,10 @@ export default function ProductsIndexRoute() {
         <Group align="center" mb="sm" gap="xs">
           <Select
             placeholder="Saved views"
-            data={(views || []).map((v: any) => ({ value: v.name, label: v.name }))}
+            data={(views || []).map((v: any) => ({
+              value: v.name,
+              label: v.name,
+            }))}
             defaultValue={activeView || null}
             onChange={(val) => {
               const next = new URLSearchParams(sp);
@@ -142,7 +236,11 @@ export default function ProductsIndexRoute() {
           <Form method="post">
             <input type="hidden" name="_intent" value="saveView" />
             <Group gap="xs" align="center">
-              <TextInput name="name" placeholder="Save current filters as…" w={220} />
+              <TextInput
+                name="name"
+                placeholder="Save current filters as…"
+                w={220}
+              />
               <Button type="submit">Save view</Button>
             </Group>
           </Form>
@@ -159,7 +257,10 @@ export default function ProductsIndexRoute() {
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
+            const rec =
+              typeof rowIndex === "number"
+                ? (rows as any[])[rowIndex]
+                : _record;
             const id = rec?.id;
             if (id != null) navigate(`/products/${id}`);
           }}
@@ -174,7 +275,10 @@ export default function ProductsIndexRoute() {
             next.set("page", "1");
             navigate(`?${next.toString()}`);
           }}
-          sortStatus={{ columnAccessor: sortAccessor, direction: sortDirection }}
+          sortStatus={{
+            columnAccessor: sortAccessor,
+            direction: sortDirection,
+          }}
           onSortStatusChange={({ columnAccessor, direction }) => {
             const next = new URLSearchParams(sp);
             next.set("sort", String(columnAccessor));
@@ -183,15 +287,22 @@ export default function ProductsIndexRoute() {
           }}
           columns={[
             { accessor: "id", title: "ID", width: 70, sortable: true },
-            { accessor: "code", title: "Code", sortable: true, render: (r: any) => <Link to={`/products/${r.id}`}>{r.code}</Link> },
             { accessor: "sku", title: "SKU", sortable: true },
             { accessor: "name", title: "Name", sortable: true },
             { accessor: "type", title: "Type", sortable: true },
             { accessor: "costPrice", title: "Cost", sortable: true },
             { accessor: "manualSalePrice", title: "Manual", sortable: true },
             { accessor: "autoSalePrice", title: "Auto", sortable: true },
-            { accessor: "stockTrackingEnabled", title: "Stock", render: (r: any) => (r.stockTrackingEnabled ? "Yes" : "No") },
-            { accessor: "batchTrackingEnabled", title: "Batch", render: (r: any) => (r.batchTrackingEnabled ? "Yes" : "No") },
+            {
+              accessor: "stockTrackingEnabled",
+              title: "Stock",
+              render: (r: any) => (r.stockTrackingEnabled ? "Yes" : "No"),
+            },
+            {
+              accessor: "batchTrackingEnabled",
+              title: "Batch",
+              render: (r: any) => (r.batchTrackingEnabled ? "Yes" : "No"),
+            },
           ]}
         />
       </section>
