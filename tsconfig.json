@@ -14,8 +14,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"],
-    "importsNotUsedAsValues": "error"
+    "types": ["vite/client"]
   },
-  "include": ["./src", "./app", "remix.config.js"]
+  "include": ["./src", "./app", "./app/types", "remix.config.js"]
 }

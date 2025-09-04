@@ -1,6 +1,7 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, NavLink } from "@remix-run/react";
 import type { LinksFunction } from "@remix-run/node";
 import { MantineProvider, AppShell, Anchor, Stack, Title, ColorSchemeScript, ActionIcon, localStorageColorSchemeManager, useMantineColorScheme, useComputedColorScheme } from "@mantine/core";
+import { GlobalFormProvider, SaveCancelHeader, useGlobalSaveShortcut } from "packages/timber";
 import { Notifications } from "@mantine/notifications";
 import mantineCss from "./styles/mantine.css?url";
 export function meta() {
@@ -32,7 +33,11 @@ export default function App() {
       <body>
         <MantineProvider defaultColorScheme="light" colorSchemeManager={localStorageColorSchemeManager({ key: "erp-color-scheme" })}>
           <Notifications />
-          <AppShellLayout navItems={navItems} />
+          <GlobalFormProvider>
+            <GlobalHotkeys />
+            <SaveCancelHeader />
+            <AppShellLayout navItems={navItems} />
+          </GlobalFormProvider>
           <ScrollRestoration />
           <Scripts />
         </MantineProvider>
@@ -73,4 +78,10 @@ function AppShellLayout({ navItems }: { navItems: { to: string; label: string }[
       </AppShell.Main>
     </AppShell>
   );
+}
+
+function GlobalHotkeys() {
+  // Register global keyboard shortcuts (Cmd/Ctrl+S => save via GlobalFormProvider)
+  useGlobalSaveShortcut();
+  return null;
 }

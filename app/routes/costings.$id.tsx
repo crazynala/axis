@@ -1,25 +1,11 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
-import {
-  Button,
-  Group,
-  NumberInput,
-  Select,
-  Stack,
-  Text,
-  Textarea,
-  Title,
-} from "@mantine/core";
+import { Button, Group, NumberInput, Select, Stack, Text, Textarea, Title } from "@mantine/core";
 import { prisma } from "../utils/prisma.server";
+import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "packages/timber";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [
-  { title: data?.costing ? `Costing #${data.costing.id}` : "Costing" },
-];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.costing ? `Costing #${data.costing.id}` : "Costing" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -46,15 +32,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = form.get("_intent");
 
   if (intent === "update") {
-    const assemblyId = form.get("assemblyId")
-      ? Number(form.get("assemblyId"))
-      : null;
-    const componentId = form.get("componentId")
-      ? Number(form.get("componentId"))
-      : null;
-    const quantityPerUnit = form.get("quantityPerUnit")
-      ? Number(form.get("quantityPerUnit"))
-      : null;
+    const assemblyId = form.get("assemblyId") ? Number(form.get("assemblyId")) : null;
+    const componentId = form.get("componentId") ? Number(form.get("componentId")) : null;
+    const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
@@ -84,13 +64,21 @@ export default function CostingDetailRoute() {
   const { costing, products, assemblies } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
+  useRecordBrowserShortcuts(costing.id);
 
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Title order={2}>Costing #{costing.id}</Title>
-        <Link to="/costings">Back</Link>
+        <BreadcrumbSet
+          breadcrumbs={[
+            { label: "Costings", href: "/costings" },
+            { label: String(costing.id), href: `/costings/${costing.id}` },
+          ]}
+        />
       </Group>
+      <RecordNavButtons recordBrowser={useRecordBrowser(costing.id)} />
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />
@@ -103,9 +91,7 @@ export default function CostingDetailRoute() {
               value: String(a.id),
               label: a.name || `Assembly #${a.id}`,
             }))}
-            defaultValue={
-              costing.assemblyId != null ? String(costing.assemblyId) : null
-            }
+            defaultValue={costing.assemblyId != null ? String(costing.assemblyId) : null}
             clearable
           />
           <Select
@@ -114,29 +100,13 @@ export default function CostingDetailRoute() {
             w={200}
             data={products.map((p: any) => ({
               value: String(p.id),
-              label: p.name
-                ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})`
-                : `#${p.id}`,
+              label: p.name ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})` : `#${p.id}`,
             }))}
-            defaultValue={
-              costing.componentId != null ? String(costing.componentId) : null
-            }
+            defaultValue={costing.componentId != null ? String(costing.componentId) : null}
             clearable
           />
-          <NumberInput
-            name="quantityPerUnit"
-            label="Qty / Unit"
-            w={140}
-            defaultValue={costing.quantityPerUnit ?? undefined}
-            allowDecimal
-          />
-          <NumberInput
-            name="unitCost"
-            label="Unit Cost"
-            w={140}
-            defaultValue={costing.unitCost ?? undefined}
-            allowDecimal
-          />
+          <NumberInput name="quantityPerUnit" label="Qty / Unit" w={140} defaultValue={costing.quantityPerUnit ?? undefined} allowDecimal />
+          <NumberInput name="unitCost" label="Unit Cost" w={140} defaultValue={costing.unitCost ?? undefined} allowDecimal />
           <Select
             name="usageType"
             label="Usage"
@@ -148,12 +118,7 @@ export default function CostingDetailRoute() {
             defaultValue={(costing as any).usageType || null}
             clearable
           />
-          <Textarea
-            name="notes"
-            label="Notes"
-            w={260}
-            defaultValue={costing.notes || ""}
-          />
+          <Textarea name="notes" label="Notes" w={260} defaultValue={costing.notes || ""} />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
           </Button>

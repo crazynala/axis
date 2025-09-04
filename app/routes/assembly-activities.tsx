@@ -1,5 +1,19 @@
-import { Outlet } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Outlet, useLoaderData } from "@remix-run/react";
+import { RecordBrowserProvider } from "packages/timber";
+import { prisma } from "../utils/prisma.server";
+
+export async function loader(_args: LoaderFunctionArgs) {
+  const activities = await prisma.assemblyActivity.findMany({ orderBy: { id: "asc" }, select: { id: true, name: true, status: true } });
+  return json({ activities });
+}
 
 export default function AssemblyActivitiesLayout() {
-  return <Outlet />;
+  const data = useLoaderData() as { activities?: any[] };
+  return (
+    <RecordBrowserProvider initialRecords={data?.activities ?? []}>
+      <Outlet />
+    </RecordBrowserProvider>
+  );
 }

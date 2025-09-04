@@ -5,7 +5,9 @@
     "packages/*"
   ],
   "scripts": {
+    "prebuild": "npm -w packages/timber run build",
     "build": "remix build",
+    "import:sample": "node scripts/import-sample-data.js",
     "debug": "node --inspect-brk server.js",
     "dev": "remix dev",
     "start": "cross-env NODE_ENV=production node server.js",

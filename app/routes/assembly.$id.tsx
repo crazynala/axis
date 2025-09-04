@@ -1,23 +1,10 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import {
-  Button,
-  Group,
-  Stack,
-  Table,
-  Title,
-  Text,
-  Select,
-  NumberInput,
-  Textarea,
-} from "@mantine/core";
+import { Button, Group, Stack, Table, Title, Text, Select, NumberInput, Textarea } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
+import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "packages/timber";
 
 export const meta: MetaFunction = () => [{ title: "Assembly" }];
 
@@ -54,12 +41,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "costing.create") {
     const compRaw = form.get("componentId");
     const compNum = compRaw == null || compRaw === "" ? null : Number(compRaw);
-    const componentId = Number.isFinite(compNum as any)
-      ? (compNum as number)
-      : null;
-    const quantityPerUnit = form.get("quantityPerUnit")
-      ? Number(form.get("quantityPerUnit"))
-      : null;
+    const componentId = Number.isFinite(compNum as any) ? (compNum as number) : null;
+    const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
@@ -92,11 +75,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function AssemblyDetailRoute() {
-  const { assembly, costings, activities, products } =
-    useLoaderData<typeof loader>();
+  const { assembly, costings, activities, products } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
+  useRecordBrowserShortcuts(assembly.id);
 
   const costingForm = useForm<{
     componentId: number | null;
@@ -116,7 +99,16 @@ export default function AssemblyDetailRoute() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>Assembly</Title>
+      <Group justify="space-between" align="center">
+        <Title order={2}>Assembly</Title>
+        <BreadcrumbSet
+          breadcrumbs={[
+            { label: "Assembly", href: "/assembly" },
+            { label: String(assembly.id), href: `/assembly/${assembly.id}` },
+          ]}
+        />
+      </Group>
+      <RecordNavButtons recordBrowser={useRecordBrowser(assembly.id)} />
 
       <section>
         <Title order={4} mb="xs">
@@ -152,10 +144,8 @@ export default function AssemblyDetailRoute() {
           onSubmit={costingForm.handleSubmit((v) => {
             const fd = new FormData();
             fd.set("_intent", "costing.create");
-            if (v.componentId != null)
-              fd.set("componentId", String(v.componentId));
-            if (v.quantityPerUnit != null)
-              fd.set("quantityPerUnit", String(v.quantityPerUnit));
+            if (v.componentId != null) fd.set("componentId", String(v.componentId));
+            if (v.quantityPerUnit != null) fd.set("quantityPerUnit", String(v.quantityPerUnit));
             if (v.unitCost != null) fd.set("unitCost", String(v.unitCost));
             if (v.usageType) fd.set("usageType", v.usageType);
             if (v.notes) fd.set("notes", v.notes);
@@ -174,9 +164,7 @@ export default function AssemblyDetailRoute() {
                   onChange={(v) => field.onChange(v ? Number(v) : null)}
                   data={products.map((p: any) => ({
                     value: String(p.id),
-                    label: p.name
-                      ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})`
-                      : `#${p.id}`,
+                    label: p.name ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})` : `#${p.id}`,
                   }))}
                   clearable
                 />
@@ -185,28 +173,12 @@ export default function AssemblyDetailRoute() {
             <Controller
               name="quantityPerUnit"
               control={costingForm.control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Qty / Unit"
-                  w={140}
-                  value={field.value ?? undefined}
-                  onChange={(v) => field.onChange(v === "" ? null : Number(v))}
-                  allowDecimal
-                />
-              )}
+              render={({ field }) => <NumberInput label="Qty / Unit" w={140} value={field.value ?? undefined} onChange={(v) => field.onChange(v === "" ? null : Number(v))} allowDecimal />}
             />
             <Controller
               name="unitCost"
               control={costingForm.control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Unit Cost"
-                  w={140}
-                  value={field.value ?? undefined}
-                  onChange={(v) => field.onChange(v === "" ? null : Number(v))}
-                  allowDecimal
-                />
-              )}
+              render={({ field }) => <NumberInput label="Unit Cost" w={140} value={field.value ?? undefined} onChange={(v) => field.onChange(v === "" ? null : Number(v))} allowDecimal />}
             />
             <Controller
               name="usageType"
@@ -225,26 +197,14 @@ export default function AssemblyDetailRoute() {
                 />
               )}
             />
-            <Textarea
-              label="Notes"
-              autosize
-              minRows={1}
-              w={240}
-              {...costingForm.register("notes")}
-            />
+            <Textarea label="Notes" autosize minRows={1} w={240} {...costingForm.register("notes")} />
             <Button type="submit" disabled={busy}>
               {busy ? "Saving..." : "Add"}
             </Button>
           </Group>
         </form>
 
-        <Table
-          striped
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          mt="md"
-        >
+        <Table striped withTableBorder withColumnBorders highlightOnHover mt="md">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
@@ -259,26 +219,15 @@ export default function AssemblyDetailRoute() {
             {costings.map((c: any) => (
               <Table.Tr key={c.id}>
                 <Table.Td>{c.id}</Table.Td>
-                <Table.Td>
-                  {c.component?.name || c.component?.sku || c.componentId}
-                </Table.Td>
+                <Table.Td>{c.component?.name || c.component?.sku || c.componentId}</Table.Td>
                 <Table.Td>{c.usageType}</Table.Td>
                 <Table.Td>{c.quantityPerUnit}</Table.Td>
                 <Table.Td>{c.unitCost}</Table.Td>
                 <Table.Td>
                   <form method="post">
-                    <input
-                      type="hidden"
-                      name="_intent"
-                      value="costing.delete"
-                    />
+                    <input type="hidden" name="_intent" value="costing.delete" />
                     <input type="hidden" name="id" value={c.id} />
-                    <Button
-                      type="submit"
-                      variant="light"
-                      color="red"
-                      disabled={busy}
-                    >
+                    <Button type="submit" variant="light" color="red" disabled={busy}>
                       Delete
                     </Button>
                   </form>
@@ -314,28 +263,15 @@ export default function AssemblyDetailRoute() {
                 <Table.Td>{a.name}</Table.Td>
                 <Table.Td>{a.description}</Table.Td>
                 <Table.Td>{a.job?.name || a.jobId}</Table.Td>
-                <Table.Td>
-                  {a.startTime ? new Date(a.startTime).toLocaleString() : ""}
-                </Table.Td>
-                <Table.Td>
-                  {a.endTime ? new Date(a.endTime).toLocaleString() : ""}
-                </Table.Td>
+                <Table.Td>{a.startTime ? new Date(a.startTime).toLocaleString() : ""}</Table.Td>
+                <Table.Td>{a.endTime ? new Date(a.endTime).toLocaleString() : ""}</Table.Td>
                 <Table.Td>{a.status}</Table.Td>
                 <Table.Td>{a.notes}</Table.Td>
                 <Table.Td>
                   <form method="post">
-                    <input
-                      type="hidden"
-                      name="_intent"
-                      value="activity.delete"
-                    />
+                    <input type="hidden" name="_intent" value="activity.delete" />
                     <input type="hidden" name="id" value={a.id} />
-                    <Button
-                      type="submit"
-                      variant="light"
-                      color="red"
-                      disabled={busy}
-                    >
+                    <Button type="submit" variant="light" color="red" disabled={busy}>
                       Delete
                     </Button>
                   </form>

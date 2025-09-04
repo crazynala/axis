@@ -1,25 +1,8 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSubmit,
-} from "@remix-run/react";
-import {
-  Button,
-  Checkbox,
-  Table,
-  TextInput,
-  Group,
-  Stack,
-  Title,
-  Textarea,
-} from "@mantine/core";
+import { Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Button, Checkbox, Table, TextInput, Group, Stack, Title, Textarea } from "@mantine/core";
+import { BreadcrumbSet } from "packages/timber";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
 
@@ -124,51 +107,16 @@ export default function JobsIndexRoute() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>Jobs</Title>
+      <Group justify="space-between" align="center">
+        <Title order={2}>Jobs</Title>
+        <BreadcrumbSet breadcrumbs={[{ label: "Jobs", href: "/jobs" }]} />
+      </Group>
 
-      <section>
-        <Title order={4} mb="sm">
-          Add Job
-        </Title>
-        <form
-          onSubmit={form.handleSubmit((values) => {
-            const fd = new FormData();
-            fd.set("_intent", "create");
-            if (values.name) fd.set("name", values.name);
-            if (values.status) fd.set("status", values.status);
-            if (values.is_active) fd.set("is_active", "on");
-            if (values.notes) fd.set("notes", values.notes);
-            submit(fd, { method: "post" });
-          })}
-        >
-          <Group align="flex-end" wrap="wrap">
-            <TextInput label="Code" w={160} {...form.register("code")} />
-            <TextInput label="Name" w={220} {...form.register("name")} />
-            <TextInput label="Status" w={160} {...form.register("status")} />
-            <Controller
-              name="is_active"
-              control={form.control}
-              render={({ field }) => (
-                <Checkbox
-                  label="Active"
-                  checked={!!field.value}
-                  onChange={(e) => field.onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
-            <Textarea
-              label="Notes"
-              autosize
-              minRows={1}
-              w={260}
-              {...form.register("notes")}
-            />
-            <Button type="submit" disabled={busy}>
-              {busy ? "Saving..." : "Save"}
-            </Button>
-          </Group>
-        </form>
-      </section>
+      <Group>
+        <Button component="a" href="/jobs/new" variant="filled" color="blue">
+          New Job
+        </Button>
+      </Group>
 
       <section>
         <Title order={4} mb="sm">

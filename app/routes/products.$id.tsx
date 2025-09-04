@@ -1,28 +1,14 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Link, Form, useNavigation } from "@remix-run/react";
-import {
-  Stack,
-  Title,
-  Group,
-  Text,
-  Button,
-  Checkbox,
-  NumberInput,
-  TextInput,
-} from "@mantine/core";
+import { Stack, Title, Group, Text, Button, Checkbox, NumberInput, TextInput } from "@mantine/core";
 import { Table } from "@mantine/core";
 import { prisma } from "../utils/prisma.server";
+import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "packages/timber";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.product
-      ? `Product ${data.product.name ?? data.product.id}`
-      : "Product",
+    title: data?.product ? `Product ${data.product.name ?? data.product.id}` : "Product",
   },
 ];
 
@@ -42,7 +28,25 @@ export async function loader({ params }: LoaderFunctionArgs) {
     },
   });
   if (!product) throw new Response("Not found", { status: 404 });
-  return json({ product });
+  // Compute per-location stock using movement lines joined to movement/location
+  const byLocation = await prisma.$queryRawUnsafe<any[]>(
+    `
+    SELECT l.id as location_id, COALESCE(l.name,'') as location_name,
+           COALESCE(SUM(CASE
+             WHEN lower(pm."movementType") IN ('in','receive','purchase','adjust_in','return_in','return','transfer_in') THEN pml.quantity
+             WHEN lower(pm."movementType") IN ('out','issue','consume','ship','sale','deliver','adjust_out','transfer_out') THEN -pml.quantity
+             ELSE 0
+           END),0) AS qty
+    FROM "ProductMovementLine" pml
+    JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+    LEFT JOIN "Location" l ON l.id = pm."locationId"
+    WHERE pml."productId" = $1
+    GROUP BY l.id, l.name
+    ORDER BY l.name NULLS LAST, l.id
+    `,
+    id
+  );
+  return json({ product, stockByLocation: byLocation });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -51,21 +55,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   if (intent === "delete") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     await prisma.product.delete({ where: { id } });
     return redirect("/products");
   }
   if (intent === "update") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     // map free-text to enum if it matches, else null
     const typeStr = (form.get("type") as string | null)?.trim() || null;
-    const typeEnum =
-      typeStr &&
-      ["CMT", "Fabric", "Finished", "Trim", "Service"].includes(typeStr)
-        ? (typeStr as any)
-        : null;
+    const typeEnum = typeStr && ["CMT", "Fabric", "Finished", "Trim", "Service"].includes(typeStr) ? (typeStr as any) : null;
     await prisma.product.update({
       where: { id },
       data: {
@@ -73,12 +71,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         name: (form.get("name") as string | null)?.trim() || null,
         type: typeEnum,
         costPrice: form.get("costPrice") ? Number(form.get("costPrice")) : null,
-        manualSalePrice: form.get("manualSalePrice")
-          ? Number(form.get("manualSalePrice"))
-          : null,
-        autoSalePrice: form.get("autoSalePrice")
-          ? Number(form.get("autoSalePrice"))
-          : null,
+        manualSalePrice: form.get("manualSalePrice") ? Number(form.get("manualSalePrice")) : null,
+        autoSalePrice: form.get("autoSalePrice") ? Number(form.get("autoSalePrice")) : null,
         stockTrackingEnabled: form.get("stockTrackingEnabled") === "on",
         batchTrackingEnabled: form.get("batchTrackingEnabled") === "on",
       },
@@ -86,16 +80,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/products/${id}`);
   }
   if (intent === "addProductLine") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     const childRef = String(form.get("childRef") || "").trim();
     const quantity = form.get("quantity") ? Number(form.get("quantity")) : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     if (!childRef || quantity === null || unitCost === null) {
       return json(
         {
-          error:
-            "Child product (ID or SKU), quantity, and unit cost are required",
+          error: "Child product (ID or SKU), quantity, and unit cost are required",
         },
         { status: 400 }
       );
@@ -111,10 +103,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
     if (!childProduct) {
-      return json(
-        { error: `Child product '${childRef}' not found` },
-        { status: 404 }
-      );
+      return json({ error: `Child product '${childRef}' not found` }, { status: 404 });
     }
     await prisma.productLine.create({
       data: {
@@ -138,71 +127,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function ProductDetailRoute() {
-  const { product } = useLoaderData<typeof loader>();
+  const { product, stockByLocation } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  // Register local keyboard shortcuts for navigating records
+  useRecordBrowserShortcuts(product.id);
   return (
     <Stack>
       <Group justify="space-between" align="center">
         <Title order={2}>{product.name || `Product #${product.id}`}</Title>
-        <Link to="/products">Back</Link>
+        <BreadcrumbSet
+          breadcrumbs={[
+            { label: "Products", href: "/products" },
+            { label: String(product.id), href: `/products/${product.id}` },
+          ]}
+        />
       </Group>
+      <RecordNavButtons recordBrowser={useRecordBrowser(product.id)} />
 
       <Form method="post">
         <Stack>
           <input type="hidden" name="_intent" value="update" />
-          <TextInput
-            name="sku"
-            label="SKU"
-            defaultValue={product.sku || ""}
-            w={240}
-          />
-          <TextInput
-            name="name"
-            label="Name"
-            defaultValue={product.name || ""}
-            w={360}
-          />
-          <TextInput
-            name="type"
-            label="Type"
-            defaultValue={product.type || ""}
-            w={200}
-          />
-          <NumberInput
-            name="costPrice"
-            label="Cost Price"
-            defaultValue={product.costPrice ?? undefined}
-            step={0.01}
-            w={200}
-            allowDecimal
-          />
-          <NumberInput
-            name="manualSalePrice"
-            label="Manual Sale Price"
-            defaultValue={product.manualSalePrice ?? undefined}
-            step={0.01}
-            w={220}
-            allowDecimal
-          />
-          <NumberInput
-            name="autoSalePrice"
-            label="Auto Sale Price"
-            defaultValue={product.autoSalePrice ?? undefined}
-            step={0.01}
-            w={220}
-            allowDecimal
-          />
-          <Checkbox
-            name="stockTrackingEnabled"
-            label="Stock Tracking"
-            defaultChecked={!!product.stockTrackingEnabled}
-          />
-          <Checkbox
-            name="batchTrackingEnabled"
-            label="Batch Tracking"
-            defaultChecked={!!product.batchTrackingEnabled}
-          />
+          <TextInput name="sku" label="SKU" defaultValue={product.sku || ""} w={240} />
+          <TextInput name="name" label="Name" defaultValue={product.name || ""} w={360} />
+          <TextInput name="type" label="Type" defaultValue={product.type || ""} w={200} />
+          <NumberInput name="costPrice" label="Cost Price" defaultValue={product.costPrice ?? undefined} step={0.01} w={200} allowDecimal />
+          <NumberInput name="manualSalePrice" label="Manual Sale Price" defaultValue={product.manualSalePrice ?? undefined} step={0.01} w={220} allowDecimal />
+          <NumberInput name="autoSalePrice" label="Auto Sale Price" defaultValue={product.autoSalePrice ?? undefined} step={0.01} w={220} allowDecimal />
+          <Checkbox name="stockTrackingEnabled" label="Stock Tracking" defaultChecked={!!product.stockTrackingEnabled} />
+          <Checkbox name="batchTrackingEnabled" label="Batch Tracking" defaultChecked={!!product.batchTrackingEnabled} />
           <Group>
             <Button type="submit" disabled={busy}>
               {busy ? "Saving..." : "Save changes"}
@@ -226,30 +179,14 @@ export default function ProductDetailRoute() {
           <input type="hidden" name="_intent" value="addProductLine" />
           <Group align="flex-end" wrap="wrap">
             <TextInput name="childRef" label="Child (ID or SKU)" w={200} />
-            <NumberInput
-              name="quantity"
-              label="Quantity"
-              w={120}
-              allowDecimal
-            />
-            <NumberInput
-              name="unitCost"
-              label="Unit Cost"
-              w={120}
-              allowDecimal
-            />
+            <NumberInput name="quantity" label="Quantity" w={120} allowDecimal />
+            <NumberInput name="unitCost" label="Unit Cost" w={120} allowDecimal />
             <Button type="submit" disabled={busy}>
               Add
             </Button>
           </Group>
         </Form>
-        <Table
-          striped
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          mt="md"
-        >
+        <Table striped withTableBorder withColumnBorders highlightOnHover mt="md">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
@@ -263,25 +200,14 @@ export default function ProductDetailRoute() {
             {product.productLines.map((pl: any) => (
               <Table.Tr key={pl.id}>
                 <Table.Td>{pl.id}</Table.Td>
-                <Table.Td>
-                  {pl.child?.sku || pl.child?.name || pl.childId}
-                </Table.Td>
+                <Table.Td>{pl.child?.sku || pl.child?.name || pl.childId}</Table.Td>
                 <Table.Td>{pl.quantity}</Table.Td>
                 <Table.Td>{pl.unitCost}</Table.Td>
                 <Table.Td>
                   <Form method="post">
-                    <input
-                      type="hidden"
-                      name="_intent"
-                      value="deleteProductLine"
-                    />
+                    <input type="hidden" name="_intent" value="deleteProductLine" />
                     <input type="hidden" name="productLineId" value={pl.id} />
-                    <Button
-                      type="submit"
-                      color="red"
-                      variant="light"
-                      disabled={busy}
-                    >
+                    <Button type="submit" color="red" variant="light" disabled={busy}>
                       Delete
                     </Button>
                   </Form>
@@ -290,6 +216,31 @@ export default function ProductDetailRoute() {
             ))}
           </Table.Tbody>
         </Table>
+      </section>
+
+      <section>
+        <Title order={4} mb="sm">
+          Stock by Location
+        </Title>
+        <Table striped withTableBorder withColumnBorders highlightOnHover mt="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Location</Table.Th>
+              <Table.Th>Qty</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {(stockByLocation || []).map((row: any) => (
+              <Table.Tr key={row.location_id ?? "none"}>
+                <Table.Td>{row.location_name || `#${row.location_id ?? "(none)"}`}</Table.Td>
+                <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+        <Text c="dimmed" size="sm" mt="xs">
+          Global stock: {Number((product as any).stockQty ?? 0)}
+        </Text>
       </section>
 
       <Text c="dimmed" size="sm">

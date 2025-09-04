@@ -1,24 +1,13 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
-import {
-  Button,
-  Checkbox,
-  Group,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
+import { Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useInitGlobalFormContext, useRecordBrowserShortcuts, RecordNavButtons } from "packages/timber";
+import { Button, Checkbox, Group, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Controller, useForm } from "react-hook-form";
+import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [
-  { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
-];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.company?.name ? `Company ${data.company.name}` : "Company" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -36,8 +25,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "update") {
     const data = {
       name: (form.get("name") as string) || null,
-      type: (form.get("type") as string) || null,
-      is_active: form.get("is_active") === "on",
+      isCarrier: form.get("isCarrier") === "on",
+      isCustomer: form.get("isCustomer") === "on",
+      isSupplier: form.get("isSupplier") === "on",
+      isInactive: form.get("isInactive") === "on",
+      isActive: form.get("isActive") === "on",
       notes: (form.get("notes") as string) || null,
     } as const;
     await prisma.company.update({ where: { id }, data: data as any });
@@ -56,52 +48,96 @@ export default function CompanyDetailRoute() {
   const { company } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const submit = useSubmit();
+  // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
+  const recordBrowser = useRecordBrowserShortcuts(company.id);
+
+  const form = useForm<{ name: string; notes: string; isCarrier: boolean; isCustomer: boolean; isSupplier: boolean; isInactive: boolean; isActive: boolean }>({
+    defaultValues: {
+      name: company.name || "",
+      notes: company.notes || "",
+      isCarrier: !!company.isCarrier,
+      isCustomer: !!company.isCustomer,
+      isSupplier: !!company.isSupplier,
+      isInactive: !!company.isInactive,
+      isActive: !!company.isActive,
+    },
+  });
+
+  // Reset form when navigating to a different company via record browser
+  useEffect(() => {
+    form.reset({
+      name: company.name || "",
+      notes: company.notes || "",
+      isCarrier: !!company.isCarrier,
+      isCustomer: !!company.isCustomer,
+      isSupplier: !!company.isSupplier,
+      isInactive: !!company.isInactive,
+      isActive: !!company.isActive,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.id]);
+
+  // Wire this form into the global Save/Cancel header via GlobalFormProvider in root
+  type FormValues = { name: string; notes: string; isCarrier: boolean; isCustomer: boolean; isSupplier: boolean; isInactive: boolean; isActive: boolean };
+  const save = (values: FormValues) => {
+    const fd = new FormData();
+    fd.set("_intent", "update");
+    fd.set("name", values.name ?? "");
+    if (values.notes) fd.set("notes", values.notes);
+    if (values.isCarrier) fd.set("isCarrier", "on");
+    if (values.isCustomer) fd.set("isCustomer", "on");
+    if (values.isSupplier) fd.set("isSupplier", "on");
+    if (values.isInactive) fd.set("isInactive", "on");
+    if (values.isActive) fd.set("isActive", "on");
+    submit(fd, { method: "post" });
+  };
+
+  useInitGlobalFormContext<FormValues>(form as any, save, () => form.reset());
 
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Title order={2}>{company.name || `Company #${company.id}`}</Title>
-        <Link to="/companies">Back</Link>
+        <Group>
+          <RecordNavButtons recordBrowser={recordBrowser} />
+          <Link to="/companies">Back</Link>
+        </Group>
       </Group>
 
-      <Form method="post">
-        <input type="hidden" name="_intent" value="update" />
+      <form onSubmit={form.handleSubmit(save)}>
         <Group align="flex-end" wrap="wrap">
-          <TextInput
-            name="name"
-            label="Name"
-            w={240}
-            defaultValue={company.name || ""}
+          <TextInput label="Name" w={240} {...form.register("name")} />
+          <Controller name="isCarrier" control={form.control} render={({ field }) => <Checkbox label="Carrier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />} />
+          <Controller
+            name="isCustomer"
+            control={form.control}
+            render={({ field }) => <Checkbox label="Customer" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
           />
-          <TextInput
-            name="type"
-            label="Type"
-            w={180}
-            defaultValue={(company as any).type || ""}
+          <Controller
+            name="isSupplier"
+            control={form.control}
+            render={({ field }) => <Checkbox label="Supplier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
           />
-          <Checkbox
-            name="is_active"
-            label="Active"
-            defaultChecked={(company as any).is_active || false}
+          <Controller
+            name="isInactive"
+            control={form.control}
+            render={({ field }) => <Checkbox label="Inactive" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
           />
-          <TextInput
-            name="notes"
-            label="Notes"
-            w={300}
-            defaultValue={company.notes || ""}
-          />
+          <Controller name="isActive" control={form.control} render={({ field }) => <Checkbox label="Active" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />} />
+          <TextInput label="Notes" w={300} {...form.register("notes")} />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
           </Button>
         </Group>
-      </Form>
+      </form>
 
-      <Form method="post">
+      <form method="post">
         <input type="hidden" name="_intent" value="delete" />
         <Button type="submit" color="red" variant="light" disabled={busy}>
           {busy ? "Deleting..." : "Delete"}
         </Button>
-      </Form>
+      </form>
 
       <Text c="dimmed" size="sm">
         ID: {company.id}

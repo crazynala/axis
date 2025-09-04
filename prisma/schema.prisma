@@ -73,7 +73,6 @@ model Product {
 model Company {
     id                Int                    @id @default(autoincrement())
     name              String?
-    type              CompanyType?
     address           String?
     city              String?
     state             String?
@@ -84,6 +83,10 @@ model Company {
     website           String?
     notes             String?
     isActive          Boolean?
+    isCarrier         Boolean?
+    isCustomer        Boolean?
+    isSupplier        Boolean?
+    isInactive        Boolean?
     productsSupplied  Product[]              @relation("Supplier")
     productsPurchased Product[]              @relation("Customer")
     pricingGroups     SupplierPricingGroup[]
@@ -276,7 +279,20 @@ model ProductMovement {
     movementType String?
     date         DateTime?
     locationId   Int?
-    notes        String?
+    // New mapped fields (scalars for import mapping)
+    assemblyActivityId  Int?
+    assemblyId          Int?
+    costingId           Int?
+    expenseId           Int?
+    jobId               Int?
+    locationInId        Int?
+    locationOutId       Int?
+    shippingType        String?
+    productId           Int?
+    quantity            Float?
+    purchaseOrderLineId Int?
+    shippingLineId      Int?
+    notes               String?
     lines        ProductMovementLine[]
     location     Location?             @relation(fields: [locationId], references: [id])
     // Metadata
@@ -291,6 +307,11 @@ model ProductMovementLine {
     movementId Int?
     productId  Int?
     batchId    Int?
+    // Additional scalar fields for import mapping (no relations yet)
+    costingId           Int?
+    productBatchId      Int?
+    productMovementId   Int?
+    purchaseOrderLineId Int?
     quantity   Float?
     notes      String?
     movement   ProductMovement? @relation(fields: [movementId], references: [id])
@@ -301,6 +322,8 @@ model ProductMovementLine {
     modifiedBy String?
     createdAt  DateTime?        @default(now())
     updatedAt  DateTime?        @updatedAt
+
+    @@index([productId], map: "idx_product_movement_line_product_id")
 }
 
 model Job {

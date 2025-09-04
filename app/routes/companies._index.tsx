@@ -1,34 +1,13 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSubmit,
-} from "@remix-run/react";
-import {
-  Button,
-  Checkbox,
-  Select,
-  Table,
-  TextInput,
-  Group,
-  Stack,
-  Title,
-} from "@mantine/core";
-import { Controller, useForm } from "react-hook-form";
+import type { MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
+import { Link, useRouteLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Button, Table, Group, Stack, Title } from "@mantine/core";
+import { BreadcrumbSet } from "../../packages/timber";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
-export async function loader(_args: LoaderFunctionArgs) {
-  const companies = await prisma.company.findMany({ orderBy: { id: "asc" } });
-  return json({ companies });
-}
+// No loader here; we use parent route loader data from routes/companies
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
@@ -68,75 +47,23 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CompaniesIndexRoute() {
-  const { companies } = useLoaderData<typeof loader>();
+  const parent = useRouteLoaderData("routes/companies") as { companies: any[] } | undefined;
+  const companies = parent?.companies ?? [];
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
 
-  const form = useForm<{
-    name: string | null;
-    type: string | null;
-    is_active: boolean;
-    notes: string | null;
-  }>({
-    defaultValues: { name: "", type: null, is_active: false, notes: "" },
-  });
+  // New is handled in /companies/new; delete handled via this route's action
 
   return (
     <Stack gap="lg">
+      <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
       <Title order={2}>Companies</Title>
+
       <section>
-        <Title order={4} mb="sm">
-          Add Company
-        </Title>
-        <form
-          onSubmit={form.handleSubmit((values) => {
-            const fd = new FormData();
-            fd.set("_intent", "create");
-            if (values.name) fd.set("name", values.name);
-            if (values.type) fd.set("type", values.type);
-            if (values.is_active) fd.set("is_active", "on");
-            if (values.notes) fd.set("notes", values.notes);
-            submit(fd, { method: "post" });
-          })}
-        >
-          <Group align="flex-end" wrap="wrap">
-            <TextInput label="Name" w={240} {...form.register("name")} />
-            <Controller
-              name="type"
-              control={form.control}
-              render={({ field }) => (
-                <Select
-                  label="Type"
-                  data={[
-                    { value: "vendor", label: "Vendor" },
-                    { value: "customer", label: "Customer" },
-                    { value: "other", label: "Other" },
-                  ]}
-                  w={180}
-                  clearable
-                  value={field.value ?? null}
-                  onChange={(v) => field.onChange(v ?? null)}
-                />
-              )}
-            />
-            <Controller
-              name="is_active"
-              control={form.control}
-              render={({ field }) => (
-                <Checkbox
-                  label="Active"
-                  checked={!!field.value}
-                  onChange={(e) => field.onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
-            <TextInput label="Notes" w={240} {...form.register("notes")} />
-            <Button type="submit" disabled={busy}>
-              {busy ? "Saving..." : "Save"}
-            </Button>
-          </Group>
-        </form>
+        <Button component="a" href="/companies/new" variant="filled" color="blue">
+          New Company
+        </Button>
       </section>
 
       <section>
@@ -148,7 +75,10 @@ export default function CompaniesIndexRoute() {
             <Table.Tr>
               <Table.Th>ID</Table.Th>
               <Table.Th>Name</Table.Th>
-              <Table.Th>Type</Table.Th>
+              <Table.Th>Carrier</Table.Th>
+              <Table.Th>Customer</Table.Th>
+              <Table.Th>Supplier</Table.Th>
+              <Table.Th>Inactive</Table.Th>
               <Table.Th>Active</Table.Th>
               <Table.Th>Notes</Table.Th>
               <Table.Th>Actions</Table.Th>
@@ -159,12 +89,13 @@ export default function CompaniesIndexRoute() {
               <Table.Tr key={c.id}>
                 <Table.Td>{c.id}</Table.Td>
                 <Table.Td>
-                  <Link to={`/companies/${c.id}`}>
-                    {c.name || `Company #${c.id}`}
-                  </Link>
+                  <Link to={`/companies/${c.id}`}>{c.name || `Company #${c.id}`}</Link>
                 </Table.Td>
-                <Table.Td>{c.type}</Table.Td>
-                <Table.Td>{c.is_active ? "Yes" : "No"}</Table.Td>
+                <Table.Td>{c.isCarrier ? "Yes" : ""}</Table.Td>
+                <Table.Td>{c.isCustomer ? "Yes" : ""}</Table.Td>
+                <Table.Td>{c.isSupplier ? "Yes" : ""}</Table.Td>
+                <Table.Td>{c.isInactive ? "Yes" : ""}</Table.Td>
+                <Table.Td>{c.isActive ? "Yes" : "No"}</Table.Td>
                 <Table.Td>{c.notes}</Table.Td>
                 <Table.Td>
                   <Button
