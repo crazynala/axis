@@ -5,7 +5,15 @@ import { RecordBrowserProvider } from "packages/timber";
 import { prisma } from "../utils/prisma.server";
 
 export async function loader(_args: LoaderFunctionArgs) {
-  const jobs = await prisma.job.findMany({ orderBy: { id: "asc" }, select: { id: true, name: true, projectCode: true } });
+  const jobs = await prisma.job.findMany({
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      name: true,
+      projectCode: true,
+      company: { select: { name: true } },
+    },
+  });
   return json({ jobs });
 }
 

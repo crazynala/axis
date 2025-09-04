@@ -4,9 +4,26 @@ const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
 const { createRequestHandler } = require("@remix-run/express");
+const { broadcastDevReady } = require("@remix-run/node");
 
 const isProduction = process.env.NODE_ENV === "production";
 const root = process.cwd();
+
+// Helper: load the Remix server build in development (manual or virtual)
+async function loadDevBuild() {
+  // Try Vite virtual module first (when using the Vite plugin)
+  try {
+    return await import("virtual:remix/server-build");
+  } catch (_) {
+    // Then try Remix CLI export without extension
+    try {
+      return await import("@remix-run/dev/server-build");
+    } catch (_) {
+      // Node ESM in newer versions may require explicit .js
+      return await import("@remix-run/dev/server-build.js");
+    }
+  }
+}
 
 async function createServer() {
   const app = express();
@@ -39,15 +56,7 @@ async function createServer() {
     app.all(
       "*",
       createRequestHandler({
-        build: async () => {
-          try {
-            // Vite plugin virtual module (if present)
-            return await import("virtual:remix/server-build");
-          } catch (_) {
-            // Remix CLI virtual module
-            return await import("@remix-run/dev/server-build");
-          }
-        },
+  build: () => loadDevBuild(),
         mode: "development",
       })
     );
@@ -71,6 +80,16 @@ createServer().then((app) => {
     server = app
       .listen(port, () => {
         console.log(`HTTP server is running at http://localhost:${port}`);
+  if (!isProduction && process.env.REMIX_DEV_ORIGIN) {
+          (async () => {
+            try {
+              const build = await loadDevBuild();
+              broadcastDevReady(build);
+            } catch (e) {
+              // ignore if build cannot be imported (non-manual mode)
+            }
+          })();
+        }
       })
       .on("error", (err) => {
         if (err && err.code === "EADDRINUSE") {

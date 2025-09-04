@@ -14,7 +14,8 @@ function sumIntArray(arr: number[] | null | undefined): number {
 }
 
 // Create base client
-const base = globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
+const base =
+  globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
 
 // Helper to safely coerce to number
@@ -57,9 +58,11 @@ const OUT_TYPES = [
 export const prisma: PrismaClient = (base as any).$extends({
   result: {
     assembly: {
-      qtyOrdered: {
+      c_qtyOrdered: {
         needs: { qtyOrderedBreakdown: true },
-        compute(assembly: { qtyOrderedBreakdown: number[] | null | undefined }) {
+        compute(assembly: {
+          qtyOrderedBreakdown: number[] | null | undefined;
+        }) {
           return sumIntArray(assembly.qtyOrderedBreakdown);
         },
       },
@@ -69,28 +72,126 @@ export const prisma: PrismaClient = (base as any).$extends({
     // query extension below to avoid overriding it with a static compute.
   },
   query: {
+    assembly: {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const result = await query(args);
+        return await attachAssemblyComputed(result);
+      },
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const result = await query(args);
+        return await attachAssemblyComputed(result);
+      },
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const results = await query(args);
+        return await attachAssemblyComputedMany(results);
+      },
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const result = await query(args);
+        return await attachAssemblyComputed(result);
+      },
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const result = await query(args);
+        return await attachAssemblyComputed(result);
+      },
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        const result = await query(args);
+        return await attachAssemblyComputed(result);
+      },
+    },
     product: {
-      async findUnique({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachStockQty(result);
       },
-      async findFirst({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachStockQty(result);
       },
-      async findMany({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const results = await query(args);
         return await attachStockQtyMany(results);
       },
-      async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachStockQty(result);
       },
-      async update({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachStockQty(result);
       },
-      async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachStockQty(result);
       },
@@ -134,17 +235,139 @@ async function computeProductStockQty(productId: number): Promise<number> {
   return batchQty;
 }
 
-async function attachStockQty<T extends { id?: number } | null>(product: T): Promise<T> {
+async function attachStockQty<T extends { id?: number } | null>(
+  product: T
+): Promise<T> {
   if (!product || !product.id) return product;
   const total = await computeProductStockQty(product.id);
   (product as any).stockQty = Math.round(total * 100) / 100;
   return product;
 }
 
-async function attachStockQtyMany<T extends Array<{ id?: number }>>(products: T): Promise<T> {
+async function attachStockQtyMany<T extends Array<{ id?: number }>>(
+  products: T
+): Promise<T> {
   // Optimize by grouping ids and doing a single grouped fetch when needed in the future.
   // For now, keep it simple and reuse per-row computation.
   return (await Promise.all(products.map((p) => attachStockQty(p)))) as T;
+}
+
+// ---- Assembly computed helpers ----
+type MaybeAssembly = {
+  id?: number | null;
+  variantSetId?: number | null;
+} | null;
+
+function classifyActivityType(
+  a: { name?: string | null; activityType?: string | null },
+  needle: "cut" | "make" | "pack"
+) {
+  const s = (a.activityType || a.name || "").toString().toLowerCase();
+  return s.includes(needle);
+}
+
+function sumArrays(
+  targetLen: number,
+  arrays: Array<number[] | null | undefined>
+): number[] {
+  const out = Array.from({ length: targetLen }, () => 0);
+  for (const arr of arrays) {
+    if (!Array.isArray(arr)) continue;
+    const m = Math.min(arr.length, targetLen);
+    for (let i = 0; i < m; i++) {
+      const v = arr[i];
+      if (Number.isFinite(v)) out[i] += (v as number) | 0;
+    }
+  }
+  return out;
+}
+
+async function computeAssemblyBreakdowns(
+  assemblyId: number,
+  variantSetId: number | null
+): Promise<{
+  c_qtyCut_Breakdown: number[];
+  c_qtyMake_Breakdown: number[];
+  c_qtyPack_Breakdown: number[];
+  c_qtyCut: number;
+  c_qtyMake: number;
+  c_qtyPack: number;
+  c_numVariants: number;
+}> {
+  const activities = await base.assemblyActivity.findMany({
+    where: { assemblyId },
+    select: { qtyBreakdown: true, name: true, activityType: true },
+  });
+  let len = 0;
+  let c_numVariants = 0;
+  if (variantSetId) {
+    const vs = await base.variantSet.findUnique({
+      where: { id: variantSetId },
+      select: { variants: true },
+    });
+    const variants = (vs?.variants || []) as Array<string | null | undefined>;
+    // Determine last populated label (non-empty after trim)
+    for (let i = variants.length - 1; i >= 0; i--) {
+      const lab = (variants[i] ?? "").toString().trim();
+      if (lab) {
+        c_numVariants = i + 1;
+        break;
+      }
+    }
+    // Respect number of variants available
+    len = c_numVariants > 0 ? c_numVariants : variants.length || 0;
+  }
+  if (len === 0) {
+    // derive from max breakdown length
+    for (const a of activities)
+      len = Math.max(len, a.qtyBreakdown?.length || 0);
+  }
+  type Act = {
+    qtyBreakdown: number[] | null;
+    name?: string | null;
+    activityType?: string | null;
+  };
+  const cutArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "cut"))
+    .map((a: Act) => a.qtyBreakdown);
+  const makeArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "make"))
+    .map((a: Act) => a.qtyBreakdown);
+  const packArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "pack"))
+    .map((a: Act) => a.qtyBreakdown);
+  const c_qtyCut_Breakdown = sumArrays(len, cutArrays);
+  const c_qtyMake_Breakdown = sumArrays(len, makeArrays);
+  const c_qtyPack_Breakdown = sumArrays(len, packArrays);
+  return {
+    c_qtyCut_Breakdown,
+    c_qtyMake_Breakdown,
+    c_qtyPack_Breakdown,
+    c_qtyCut: sumIntArray(c_qtyCut_Breakdown),
+    c_qtyMake: sumIntArray(c_qtyMake_Breakdown),
+    c_qtyPack: sumIntArray(c_qtyPack_Breakdown),
+    c_numVariants,
+  };
+}
+
+async function attachAssemblyComputed<T extends MaybeAssembly>(
+  assembly: T
+): Promise<T> {
+  if (!assembly || !assembly.id) return assembly;
+  const comp = await computeAssemblyBreakdowns(
+    assembly.id as number,
+    (assembly as any).variantSetId ?? null
+  );
+  Object.assign(assembly as any, comp);
+  return assembly;
+}
+
+async function attachAssemblyComputedMany<T extends Array<MaybeAssembly>>(
+  assemblies: T
+): Promise<T> {
+  return (await Promise.all(
+    assemblies.map((a) => attachAssemblyComputed(a))
+  )) as T;
 }
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

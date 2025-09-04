@@ -1,10 +1,31 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSearchParams, useNavigate, Form } from "@remix-run/react";
-import { Button, Checkbox, NumberInput, TextInput, Group, Stack, Title, Select } from "@mantine/core";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSearchParams,
+  useNavigate,
+  Form,
+} from "@remix-run/react";
+import {
+  Button,
+  Checkbox,
+  NumberInput,
+  TextInput,
+  Group,
+  Stack,
+  Title,
+  Select,
+} from "@mantine/core";
 import { BreadcrumbSet } from "packages/timber";
 import { prisma } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { getUser } from "../utils/auth.server";
 import { DataTable } from "mantine-datatable";
 import { listViews, saveView } from "../utils/views.server";
 
@@ -13,6 +34,8 @@ export const meta: MetaFunction = () => [{ title: "Products" }];
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
   const params = parseTableParams(args.request.url);
+  const me = await getUser(args.request);
+  const defaultPerPage = me?.recordsPerPage ?? 20;
   const views = await listViews("products");
   const viewName = url.searchParams.get("view");
   let effective = params;
@@ -22,13 +45,22 @@ export async function loader(args: LoaderFunctionArgs) {
       const saved = v.params as any;
       effective = {
         page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
+        perPage: Number(
+          url.searchParams.get("perPage") || saved.perPage || defaultPerPage
+        ),
         sort: (url.searchParams.get("sort") || saved.sort || null) as any,
         dir: (url.searchParams.get("dir") || saved.dir || null) as any,
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
     }
+  }
+  if (!viewName) {
+    // no saved view selected; apply default perPage if not specified
+    effective = {
+      ...effective,
+      perPage: Number(url.searchParams.get("perPage") || defaultPerPage),
+    };
   }
   const prismaArgs = buildPrismaArgs<any>(effective, {
     defaultSort: { field: "id", dir: "asc" },
@@ -47,7 +79,10 @@ export async function loader(args: LoaderFunctionArgs) {
       maxCost: (v: string) => ({ costPrice: { lte: Number(v) } }),
     },
   });
-  const [rows, total] = await Promise.all([prisma.product.findMany({ ...prismaArgs }), prisma.product.count({ where: prismaArgs.where })]);
+  const [rows, total] = await Promise.all([
+    prisma.product.findMany({ ...prismaArgs }),
+    prisma.product.count({ where: prismaArgs.where }),
+  ]);
   return json({
     rows,
     total,
@@ -93,20 +128,29 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ProductsIndexRoute() {
-  const { rows, total, page, perPage, q, filters, views, activeView } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, views, activeView } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
 
-  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || "id";
-  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || "asc";
+  const sortAccessor =
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("sort")
+      : null) || "id";
+  const sortDirection =
+    ((typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("dir")
+      : null) as any) || "asc";
 
   return (
     <Stack gap="lg">
       <Group justify="space-between" mb="xs" align="center">
         <Title order={2}>Products</Title>
-        <BreadcrumbSet breadcrumbs={[{ label: "Products", href: "/products" }]} />
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Products", href: "/products" }]}
+        />
       </Group>
       <Group justify="flex-end" mb="xs">
         <Button component={Link} to="/products/new">
@@ -118,14 +162,69 @@ export default function ProductsIndexRoute() {
         {/* Filters */}
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="sku" label="SKU" defaultValue={filters?.sku || ""} w={160} />
-            <TextInput name="name" label="Name" defaultValue={filters?.name || ""} w={220} />
-            <TextInput name="q" label="Search" placeholder="Any field" defaultValue={q || ""} w={200} />
-            <Select name="type" label="Type" data={["CMT", "Fabric", "Finished", "Trim", "Service"].map((v) => ({ value: v, label: v }))} defaultValue={filters?.type || null} clearable w={160} />
-            <Checkbox name="stock" label="Stock" defaultChecked={filters?.stock === "1" || (filters?.stock as any) === true} onChange={() => {}} />
-            <Checkbox name="batch" label="Batch" defaultChecked={filters?.batch === "1" || (filters?.batch as any) === true} onChange={() => {}} />
-            <NumberInput name="minCost" label="Min Cost" w={140} defaultValue={filters?.minCost ? Number(filters.minCost) : undefined} allowDecimal />
-            <NumberInput name="maxCost" label="Max Cost" w={140} defaultValue={filters?.maxCost ? Number(filters.maxCost) : undefined} allowDecimal />
+            <TextInput
+              name="sku"
+              label="SKU"
+              defaultValue={filters?.sku || ""}
+              w={160}
+            />
+            <TextInput
+              name="name"
+              label="Name"
+              defaultValue={filters?.name || ""}
+              w={220}
+            />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Any field"
+              defaultValue={q || ""}
+              w={200}
+            />
+            <Select
+              name="type"
+              label="Type"
+              data={["CMT", "Fabric", "Finished", "Trim", "Service"].map(
+                (v) => ({ value: v, label: v })
+              )}
+              defaultValue={filters?.type || null}
+              clearable
+              w={160}
+            />
+            <Checkbox
+              name="stock"
+              label="Stock"
+              defaultChecked={
+                filters?.stock === "1" || (filters?.stock as any) === true
+              }
+              onChange={() => {}}
+            />
+            <Checkbox
+              name="batch"
+              label="Batch"
+              defaultChecked={
+                filters?.batch === "1" || (filters?.batch as any) === true
+              }
+              onChange={() => {}}
+            />
+            <NumberInput
+              name="minCost"
+              label="Min Cost"
+              w={140}
+              defaultValue={
+                filters?.minCost ? Number(filters.minCost) : undefined
+              }
+              allowDecimal
+            />
+            <NumberInput
+              name="maxCost"
+              label="Max Cost"
+              w={140}
+              defaultValue={
+                filters?.maxCost ? Number(filters.maxCost) : undefined
+              }
+              allowDecimal
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
@@ -154,7 +253,11 @@ export default function ProductsIndexRoute() {
           <Form method="post">
             <input type="hidden" name="_intent" value="saveView" />
             <Group gap="xs" align="center">
-              <TextInput name="name" placeholder="Save current filters as…" w={220} />
+              <TextInput
+                name="name"
+                placeholder="Save current filters as…"
+                w={220}
+              />
               <Button type="submit">Save view</Button>
             </Group>
           </Form>
@@ -171,7 +274,10 @@ export default function ProductsIndexRoute() {
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
+            const rec =
+              typeof rowIndex === "number"
+                ? (rows as any[])[rowIndex]
+                : _record;
             const id = rec?.id;
             if (id != null) navigate(`/products/${id}`);
           }}
@@ -197,7 +303,13 @@ export default function ProductsIndexRoute() {
             navigate(`?${next.toString()}`);
           }}
           columns={[
-            { accessor: "id", title: "ID", width: 70, sortable: true },
+            {
+              accessor: "id",
+              title: "ID",
+              width: 70,
+              sortable: true,
+              render: (r: any) => <Link to={`/products/${r.id}`}>{r.id}</Link>,
+            },
             { accessor: "sku", title: "SKU", sortable: true },
             { accessor: "name", title: "Name", sortable: true },
             { accessor: "type", title: "Type", sortable: true },

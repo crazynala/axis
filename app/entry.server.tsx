@@ -8,6 +8,11 @@ export default function handleRequest(
   responseHeaders: Headers,
   remixContext: EntryContext
 ) {
+  // Env diagnostics (server)
+  // Note: will log on each request in dev
+  // eslint-disable-next-line no-console
+  console.log(`[env] server NODE_ENV=${process.env.NODE_ENV}`);
+
   const markup = renderToString(
     <RemixServer context={remixContext} url={request.url} />
   );

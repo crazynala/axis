@@ -1,3 +1,4 @@
-/* Aggregate Mantine styles so Remix/Vite can bundle them as a single asset */
+/* Mantine base styles only */
 @import "@mantine/core/styles.css";
 @import "@mantine/notifications/styles.css";
+@import "@mantine/dates/styles.css";

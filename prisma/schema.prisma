@@ -7,6 +7,11 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
+enum ColorScheme {
+    light
+    dark
+}
+
 enum ProductType {
     CMT
     Fabric
@@ -275,10 +280,10 @@ model Batch {
 }
 
 model ProductMovement {
-    id           Int                   @id @default(autoincrement())
-    movementType String?
-    date         DateTime?
-    locationId   Int?
+    id                  Int                   @id @default(autoincrement())
+    movementType        String?
+    date                DateTime?
+    locationId          Int?
     // New mapped fields (scalars for import mapping)
     assemblyActivityId  Int?
     assemblyId          Int?
@@ -293,35 +298,35 @@ model ProductMovement {
     purchaseOrderLineId Int?
     shippingLineId      Int?
     notes               String?
-    lines        ProductMovementLine[]
-    location     Location?             @relation(fields: [locationId], references: [id])
+    lines               ProductMovementLine[]
+    location            Location?             @relation(fields: [locationId], references: [id])
     // Metadata
-    createdBy    String?
-    modifiedBy   String?
-    createdAt    DateTime?             @default(now())
-    updatedAt    DateTime?             @updatedAt
+    createdBy           String?
+    modifiedBy          String?
+    createdAt           DateTime?             @default(now())
+    updatedAt           DateTime?             @updatedAt
 }
 
 model ProductMovementLine {
-    id         Int              @id @default(autoincrement())
-    movementId Int?
-    productId  Int?
-    batchId    Int?
+    id                  Int              @id @default(autoincrement())
+    movementId          Int?
+    productId           Int?
+    batchId             Int?
     // Additional scalar fields for import mapping (no relations yet)
     costingId           Int?
     productBatchId      Int?
     productMovementId   Int?
     purchaseOrderLineId Int?
-    quantity   Float?
-    notes      String?
-    movement   ProductMovement? @relation(fields: [movementId], references: [id])
-    product    Product?         @relation(fields: [productId], references: [id])
-    batch      Batch?           @relation(fields: [batchId], references: [id])
+    quantity            Float?
+    notes               String?
+    movement            ProductMovement? @relation(fields: [movementId], references: [id])
+    product             Product?         @relation(fields: [productId], references: [id])
+    batch               Batch?           @relation(fields: [batchId], references: [id])
     // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime?        @default(now())
-    updatedAt  DateTime?        @updatedAt
+    createdBy           String?
+    modifiedBy          String?
+    createdAt           DateTime?        @default(now())
+    updatedAt           DateTime?        @updatedAt
 
     @@index([productId], map: "idx_product_movement_line_product_id")
 }
@@ -401,4 +406,29 @@ model AssemblyActivity {
     modifiedBy               String?
     createdAt                DateTime? @default(now())
     updatedAt                DateTime? @updatedAt
+}
+
+// --- Auth models ---
+model User {
+    id             Int             @id @default(autoincrement())
+    email          String          @unique
+    passwordHash   String
+    name           String?
+    recordsPerPage Int             @default(25)
+    isActive       Boolean         @default(true)
+    colorScheme    ColorScheme     @default(light)
+    createdAt      DateTime        @default(now())
+    updatedAt      DateTime        @updatedAt
+    resets         PasswordReset[]
+}
+
+model PasswordReset {
+    id        Int       @id @default(autoincrement())
+    userId    Int
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    otp       String
+    token     String    @unique
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime  @default(now())
 }

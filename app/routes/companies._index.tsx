@@ -1,121 +1,182 @@
-import type { MetaFunction, ActionFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
-import { Link, useRouteLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Button, Table, Group, Stack, Title } from "@mantine/core";
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import {
+  Link,
+  useNavigation,
+  useSearchParams,
+  useNavigate,
+  useLoaderData,
+} from "@remix-run/react";
+import { Button, Group, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "../../packages/timber";
 import { prisma } from "../utils/prisma.server";
+import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { DataTable } from "mantine-datatable";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
-// No loader here; we use parent route loader data from routes/companies
-
-export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  const intent = form.get("_intent");
-
-  if (intent === "create") {
-    const data = {
-      name: (form.get("name") as string) || null,
-      type: (form.get("type") as string) || null,
-      is_active: form.get("is_active") === "on",
-      notes: (form.get("notes") as string) || null,
-    } as const;
-    await prisma.company.create({ data: data as any });
-    return redirect("/companies");
-  }
-
-  if (intent === "delete") {
-    const id = Number(form.get("id"));
-    if (id) await prisma.company.delete({ where: { id } });
-    return redirect("/companies");
-  }
-
-  if (intent === "update") {
-    const id = Number(form.get("id"));
-    if (!id) return redirect("/companies");
-    const data = {
-      name: (form.get("name") as string) || null,
-      type: (form.get("type") as string) || null,
-      is_active: form.get("is_active") === "on",
-      notes: (form.get("notes") as string) || null,
-    } as const;
-    await prisma.company.update({ where: { id }, data: data as any });
-    return redirect("/companies");
-  }
-
-  return redirect("/companies");
+export async function loader(args: LoaderFunctionArgs) {
+  const params = parseTableParams(args.request.url);
+  const prismaArgs = buildPrismaArgs<any>(params, {
+    defaultSort: { field: "id", dir: "asc" },
+    searchableFields: ["name", "notes"],
+  });
+  const [rows, total] = await Promise.all([
+    prisma.company.findMany({
+      ...prismaArgs,
+      select: {
+        id: true,
+        name: true,
+        notes: true,
+        isCarrier: true,
+        isCustomer: true,
+        isSupplier: true,
+        isInactive: true,
+        isActive: true,
+      },
+    }),
+    prisma.company.count({ where: prismaArgs.where }),
+  ]);
+  return json({
+    rows,
+    total,
+    page: params.page,
+    perPage: params.perPage,
+    sort: params.sort,
+    dir: params.dir,
+  });
 }
 
 export default function CompaniesIndexRoute() {
-  const parent = useRouteLoaderData("routes/companies") as { companies: any[] } | undefined;
-  const companies = parent?.companies ?? [];
+  const { rows, total, page, perPage, sort, dir } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const submit = useSubmit();
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
+  const sortAccessor =
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("sort")
+      : null) ||
+    sort ||
+    "id";
+  const sortDirection =
+    ((typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("dir")
+      : null) as any) ||
+    dir ||
+    "asc";
 
   // New is handled in /companies/new; delete handled via this route's action
 
   return (
     <Stack gap="lg">
-      <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
+      <BreadcrumbSet
+        breadcrumbs={[{ label: "Companies", href: "/companies" }]}
+      />
       <Title order={2}>Companies</Title>
 
       <section>
-        <Button component="a" href="/companies/new" variant="filled" color="blue">
+        <Button
+          component="a"
+          href="/companies/new"
+          variant="filled"
+          color="blue"
+        >
           New Company
         </Button>
       </section>
 
       <section>
         <Title order={4} mb="sm">
-          All Companies
+          All Companies3
         </Title>
-        <Table striped withTableBorder withColumnBorders highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>ID</Table.Th>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Carrier</Table.Th>
-              <Table.Th>Customer</Table.Th>
-              <Table.Th>Supplier</Table.Th>
-              <Table.Th>Inactive</Table.Th>
-              <Table.Th>Active</Table.Th>
-              <Table.Th>Notes</Table.Th>
-              <Table.Th>Actions</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {companies.map((c: any) => (
-              <Table.Tr key={c.id}>
-                <Table.Td>{c.id}</Table.Td>
-                <Table.Td>
-                  <Link to={`/companies/${c.id}`}>{c.name || `Company #${c.id}`}</Link>
-                </Table.Td>
-                <Table.Td>{c.isCarrier ? "Yes" : ""}</Table.Td>
-                <Table.Td>{c.isCustomer ? "Yes" : ""}</Table.Td>
-                <Table.Td>{c.isSupplier ? "Yes" : ""}</Table.Td>
-                <Table.Td>{c.isInactive ? "Yes" : ""}</Table.Td>
-                <Table.Td>{c.isActive ? "Yes" : "No"}</Table.Td>
-                <Table.Td>{c.notes}</Table.Td>
-                <Table.Td>
-                  <Button
-                    variant="light"
-                    color="red"
-                    disabled={busy}
-                    onClick={() => {
-                      const fd = new FormData();
-                      fd.set("_intent", "delete");
-                      fd.set("id", String(c.id));
-                      submit(fd, { method: "post" });
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+        <DataTable
+          withTableBorder
+          withColumnBorders
+          highlightOnHover
+          idAccessor="id"
+          records={rows as any}
+          totalRecords={total}
+          page={page}
+          recordsPerPage={perPage}
+          recordsPerPageOptions={[10, 20, 50, 100]}
+          fetching={busy}
+          onRowClick={(_record: any, rowIndex?: number) => {
+            const rec =
+              typeof rowIndex === "number"
+                ? (rows as any[])[rowIndex]
+                : _record;
+            const id = rec?.id;
+            if (id != null) navigate(`/companies/${id}`);
+          }}
+          onPageChange={(p) => {
+            const next = new URLSearchParams(sp);
+            next.set("page", String(p));
+            navigate(`?${next.toString()}`);
+          }}
+          onRecordsPerPageChange={(n: number) => {
+            const next = new URLSearchParams(sp);
+            next.set("perPage", String(n));
+            next.set("page", "1");
+            navigate(`?${next.toString()}`);
+          }}
+          sortStatus={{
+            columnAccessor: sortAccessor,
+            direction: sortDirection as any,
+          }}
+          onSortStatusChange={({ columnAccessor, direction }) => {
+            const next = new URLSearchParams(sp);
+            next.set("sort", String(columnAccessor));
+            next.set("dir", direction);
+            navigate(`?${next.toString()}`);
+          }}
+          columns={[
+            {
+              accessor: "id",
+              title: "ID",
+              width: 70,
+              sortable: true,
+              render: (r: any) => <Link to={`/companies/${r.id}`}>{r.id}</Link>,
+            },
+            {
+              accessor: "name",
+              title: "Name",
+              sortable: true,
+              render: (r: any) => (
+                <Link to={`/companies/${r.id}`}>
+                  {r.name || `Company #${r.id}`}
+                </Link>
+              ),
+            },
+            {
+              accessor: "isCarrier",
+              title: "Carrier",
+              render: (r: any) => (r.isCarrier ? "Yes" : ""),
+            },
+            {
+              accessor: "isCustomer",
+              title: "Customer",
+              render: (r: any) => (r.isCustomer ? "Yes" : ""),
+            },
+            {
+              accessor: "isSupplier",
+              title: "Supplier",
+              render: (r: any) => (r.isSupplier ? "Yes" : ""),
+            },
+            {
+              accessor: "isInactive",
+              title: "Inactive",
+              render: (r: any) => (r.isInactive ? "Yes" : ""),
+            },
+            {
+              accessor: "isActive",
+              title: "Active",
+              render: (r: any) => (r.isActive ? "Yes" : "No"),
+            },
+            { accessor: "notes", title: "Notes" },
+          ]}
+        />
       </section>
     </Stack>
   );

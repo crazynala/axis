@@ -1,38 +1,22 @@
-import * as path from "path";
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import rollupReplace from "@rollup/plugin-replace";
+import { vitePlugin as remix } from "@remix-run/dev";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-// https://vitejs.dev/config/
+const r = (p) => path.resolve(fileURLToPath(new URL(".", import.meta.url)), p);
+
 export default defineConfig({
   server: {
     port: 3000,
-    fs: {
-      // allow serving workspace packages like packages/timber in dev
-      allow: ["..", "./packages"],
+    fs: { allow: ["..", "./packages"] },
+  },
+  resolve: {
+    alias: {
+      "packages/timber": r("packages/timber/src/index.ts"),
     },
   },
-  plugins: [
-    rollupReplace({
-      preventAssignment: true,
-      values: {
-        "process.env.NODE_ENV": JSON.stringify("development"),
-      },
-    }),
-    react(),
-  ],
-  resolve: process.env.USE_SOURCE
-    ? {
-        alias: {
-          "react-router": path.resolve(
-            __dirname,
-            "../../packages/react-router/index.ts",
-          ),
-          "react-router-dom": path.resolve(
-            __dirname,
-            "../../packages/react-router-dom/index.tsx",
-          ),
-        },
-      }
-    : {},
+  ssr: {
+    noExternal: ["packages/timber", "@aa/timber"],
+  },
+  plugins: [remix()],
 });
