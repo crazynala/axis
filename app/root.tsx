@@ -1,45 +1,21 @@
-import {
-  Links,
-  Meta,
-  Outlet,
-  Scripts,
-  LiveReload,
-  ScrollRestoration,
-  NavLink,
-  Form,
-  useLoaderData,
-} from "@remix-run/react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, NavLink, Form, useLoaderData } from "@remix-run/react";
 import { useEffect, useState } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import type { LinksFunction } from "@remix-run/node";
-import {
-  AppShell,
-  Anchor,
-  Stack,
-  Title,
-  ColorSchemeScript,
-  ActionIcon,
-  useMantineColorScheme,
-  useComputedColorScheme,
-} from "@mantine/core";
+import { AppShell, Anchor, Stack, Title, ColorSchemeScript, ActionIcon, useMantineColorScheme, useComputedColorScheme } from "@mantine/core";
 import { MantineProvider } from "@mantine/core";
-import {
-  GlobalFormProvider,
-  SaveCancelHeader,
-  useGlobalSaveShortcut,
-} from "packages/timber";
+import { GlobalFormProvider, SaveCancelHeader, useGlobalSaveShortcut } from "packages/timber";
 import { Notifications } from "@mantine/notifications";
 import mantineCss from "./styles/mantine.css?url";
 import { getUser, getUserId } from "./utils/auth.server";
+import { IconBrandDatabricks, IconWoman, IconAffiliate, IconAutomation, IconSettings } from "@tabler/icons-react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const path = url.pathname;
   const publicPaths = ["/login", "/forgot", "/reset"]; // reset uses /reset/:token
-  const isPublic = publicPaths.some(
-    (p) => path === p || path.startsWith("/reset")
-  );
+  const isPublic = publicPaths.some((p) => path === p || path.startsWith("/reset"));
   if (isPublic) return json({ colorScheme: "light" as const });
   const uid = await getUserId(request);
   if (!uid) {
@@ -51,36 +27,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ colorScheme });
 }
 export function meta() {
-  return [
-    { title: "ERP Remix" },
-    { name: "viewport", content: "width=device-width, initial-scale=1" },
-  ];
+  return [{ title: "ERP Remix" }, { name: "viewport", content: "width=device-width, initial-scale=1" }];
 }
 
-export const links: LinksFunction = () => [
-  { rel: "stylesheet", href: mantineCss },
-];
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: mantineCss }];
 
 export default function App() {
   const { colorScheme } = useLoaderData<typeof loader>();
   const navItems = [
-    { to: "/contacts", label: "Contacts" },
-    { to: "/companies", label: "Companies" },
-    { to: "/products", label: "Products" },
+    { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
+    { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
+    { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
     { to: "/costings", label: "Costings" },
-    { to: "/jobs", label: "Jobs" },
+    { to: "/jobs", icon: <IconAutomation />, label: "Jobs" },
     { to: "/assembly", label: "Assembly" },
     { to: "/assembly-activities", label: "Assembly Activities" },
     { to: "/admin", label: "Admin" },
-    { to: "/settings", label: "Settings" },
+    { to: "/settings", icon: <IconSettings />, label: "Settings" },
   ];
 
   return (
-    <html
-      lang="en"
-      data-mantine-color-scheme={colorScheme}
-      suppressHydrationWarning
-    >
+    <html lang="en" data-mantine-color-scheme={colorScheme} suppressHydrationWarning>
       <head>
         <Meta />
         {/* Ensures color scheme is applied before styles to avoid flicker */}
@@ -97,18 +64,13 @@ export default function App() {
           </GlobalFormProvider>
           <ScrollRestoration />
           <Scripts />
-          {process.env.NODE_ENV === "development" && <LiveReload />}
         </MantineProvider>
       </body>
     </html>
   );
 }
 
-function AppShellLayout({
-  navItems,
-}: {
-  navItems: { to: string; label: string }[];
-}) {
+function AppShellLayout({ navItems }: { navItems: { to: string; label: string }[] }) {
   const { setColorScheme } = useMantineColorScheme();
   const computed = useComputedColorScheme("light", {
     // Read color scheme on client to avoid SSR/client mismatch
@@ -135,12 +97,7 @@ function AppShellLayout({
         <Title order={3} mb="md">
           ERP Navigation
         </Title>
-        <ActionIcon
-          variant="default"
-          onClick={toggle}
-          aria-label="Toggle color scheme"
-          mb="sm"
-        >
+        <ActionIcon variant="default" onClick={toggle} aria-label="Toggle color scheme" mb="sm">
           <span role="img" aria-hidden suppressHydrationWarning>
             {mounted ? (computed === "light" ? "🌙" : "☀️") : "🌙"}
           </span>
@@ -151,7 +108,7 @@ function AppShellLayout({
               {({ isActive }) => (
                 // Render Anchor as span to avoid <a> inside <a>
                 <Anchor component="span" fw={isActive ? 700 : 500}>
-                  {item.label}
+                  {item.icon} {item.label}
                 </Anchor>
               )}
             </NavLink>

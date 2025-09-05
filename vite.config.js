@@ -14,6 +14,11 @@ export default defineConfig({
     alias: {
       "packages/timber": r("packages/timber/src/index.ts"),
     },
+    // Ensure single React instance when linking local packages
+    dedupe: ["react", "react-dom"],
+  },
+  optimizeDeps: {
+    include: ["react", "react-dom", "@remix-run/react"],
   },
   ssr: {
     noExternal: ["packages/timber", "@aa/timber"],

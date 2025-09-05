@@ -1,45 +1,16 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  useLoaderData,
-  Link,
-  Form,
-  useNavigation,
-  useSubmit,
-} from "@remix-run/react";
-import {
-  Stack,
-  Title,
-  Group,
-  Text,
-  Button,
-  Card,
-  Divider,
-  Table,
-  SimpleGrid,
-  Badge,
-} from "@mantine/core";
+import { useLoaderData, Link, Form, useNavigation, useSubmit } from "@remix-run/react";
+import { Stack, Title, Group, Text, Button, Card, Divider, Table, SimpleGrid, Badge } from "@mantine/core";
 import { TextInput, Checkbox, NumberInput, Modal } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
 import { useMemo, useState } from "react";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-} from "packages/timber";
+import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts, useInitGlobalFormContext } from "packages/timber";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.product
-      ? `Product ${data.product.name ?? data.product.id}`
-      : "Product",
+    title: data?.product ? `Product ${data.product.name ?? data.product.id}` : "Product",
   },
 ];
 
@@ -110,6 +81,43 @@ export async function loader({ params }: LoaderFunctionArgs) {
     `,
     id
   );
+  // Compute per-batch stock for this product from ProductMovementLine (signed by movementType)
+  const byBatch = await prisma.$queryRawUnsafe<any[]>(
+    `
+    WITH typed AS (
+      SELECT
+        pml."batchId" AS bid,
+        CASE
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (
+            'in','receive','purchase','adjust_in','return_in','return','transfer_in','po (receive)','shipping (in)'
+          ) THEN COALESCE(ABS(pml.quantity),0)
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (
+            'out','issue','consume','ship','sale','deliver','adjust_out','transfer_out','shipping (out)','po (return)','assembly','expense'
+          ) THEN -COALESCE(ABS(pml.quantity),0)
+          ELSE COALESCE(pml.quantity,0)
+        END AS qty
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pml."productId" = $1
+    )
+    SELECT 
+      b.id AS batch_id,
+      COALESCE(b."codeMill", '') AS code_mill,
+      COALESCE(b."codeSartor", '') AS code_sartor,
+      COALESCE(b.name, '') AS batch_name,
+      b."receivedAt"     AS received_at,
+      b."locationId"     AS location_id,
+      COALESCE(l.name,'') AS location_name,
+      COALESCE(SUM(t.qty),0) AS qty
+    FROM "Batch" b
+    LEFT JOIN typed t ON t.bid = b.id
+    LEFT JOIN "Location" l ON l.id = b."locationId"
+    WHERE b."productId" = $1
+    GROUP BY b.id, b."codeMill", b."codeSartor", b.name, b."receivedAt", b."locationId", l.name
+    ORDER BY b."receivedAt" DESC NULLS LAST, b.id DESC
+    `,
+    id
+  );
   const productChoices = await prisma.product.findMany({
     select: {
       id: true,
@@ -120,7 +128,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
     take: 1000,
   });
-  return json({ product, stockByLocation: byLocation, productChoices });
+  return json({ product, stockByLocation: byLocation, stockByBatch: byBatch, productChoices });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -129,8 +137,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   if (intent === "update") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     const data: any = {};
     const str = (k: string) => {
       if (form.has(k)) data[k] = (form.get(k) as string) || null;
@@ -154,8 +161,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/products/${id}`);
   }
   if (intent === "product.addComponent") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     const childId = Number(form.get("childId"));
     if (Number.isFinite(childId)) {
       await prisma.productLine.create({
@@ -165,8 +171,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/products/${id}`);
   }
   if (intent === "delete") {
-    if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     await prisma.product.delete({ where: { id } });
     return redirect("/products");
   }
@@ -174,8 +179,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function ProductDetailRoute() {
-  const { product, stockByLocation, productChoices } =
-    useLoaderData<typeof loader>();
+  const { product, stockByLocation, stockByBatch, productChoices } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   // Register local keyboard shortcuts for navigating records
@@ -198,8 +202,7 @@ export default function ProductDetailRoute() {
     if (values.name) fd.set("name", values.name);
     if (values.description) fd.set("description", values.description);
     if (values.costPrice != null) fd.set("costPrice", String(values.costPrice));
-    if (values.manualSalePrice != null)
-      fd.set("manualSalePrice", String(values.manualSalePrice));
+    if (values.manualSalePrice != null) fd.set("manualSalePrice", String(values.manualSalePrice));
     if (values.stockTrackingEnabled) fd.set("stockTrackingEnabled", "on");
     if (values.batchTrackingEnabled) fd.set("batchTrackingEnabled", "on");
     submit(fd, { method: "post" });
@@ -211,12 +214,8 @@ export default function ProductDetailRoute() {
   const filtered = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     let arr = productChoices as any[];
-    if (q)
-      arr = arr.filter((p) =>
-        ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
-      );
-    if (assemblyItemOnly)
-      arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
+    if (q) arr = arr.filter((p) => ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q));
+    if (assemblyItemOnly) arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
     return arr;
   }, [productChoices, pickerSearch, assemblyItemOnly]);
 
@@ -285,12 +284,7 @@ export default function ProductDetailRoute() {
               <Text fw={600} w={140}>
                 Variant Set
               </Text>
-              <Text>
-                {product.variantSet?.name ||
-                  (product.variantSet?.variants?.length
-                    ? `${product.variantSet?.variants.length} variants`
-                    : "")}
-              </Text>
+              <Text>{product.variantSet?.name || (product.variantSet?.variants?.length ? `${product.variantSet?.variants.length} variants` : "")}</Text>
             </Group>
             <Group gap="md">
               <Text fw={600} w={140}>
@@ -299,13 +293,7 @@ export default function ProductDetailRoute() {
               <Controller
                 name="stockTrackingEnabled"
                 control={form.control}
-                render={({ field }) => (
-                  <Checkbox
-                    checked={!!field.value}
-                    onChange={(e) => field.onChange(e.currentTarget.checked)}
-                    label={field.value ? "Enabled" : "Disabled"}
-                  />
-                )}
+                render={({ field }) => <Checkbox checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} label={field.value ? "Enabled" : "Disabled"} />}
               />
             </Group>
             <Group gap="md">
@@ -315,13 +303,7 @@ export default function ProductDetailRoute() {
               <Controller
                 name="batchTrackingEnabled"
                 control={form.control}
-                render={({ field }) => (
-                  <Checkbox
-                    checked={!!field.value}
-                    onChange={(e) => field.onChange(e.currentTarget.checked)}
-                    label={field.value ? "Enabled" : "Disabled"}
-                  />
-                )}
+                render={({ field }) => <Checkbox checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} label={field.value ? "Enabled" : "Disabled"} />}
               />
             </Group>
           </Stack>
@@ -336,35 +318,13 @@ export default function ProductDetailRoute() {
               <Text fw={600} w={160}>
                 Cost Price
               </Text>
-              <Controller
-                name="costPrice"
-                control={form.control}
-                render={({ field }) => (
-                  <NumberInput
-                    w={160}
-                    value={field.value as any}
-                    onChange={(v) => field.onChange(v)}
-                    allowDecimal
-                  />
-                )}
-              />
+              <Controller name="costPrice" control={form.control} render={({ field }) => <NumberInput w={160} value={field.value as any} onChange={(v) => field.onChange(v)} allowDecimal />} />
             </Group>
             <Group gap="md">
               <Text fw={600} w={160}>
                 Manual Sale Price
               </Text>
-              <Controller
-                name="manualSalePrice"
-                control={form.control}
-                render={({ field }) => (
-                  <NumberInput
-                    w={160}
-                    value={field.value as any}
-                    onChange={(v) => field.onChange(v)}
-                    allowDecimal
-                  />
-                )}
-              />
+              <Controller name="manualSalePrice" control={form.control} render={({ field }) => <NumberInput w={160} value={field.value as any} onChange={(v) => field.onChange(v)} allowDecimal />} />
             </Group>
             <Group gap="md">
               <Text fw={600} w={160}>
@@ -376,9 +336,7 @@ export default function ProductDetailRoute() {
               <Text fw={600} w={160}>
                 Category
               </Text>
-              <Text>
-                {product.category?.label || product.subCategory || ""}
-              </Text>
+              <Text>{product.category?.label || product.subCategory || ""}</Text>
             </Group>
             <Group gap="md">
               <Text fw={600} w={160}>
@@ -419,15 +377,7 @@ export default function ProductDetailRoute() {
                 <Table.Tr key={pl.id}>
                   <Table.Td>{pl.id}</Table.Td>
                   <Table.Td>{pl.child?.sku || ""}</Table.Td>
-                  <Table.Td>
-                    {pl.child ? (
-                      <Link to={`/products/${pl.child.id}`}>
-                        {pl.child.name || pl.child.id}
-                      </Link>
-                    ) : (
-                      pl.childId
-                    )}
-                  </Table.Td>
+                  <Table.Td>{pl.child ? <Link to={`/products/${pl.child.id}`}>{pl.child.name || pl.child.id}</Link> : pl.childId}</Table.Td>
                   <Table.Td>{pl.activityUsed || ""}</Table.Td>
                   <Table.Td>{pl.child?.type || ""}</Table.Td>
                   <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
@@ -444,9 +394,7 @@ export default function ProductDetailRoute() {
         <Card.Section inheritPadding py="xs">
           <Group justify="space-between" align="center">
             <Title order={4}>Stock by Location</Title>
-            <Badge variant="light">
-              Global: {Number((product as any).stockQty ?? 0)}
-            </Badge>
+            <Badge variant="light">Global: {Number((product as any).stockQty ?? 0)}</Badge>
           </Group>
         </Card.Section>
         <Divider my="xs" />
@@ -460,9 +408,44 @@ export default function ProductDetailRoute() {
           <Table.Tbody>
             {(stockByLocation || []).map((row: any) => (
               <Table.Tr key={row.location_id ?? "none"}>
+                <Table.Td>{row.location_name || `#${row.location_id ?? "(none)"}`}</Table.Td>
+                <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+
+        {/* Stock by Batch */}
+        <Divider my="md" />
+        <Title order={5} style={{ paddingLeft: 8, paddingBottom: 6 }}>
+          Stock by Batch
+        </Title>
+        <Table striped withTableBorder withColumnBorders highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Batch Codes</Table.Th>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Location</Table.Th>
+              <Table.Th>Received</Table.Th>
+              <Table.Th>Qty</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {(stockByBatch || []).map((row: any) => (
+              <Table.Tr key={row.batch_id}>
                 <Table.Td>
-                  {row.location_name || `#${row.location_id ?? "(none)"}`}
+                  {row.code_mill || row.code_sartor ? (
+                    <>
+                      {row.code_mill || ""}
+                      {row.code_sartor ? (row.code_mill ? " | " : "") + row.code_sartor : ""}
+                    </>
+                  ) : (
+                    `#${row.batch_id}`
+                  )}
                 </Table.Td>
+                <Table.Td>{row.batch_name || ""}</Table.Td>
+                <Table.Td>{row.location_name || (row.location_id ? `#${row.location_id}` : "")}</Table.Td>
+                <Table.Td>{row.received_at ? new Date(row.received_at).toLocaleDateString() : ""}</Table.Td>
                 <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
               </Table.Tr>
             ))}
@@ -471,26 +454,11 @@ export default function ProductDetailRoute() {
       </Card>
 
       {/* Add Component Picker */}
-      <Modal
-        opened={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        title="Add Component"
-        size="xl"
-        centered
-      >
+      <Modal opened={pickerOpen} onClose={() => setPickerOpen(false)} title="Add Component" size="xl" centered>
         <Stack>
           <Group justify="space-between" align="flex-end">
-            <TextInput
-              placeholder="Search products..."
-              value={pickerSearch}
-              onChange={(e) => setPickerSearch(e.currentTarget.value)}
-              w={320}
-            />
-            <Checkbox
-              label="Assembly Item"
-              checked={assemblyItemOnly}
-              onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
-            />
+            <TextInput placeholder="Search products..." value={pickerSearch} onChange={(e) => setPickerSearch(e.currentTarget.value)} w={320} />
+            <Checkbox label="Assembly Item" checked={assemblyItemOnly} onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)} />
           </Group>
           <div style={{ maxHeight: 420, overflow: "auto" }}>
             {filtered.map((p: any) => (

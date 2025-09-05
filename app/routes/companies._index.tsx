@@ -1,12 +1,6 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import {
-  Link,
-  useNavigation,
-  useSearchParams,
-  useNavigate,
-  useLoaderData,
-} from "@remix-run/react";
+import { Link, useNavigation, useSearchParams, useNavigate, useLoaderData } from "@remix-run/react";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "../../packages/timber";
 import { prisma } from "../utils/prisma.server";
@@ -48,48 +42,30 @@ export async function loader(args: LoaderFunctionArgs) {
 }
 
 export default function CompaniesIndexRoute() {
-  const { rows, total, page, perPage, sort, dir } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, sort, dir } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const sortAccessor =
-    (typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("sort")
-      : null) ||
-    sort ||
-    "id";
-  const sortDirection =
-    ((typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("dir")
-      : null) as any) ||
-    dir ||
-    "asc";
+  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || sort || "id";
+  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || dir || "asc";
 
   // New is handled in /companies/new; delete handled via this route's action
 
   return (
     <Stack gap="lg">
-      <BreadcrumbSet
-        breadcrumbs={[{ label: "Companies", href: "/companies" }]}
-      />
+      <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
       <Title order={2}>Companies</Title>
 
       <section>
-        <Button
-          component="a"
-          href="/companies/new"
-          variant="filled"
-          color="blue"
-        >
+        <Button component="a" href="/companies/new" variant="filled" color="blue">
           New Company
         </Button>
       </section>
 
       <section>
         <Title order={4} mb="sm">
-          All Companies3
+          All Companies
         </Title>
         <DataTable
           withTableBorder
@@ -103,10 +79,7 @@ export default function CompaniesIndexRoute() {
           recordsPerPageOptions={[10, 20, 50, 100]}
           fetching={busy}
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec =
-              typeof rowIndex === "number"
-                ? (rows as any[])[rowIndex]
-                : _record;
+            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
             const id = rec?.id;
             if (id != null) navigate(`/companies/${id}`);
           }}
@@ -143,11 +116,7 @@ export default function CompaniesIndexRoute() {
               accessor: "name",
               title: "Name",
               sortable: true,
-              render: (r: any) => (
-                <Link to={`/companies/${r.id}`}>
-                  {r.name || `Company #${r.id}`}
-                </Link>
-              ),
+              render: (r: any) => <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>,
             },
             {
               accessor: "isCarrier",

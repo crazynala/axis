@@ -164,6 +164,7 @@ model Assembly {
     variantSet          VariantSet?        @relation(fields: [variantSetId], references: [id])
     activities          AssemblyActivity[] @relation("Assembly_Activities")
     costings            Costing[]
+    batches             Batch[]
     // Metadata
     createdBy           String?
     modifiedBy          String?
@@ -261,7 +262,10 @@ model Batch {
     id                  Int                   @id @default(autoincrement())
     productId           Int?
     locationId          Int?
-    batchCode           String?
+    jobId               Int?
+    assemblyId          Int?
+    codeMill            String?
+    codeSartor          String?
     name                String?
     source              String?
     quantity            Float?
@@ -269,6 +273,8 @@ model Batch {
     notes               String?
     product             Product?              @relation(fields: [productId], references: [id])
     location            Location?             @relation(fields: [locationId], references: [id])
+    job                 Job?                  @relation(fields: [jobId], references: [id])
+    assembly            Assembly?             @relation(fields: [assemblyId], references: [id])
     ProductMovementLine ProductMovementLine[]
     Variant             Variant?              @relation(fields: [variantId], references: [id])
     variantId           Int?
@@ -312,9 +318,7 @@ model ProductMovementLine {
     movementId          Int?
     productId           Int?
     batchId             Int?
-    // Additional scalar fields for import mapping (no relations yet)
     costingId           Int?
-    productBatchId      Int?
     productMovementId   Int?
     purchaseOrderLineId Int?
     quantity            Float?
@@ -360,6 +364,7 @@ model Job {
     Variant                 Variant[]
     assemblyActivities      AssemblyActivity[]
     assemblies              Assembly[]         @relation("Job_Assemblies")
+    batches                 Batch[]
     // Metadata
     createdBy               String?
     modifiedBy              String?

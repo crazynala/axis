@@ -1,7 +1,7 @@
-/* Dev-only: Seed an admin user for login testing */
-require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
-const bcrypt = require("bcryptjs");
+/* Dev-only: Seed an admin user for login testing (ESM) */
+import "dotenv/config";
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
