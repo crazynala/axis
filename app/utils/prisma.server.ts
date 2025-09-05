@@ -14,7 +14,8 @@ function sumIntArray(arr: number[] | null | undefined): number {
 }
 
 // Create base client
-const base = globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
+const base =
+  globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
 
 // Helper to safely coerce to number
@@ -59,7 +60,9 @@ export const prisma: PrismaClient = (base as any).$extends({
     assembly: {
       c_qtyOrdered: {
         needs: { qtyOrderedBreakdown: true },
-        compute(assembly: { qtyOrderedBreakdown: number[] | null | undefined }) {
+        compute(assembly: {
+          qtyOrderedBreakdown: number[] | null | undefined;
+        }) {
           return sumIntArray(assembly.qtyOrderedBreakdown);
         },
       },
@@ -70,55 +73,213 @@ export const prisma: PrismaClient = (base as any).$extends({
   },
   query: {
     assembly: {
-      async findUnique({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async findFirst({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async findMany({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const results = await query(args);
         return await attachAssemblyComputedMany(results);
       },
-      async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async update({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
     },
     product: {
-      async findUnique({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
-        return await attachStockQty(result);
+        const withQty = await attachStockQty(result);
+        return await attachProductAggregates(withQty);
       },
-      async findFirst({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
-        return await attachStockQty(result);
+        const withQty = await attachStockQty(result);
+        return await attachProductAggregates(withQty);
       },
-      async findMany({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const results = await query(args);
         return await attachStockQtyMany(results);
       },
-      async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
-        const result = await query(args);
-        return await attachStockQty(result);
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        // Ensure SKU uniqueness globally by suffixing -dup, -dup2, ... when needed
+        if (args?.data) {
+          const desired: string | null = args.data.sku ?? null;
+          const idHint: number | undefined = args.data.id;
+          args.data.sku = await getUniqueSku(desired, idHint ?? null);
+        }
+        try {
+          const result = await query(args);
+          const withQty = await attachStockQty(result);
+          return await attachProductAggregates(withQty);
+        } catch (err: any) {
+          // Handle rare race: retry once on unique violation for sku
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
+            if (args?.data) {
+              const desired: string | null = args.data.sku ?? null;
+              const idHint: number | undefined = args.data.id;
+              args.data.sku = await getUniqueSku(desired, idHint ?? null);
+            }
+            const result = await query(args);
+            const withQty = await attachStockQty(result);
+            return await attachProductAggregates(withQty);
+          }
+          throw err;
+        }
       },
-      async update({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
-        const result = await query(args);
-        return await attachStockQty(result);
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        if (args?.data) {
+          const desired: string | null = args.data.sku ?? null;
+          const idHint: number | undefined = args?.where?.id ?? undefined;
+          args.data.sku = await getUniqueSku(desired, idHint ?? null);
+        }
+        try {
+          const result = await query(args);
+          const withQty = await attachStockQty(result);
+          return await attachProductAggregates(withQty);
+        } catch (err: any) {
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
+            if (args?.data) {
+              const desired: string | null = args.data.sku ?? null;
+              const idHint: number | undefined = args?.where?.id ?? undefined;
+              args.data.sku = await getUniqueSku(desired, idHint ?? null);
+            }
+            const result = await query(args);
+            const withQty = await attachStockQty(result);
+            return await attachProductAggregates(withQty);
+          }
+          throw err;
+        }
       },
-      async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
-        const result = await query(args);
-        return await attachStockQty(result);
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
+        if (args?.create) {
+          const desired: string | null = args.create.sku ?? null;
+          const idHint: number | undefined = args.create.id;
+          args.create.sku = await getUniqueSku(desired, idHint ?? null);
+        }
+        if (args?.update) {
+          const desired: string | null = args.update.sku ?? null;
+          const idHint: number | undefined = args?.where?.id ?? undefined;
+          args.update.sku = await getUniqueSku(desired, idHint ?? null);
+        }
+        try {
+          const result = await query(args);
+          const withQty = await attachStockQty(result);
+          return await attachProductAggregates(withQty);
+        } catch (err: any) {
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
+            if (args?.update) {
+              const desired: string | null = args.update.sku ?? null;
+              const idHint: number | undefined = args?.where?.id ?? undefined;
+              args.update.sku = await getUniqueSku(desired, idHint ?? null);
+            }
+            if (args?.create) {
+              const desired: string | null = args.create.sku ?? null;
+              const idHint: number | undefined = args.create.id;
+              args.create.sku = await getUniqueSku(desired, idHint ?? null);
+            }
+            const result = await query(args);
+            const withQty = await attachStockQty(result);
+            return await attachProductAggregates(withQty);
+          }
+          throw err;
+        }
       },
     },
   },
@@ -160,18 +321,24 @@ async function computeProductStockQty(productId: number): Promise<number> {
   return batchQty;
 }
 
-async function attachStockQty<T extends { id?: number } | null>(product: T): Promise<T> {
+async function attachStockQty<T extends { id?: number } | null>(
+  product: T
+): Promise<T> {
   if (!product || !product.id) return product;
   const total = await computeProductStockQty(product.id);
   (product as any).c_stockQty = Math.round(total * 100) / 100;
   // If batches are already loaded on the product (via include), augment each with stockQty
   if (Array.isArray((product as any).batches)) {
-    (product as any).batches = await attachBatchStockQtyMany((product as any).batches);
+    (product as any).batches = await attachBatchStockQtyMany(
+      (product as any).batches
+    );
   }
   return product;
 }
 
-async function attachStockQtyMany<T extends Array<{ id?: number }>>(products: T): Promise<T> {
+async function attachStockQtyMany<T extends Array<{ id?: number }>>(
+  products: T
+): Promise<T> {
   // Optimize by grouping ids and doing a single grouped fetch when needed in the future.
   // For now, keep it simple and reuse per-row computation.
   return (await Promise.all(products.map((p) => attachStockQty(p)))) as T;
@@ -217,8 +384,143 @@ async function attachBatchStockQty<T extends MaybeBatch>(batch: T): Promise<T> {
   return batch;
 }
 
-async function attachBatchStockQtyMany<T extends Array<MaybeBatch>>(batches: T): Promise<T> {
+async function attachBatchStockQtyMany<T extends Array<MaybeBatch>>(
+  batches: T
+): Promise<T> {
   return (await Promise.all(batches.map((b) => attachBatchStockQty(b)))) as T;
+}
+
+// ---- Product aggregates: byLocation and byBatch ----
+async function computeProductByLocation(
+  productId: number
+): Promise<
+  Array<{ location_id: number | null; location_name: string; qty: number }>
+> {
+  const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
+  const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
+  const rows = (await base.$queryRawUnsafe(
+    `
+    WITH typed AS (
+      SELECT
+        CASE
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN pm."locationInId"
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN pm."locationOutId"
+          ELSE COALESCE(pm."locationId", pm."locationInId", pm."locationOutId")
+        END AS lid,
+        CASE
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0)
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
+          ELSE COALESCE(pml.quantity,0)
+        END AS qty
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pml."productId" = $1
+    )
+    SELECT l.id AS location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(qty),0) AS qty
+    FROM typed t
+    LEFT JOIN "Location" l ON l.id = t.lid
+    GROUP BY l.id, l.name
+    ORDER BY l.name NULLS LAST, l.id
+    `,
+    productId
+  )) as Array<{ location_id: number | null; location_name: string; qty: any }>;
+  return rows.map((r) => ({
+    location_id: r.location_id ?? null,
+    location_name: (r.location_name as any) ?? "",
+    qty: Math.round(100 * Number(r.qty ?? 0)) / 100,
+  }));
+}
+
+async function computeProductByBatch(productId: number): Promise<
+  Array<{
+    batch_id: number;
+    code_mill: string;
+    code_sartor: string;
+    batch_name: string;
+    received_at: Date | null;
+    location_id: number | null;
+    location_name: string;
+    qty: number;
+  }>
+> {
+  const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
+  const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
+  const rows = (await base.$queryRawUnsafe(
+    `
+    WITH typed AS (
+      SELECT
+        pml."batchId" AS bid,
+        CASE
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0)
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
+          ELSE COALESCE(pml.quantity,0)
+        END AS qty
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pml."productId" = $1
+    )
+    SELECT 
+      b.id AS batch_id,
+      COALESCE(b."codeMill", '') AS code_mill,
+      COALESCE(b."codeSartor", '') AS code_sartor,
+      COALESCE(b.name, '') AS batch_name,
+      b."receivedAt"     AS received_at,
+      b."locationId"     AS location_id,
+      COALESCE(l.name,'') AS location_name,
+      COALESCE(SUM(t.qty),0) AS qty
+    FROM "Batch" b
+    LEFT JOIN typed t ON t.bid = b.id
+    LEFT JOIN "Location" l ON l.id = b."locationId"
+    WHERE b."productId" = $1
+    GROUP BY b.id, b."codeMill", b."codeSartor", b.name, b."receivedAt", b."locationId", l.name
+    ORDER BY b."receivedAt" DESC NULLS LAST, b.id DESC
+    `,
+    productId
+  )) as Array<{
+    batch_id: number;
+    code_mill: string;
+    code_sartor: string;
+    batch_name: string;
+    received_at: Date | null;
+    location_id: number | null;
+    location_name: string;
+    qty: any;
+  }>;
+  return rows.map((r) => ({
+    ...r,
+    qty: Math.round(100 * Number(r.qty ?? 0)) / 100,
+  }));
+}
+
+async function attachProductAggregates<T extends { id?: number } | null>(
+  product: T
+): Promise<T> {
+  if (!product || !product.id) return product;
+  const [byLoc, byBatch] = await Promise.all([
+    computeProductByLocation(product.id),
+    computeProductByBatch(product.id),
+  ]);
+  (product as any).c_byLocation = byLoc;
+  (product as any).c_byBatch = byBatch;
+  return product;
+}
+
+// ---- SKU uniqueness helper ----
+async function getUniqueSku(
+  desired: string | null,
+  currentId: number | null
+): Promise<string | null> {
+  const skuBase = (desired || "").trim();
+  if (!skuBase) return null;
+  let candidate = skuBase;
+  let n = 1;
+  while (true) {
+    const clash = await base.product.findFirst({ where: { sku: candidate } });
+    if (!clash || (currentId != null && clash.id === currentId))
+      return candidate;
+    n += 1;
+    candidate = n === 2 ? `${skuBase}-dup` : `${skuBase}-dup${n - 1}`;
+  }
 }
 
 // ---- Assembly computed helpers ----
@@ -227,12 +529,18 @@ type MaybeAssembly = {
   variantSetId?: number | null;
 } | null;
 
-function classifyActivityType(a: { name?: string | null; activityType?: string | null }, needle: "cut" | "make" | "pack") {
+function classifyActivityType(
+  a: { name?: string | null; activityType?: string | null },
+  needle: "cut" | "make" | "pack"
+) {
   const s = (a.activityType || a.name || "").toString().toLowerCase();
   return s.includes(needle);
 }
 
-function sumArrays(targetLen: number, arrays: Array<number[] | null | undefined>): number[] {
+function sumArrays(
+  targetLen: number,
+  arrays: Array<number[] | null | undefined>
+): number[] {
   const out = Array.from({ length: targetLen }, () => 0);
   for (const arr of arrays) {
     if (!Array.isArray(arr)) continue;
@@ -282,16 +590,23 @@ async function computeAssemblyBreakdowns(
   }
   if (len === 0) {
     // derive from max breakdown length
-    for (const a of activities) len = Math.max(len, a.qtyBreakdown?.length || 0);
+    for (const a of activities)
+      len = Math.max(len, a.qtyBreakdown?.length || 0);
   }
   type Act = {
     qtyBreakdown: number[] | null;
     name?: string | null;
     activityType?: string | null;
   };
-  const cutArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "cut")).map((a: Act) => a.qtyBreakdown);
-  const makeArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "make")).map((a: Act) => a.qtyBreakdown);
-  const packArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "pack")).map((a: Act) => a.qtyBreakdown);
+  const cutArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "cut"))
+    .map((a: Act) => a.qtyBreakdown);
+  const makeArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "make"))
+    .map((a: Act) => a.qtyBreakdown);
+  const packArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "pack"))
+    .map((a: Act) => a.qtyBreakdown);
   const c_qtyCut_Breakdown = sumArrays(len, cutArrays);
   const c_qtyMake_Breakdown = sumArrays(len, makeArrays);
   const c_qtyPack_Breakdown = sumArrays(len, packArrays);
@@ -306,15 +621,24 @@ async function computeAssemblyBreakdowns(
   };
 }
 
-async function attachAssemblyComputed<T extends MaybeAssembly>(assembly: T): Promise<T> {
+async function attachAssemblyComputed<T extends MaybeAssembly>(
+  assembly: T
+): Promise<T> {
   if (!assembly || !assembly.id) return assembly;
-  const comp = await computeAssemblyBreakdowns(assembly.id as number, (assembly as any).variantSetId ?? null);
+  const comp = await computeAssemblyBreakdowns(
+    assembly.id as number,
+    (assembly as any).variantSetId ?? null
+  );
   Object.assign(assembly as any, comp);
   return assembly;
 }
 
-async function attachAssemblyComputedMany<T extends Array<MaybeAssembly>>(assemblies: T): Promise<T> {
-  return (await Promise.all(assemblies.map((a) => attachAssemblyComputed(a)))) as T;
+async function attachAssemblyComputedMany<T extends Array<MaybeAssembly>>(
+  assemblies: T
+): Promise<T> {
+  return (await Promise.all(
+    assemblies.map((a) => attachAssemblyComputed(a))
+  )) as T;
 }
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

@@ -60,12 +60,17 @@ export async function loader(args: LoaderFunctionArgs) {
   // The extension augments each assembly with c_qty* and *_Breakdown fields
   const assembliesWithComputed = (await prisma.assembly.findMany({
     where: { id: { in: assemblies.map((a: any) => a.id) } },
-    select: { id: true, jobId: true },
+    select: {
+      id: true,
+      jobId: true,
+      // computed fields provided by extension
+    },
   })) as Array<any>;
   const asmMap = new Map<number, any>();
   for (const a of assembliesWithComputed) asmMap.set(a.id, a);
 
   const aggByJob: Record<number, any> = {};
+  const asmsByJob: Record<number, Array<any>> = {};
   function ensureJob(jid: number) {
     if (!aggByJob[jid])
       aggByJob[jid] = {
@@ -79,6 +84,7 @@ export async function loader(args: LoaderFunctionArgs) {
         c_qtyPack_Breakdown: [] as number[],
         variantLabels: [] as string[],
       };
+    if (!asmsByJob[jid]) asmsByJob[jid] = [];
     return aggByJob[jid];
   }
 
@@ -128,6 +134,15 @@ export async function loader(args: LoaderFunctionArgs) {
       (aExt.c_qtyPack_Breakdown || []) as number[]
     );
 
+    // Collect per-assembly rows for tooltips
+    asmsByJob[a.jobId].push({
+      id: a.id,
+      ordered: orderedArr,
+      cut: (aExt.c_qtyCut_Breakdown || []) as number[],
+      make: (aExt.c_qtyMake_Breakdown || []) as number[],
+      pack: (aExt.c_qtyPack_Breakdown || []) as number[],
+    });
+
     // Set variant labels once per job: trim to last non-empty; prefer assembly's variantSet; fall back to product variantSet
     if (agg.variantLabels.length === 0) {
       const labelsSrc =
@@ -157,6 +172,7 @@ export async function loader(args: LoaderFunctionArgs) {
     c_qtyMake_Breakdown: aggByJob[r.id]?.c_qtyMake_Breakdown || [],
     c_qtyPack_Breakdown: aggByJob[r.id]?.c_qtyPack_Breakdown || [],
     variantLabels: aggByJob[r.id]?.variantLabels || [],
+  assembliesDetail: asmsByJob[r.id] || [],
   }));
 
   return json({
@@ -269,40 +285,36 @@ export default function JobsIndexRoute() {
               title: "Qty Ordered",
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
-                const arr: number[] = (r.breakdownOrdered || []) as number[];
-                const len = Math.max(labels.length, arr.length);
-                const cols = labels.length
+                const len = labels.length;
+                const cols = len
                   ? labels
-                  : Array.from(
-                      { length: len },
-                      (_: any, i: number) => `#${i + 1}`
-                    );
+                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
                       <thead>
                         <tr>
+                          <th style={{ padding: "0 6px", fontWeight: 600, textAlign: "left" }}>Asm</th>
                           {cols.map((c: string, i: number) => (
-                            <th
-                              key={`ord-h-${i}`}
-                              style={{ padding: "0 6px", fontWeight: 600 }}
-                            >
+                            <th key={`ord-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
                               {c || `#${i + 1}`}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {cols.map((_c: string, i: number) => (
-                            <td
-                              key={`ord-${i}`}
-                              style={{ textAlign: "right", padding: "0 6px" }}
-                            >
-                              {arr[i] || ""}
+                        {(r.assembliesDetail || []).map((a: any) => (
+                          <tr key={`ord-row-${a.id}`}>
+                            <td style={{ padding: "0 6px" }}>
+                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
-                          ))}
-                        </tr>
+                            {cols.map((_c: string, i: number) => (
+                              <td key={`ord-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                {a.ordered?.[i] || ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -319,40 +331,36 @@ export default function JobsIndexRoute() {
               title: "Cut",
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
-                const arr: number[] = (r.c_qtyCut_Breakdown || []) as number[];
-                const len = Math.max(labels.length, arr.length);
-                const cols = labels.length
+                const len = labels.length;
+                const cols = len
                   ? labels
-                  : Array.from(
-                      { length: len },
-                      (_: any, i: number) => `#${i + 1}`
-                    );
+                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
                       <thead>
                         <tr>
+                          <th style={{ padding: "0 6px", fontWeight: 600, textAlign: "left" }}>Asm</th>
                           {cols.map((c: string, i: number) => (
-                            <th
-                              key={`cut-h-${i}`}
-                              style={{ padding: "0 6px", fontWeight: 600 }}
-                            >
+                            <th key={`cut-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
                               {c || `#${i + 1}`}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {cols.map((_c: string, i: number) => (
-                            <td
-                              key={`cut-${i}`}
-                              style={{ textAlign: "right", padding: "0 6px" }}
-                            >
-                              {arr[i] || ""}
+                        {(r.assembliesDetail || []).map((a: any) => (
+                          <tr key={`cut-row-${a.id}`}>
+                            <td style={{ padding: "0 6px" }}>
+                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
-                          ))}
-                        </tr>
+                            {cols.map((_c: string, i: number) => (
+                              <td key={`cut-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                {a.cut?.[i] || ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -369,40 +377,36 @@ export default function JobsIndexRoute() {
               title: "Make",
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
-                const arr: number[] = (r.c_qtyMake_Breakdown || []) as number[];
-                const len = Math.max(labels.length, arr.length);
-                const cols = labels.length
+                const len = labels.length;
+                const cols = len
                   ? labels
-                  : Array.from(
-                      { length: len },
-                      (_: any, i: number) => `#${i + 1}`
-                    );
+                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
                       <thead>
                         <tr>
+                          <th style={{ padding: "0 6px", fontWeight: 600, textAlign: "left" }}>Asm</th>
                           {cols.map((c: string, i: number) => (
-                            <th
-                              key={`make-h-${i}`}
-                              style={{ padding: "0 6px", fontWeight: 600 }}
-                            >
+                            <th key={`make-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
                               {c || `#${i + 1}`}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {cols.map((_c: string, i: number) => (
-                            <td
-                              key={`make-${i}`}
-                              style={{ textAlign: "right", padding: "0 6px" }}
-                            >
-                              {arr[i] || ""}
+                        {(r.assembliesDetail || []).map((a: any) => (
+                          <tr key={`make-row-${a.id}`}>
+                            <td style={{ padding: "0 6px" }}>
+                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
-                          ))}
-                        </tr>
+                            {cols.map((_c: string, i: number) => (
+                              <td key={`make-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                {a.make?.[i] || ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -419,40 +423,36 @@ export default function JobsIndexRoute() {
               title: "Pack",
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
-                const arr: number[] = (r.c_qtyPack_Breakdown || []) as number[];
-                const len = Math.max(labels.length, arr.length);
-                const cols = labels.length
+                const len = labels.length;
+                const cols = len
                   ? labels
-                  : Array.from(
-                      { length: len },
-                      (_: any, i: number) => `#${i + 1}`
-                    );
+                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
                       <thead>
                         <tr>
+                          <th style={{ padding: "0 6px", fontWeight: 600, textAlign: "left" }}>Asm</th>
                           {cols.map((c: string, i: number) => (
-                            <th
-                              key={`pack-h-${i}`}
-                              style={{ padding: "0 6px", fontWeight: 600 }}
-                            >
+                            <th key={`pack-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
                               {c || `#${i + 1}`}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {cols.map((_c: string, i: number) => (
-                            <td
-                              key={`pack-${i}`}
-                              style={{ textAlign: "right", padding: "0 6px" }}
-                            >
-                              {arr[i] || ""}
+                        {(r.assembliesDetail || []).map((a: any) => (
+                          <tr key={`pack-row-${a.id}`}>
+                            <td style={{ padding: "0 6px" }}>
+                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
-                          ))}
-                        </tr>
+                            {cols.map((_c: string, i: number) => (
+                              <td key={`pack-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                {a.pack?.[i] || ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>

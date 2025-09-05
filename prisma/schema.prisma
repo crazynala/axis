@@ -337,7 +337,7 @@ model ProductMovementLine {
 
 model Job {
     id                      Int                @id @default(autoincrement())
-    projectCode             String?            @unique
+    projectCode             String?
     name                    String?
     description             String?
     startDate               DateTime?

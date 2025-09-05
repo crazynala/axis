@@ -23,6 +23,7 @@ import {
   Modal,
   TextInput,
   Switch,
+  Tooltip,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useEffect, useMemo, useState } from "react";
@@ -46,6 +47,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
     include: { assemblies: true, company: true },
   });
   if (!job) throw new Response("Not Found", { status: 404 });
+  // Re-fetch assemblies via extension-enabled findMany to attach computed fields
+  const assembliesExt = await prisma.assembly.findMany({
+    where: { jobId: id },
+    orderBy: { id: "asc" },
+  });
   // Gather product details for assemblies
   const productIds = Array.from(
     new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))
@@ -82,7 +88,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
     take: 1000,
   });
-  return json({ job, productsById, customers, productChoices });
+  return json({ job: { ...job, assemblies: assembliesExt as any }, productsById, customers, productChoices });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -464,22 +470,159 @@ export default function JobDetailRoute() {
                   <Table.Td>{p?.name || ""}</Table.Td>
                   <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
                   <Table.Td>
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      onClick={() => {
-                        const labels = (p?.variantSet?.variants ||
-                          []) as string[];
-                        setQtyAsm({ ...a, labels });
-                        setQtyModalOpen(true);
-                      }}
+                    <Tooltip
+                      openDelay={300}
+                      label={(() => {
+                        const labels: string[] = (p?.variantSet?.variants || []) as string[];
+                        const cols = labels.length ? labels : ["#1"];
+                        const arr = ((a as any).qtyOrderedBreakdown || []) as number[];
+                        return (
+                          <div style={{ padding: 4 }}>
+                            <table>
+                              <thead>
+                                <tr>
+                                  {cols.map((c: string, i: number) => (
+                                    <th key={`ord-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
+                                      {c || `#${i + 1}`}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {cols.map((_c: string, i: number) => (
+                                    <td key={`ord-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                      {arr[i] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
                     >
-                      {(a as any).c_qtyOrdered ?? 0}
-                    </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => {
+                          const labels = (p?.variantSet?.variants || []) as string[];
+                          setQtyAsm({ ...a, labels });
+                          setQtyModalOpen(true);
+                        }}
+                      >
+                        {(a as any).c_qtyOrdered ?? 0}
+                      </Button>
+                    </Tooltip>
                   </Table.Td>
-                  <Table.Td>{(a as any).c_qtyCut ?? ""}</Table.Td>
-                  <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
-                  <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
+                  <Table.Td>
+                    <Tooltip
+                      openDelay={300}
+                      label={(() => {
+                        const labels: string[] = (p?.variantSet?.variants || []) as string[];
+                        const cols = labels.length ? labels : ["#1"];
+                        const arr = ((a as any).c_qtyCut_Breakdown || []) as number[];
+                        return (
+                          <div style={{ padding: 4 }}>
+                            <table>
+                              <thead>
+                                <tr>
+                                  {cols.map((c: string, i: number) => (
+                                    <th key={`cut-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
+                                      {c || `#${i + 1}`}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {cols.map((_c: string, i: number) => (
+                                    <td key={`cut-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                      {arr[i] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    >
+                      {(a as any).c_qtyCut ?? ""}
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip
+                      openDelay={300}
+                      label={(() => {
+                        const labels: string[] = (p?.variantSet?.variants || []) as string[];
+                        const cols = labels.length ? labels : ["#1"];
+                        const arr = ((a as any).c_qtyMake_Breakdown || []) as number[];
+                        return (
+                          <div style={{ padding: 4 }}>
+                            <table>
+                              <thead>
+                                <tr>
+                                  {cols.map((c: string, i: number) => (
+                                    <th key={`make-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
+                                      {c || `#${i + 1}`}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {cols.map((_c: string, i: number) => (
+                                    <td key={`make-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                      {arr[i] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    >
+                      {(a as any).c_qtyMake ?? ""}
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>
+                    <Tooltip
+                      openDelay={300}
+                      label={(() => {
+                        const labels: string[] = (p?.variantSet?.variants || []) as string[];
+                        const cols = labels.length ? labels : ["#1"];
+                        const arr = ((a as any).c_qtyPack_Breakdown || []) as number[];
+                        return (
+                          <div style={{ padding: 4 }}>
+                            <table>
+                              <thead>
+                                <tr>
+                                  {cols.map((c: string, i: number) => (
+                                    <th key={`pack-h-${i}`} style={{ padding: "0 6px", fontWeight: 600 }}>
+                                      {c || `#${i + 1}`}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {cols.map((_c: string, i: number) => (
+                                    <td key={`pack-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
+                                      {arr[i] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    >
+                      {(a as any).c_qtyPack ?? ""}
+                    </Tooltip>
+                  </Table.Td>
                   <Table.Td>{a.status || ""}</Table.Td>
                 </Table.Tr>
               );

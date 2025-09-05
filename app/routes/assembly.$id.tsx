@@ -172,25 +172,7 @@ export default function AssemblyDetailRoute() {
                 <Text fw={600} w={140}>
                   Name
                 </Text>
-                <form method="post">
-                  <input type="hidden" name="_intent" value="assembly.update" />
-                  <Group gap="xs" align="center">
-                    <input
-                      type="text"
-                      name="name"
-                      defaultValue={assembly.name || ""}
-                      style={{
-                        width: 240,
-                        padding: 6,
-                        borderRadius: 6,
-                        border: "1px solid var(--mantine-color-default-border)",
-                      }}
-                    />
-                    <Button size="xs" type="submit" variant="light">
-                      Save
-                    </Button>
-                  </Group>
-                </form>
+                <Text>{assembly.name || ""}</Text>
               </Group>
               <Group gap="md">
                 <Text fw={600} w={140}>
@@ -379,30 +361,75 @@ export default function AssemblyDetailRoute() {
                   <Table.Th>Start</Table.Th>
                   <Table.Th>End</Table.Th>
                   <Table.Th>Status</Table.Th>
-                  {(assembly.variantSet?.variants &&
-                  assembly.variantSet.variants.length
-                    ? assembly.variantSet.variants
-                    : productVariantSet?.variants ||
-                      (
-                        activities.find((a: any) =>
-                          Array.isArray(a.qtyBreakdown)
-                        )?.qtyBreakdown || []
-                      ).map((_x: any, i: number) => `#${i + 1}`)
-                  ).map((label: string, idx: number) => (
-                    <Table.Th key={`vcol-${idx}`}>
-                      {label || `#${idx + 1}`}
-                    </Table.Th>
-                  ))}
+                  {(() => {
+                    const raw =
+                      (assembly.variantSet?.variants?.length
+                        ? assembly.variantSet.variants
+                        : productVariantSet?.variants) || [];
+                    // respect non-empty labels and c_numVariants if present
+                    let last = -1;
+                    for (let i = raw.length - 1; i >= 0; i--) {
+                      const s = (raw[i] || "").toString().trim();
+                      if (s) {
+                        last = i;
+                        break;
+                      }
+                    }
+                    const cnum = (assembly as any).c_numVariants as
+                      | number
+                      | undefined;
+                    const effectiveLen = Math.max(
+                      0,
+                      Math.min(
+                        typeof cnum === "number" && cnum > 0
+                          ? cnum
+                          : raw.length,
+                        last + 1
+                      )
+                    );
+                    const cols = raw.slice(0, effectiveLen);
+                    return (
+                      cols.length
+                        ? cols
+                        : (
+                            activities.find((a: any) =>
+                              Array.isArray(a.qtyBreakdown)
+                            )?.qtyBreakdown || []
+                          ).map((_x: any, i: number) => `#${i + 1}`)
+                    ).map((label: string, idx: number) => (
+                      <Table.Th key={`vcol-${idx}`}>
+                        {label || `#${idx + 1}`}
+                      </Table.Th>
+                    ));
+                  })()}
                   <Table.Th>Notes</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {activities.map((a: any) => {
-                  const labels =
-                    (assembly.variantSet?.variants &&
-                    assembly.variantSet.variants.length
+                  const raw =
+                    (assembly.variantSet?.variants?.length
                       ? assembly.variantSet.variants
                       : productVariantSet?.variants) || [];
+                  let last = -1;
+                  for (let i = raw.length - 1; i >= 0; i--) {
+                    const s = (raw[i] || "").toString().trim();
+                    if (s) {
+                      last = i;
+                      break;
+                    }
+                  }
+                  const cnum = (assembly as any).c_numVariants as
+                    | number
+                    | undefined;
+                  const effectiveLen = Math.max(
+                    0,
+                    Math.min(
+                      typeof cnum === "number" && cnum > 0 ? cnum : raw.length,
+                      last + 1
+                    )
+                  );
+                  const labels = raw.slice(0, effectiveLen);
                   const breakdown = (a.qtyBreakdown || []) as number[];
                   const cols = labels.length
                     ? labels
