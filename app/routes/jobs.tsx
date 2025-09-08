@@ -1,8 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { RecordBrowserProvider } from "packages/timber";
 import { prisma } from "../utils/prisma.server";
+import { MasterTableProvider } from "@aa/timber";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const jobs = await prisma.job.findMany({
@@ -19,9 +19,10 @@ export async function loader(_args: LoaderFunctionArgs) {
 
 export default function JobsLayout() {
   const data = useLoaderData() as { jobs?: any[] };
+
   return (
-    <RecordBrowserProvider initialRecords={data?.jobs ?? []}>
+    <MasterTableProvider initialRecords={data.jobs}>
       <Outlet />
-    </RecordBrowserProvider>
+    </MasterTableProvider>
   );
 }

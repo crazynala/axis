@@ -1,31 +1,13 @@
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import {
-  unstable_composeUploadHandlers,
-  unstable_createMemoryUploadHandler,
-  unstable_parseMultipartFormData,
-} from "@remix-run/node";
-import {
-  useActionData,
-  useLoaderData,
-  useNavigation,
-  useSubmit,
-} from "@remix-run/react";
+import { unstable_composeUploadHandlers, unstable_createMemoryUploadHandler, unstable_parseMultipartFormData } from "@remix-run/node";
+import { useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
+import { loadLogLevels, saveLogLevels, type LogLevels, type LogLevel } from "~/utils/log-config.server";
 import * as XLSX from "xlsx";
 import { useForm, Controller } from "react-hook-form";
-import {
-  Button,
-  Group,
-  TextInput,
-  NumberInput,
-  Table,
-  Title,
-  Stack,
-  Divider,
-  Alert,
-  Select,
-} from "@mantine/core";
+import { Button, Group, TextInput, NumberInput, Table, Title, Stack, Divider, Alert, Select, Text } from "@mantine/core";
+import { useEffect, useState } from "react";
 
 type LoaderData = {
   values: Array<{
@@ -35,13 +17,15 @@ type LoaderData = {
     type: string | null;
     value: number | null;
   }>;
+  logLevels: LogLevels;
 };
 
 export async function loader({}: LoaderFunctionArgs) {
   const values = await prisma.valueList.findMany({
     orderBy: [{ type: "asc" }, { label: "asc" }],
   });
-  return json<LoaderData>({ values });
+  const logLevels = await loadLogLevels();
+  return json<LoaderData>({ values, logLevels });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -49,9 +33,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const isMultipart = contentType.includes("multipart/form-data");
 
   if (isMultipart) {
-    const uploadHandler = unstable_composeUploadHandlers(
-      unstable_createMemoryUploadHandler({ maxPartSize: 15_000_000 })
-    );
+    const uploadHandler = unstable_composeUploadHandlers(unstable_createMemoryUploadHandler({ maxPartSize: 15_000_000 }));
     const form = await unstable_parseMultipartFormData(request, uploadHandler);
     const intent = form.get("_intent");
 
@@ -68,6 +50,26 @@ export async function action({ request }: ActionFunctionArgs) {
       });
       return json({ values, message: "Value created" });
     }
+    // Logging settings update (multipart safe simple form)
+    if (intent === "log.updateLevels") {
+      const raw = (form.get("levels") as string) || "{}";
+      try {
+        const parsed = JSON.parse(raw) as LogLevels;
+        await saveLogLevels(parsed);
+        const values = await prisma.valueList.findMany({
+          orderBy: [{ type: "asc" }, { label: "asc" }],
+        });
+        const logLevels = await loadLogLevels();
+        return json({ values, logLevels, message: "Log levels updated" });
+      } catch (e: any) {
+        const values = await prisma.valueList.findMany({
+          orderBy: [{ type: "asc" }, { label: "asc" }],
+        });
+        const logLevels = await loadLogLevels();
+        return json({ values, logLevels, error: `Invalid JSON: ${e?.message || e}` });
+      }
+    }
+
     // Expecting Excel upload via multipart
     if (intent !== "uploadExcel") {
       // Other intents (like valueList.delete) are handled below in non-multipart fallback
@@ -123,9 +125,7 @@ export async function action({ request }: ActionFunctionArgs) {
     // Upload config
     const uploadMode = ((form.get("mode") as string) || "auto").toLowerCase();
     const sheetNameOverride = (form.get("sheetName") as string) || "";
-    const files = (form.getAll("file") as any[]).filter(
-      (f) => f && typeof f.arrayBuffer === "function"
-    ) as File[];
+    const files = (form.getAll("file") as any[]).filter((f) => f && typeof f.arrayBuffer === "function") as File[];
 
     // Mode priority ensures dependencies import in the right order when auto
     const modePriority: Record<string, number> = {
@@ -146,10 +146,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const inferMode = (filename: string): string | null => {
       const n = filename.toLowerCase();
-      if (n.includes("variantset") || n.includes("variant_set"))
-        return "import:variant_sets";
-      if (n.includes("companies") || n.includes("company"))
-        return "import:companies";
+      if (n.includes("variantset") || n.includes("variant_set")) return "import:variant_sets";
+      if (n.includes("companies") || n.includes("company")) return "import:companies";
       if (n.includes("jobs")) return "import:jobs";
       if (n.includes("assembl")) {
         if (n.includes("activit")) return "import:assembly_activities";
@@ -157,15 +155,11 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       if (n.includes("product_locations")) return "import:product_locations";
       if (n.includes("product_batches")) return "import:product_batches";
-      if (n.includes("product_movement_lines"))
-        return "import:product_movement_lines";
+      if (n.includes("product_movement_lines")) return "import:product_movement_lines";
       if (n.includes("product_movements")) return "import:product_movements";
-      if (n.includes("productlines") || n.includes("product_lines"))
-        return "import:product_lines";
-      if (n.includes("costings") || n.includes("costing"))
-        return "import:costings";
-      if (n.includes("product") || n.includes("products"))
-        return "import:products";
+      if (n.includes("productlines") || n.includes("product_lines")) return "import:product_lines";
+      if (n.includes("costings") || n.includes("costing")) return "import:costings";
+      if (n.includes("product") || n.includes("products")) return "import:products";
       if (n.includes("location")) return "import:locations";
       return null;
     };
@@ -193,25 +187,18 @@ export async function action({ request }: ActionFunctionArgs) {
 
     // Run async workers over rows in batches for concurrency and periodic progress updates
     const IMPORT_BATCH_SIZE = Number(process.env.IMPORT_BATCH_SIZE ?? 200);
-    const processRowsInBatches = async <T,>(
-      items: T[],
-      worker: (item: T, index: number) => Promise<void>,
-      opts?: { batchSize?: number; label?: string }
-    ) => {
+    const processRowsInBatches = async <T,>(items: T[], worker: (item: T, index: number) => Promise<void>, opts?: { batchSize?: number; label?: string }) => {
       const batchSize = opts?.batchSize ?? IMPORT_BATCH_SIZE;
       const label = opts?.label ?? "rows";
       for (let start = 0; start < items.length; start += batchSize) {
         const end = Math.min(items.length, start + batchSize);
         const slice = items.slice(start, end);
-        await Promise.allSettled(
-          slice.map((item, idx) => worker(item, start + idx))
-        );
+        await Promise.allSettled(slice.map((item, idx) => worker(item, start + idx)));
         console.log(`[import] ${label} ${end}/${items.length}`);
       }
     };
 
-    const modeOf = (f: File): string | null =>
-      uploadMode === "auto" ? inferMode(f.name) : uploadMode;
+    const modeOf = (f: File): string | null => (uploadMode === "auto" ? inferMode(f.name) : uploadMode);
     const filesOrdered = [...files].sort((a, b) => {
       const ma = modeOf(a);
       const mb = modeOf(b);
@@ -237,17 +224,12 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       const ab = await file.arrayBuffer();
       const wb = XLSX.read(ab, { type: "array" });
-      const chosenSheet =
-        sheetNameOverride && wb.SheetNames.includes(sheetNameOverride)
-          ? sheetNameOverride
-          : wb.SheetNames[0];
+      const chosenSheet = sheetNameOverride && wb.SheetNames.includes(sheetNameOverride) ? sheetNameOverride : wb.SheetNames[0];
       const ws = wb.Sheets[chosenSheet];
       const rows = XLSX.utils.sheet_to_json(ws, { defval: null }) as any[];
       const finalMode = resolvedMode;
       // Light progress logging to monitor long imports
-      console.log(
-        `[import] start mode=${finalMode} file="${file.name}" sheet="${chosenSheet}" totalRows=${rows.length}`
-      );
+      console.log(`[import] start mode=${finalMode} file="${file.name}" sheet="${chosenSheet}" totalRows=${rows.length}`);
       if (finalMode === "import:products") {
         const total = rows.length;
         let imported = 0,
@@ -261,10 +243,7 @@ export async function action({ request }: ActionFunctionArgs) {
           missingCustomer = 0;
 
         // Ensure SKU uniqueness; when desired is null keep null
-        const getUniqueSku = async (
-          desired: string | null,
-          currentId?: number | null
-        ): Promise<string | null> => {
+        const getUniqueSku = async (desired: string | null, currentId?: number | null): Promise<string | null> => {
           const base = (desired || "").trim();
           if (!base) return null;
           let candidate = base;
@@ -273,8 +252,7 @@ export async function action({ request }: ActionFunctionArgs) {
             const clash = await prisma.product.findFirst({
               where: { sku: candidate },
             });
-            if (!clash || (currentId != null && clash.id === currentId))
-              return candidate;
+            if (!clash || (currentId != null && clash.id === currentId)) return candidate;
             n += 1;
             candidate = n === 2 ? `${base}-dup` : `${base}-dup${n - 1}`;
           }
@@ -294,15 +272,7 @@ export async function action({ request }: ActionFunctionArgs) {
           "productid",
           "id",
         ];
-        const codeKeys = [
-          "code",
-          "product_code",
-          "product code",
-          "productcode",
-          "item code",
-          "sku",
-          "sku code",
-        ];
+        const codeKeys = ["code", "product_code", "product code", "productcode", "item code", "sku", "sku code"];
         const nameKeys = [
           "name",
           "product_name",
@@ -320,41 +290,11 @@ export async function action({ request }: ActionFunctionArgs) {
           "variant_set_id",
         ];
         const typeKeys = ["type", "product_type", "product type"];
-        const costKeys = [
-          "costprice",
-          "cost price",
-          "cost_price",
-          "cost",
-          "unit cost",
-        ];
-        const manualKeys = [
-          "manualsaleprice",
-          "manual sale price",
-          "manual_sale_price",
-          "manual",
-          "manual price",
-        ];
-        const autoKeys = [
-          "autosaleprice",
-          "auto sale price",
-          "auto_sale_price",
-          "auto",
-          "auto price",
-        ];
-        const stockKeys = [
-          "stocktrackingenabled",
-          "stock tracking enabled",
-          "stock_tracking_enabled",
-          "stock tracking",
-          "stock",
-        ];
-        const batchKeys = [
-          "batchtrackingenabled",
-          "batch tracking enabled",
-          "batch_tracking_enabled",
-          "batch tracking",
-          "batch",
-        ];
+        const costKeys = ["costprice", "cost price", "cost_price", "cost", "unit cost"];
+        const manualKeys = ["manualsaleprice", "manual sale price", "manual_sale_price", "manual", "manual price"];
+        const autoKeys = ["autosaleprice", "auto sale price", "auto_sale_price", "auto", "auto price"];
+        const stockKeys = ["stocktrackingenabled", "stock tracking enabled", "stock_tracking_enabled", "stock tracking", "stock"];
+        const batchKeys = ["batchtrackingenabled", "batch tracking enabled", "batch_tracking_enabled", "batch tracking", "batch"];
 
         await processRowsInBatches(
           rows,
@@ -367,28 +307,14 @@ export async function action({ request }: ActionFunctionArgs) {
             const sku = pick(r, ["sku", "sku code"])?.toString().trim() || null;
             const name = pick(r, nameKeys)?.toString().trim() || null;
             const typeRaw = pick(r, typeKeys)?.toString().trim() || null;
-            const allowedTypes = [
-              "CMT",
-              "Fabric",
-              "Finished",
-              "Trim",
-              "Service",
-            ];
-            const type =
-              allowedTypes.find(
-                (t) => t.toLowerCase() === (typeRaw || "").toLowerCase()
-              ) ||
-              (typeRaw && typeRaw.toLowerCase() === "finished goods"
-                ? "Finished"
-                : null);
+            const allowedTypes = ["CMT", "Fabric", "Finished", "Trim", "Service"];
+            const type = allowedTypes.find((t) => t.toLowerCase() === (typeRaw || "").toLowerCase()) || (typeRaw && typeRaw.toLowerCase() === "finished goods" ? "Finished" : null);
             const costPrice = asNum(pick(r, costKeys)) as number | null;
             const manualSalePrice = asNum(pick(r, manualKeys)) as number | null;
             const autoSalePrice = asNum(pick(r, autoKeys)) as number | null;
             const stockTrackingEnabled = asBool(pick(r, stockKeys)) as boolean;
             const batchTrackingEnabled = asBool(pick(r, batchKeys)) as boolean;
-            const variantSetIdVal = asNum(pick(r, variantSetIdKeys)) as
-              | number
-              | null;
+            const variantSetIdVal = asNum(pick(r, variantSetIdKeys)) as number | null;
             let resolvedVariantSetId: number | null = null;
             if (variantSetIdVal != null) {
               const vs = await prisma.variantSet.findUnique({
@@ -401,12 +327,8 @@ export async function action({ request }: ActionFunctionArgs) {
             }
 
             // Resolve customer -> Product.customerId from either numeric a_CompanyID or Customer name
-            const companyIdRaw = asNum(pick(r, ["a_CompanyID"])) as
-              | number
-              | null;
-            const customerName = (pick(r, ["Customer"]) ?? "")
-              .toString()
-              .trim();
+            const companyIdRaw = asNum(pick(r, ["a_CompanyID"])) as number | null;
+            const customerName = (pick(r, ["Customer"]) ?? "").toString().trim();
             let resolvedCustomerId: number | null = null;
             if (companyIdRaw != null) {
               const c = await prisma.company.findUnique({
@@ -443,12 +365,8 @@ export async function action({ request }: ActionFunctionArgs) {
                   autoSalePrice,
                   stockTrackingEnabled,
                   batchTrackingEnabled,
-                  ...(resolvedVariantSetId != null
-                    ? { variantSetId: resolvedVariantSetId }
-                    : {}),
-                  ...(resolvedCustomerId != null
-                    ? { customerId: resolvedCustomerId }
-                    : {}),
+                  ...(resolvedVariantSetId != null ? { variantSetId: resolvedVariantSetId } : {}),
+                  ...(resolvedCustomerId != null ? { customerId: resolvedCustomerId } : {}),
                 } as any,
               });
               updated++;
@@ -464,12 +382,8 @@ export async function action({ request }: ActionFunctionArgs) {
                   autoSalePrice,
                   stockTrackingEnabled,
                   batchTrackingEnabled,
-                  ...(resolvedVariantSetId != null
-                    ? { variantSetId: resolvedVariantSetId }
-                    : {}),
-                  ...(resolvedCustomerId != null
-                    ? { customerId: resolvedCustomerId }
-                    : {}),
+                  ...(resolvedVariantSetId != null ? { variantSetId: resolvedVariantSetId } : {}),
+                  ...(resolvedCustomerId != null ? { customerId: resolvedCustomerId } : {}),
                 } as any,
               });
               created++;
@@ -480,9 +394,7 @@ export async function action({ request }: ActionFunctionArgs) {
           { batchSize: 1, label: "products" }
         );
 
-        console.log(
-          `[import] done products file="${file.name}" imported=${imported} created=${created} updated=${updated} skippedNoId=${skippedNoId}`
-        );
+        console.log(`[import] done products file="${file.name}" imported=${imported} created=${created} updated=${updated} skippedNoId=${skippedNoId}`);
         batchResults.push({
           file: file.name,
           target: "products",
@@ -518,41 +430,22 @@ export async function action({ request }: ActionFunctionArgs) {
             }
             const email = (pick(r, ["Email"]) ?? "").toString().trim() || null;
             const phone = (pick(r, ["Phone"]) ?? "").toString().trim() || null;
-            const category =
-              (pick(r, ["Category"]) ?? "").toString().trim() || null;
-            const customerPricingCategory =
-              (pick(r, ["CustomerPricingCategory"]) ?? "").toString().trim() ||
-              null;
-            const customerPricingDiscount = asNum(
-              pick(r, ["CustomerPricingDiscount"])
-            ) as number | null;
-            const ourRep =
-              (pick(r, ["OurRep"]) ?? "").toString().trim() || null;
+            const category = (pick(r, ["Category"]) ?? "").toString().trim() || null;
+            const customerPricingCategory = (pick(r, ["CustomerPricingCategory"]) ?? "").toString().trim() || null;
+            const customerPricingDiscount = asNum(pick(r, ["CustomerPricingDiscount"])) as number | null;
+            const ourRep = (pick(r, ["OurRep"]) ?? "").toString().trim() || null;
             const flagCarrier = !!pick(r, ["Flag_Carrier"]);
             const flagCustomer = !!pick(r, ["Flag_Customer"]);
             const flagInactive = !!pick(r, ["Flag_Inactive"]);
             const flagSupplier = !!pick(r, ["Flag_Supplier"]);
-            const createdBy =
-              (pick(r, ["Record_CreatedBy"]) ?? "").toString().trim() || null;
-            const createdAt = asDate(
-              pick(r, ["Record_CreatedTimestamp"])
-            ) as Date | null;
-            const modifiedBy =
-              (pick(r, ["Record_ModifiedBy"]) ?? "").toString().trim() || null;
-            const updatedAt = asDate(
-              pick(r, ["Record_ModifiedTimestamp"])
-            ) as Date | null;
-            const type = flagSupplier
-              ? "vendor"
-              : flagCustomer
-              ? "customer"
-              : "other";
+            const createdBy = (pick(r, ["Record_CreatedBy"]) ?? "").toString().trim() || null;
+            const createdAt = asDate(pick(r, ["Record_CreatedTimestamp"])) as Date | null;
+            const modifiedBy = (pick(r, ["Record_ModifiedBy"]) ?? "").toString().trim() || null;
+            const updatedAt = asDate(pick(r, ["Record_ModifiedTimestamp"])) as Date | null;
+            const type = flagSupplier ? "vendor" : flagCustomer ? "customer" : "other";
             const isActive = flagInactive ? false : true;
             // Prefer matching by explicit id when provided; else by name
-            let existing =
-              idNum != null
-                ? await prisma.company.findUnique({ where: { id: idNum } })
-                : null;
+            let existing = idNum != null ? await prisma.company.findUnique({ where: { id: idNum } }) : null;
             if (!existing && name) {
               existing = await prisma.company.findFirst({ where: { name } });
             }
@@ -564,12 +457,8 @@ export async function action({ request }: ActionFunctionArgs) {
                 [
                   type ? `Type: ${type}` : null,
                   category ? `Category: ${category}` : null,
-                  customerPricingCategory
-                    ? `CustPricingCat: ${customerPricingCategory}`
-                    : null,
-                  customerPricingDiscount != null
-                    ? `CustPricingDisc: ${customerPricingDiscount}`
-                    : null,
+                  customerPricingCategory ? `CustPricingCat: ${customerPricingCategory}` : null,
+                  customerPricingDiscount != null ? `CustPricingDisc: ${customerPricingDiscount}` : null,
                   ourRep ? `OurRep: ${ourRep}` : null,
                   flagCarrier ? `Carrier: yes` : null,
                 ]
@@ -593,19 +482,14 @@ export async function action({ request }: ActionFunctionArgs) {
               updated++;
             } else {
               await prisma.company.create({
-                data:
-                  idNum != null
-                    ? ({ id: idNum, ...data } as any)
-                    : (data as any),
+                data: idNum != null ? ({ id: idNum, ...data } as any) : (data as any),
               });
               created++;
             }
           },
           { batchSize: 200, label: "companies" }
         );
-        console.log(
-          `[import] done companies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done companies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "companies",
@@ -633,23 +517,9 @@ export async function action({ request }: ActionFunctionArgs) {
           rows,
           async (r, i) => {
             // Job number must become Job.id
-            const jobIdNum = asNum(
-              pick(r, [
-                "a__JobNo",
-                "a_JobNo",
-                "JobNo",
-                "job_no",
-                "jobno",
-                "job_num",
-                "jobnum",
-              ]) as any
-            ) as number | null;
-            const jobNoRaw = (pick(r, ["a__JobNo", "JobNo"]) ?? "")
-              .toString()
-              .trim();
-            const projectCodeRaw = (pick(r, ["ProjectCode"]) ?? "")
-              .toString()
-              .trim();
+            const jobIdNum = asNum(pick(r, ["a__JobNo", "a_JobNo", "JobNo", "job_no", "jobno", "job_num", "jobnum"]) as any) as number | null;
+            const jobNoRaw = (pick(r, ["a__JobNo", "JobNo"]) ?? "").toString().trim();
+            const projectCodeRaw = (pick(r, ["ProjectCode"]) ?? "").toString().trim();
             // Keep empty if missing; do not backfill from job number
             const projectCode = (projectCodeRaw || "").trim();
             const name = (pick(r, ["JobName"]) ?? "").toString().trim();
@@ -658,31 +528,15 @@ export async function action({ request }: ActionFunctionArgs) {
               return;
             }
             const companyId = asNum(pick(r, ["a_CompanyID"])) as number | null;
-            const locInId = asNum(pick(r, ["a_LocationID|In"])) as
-              | number
-              | null;
-            const locOutId = asNum(pick(r, ["a_LocationID|Out"])) as
-              | number
-              | null;
-            const status =
-              (pick(r, ["JobType"]) ?? "").toString().trim() || null;
-            const endCustomerName =
-              (pick(r, ["EndCustomerName"]) ?? "").toString().trim() || null;
-            const customerOrderDate = asDate(
-              pick(r, ["Date|CustomerOrder", "Date|CustomerOrder|Manual"])
-            ) as Date | null;
-            const cutSubmissionDate = asDate(
-              pick(r, ["Date|CutSubmission"])
-            ) as Date | null;
-            const dropDeadDate = asDate(
-              pick(r, ["Date|DropDead"])
-            ) as Date | null;
-            const finishDate = asDate(
-              pick(r, ["Date|Finish", "Date|Finish|Manual"])
-            ) as Date | null;
-            const firstInvoiceDate = asDate(
-              pick(r, ["Date|FirstInvoice"])
-            ) as Date | null;
+            const locInId = asNum(pick(r, ["a_LocationID|In"])) as number | null;
+            const locOutId = asNum(pick(r, ["a_LocationID|Out"])) as number | null;
+            const status = (pick(r, ["JobType"]) ?? "").toString().trim() || null;
+            const endCustomerName = (pick(r, ["EndCustomerName"]) ?? "").toString().trim() || null;
+            const customerOrderDate = asDate(pick(r, ["Date|CustomerOrder", "Date|CustomerOrder|Manual"])) as Date | null;
+            const cutSubmissionDate = asDate(pick(r, ["Date|CutSubmission"])) as Date | null;
+            const dropDeadDate = asDate(pick(r, ["Date|DropDead"])) as Date | null;
+            const finishDate = asDate(pick(r, ["Date|Finish", "Date|Finish|Manual"])) as Date | null;
+            const firstInvoiceDate = asDate(pick(r, ["Date|FirstInvoice"])) as Date | null;
             const targetDate = asDate(pick(r, ["Date|Target"])) as Date | null;
             let resolvedCompanyId: number | null = null;
             if (companyId != null) {
@@ -742,9 +596,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "jobs" }
         );
-        console.log(
-          `[import] done jobs file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done jobs file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "jobs",
@@ -775,26 +627,12 @@ export async function action({ request }: ActionFunctionArgs) {
             // Assembly ID from FileMaker serial
             const idNum = asNum(pick(r, ["a__Serial"])) as number | null;
             const name = (pick(r, ["NameOverride"]) ?? "").toString().trim();
-            const jobIdNum = asNum(
-              pick(r, ["a__JobNo", "a_JobNo", "JobNo", "jobno"]) as any
-            ) as number | null;
-            const productIdNum = asNum(
-              pick(r, [
-                "a__ProductCode",
-                "a_ProductCode",
-                "ProductCode",
-                "product_code",
-                "product code",
-                "productcode",
-              ]) as any
-            ) as number | null;
-            const status =
-              (pick(r, ["Status"]) ?? "").toString().trim() || null;
+            const jobIdNum = asNum(pick(r, ["a__JobNo", "a_JobNo", "JobNo", "jobno"]) as any) as number | null;
+            const productIdNum = asNum(pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode", "product_code", "product code", "productcode"]) as any) as number | null;
+            const status = (pick(r, ["Status"]) ?? "").toString().trim() || null;
             const notes = (pick(r, ["Notes"]) ?? "").toString().trim() || null;
             // Qty breakdown like "0,0,11,12,7,1,0" -> [0,0,11,12,7,1,0]
-            const qtyListRaw = (
-              pick(r, ["Qty_Ordered_List_c", "Qty_List", "QtyBreakdown"]) ?? ""
-            ).toString();
+            const qtyListRaw = (pick(r, ["Qty_Ordered_List_c", "Qty_List", "QtyBreakdown"]) ?? "").toString();
             const qtyOrderedBreakdown = parseIntListPreserveGaps(qtyListRaw);
             if (idNum == null && !name && jobIdNum == null) {
               skipped++;
@@ -820,12 +658,7 @@ export async function action({ request }: ActionFunctionArgs) {
                 productVariantSetId = (product as any).variantSet?.id ?? null;
               } else missingProduct++;
             }
-            const existing =
-              idNum != null
-                ? await prisma.assembly.findUnique({ where: { id: idNum } })
-                : name
-                ? await prisma.assembly.findFirst({ where: { name } })
-                : null;
+            const existing = idNum != null ? await prisma.assembly.findUnique({ where: { id: idNum } }) : name ? await prisma.assembly.findFirst({ where: { name } }) : null;
             const data: any = {
               name: name || null,
               jobId,
@@ -834,12 +667,7 @@ export async function action({ request }: ActionFunctionArgs) {
               notes,
               qtyOrderedBreakdown,
               // prefer assembly-sourced variant set when present; fallback to product's
-              variantSetId:
-                (asNum(pick(r, ["a_VariantSetID", "a__VariantSetID"])) as
-                  | number
-                  | null) ??
-                productVariantSetId ??
-                undefined,
+              variantSetId: (asNum(pick(r, ["a_VariantSetID", "a__VariantSetID"])) as number | null) ?? productVariantSetId ?? undefined,
             };
             if (existing) {
               await (prisma as any).assembly.update({
@@ -861,9 +689,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "assemblies" }
         );
-        console.log(
-          `[import] done assemblies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done assemblies file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "assemblies",
@@ -890,47 +716,16 @@ export async function action({ request }: ActionFunctionArgs) {
         await processRowsInBatches(
           rows,
           async (r, i) => {
-            const costingId = asNum(
-              pick(r, ["a__Serial", "a_Serial", "id"])
-            ) as number | null;
-            const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as
-              | number
-              | null;
-            const assemblyName = (pick(r, ["AssemblyName"]) ?? "")
-              .toString()
-              .trim();
-            const productIdNum = asNum(
-              pick(r, [
-                "a__ProductCode",
-                "a_ProductCode",
-                "ProductCode",
-                "product_code",
-                "product code",
-                "productcode",
-              ])
-            ) as number | null;
-            const usageRaw = (pick(r, ["ActivityUsed", "UsageType"]) ?? "")
-              .toString()
-              .trim();
-            const quantityPerUnit = asNum(
-              pick(r, [
-                "QtyRequiredPerUnit",
-                "QuantityPerUnit",
-                "QtyPerUnit",
-                "Quantity",
-              ])
-            ) as number | null;
-            const unitCost = asNum(
-              pick(r, ["Price|Cost_PerUnit", "UnitCost"])
-            ) as number | null;
-            const salePricePerItem = asNum(pick(r, ["Price|Sale_PerItem"])) as
-              | number
-              | null;
-            const salePricePerUnit = asNum(pick(r, ["Price|Sale_PerUnit"])) as
-              | number
-              | null;
-            const notes =
-              (pick(r, ["Label_Notes", "Notes"]) ?? "").toString() || null;
+            const costingId = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as number | null;
+            const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as number | null;
+            const assemblyName = (pick(r, ["AssemblyName"]) ?? "").toString().trim();
+            const productIdNum = asNum(pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode", "product_code", "product code", "productcode"])) as number | null;
+            const usageRaw = (pick(r, ["ActivityUsed", "UsageType"]) ?? "").toString().trim();
+            const quantityPerUnit = asNum(pick(r, ["QtyRequiredPerUnit", "QuantityPerUnit", "QtyPerUnit", "Quantity"])) as number | null;
+            const unitCost = asNum(pick(r, ["Price|Cost_PerUnit", "UnitCost"])) as number | null;
+            const salePricePerItem = asNum(pick(r, ["Price|Sale_PerItem"])) as number | null;
+            const salePricePerUnit = asNum(pick(r, ["Price|Sale_PerUnit"])) as number | null;
+            const notes = (pick(r, ["Label_Notes", "Notes"]) ?? "").toString() || null;
             let assembly: any = null;
             if (assemblyIdVal)
               assembly = await prisma.assembly.findFirst({
@@ -956,11 +751,7 @@ export async function action({ request }: ActionFunctionArgs) {
               skipped++;
               return;
             }
-            const usageType = usageRaw.toLowerCase().startsWith("cut")
-              ? "cut"
-              : usageRaw.toLowerCase().startsWith("make")
-              ? "make"
-              : null;
+            const usageType = usageRaw.toLowerCase().startsWith("cut") ? "cut" : usageRaw.toLowerCase().startsWith("make") ? "make" : null;
             if (costingId != null) {
               const existing = await prisma.costing.findUnique({
                 where: { id: costingId },
@@ -1004,9 +795,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "costings" }
         );
-        console.log(
-          `[import] done costings file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done costings file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "costings",
@@ -1037,53 +826,20 @@ export async function action({ request }: ActionFunctionArgs) {
           rows,
           async (r, i) => {
             // Prefer FileMaker serial as primary key for AssemblyActivity.id
-            const activityId = asNum(
-              pick(r, ["a__Serial", "a_Serial", "id"])
-            ) as number | null;
-            const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as
-              | number
-              | null;
+            const activityId = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as number | null;
+            const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as number | null;
             const jobIdNum = asNum(pick(r, ["a_JobNo"])) as number | null;
-            const productIdNum = asNum(
-              pick(r, [
-                "a__ProductCode",
-                "a_ProductCode",
-                "ProductCode",
-                "product_code",
-                "product code",
-                "productcode",
-              ]) as any
-            ) as number | null;
-            const name =
-              (pick(r, ["AssemblyActivityType"]) ?? "").toString().trim() ||
-              null;
+            const productIdNum = asNum(pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode", "product_code", "product code", "productcode"]) as any) as number | null;
+            const name = (pick(r, ["AssemblyActivityType"]) ?? "").toString().trim() || null;
             const notes = (pick(r, ["Notes"]) ?? "").toString().trim() || null;
-            const activityDate = asDate(
-              pick(r, ["ActivityDate"])
-            ) as Date | null;
+            const activityDate = asDate(pick(r, ["ActivityDate"])) as Date | null;
             const quantity = asNum(pick(r, ["Quantity"])) as number | null;
-            const qtyBreakdownRaw = (
-              pick(r, [
-                "QtyBreakdown_List_c",
-                "Qty_Breakdown_List",
-                "QtyBreakdown",
-                "Qty_List",
-                "QtyList",
-              ]) ?? ""
-            ).toString();
+            const qtyBreakdownRaw = (pick(r, ["QtyBreakdown_List_c", "Qty_Breakdown_List", "QtyBreakdown", "Qty_List", "QtyList"]) ?? "").toString();
             const qtyBreakdown = parseIntListPreserveGaps(qtyBreakdownRaw);
-            const qtyFabricConsumed = asNum(pick(r, ["QtyFabricConsumed"])) as
-              | number
-              | null;
-            const qtyFabricConsumedPerUnit = asNum(
-              pick(r, ["QtyFabricConsumedPerUnit"])
-            ) as number | null;
-            const locationInId = asNum(pick(r, ["a_LocationID_In"])) as
-              | number
-              | null;
-            const locationOutId = asNum(pick(r, ["a_LocationID_Out"])) as
-              | number
-              | null;
+            const qtyFabricConsumed = asNum(pick(r, ["QtyFabricConsumed"])) as number | null;
+            const qtyFabricConsumedPerUnit = asNum(pick(r, ["QtyFabricConsumedPerUnit"])) as number | null;
+            const locationInId = asNum(pick(r, ["a_LocationID_In"])) as number | null;
+            const locationOutId = asNum(pick(r, ["a_LocationID_Out"])) as number | null;
             if (!assemblyIdVal && jobIdNum == null && !name) {
               skipped++;
               return;
@@ -1178,9 +934,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "assembly_activities" }
         );
-        console.log(
-          `[import] done assembly_activities file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done assembly_activities file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "assembly_activities",
@@ -1208,9 +962,7 @@ export async function action({ request }: ActionFunctionArgs) {
         await processRowsInBatches(
           rows,
           async (r, i) => {
-            const name = (pick(r, ["name", "location", "location_name"]) ?? "")
-              .toString()
-              .trim();
+            const name = (pick(r, ["name", "location", "location_name"]) ?? "").toString().trim();
             if (!name) {
               skippedNoName++;
               return;
@@ -1232,9 +984,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "locations" }
         );
-        console.log(
-          `[import] done locations file="${file.name}" created=${created} updated=${updated} skippedNoName=${skippedNoName}`
-        );
+        console.log(`[import] done locations file="${file.name}" created=${created} updated=${updated} skippedNoName=${skippedNoName}`);
         batchResults.push({
           file: file.name,
           target: "locations",
@@ -1261,20 +1011,12 @@ export async function action({ request }: ActionFunctionArgs) {
           async (r, i) => {
             // Mapping per provided spec
             const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
-            const assemblyId = asNum(pick(r, ["a_AssemblyID"])) as
-              | number
-              | null;
+            const assemblyId = asNum(pick(r, ["a_AssemblyID"])) as number | null;
             const jobId = asNum(pick(r, ["a_JobNo"])) as number | null;
-            const locationId = asNum(pick(r, ["a_LocationID"])) as
-              | number
-              | null;
-            const productIdNum = asNum(pick(r, ["a_ProductCode"])) as
-              | number
-              | null;
-            const codeMill =
-              (pick(r, ["BatchNumber|Mill"]) ?? "").toString().trim() || null;
-            const codeSartor =
-              (pick(r, ["BatchNumber|Sartor"]) ?? "").toString().trim() || null;
+            const locationId = asNum(pick(r, ["a_LocationID"])) as number | null;
+            const productIdNum = asNum(pick(r, ["a_ProductCode"])) as number | null;
+            const codeMill = (pick(r, ["BatchNumber|Mill"]) ?? "").toString().trim() || null;
+            const codeSartor = (pick(r, ["BatchNumber|Sartor"]) ?? "").toString().trim() || null;
             const createdAt = asDate(pick(r, ["Date"])) as Date | null; // createdAd -> createdAt
             const name = (pick(r, ["Name"]) ?? "").toString().trim() || null;
             const notes = null; // Source -> ignore
@@ -1344,9 +1086,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "product_batches" }
         );
-        console.log(
-          `[import] done product_batches file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done product_batches file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "product_batches",
@@ -1373,17 +1113,9 @@ export async function action({ request }: ActionFunctionArgs) {
         await processRowsInBatches(
           rows,
           async (r, i) => {
-            const productIdNum = asNum(
-              pick(r, ["product_code", "product code", "code", "sku"]) as any
-            ) as number | null;
-            const locationName = (
-              pick(r, ["location_name", "location", "loc"]) ?? ""
-            )
-              .toString()
-              .trim();
-            const qty = asNum(
-              pick(r, ["quantity", "qty", "qty_on_hand", "on hand"])
-            ) as number | null;
+            const productIdNum = asNum(pick(r, ["product_code", "product code", "code", "sku"]) as any) as number | null;
+            const locationName = (pick(r, ["location_name", "location", "loc"]) ?? "").toString().trim();
+            const qty = asNum(pick(r, ["quantity", "qty", "qty_on_hand", "on hand"])) as number | null;
             if (productIdNum == null || !locationName) {
               skipped++;
               return;
@@ -1429,10 +1161,7 @@ export async function action({ request }: ActionFunctionArgs) {
                   codeSartor,
                   name: null,
                   receivedAt: null,
-                  notes:
-                    qty != null
-                      ? `Imported from Product_Locations (init qty hint: ${qty})`
-                      : "Imported from Product_Locations",
+                  notes: qty != null ? `Imported from Product_Locations (init qty hint: ${qty})` : "Imported from Product_Locations",
                 } as any,
               });
               created++;
@@ -1440,9 +1169,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "product_locations" }
         );
-        console.log(
-          `[import] done product_locations file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done product_locations file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "product_locations",
@@ -1468,35 +1195,17 @@ export async function action({ request }: ActionFunctionArgs) {
           const r = rows[i];
           const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
           const name = (pick(r, ["Name", "name"]) ?? "").toString().trim();
-          const labelsRaw = (
-            pick(r, [
-              "VariantLabel_List_c",
-              "VariantLabel_List",
-              "VariantLabelList",
-              "Variants",
-              "VariantList",
-              "values",
-            ]) ?? ""
-          ).toString();
+          const labelsRaw = (pick(r, ["VariantLabel_List_c", "VariantLabel_List", "VariantLabelList", "Variants", "VariantList", "values"]) ?? "").toString();
           const variants = parseStringListPreserveGaps(labelsRaw);
           if (!name && idNum == null && variants.length === 0) {
             skipped++;
             continue;
           }
-          const createdBy =
-            (pick(r, ["Record_CreatedBy"]) ?? "").toString().trim() || null;
-          const createdAt = asDate(
-            pick(r, ["Record_CreatedTimestamp"])
-          ) as Date | null;
-          const modifiedBy =
-            (pick(r, ["Record_ModifiedBy"]) ?? "").toString().trim() || null;
-          const updatedAt = asDate(
-            pick(r, ["Record_ModifiedTimestamp"])
-          ) as Date | null;
-          const existing =
-            idNum != null
-              ? await prisma.variantSet.findUnique({ where: { id: idNum } })
-              : await prisma.variantSet.findFirst({ where: { name } });
+          const createdBy = (pick(r, ["Record_CreatedBy"]) ?? "").toString().trim() || null;
+          const createdAt = asDate(pick(r, ["Record_CreatedTimestamp"])) as Date | null;
+          const modifiedBy = (pick(r, ["Record_ModifiedBy"]) ?? "").toString().trim() || null;
+          const updatedAt = asDate(pick(r, ["Record_ModifiedTimestamp"])) as Date | null;
+          const existing = idNum != null ? await prisma.variantSet.findUnique({ where: { id: idNum } }) : await prisma.variantSet.findFirst({ where: { name } });
           const data: any = {
             name: name || null,
             variants,
@@ -1521,12 +1230,9 @@ export async function action({ request }: ActionFunctionArgs) {
             }
             created++;
           }
-          if (i > 0 && i % 100 === 0)
-            console.log(`[import] variant_sets ${i}/${total}`);
+          if (i > 0 && i % 100 === 0) console.log(`[import] variant_sets ${i}/${total}`);
         }
-        console.log(
-          `[import] done variant_sets file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done variant_sets file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "variant_sets",
@@ -1552,8 +1258,7 @@ export async function action({ request }: ActionFunctionArgs) {
           const all = await prisma.product.findMany({
             select: { id: true, sku: true },
           });
-          for (const p of all)
-            if (p.sku) bySku.set(p.sku.trim().toUpperCase(), p.id);
+          for (const p of all) if (p.sku) bySku.set(p.sku.trim().toUpperCase(), p.id);
           return bySku;
         };
         const skuMap = await getSkuMap();
@@ -1561,29 +1266,14 @@ export async function action({ request }: ActionFunctionArgs) {
         await processRowsInBatches(
           rows,
           async (r, i) => {
-            const serial = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as
-              | number
-              | null;
-            const type =
-              (pick(r, ["Type", "type"]) ?? "").toString().trim() || null;
-            const createdAt = asDate(
-              pick(r, ["Date", "date", "movement_date"])
-            ) as Date | null;
-            const fromRaw = pick(r, [
-              "a_LocationID_Out",
-              "Movement_From",
-            ]) as any;
+            const serial = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as number | null;
+            const type = (pick(r, ["Type", "type"]) ?? "").toString().trim() || null;
+            const createdAt = asDate(pick(r, ["Date", "date", "movement_date"])) as Date | null;
+            const fromRaw = pick(r, ["a_LocationID_Out", "Movement_From"]) as any;
             const toRaw = pick(r, ["a_LocationID_In", "Movement_To"]) as any;
-            const shippingType =
-              (pick(r, ["ShippingType"]) ?? "").toString().trim() || null;
-            const qty = asNum(pick(r, ["Quantity", "Qty", "quantity"])) as
-              | number
-              | null;
-            const productCodeRaw = (
-              pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? ""
-            )
-              .toString()
-              .trim();
+            const shippingType = (pick(r, ["ShippingType"]) ?? "").toString().trim() || null;
+            const qty = asNum(pick(r, ["Quantity", "Qty", "quantity"])) as number | null;
+            const productCodeRaw = (pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? "").toString().trim();
             // resolve productId from SKU or numeric id
             let productId: number | null = null;
             if (/^\d+$/.test(productCodeRaw)) {
@@ -1596,27 +1286,10 @@ export async function action({ request }: ActionFunctionArgs) {
             }
             // resolve direction
             const t = (type || "").toLowerCase();
-            const outTypes = new Set([
-              "out",
-              "issue",
-              "consume",
-              "ship",
-              "sale",
-              "deliver",
-              "adjust_out",
-              "transfer_out",
-              "shipping (out)",
-              "po (return)",
-              "assembly",
-              "expense",
-            ]);
+            const outTypes = new Set(["out", "issue", "consume", "ship", "sale", "deliver", "adjust_out", "transfer_out", "shipping (out)", "po (return)", "assembly", "expense"]);
             const isOut = outTypes.has(t);
-            const locationOutId = isOut
-              ? (asNum(fromRaw) as number | null)
-              : null;
-            const locationInId = !isOut
-              ? (asNum(toRaw) as number | null)
-              : null;
+            const locationOutId = isOut ? (asNum(fromRaw) as number | null) : null;
+            const locationInId = !isOut ? (asNum(toRaw) as number | null) : null;
             if (!type && !createdAt && productId == null && qty == null) {
               skipped++;
               return;
@@ -1653,9 +1326,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "product_movements" }
         );
-        console.log(
-          `[import] done product_movements file="${file.name}" created=${created} updated=${updated} skipped=${skipped} missingProduct=${missingProduct}`
-        );
+        console.log(`[import] done product_movements file="${file.name}" created=${created} updated=${updated} skipped=${skipped} missingProduct=${missingProduct}`);
         batchResults.push({
           file: file.name,
           target: "product_movements",
@@ -1702,10 +1373,7 @@ export async function action({ request }: ActionFunctionArgs) {
           const existing = await prisma.batch.findFirst({
             where: {
               productId: productIdNonNull,
-              OR: [
-                { codeSartor },
-                { name: { startsWith: `Regen [${productIdNonNull}]` } as any },
-              ],
+              OR: [{ codeSartor }, { name: { startsWith: `Regen [${productIdNonNull}]` } as any }],
             } as any,
             orderBy: { id: "desc" as const },
           });
@@ -1721,8 +1389,7 @@ export async function action({ request }: ActionFunctionArgs) {
                   productId: productIdNonNull,
                   name,
                   codeSartor,
-                  notes:
-                    "Auto-created during import due to missing referenced batch",
+                  notes: "Auto-created during import due to missing referenced batch",
                 } as any,
               });
               regenBatchesCreated++;
@@ -1730,11 +1397,7 @@ export async function action({ request }: ActionFunctionArgs) {
               return created;
             } catch (ce: any) {
               // Handle identity/sequence drift on id
-              if (
-                ce?.code === "P2002" &&
-                Array.isArray(ce?.meta?.target) &&
-                ce.meta.target.includes("id")
-              ) {
+              if (ce?.code === "P2002" && Array.isArray(ce?.meta?.target) && ce.meta.target.includes("id")) {
                 const agg = await prisma.batch.aggregate({
                   _max: { id: true },
                 });
@@ -1745,8 +1408,7 @@ export async function action({ request }: ActionFunctionArgs) {
                     productId: productIdNonNull,
                     name,
                     codeSartor,
-                    notes:
-                      "Auto-created during import due to missing referenced batch (sequence drift)",
+                    notes: "Auto-created during import due to missing referenced batch (sequence drift)",
                   } as any,
                 });
                 regenBatchesCreated++;
@@ -1773,8 +1435,7 @@ export async function action({ request }: ActionFunctionArgs) {
           const all = await prisma.product.findMany({
             select: { id: true, sku: true },
           });
-          for (const p of all)
-            if (p.sku) bySku.set(p.sku.trim().toUpperCase(), p.id);
+          for (const p of all) if (p.sku) bySku.set(p.sku.trim().toUpperCase(), p.id);
           return bySku;
         };
         const skuMap = await getSkuMap();
@@ -1786,18 +1447,10 @@ export async function action({ request }: ActionFunctionArgs) {
           const maxId = (agg as any)?._max?.id ?? 0;
           // Try via pg_get_serial_sequence (works for serial/identity); fallback to ALTER TABLE RESTART
           try {
-            await prisma.$executeRawUnsafe(
-              `SELECT setval(pg_get_serial_sequence('"Batch"','id'), ${Number(
-                maxId
-              )})`
-            );
+            await prisma.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"Batch"','id'), ${Number(maxId)})`);
           } catch (_) {
             try {
-              await prisma.$executeRawUnsafe(
-                `ALTER TABLE "Batch" ALTER COLUMN id RESTART WITH ${
-                  Number(maxId) + 1
-                }`
-              );
+              await prisma.$executeRawUnsafe(`ALTER TABLE "Batch" ALTER COLUMN id RESTART WITH ${Number(maxId) + 1}`);
             } catch {
               // ignore if not supported
             }
@@ -1809,14 +1462,7 @@ export async function action({ request }: ActionFunctionArgs) {
         try {
           // Collect distinct candidate batchIds from the file
           const distinctBatchIds: number[] = Array.from(
-            new Set(
-              rows
-                .map((r: any) => asNum(pick(r, ["a_BatchID"])) as number | null)
-                .filter(
-                  (n): n is number =>
-                    typeof n === "number" && Number.isFinite(n)
-                )
-            )
+            new Set(rows.map((r: any) => asNum(pick(r, ["a_BatchID"])) as number | null).filter((n): n is number => typeof n === "number" && Number.isFinite(n)))
           );
           const existing = distinctBatchIds.length
             ? await prisma.batch.findMany({
@@ -1829,11 +1475,7 @@ export async function action({ request }: ActionFunctionArgs) {
           // Resolve productIds per row and collect those needing regen (invalid/missing batchId)
           const needsRegen = new Set<number>();
           for (const r of rows as any[]) {
-            const productCodeRaw = (
-              pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? ""
-            )
-              .toString()
-              .trim();
+            const productCodeRaw = (pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? "").toString().trim();
             if (!productCodeRaw) continue;
             let productId: number | null = null;
             if (/^\d+$/.test(productCodeRaw)) {
@@ -1853,57 +1495,34 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           }
           if (needsRegen.size > 0) {
-            console.log(
-              `[import] product_movement_lines pre-scan: precreating regen batches for ${needsRegen.size} product(s)`
-            );
+            console.log(`[import] product_movement_lines pre-scan: precreating regen batches for ${needsRegen.size} product(s)`);
             // Create sequentially to avoid cross-product create races
             for (const pid of needsRegen) {
               try {
                 await getOrCreateRegenBatch(pid);
               } catch (e) {
-                console.error(
-                  "[import] pre-scan regen create failed",
-                  { productId: pid },
-                  e
-                );
+                console.error("[import] pre-scan regen create failed", { productId: pid }, e);
               }
             }
           }
         } catch (e) {
-          console.warn(
-            "[import] product_movement_lines pre-scan step skipped due to error",
-            e
-          );
+          console.warn("[import] product_movement_lines pre-scan step skipped due to error", e);
         }
         await processRowsInBatches(
           rows,
           async (r, i) => {
             // ID of this movement line
-            const lineId = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as
-              | number
-              | null;
+            const lineId = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as number | null;
             // FK to the movement header
-            const movementIdVal = asNum(
-              pick(r, ["a_ProductMovementID", "product_movement_id"])
-            ) as number | null;
+            const movementIdVal = asNum(pick(r, ["a_ProductMovementID", "product_movement_id"])) as number | null;
             // Product code (SKU or numeric Product.id)
-            const productCodeRaw = (
-              pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? ""
-            )
-              .toString()
-              .trim();
-            const qty = asNum(pick(r, ["Quantity", "quantity", "qty"])) as
-              | number
-              | null;
+            const productCodeRaw = (pick(r, ["a_ProductCode", "ProductCode", "product_code"]) ?? "").toString().trim();
+            const qty = asNum(pick(r, ["Quantity", "quantity", "qty"])) as number | null;
             const notes = pick(r, ["notes", "note"])?.toString() ?? null;
             const createdAt = asDate(pick(r, ["Date", "date"])) as Date | null;
-            const costingId = asNum(pick(r, ["a_AssemblyLineID"])) as
-              | number
-              | null;
+            const costingId = asNum(pick(r, ["a_AssemblyLineID"])) as number | null;
             const batchId = asNum(pick(r, ["a_BatchID"])) as number | null;
-            const purchaseOrderLineId = asNum(
-              pick(r, ["a_PurchaseOrderLineID"])
-            ) as number | null;
+            const purchaseOrderLineId = asNum(pick(r, ["a_PurchaseOrderLineID"])) as number | null;
 
             // Ignore MovementQty, MovementType, QtyBatchBalance_* as per spec
 
@@ -1946,9 +1565,7 @@ export async function action({ request }: ActionFunctionArgs) {
             if (createdAt) data.createdAt = createdAt;
 
             // Preflight: resolve invalid/missing batch references before attempting write
-            let desiredBatchId: number | undefined = (batchId ?? undefined) as
-              | number
-              | undefined;
+            let desiredBatchId: number | undefined = (batchId ?? undefined) as number | undefined;
             // If provided batchId doesn't exist, generate/lookup regen batch for this product
             if (desiredBatchId != null) {
               const b = await prisma.batch.findUnique({
@@ -2001,10 +1618,7 @@ export async function action({ request }: ActionFunctionArgs) {
               if (e && e.code === "P2003") {
                 const field = String(e?.meta?.field_name || "");
                 // Only handle missing batch FK by creating a regen batch
-                if (
-                  field.includes("ProductMovementLine_batchId_fkey") &&
-                  productId != null
-                ) {
+                if (field.includes("ProductMovementLine_batchId_fkey") && productId != null) {
                   missingBatchFK++;
                   try {
                     const regen = await getOrCreateRegenBatch(productId);
@@ -2012,10 +1626,9 @@ export async function action({ request }: ActionFunctionArgs) {
                     // Retry with new batchId
                     const retryData = { ...data, batchId: regen.id } as any;
                     if (lineId != null) {
-                      const exists2 =
-                        await prisma.productMovementLine.findUnique({
-                          where: { id: lineId },
-                        });
+                      const exists2 = await prisma.productMovementLine.findUnique({
+                        where: { id: lineId },
+                      });
                       if (exists2) {
                         await prisma.productMovementLine.update({
                           where: { id: lineId },
@@ -2048,11 +1661,7 @@ export async function action({ request }: ActionFunctionArgs) {
                       meta: (regenErr as any)?.meta,
                     };
                     if (fkErrorSamples.length < 5) fkErrorSamples.push(sample);
-                    console.error(
-                      "[import] product_movement_lines regen failed",
-                      sample,
-                      regenErr
-                    );
+                    console.error("[import] product_movement_lines regen failed", sample, regenErr);
                     skipped++;
                     return;
                   }
@@ -2068,18 +1677,12 @@ export async function action({ request }: ActionFunctionArgs) {
                     meta: e.meta,
                   };
                   if (fkErrorSamples.length < 5) fkErrorSamples.push(sample);
-                  console.error(
-                    "[import] product_movement_lines FK error (P2003)",
-                    sample
-                  );
+                  console.error("[import] product_movement_lines FK error (P2003)", sample);
                   skipped++;
                   return;
                 }
               }
-              console.error(
-                "[import] product_movement_lines unexpected error",
-                e
-              );
+              console.error("[import] product_movement_lines unexpected error", e);
               skipped++;
               return;
             }
@@ -2123,46 +1726,16 @@ export async function action({ request }: ActionFunctionArgs) {
           rows,
           async (r, i) => {
             // Explicit id
-            const idNum = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as
-              | number
-              | null;
+            const idNum = asNum(pick(r, ["a__Serial", "a_Serial", "id"])) as number | null;
             // Parent id mapping
-            const parentIdNum = asNum(
-              pick(r, [
-                "a_ProductCode|Parent",
-                "parent_id",
-                "parent_code",
-                "parent",
-                "parent product",
-              ]) as any
-            ) as number | null;
+            const parentIdNum = asNum(pick(r, ["a_ProductCode|Parent", "parent_id", "parent_code", "parent", "parent product"]) as any) as number | null;
             // Child id mapping
-            const childIdNum = asNum(
-              pick(r, [
-                "a_ProductCode",
-                "child_id",
-                "child_code",
-                "child",
-                "component_code",
-                "component",
-              ]) as any
-            ) as number | null;
-            const quantity = asNum(pick(r, ["Quantity", "quantity", "qty"])) as
-              | number
-              | null;
-            const unitCost = asNum(
-              pick(r, ["UnitCost", "unit_cost", "cost", "unit cost"])
-            ) as number | null;
-            const unitCostManual = asNum(
-              pick(r, ["UnitCost_Manual", "unit_cost_manual"])
-            ) as number | null;
-            const flagAssemblyOmit = asBool(
-              pick(r, ["Flag_AssemblyOmit", "flag_assembly_omit"])
-            ) as boolean | null;
-            const activityUsed =
-              (pick(r, ["ActivityUsed", "activity_used"]) ?? "")
-                .toString()
-                .trim() || null;
+            const childIdNum = asNum(pick(r, ["a_ProductCode", "child_id", "child_code", "child", "component_code", "component"]) as any) as number | null;
+            const quantity = asNum(pick(r, ["Quantity", "quantity", "qty"])) as number | null;
+            const unitCost = asNum(pick(r, ["UnitCost", "unit_cost", "cost", "unit cost"])) as number | null;
+            const unitCostManual = asNum(pick(r, ["UnitCost_Manual", "unit_cost_manual"])) as number | null;
+            const flagAssemblyOmit = asBool(pick(r, ["Flag_AssemblyOmit", "flag_assembly_omit"])) as boolean | null;
+            const activityUsed = (pick(r, ["ActivityUsed", "activity_used"]) ?? "").toString().trim() || null;
 
             if (parentIdNum == null || childIdNum == null) {
               skipped++;
@@ -2213,9 +1786,7 @@ export async function action({ request }: ActionFunctionArgs) {
           },
           { batchSize: 200, label: "product_lines" }
         );
-        console.log(
-          `[import] done product_lines file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`
-        );
+        console.log(`[import] done product_lines file="${file.name}" created=${created} updated=${updated} skipped=${skipped}`);
         batchResults.push({
           file: file.name,
           target: "product_lines",
@@ -2271,10 +1842,29 @@ export default function AdminRoute() {
   });
 
   const values: any[] = actionData?.values ?? loaderData.values ?? [];
+  const levels: LogLevels = actionData?.logLevels ?? loaderData.logLevels ?? { default: "info" };
 
   return (
     <Stack gap="xl">
       <Title order={2}>Admin</Title>
+
+      <section>
+        <Title order={4} mb="sm">
+          Logging Settings
+        </Title>
+        <Alert mb="sm" color="grape" variant="light">
+          Set per-module log levels. Unset modules inherit from <b>default</b>. Changes save to the server and apply immediately in this tab.
+        </Alert>
+        <LoggingSettings
+          initial={levels}
+          onSubmit={(payload) => {
+            const fd = new FormData();
+            fd.set("_intent", "log.updateLevels");
+            fd.set("levels", JSON.stringify(payload));
+            submit(fd, { method: "post", encType: "multipart/form-data" });
+          }}
+        />
+      </section>
 
       <section>
         <Title order={4} mb="sm">
@@ -2298,15 +1888,7 @@ export default function AdminRoute() {
             <Controller
               name="value"
               control={valueForm.control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Value"
-                  w={140}
-                  value={field.value ?? undefined}
-                  onChange={(v) => field.onChange(v === "" ? null : Number(v))}
-                  allowDecimal
-                />
-              )}
+              render={({ field }) => <NumberInput label="Value" w={140} value={field.value ?? undefined} onChange={(v) => field.onChange(v === "" ? null : Number(v))} allowDecimal />}
             />
             <Button type="submit" disabled={busy}>
               {busy ? "Saving..." : "Add"}
@@ -2314,13 +1896,7 @@ export default function AdminRoute() {
           </Group>
         </form>
 
-        <Table
-          striped
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          mt="md"
-        >
+        <Table striped withTableBorder withColumnBorders highlightOnHover mt="md">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
@@ -2380,11 +1956,7 @@ export default function AdminRoute() {
               >
                 Sheet (optional)
               </label>
-              <input
-                name="sheetName"
-                type="text"
-                placeholder="Default: first sheet"
-              />
+              <input name="sheetName" type="text" placeholder="Default: first sheet" />
             </div>
             <div>
               <label
@@ -2402,29 +1974,15 @@ export default function AdminRoute() {
                 <option value="import:companies">Import: Companies</option>
                 <option value="import:assemblies">Import: Assemblies</option>
                 <option value="import:products">Import: Products</option>
-                <option value="import:variant_sets">
-                  Import: Variant Sets
-                </option>
+                <option value="import:variant_sets">Import: Variant Sets</option>
                 <option value="import:locations">Import: Locations</option>
-                <option value="import:product_batches">
-                  Import: Product Batches
-                </option>
-                <option value="import:product_locations">
-                  Import: Product Locations
-                </option>
-                <option value="import:product_movements">
-                  Import: Product Movements
-                </option>
-                <option value="import:product_movement_lines">
-                  Import: Product Movement Lines
-                </option>
-                <option value="import:product_lines">
-                  Import: Product Lines
-                </option>
+                <option value="import:product_batches">Import: Product Batches</option>
+                <option value="import:product_locations">Import: Product Locations</option>
+                <option value="import:product_movements">Import: Product Movements</option>
+                <option value="import:product_movement_lines">Import: Product Movement Lines</option>
+                <option value="import:product_lines">Import: Product Lines</option>
                 <option value="import:costings">Import: Costings</option>
-                <option value="import:assembly_activities">
-                  Import: Assembly Activities
-                </option>
+                <option value="import:assembly_activities">Import: Assembly Activities</option>
               </select>
             </div>
             <Button type="submit" disabled={busy}>
@@ -2468,10 +2026,7 @@ export default function AdminRoute() {
                     <Table.Td>
                       {r.error ||
                         Object.entries(r)
-                          .filter(
-                            ([k]) =>
-                              k.startsWith("missing") || k.startsWith("skipped")
-                          )
+                          .filter(([k]) => k.startsWith("missing") || k.startsWith("skipped"))
                           .map(([k, v]) => `${k}:${v}`)
                           .join(", ")}
                     </Table.Td>
@@ -2482,6 +2037,71 @@ export default function AdminRoute() {
           </Stack>
         )}
       </section>
+    </Stack>
+  );
+}
+
+function LoggingSettings({ initial, onSubmit }: { initial: LogLevels; onSubmit: (levels: LogLevels) => void }) {
+  const MODULES: string[] = ["default", "timber", "products", "jobs", "companies", "contacts", "assembly", "assembly-activities", "costings", "search", "import", "api", "web", "db", "ui"];
+  const LEVELS: LogLevel[] = ["silent", "error", "warn", "info", "debug", "trace"];
+  const [local, setLocal] = useState<LogLevels>(initial);
+  useEffect(() => setLocal(initial), [initial]);
+
+  const dataFor = (module: string) => {
+    const base = LEVELS.map((l) => ({ value: l, label: l }));
+    return module === "default" ? base : [{ value: "__inherit__", label: "(inherit default)" }, ...base];
+  };
+  const valueFor = (module: string) => {
+    if (module === "default") return local.default ?? "info";
+    return (local as any)[module] ?? "__inherit__";
+  };
+  const setFor = (module: string, v: string | null) => {
+    if (!v) return;
+    if (module === "default") {
+      setLocal({ ...local, default: v as LogLevel });
+      return;
+    }
+    if (v === "__inherit__") {
+      const { [module]: _omit, ...rest } = local as any;
+      setLocal(rest as LogLevels);
+    } else {
+      setLocal({ ...local, [module]: v as LogLevel });
+    }
+  };
+
+  const save = () => {
+    const payload: LogLevels = { ...local };
+    if (!payload.default) payload.default = "info";
+    onSubmit(payload);
+    try {
+      (window as any).__LOG_LEVELS__ = payload;
+    } catch {}
+  };
+
+  return (
+    <Stack>
+      <Group wrap="wrap" align="flex-end" gap="md">
+        {MODULES.map((m) => (
+          <div key={m} style={{ minWidth: 220 }}>
+            <Select label={m} data={dataFor(m)} value={valueFor(m)} onChange={(v) => setFor(m, v)} allowDeselect={false} />
+          </div>
+        ))}
+        <Group>
+          <Button size="xs" variant="light" onClick={() => setLocal({ default: "info" })}>
+            Default info
+          </Button>
+          <Button size="xs" variant="light" onClick={() => setLocal({ default: "warn" })}>
+            Default warn
+          </Button>
+          <Button size="xs" variant="light" onClick={() => setLocal({ default: "debug", recordBrowser: "debug" })}>
+            Debug recordBrowser
+          </Button>
+        </Group>
+        <Button onClick={save}>Save</Button>
+      </Group>
+      <Text c="dimmed" size="sm">
+        Modules not shown will inherit <b>default</b>. Use quick presets or choose per-module levels.
+      </Text>
     </Stack>
   );
 }

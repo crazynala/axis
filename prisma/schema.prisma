@@ -361,6 +361,7 @@ model Job {
     finishDateManual        DateTime?
     firstInvoiceDate        DateTime?
     targetDate              DateTime?
+    customerPoNum           String?
     Variant                 Variant[]
     assemblyActivities      AssemblyActivity[]
     assemblies              Assembly[]         @relation("Job_Assemblies")

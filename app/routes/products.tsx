@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { RecordBrowserProvider } from "packages/timber";
+import { MasterTableProvider } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
 export async function loader(_args: LoaderFunctionArgs) {
@@ -14,9 +14,10 @@ export async function loader(_args: LoaderFunctionArgs) {
 
 export default function ProductsLayout() {
   const data = useLoaderData() as { products?: any[] };
+  console.log("Found products:", data.products);
   return (
-    <RecordBrowserProvider initialRecords={data?.products ?? []}>
+    <MasterTableProvider initialRecords={data.products}>
       <Outlet />
-    </RecordBrowserProvider>
+    </MasterTableProvider>
   );
 }

@@ -1,12 +1,6 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSearchParams,
-  useNavigate,
-} from "@remix-run/react";
+import { Link, useLoaderData, useNavigation, useSearchParams, useNavigate } from "@remix-run/react";
 import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
 import { BreadcrumbSet } from "packages/timber";
 import { prisma } from "../utils/prisma.server";
@@ -95,9 +89,7 @@ export async function loader(args: LoaderFunctionArgs) {
   }
 
   // Preload product variant sets for assemblies missing one
-  const productIds = Array.from(
-    new Set((assemblies as any[]).map((a) => a.productId).filter(Boolean))
-  );
+  const productIds = Array.from(new Set((assemblies as any[]).map((a) => a.productId).filter(Boolean)));
   const productsById: Record<number, any> = {};
   if (productIds.length) {
     const prods = await prisma.product.findMany({
@@ -112,27 +104,15 @@ export async function loader(args: LoaderFunctionArgs) {
     const agg = ensureJob(a.jobId);
     const aExt = asmMap.get(a.id) || {};
     const orderedArr = (a.qtyOrderedBreakdown || []) as number[];
-    const orderedSum = orderedArr.reduce(
-      (t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t),
-      0
-    );
+    const orderedSum = orderedArr.reduce((t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t), 0);
     agg.qtyOrdered += orderedSum;
     addArrays(agg.breakdownOrdered, orderedArr);
     agg.c_qtyCut += aExt.c_qtyCut || 0;
     agg.c_qtyMake += aExt.c_qtyMake || 0;
     agg.c_qtyPack += aExt.c_qtyPack || 0;
-    addArrays(
-      agg.c_qtyCut_Breakdown,
-      (aExt.c_qtyCut_Breakdown || []) as number[]
-    );
-    addArrays(
-      agg.c_qtyMake_Breakdown,
-      (aExt.c_qtyMake_Breakdown || []) as number[]
-    );
-    addArrays(
-      agg.c_qtyPack_Breakdown,
-      (aExt.c_qtyPack_Breakdown || []) as number[]
-    );
+    addArrays(agg.c_qtyCut_Breakdown, (aExt.c_qtyCut_Breakdown || []) as number[]);
+    addArrays(agg.c_qtyMake_Breakdown, (aExt.c_qtyMake_Breakdown || []) as number[]);
+    addArrays(agg.c_qtyPack_Breakdown, (aExt.c_qtyPack_Breakdown || []) as number[]);
 
     // Collect per-assembly rows for tooltips
     asmsByJob[a.jobId].push({
@@ -145,10 +125,7 @@ export async function loader(args: LoaderFunctionArgs) {
 
     // Set variant labels once per job: trim to last non-empty; prefer assembly's variantSet; fall back to product variantSet
     if (agg.variantLabels.length === 0) {
-      const labelsSrc =
-        a.variantSet?.variants ||
-        productsById[a.productId || -1]?.variantSet?.variants ||
-        [];
+      const labelsSrc = a.variantSet?.variants || productsById[a.productId || -1]?.variantSet?.variants || [];
       const arr = (labelsSrc || []).map((s: any) => (s ?? "").toString());
       let last = -1;
       for (let i = arr.length - 1; i >= 0; i--) {
@@ -172,7 +149,7 @@ export async function loader(args: LoaderFunctionArgs) {
     c_qtyMake_Breakdown: aggByJob[r.id]?.c_qtyMake_Breakdown || [],
     c_qtyPack_Breakdown: aggByJob[r.id]?.c_qtyPack_Breakdown || [],
     variantLabels: aggByJob[r.id]?.variantLabels || [],
-  assembliesDetail: asmsByJob[r.id] || [],
+    assembliesDetail: asmsByJob[r.id] || [],
   }));
 
   return json({
@@ -188,24 +165,13 @@ export async function loader(args: LoaderFunctionArgs) {
 // No mutations on index: creation handled via /jobs/new
 
 export default function JobsIndexRoute() {
-  const { rows, total, page, perPage, sort, dir } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, sort, dir } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const sortAccessor =
-    (typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("sort")
-      : null) ||
-    sort ||
-    "id";
-  const sortDirection =
-    ((typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("dir")
-      : null) as any) ||
-    dir ||
-    "asc";
+  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || sort || "id";
+  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || dir || "asc";
 
   return (
     <Stack gap="lg">
@@ -236,10 +202,7 @@ export default function JobsIndexRoute() {
           recordsPerPageOptions={[10, 20, 50, 100]}
           fetching={busy}
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec =
-              typeof rowIndex === "number"
-                ? (rows as any[])[rowIndex]
-                : _record;
+            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
             const id = rec?.id;
             if (id != null) navigate(`/jobs/${id}`);
           }}
@@ -286,9 +249,7 @@ export default function JobsIndexRoute() {
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
                 const len = labels.length;
-                const cols = len
-                  ? labels
-                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
+                const cols = len ? labels : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
@@ -306,7 +267,7 @@ export default function JobsIndexRoute() {
                         {(r.assembliesDetail || []).map((a: any) => (
                           <tr key={`ord-row-${a.id}`}>
                             <td style={{ padding: "0 6px" }}>
-                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
+                              <Link to={`/jobs/${r.id}/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
                             {cols.map((_c: string, i: number) => (
                               <td key={`ord-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
@@ -332,9 +293,7 @@ export default function JobsIndexRoute() {
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
                 const len = labels.length;
-                const cols = len
-                  ? labels
-                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
+                const cols = len ? labels : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
@@ -352,7 +311,7 @@ export default function JobsIndexRoute() {
                         {(r.assembliesDetail || []).map((a: any) => (
                           <tr key={`cut-row-${a.id}`}>
                             <td style={{ padding: "0 6px" }}>
-                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
+                              <Link to={`/jobs/${r.id}/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
                             {cols.map((_c: string, i: number) => (
                               <td key={`cut-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
@@ -378,9 +337,7 @@ export default function JobsIndexRoute() {
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
                 const len = labels.length;
-                const cols = len
-                  ? labels
-                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
+                const cols = len ? labels : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
@@ -398,7 +355,7 @@ export default function JobsIndexRoute() {
                         {(r.assembliesDetail || []).map((a: any) => (
                           <tr key={`make-row-${a.id}`}>
                             <td style={{ padding: "0 6px" }}>
-                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
+                              <Link to={`/jobs/${r.id}/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
                             {cols.map((_c: string, i: number) => (
                               <td key={`make-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
@@ -424,9 +381,7 @@ export default function JobsIndexRoute() {
               render: (r: any) => {
                 const labels: string[] = (r.variantLabels || []) as string[];
                 const len = labels.length;
-                const cols = len
-                  ? labels
-                  : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
+                const cols = len ? labels : Array.from({ length: 1 }, (_: any, i: number) => `#${i + 1}`);
                 const content = (
                   <div style={{ padding: 4 }}>
                     <table>
@@ -444,7 +399,7 @@ export default function JobsIndexRoute() {
                         {(r.assembliesDetail || []).map((a: any) => (
                           <tr key={`pack-row-${a.id}`}>
                             <td style={{ padding: "0 6px" }}>
-                              <Link to={`/assembly/${a.id}`}>#{a.id}</Link>
+                              <Link to={`/jobs/${r.id}/assembly/${a.id}`}>#{a.id}</Link>
                             </td>
                             {cols.map((_c: string, i: number) => (
                               <td key={`pack-${a.id}-${i}`} style={{ textAlign: "right", padding: "0 6px" }}>
@@ -468,15 +423,13 @@ export default function JobsIndexRoute() {
               accessor: "startDate",
               title: "Start",
               sortable: true,
-              render: (r: any) =>
-                r.startDate ? new Date(r.startDate).toLocaleDateString() : "",
+              render: (r: any) => (r.startDate ? new Date(r.startDate).toLocaleDateString() : ""),
             },
             {
               accessor: "endDate",
               title: "End",
               sortable: true,
-              render: (r: any) =>
-                r.endDate ? new Date(r.endDate).toLocaleDateString() : "",
+              render: (r: any) => (r.endDate ? new Date(r.endDate).toLocaleDateString() : ""),
             },
             { accessor: "status", title: "Status", sortable: true },
           ]}

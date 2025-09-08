@@ -1,0 +1,14 @@
+{
+  "dev": {
+    "defaultLevel": "debug",
+    "modules": {
+      "recordBrowser": "debug"
+    }
+  },
+  "prod": {
+    "defaultLevel": "warn",
+    "modules": {
+      "recordBrowser": "info"
+    }
+  }
+}

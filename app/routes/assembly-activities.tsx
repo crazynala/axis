@@ -1,7 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { RecordBrowserProvider } from "packages/timber";
+import { useEffect } from "react";
+import { useRecordBrowserContext } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
 export async function loader(_args: LoaderFunctionArgs) {
@@ -11,9 +12,10 @@ export async function loader(_args: LoaderFunctionArgs) {
 
 export default function AssemblyActivitiesLayout() {
   const data = useLoaderData() as { activities?: any[] };
-  return (
-    <RecordBrowserProvider initialRecords={data?.activities ?? []}>
-      <Outlet />
-    </RecordBrowserProvider>
-  );
+  const ctx = useRecordBrowserContext({ optional: true });
+  useEffect(() => {
+    if (!ctx) return;
+    if (data?.activities) ctx.updateRecords(data.activities);
+  }, [ctx, data?.activities]);
+  return <Outlet />;
 }

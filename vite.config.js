@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "packages/timber": r("packages/timber/src/index.ts"),
+      "~": r("app"),
     },
     // Ensure single React instance when linking local packages
     dedupe: ["react", "react-dom"],
