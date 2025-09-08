@@ -1,17 +1,35 @@
 import { json, redirect } from "@remix-run/node";
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Button, Group, Select, Stack, TextInput, Textarea, Title } from "@mantine/core";
+import {
+  Button,
+  Group,
+  Select,
+  Stack,
+  TextInput,
+  Textarea,
+  Title,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
-import { BreadcrumbSet } from "packages/timber";
+import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "New Activity" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
   const [assemblies, jobs] = await Promise.all([
-    prisma.assembly.findMany({ select: { id: true, name: true }, orderBy: { id: "asc" } }),
-    prisma.job.findMany({ select: { id: true, name: true }, orderBy: { id: "asc" } }),
+    prisma.assembly.findMany({
+      select: { id: true, name: true },
+      orderBy: { id: "asc" },
+    }),
+    prisma.job.findMany({
+      select: { id: true, name: true },
+      orderBy: { id: "asc" },
+    }),
   ]);
   return json({ assemblies, jobs });
 }
@@ -23,8 +41,12 @@ export async function action({ request }: ActionFunctionArgs) {
     description: (form.get("description") as string) || null,
     assemblyId: form.get("assemblyId") ? Number(form.get("assemblyId")) : null,
     jobId: form.get("jobId") ? Number(form.get("jobId")) : null,
-    startTime: form.get("startTime") ? new Date(form.get("startTime") as string) : null,
-    endTime: form.get("endTime") ? new Date(form.get("endTime") as string) : null,
+    startTime: form.get("startTime")
+      ? new Date(form.get("startTime") as string)
+      : null,
+    endTime: form.get("endTime")
+      ? new Date(form.get("endTime") as string)
+      : null,
     status: (form.get("status") as string) || null,
     notes: (form.get("notes") as string) || null,
   } as any;
@@ -38,7 +60,16 @@ export default function NewActivityRoute() {
   const busy = nav.state !== "idle";
   const submit = useSubmit();
   const form = useForm({
-    defaultValues: { name: "", description: "", assemblyId: null as number | null, jobId: null as number | null, startTime: "", endTime: "", status: "", notes: "" },
+    defaultValues: {
+      name: "",
+      description: "",
+      assemblyId: null as number | null,
+      jobId: null as number | null,
+      startTime: "",
+      endTime: "",
+      status: "",
+      notes: "",
+    },
   });
   return (
     <Stack gap="lg">
@@ -62,7 +93,11 @@ export default function NewActivityRoute() {
       >
         <Group gap="md" align="flex-end">
           <TextInput label="Name" w={180} {...form.register("name")} />
-          <Textarea label="Description" w={220} {...form.register("description")} />
+          <Textarea
+            label="Description"
+            w={220}
+            {...form.register("description")}
+          />
           <Controller
             name="assemblyId"
             control={form.control}
@@ -72,7 +107,10 @@ export default function NewActivityRoute() {
                 w={160}
                 value={field.value ? String(field.value) : null}
                 onChange={(v) => field.onChange(v ? Number(v) : null)}
-                data={assemblies.map((a: any) => ({ value: String(a.id), label: a.name || `Assembly #${a.id}` }))}
+                data={assemblies.map((a: any) => ({
+                  value: String(a.id),
+                  label: a.name || `Assembly #${a.id}`,
+                }))}
                 clearable
               />
             )}
@@ -86,13 +124,26 @@ export default function NewActivityRoute() {
                 w={160}
                 value={field.value ? String(field.value) : null}
                 onChange={(v) => field.onChange(v ? Number(v) : null)}
-                data={jobs.map((j: any) => ({ value: String(j.id), label: j.name || `Job #${j.id}` }))}
+                data={jobs.map((j: any) => ({
+                  value: String(j.id),
+                  label: j.name || `Job #${j.id}`,
+                }))}
                 clearable
               />
             )}
           />
-          <TextInput label="Start Time" type="datetime-local" w={180} {...form.register("startTime")} />
-          <TextInput label="End Time" type="datetime-local" w={180} {...form.register("endTime")} />
+          <TextInput
+            label="Start Time"
+            type="datetime-local"
+            w={180}
+            {...form.register("startTime")}
+          />
+          <TextInput
+            label="End Time"
+            type="datetime-local"
+            w={180}
+            {...form.register("endTime")}
+          />
           <TextInput label="Status" w={120} {...form.register("status")} />
           <Textarea label="Notes" w={180} {...form.register("notes")} />
           <Button type="submit" disabled={busy}>

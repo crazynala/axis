@@ -1,0 +1,45 @@
+/* app.css */
+@layer mantine {
+  /* Inline labels from md+ */
+  @media (min-width: 62em) {
+    .mantine-InputWrapper-root[data-variant="autoSize"] {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      align-items: center;
+      column-gap: 0.75rem; /* 12px-ish */
+    }
+    .mantine-InputWrapper-root[data-variant="autoSize"] .mantine-InputWrapper-label {
+        width: 7rem;
+      margin-bottom: 0 !important;
+      justify-self: end;
+      padding-right: 0.5rem;
+      white-space: nowrap;
+    }
+    .mantine-InputWrapper-root[data-variant="autoSize"] .mantine-InputWrapper-description,
+    .mantine-InputWrapper-root[data-variant="autoSize"] .mantine-InputWrapper-error {
+      grid-column: 2 / 3;
+    }
+  }
+
+  /* Per-field overrides */
+  .mantine-InputWrapper-root[data-inline-label="true"] {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-items: center;
+    column-gap: 0.75rem;
+  }
+  .mantine-InputWrapper-root[data-inline-label="true"] .mantine-InputWrapper-label {    
+    margin-bottom: 0 !important;
+    justify-self: end;
+    padding-right: 0.5rem;
+    white-space: nowrap;
+  }
+  .mantine-InputWrapper-root[data-inline-label="true"] .mantine-InputWrapper-description,
+  .mantine-InputWrapper-root[data-inline-label="true"] .mantine-InputWrapper-error {
+    grid-column: 2 / 3;
+  }
+
+  .mantine-InputWrapper-root[data-inline-label="false"] {
+    display: block;
+  }
+}

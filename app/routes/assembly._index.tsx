@@ -1,8 +1,20 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit, useNavigate, useSearchParams, Form } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  useNavigate,
+  useSearchParams,
+  Form,
+} from "@remix-run/react";
 import { Button, TextInput, Group, Stack, Title } from "@mantine/core";
-import { BreadcrumbSet } from "packages/timber";
+import { BreadcrumbSet } from "@aa/timber";
 import { useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
@@ -16,7 +28,10 @@ export async function loader(args: LoaderFunctionArgs) {
     defaultSort: { field: "id", dir: "asc" },
     searchableFields: ["name", "status", "notes"],
   });
-  const [rows, total] = await Promise.all([prisma.assembly.findMany({ ...prismaArgs }), prisma.assembly.count({ where: prismaArgs.where })]);
+  const [rows, total] = await Promise.all([
+    prisma.assembly.findMany({ ...prismaArgs }),
+    prisma.assembly.count({ where: prismaArgs.where }),
+  ]);
   return json({
     rows,
     total,
@@ -51,7 +66,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function AssemblyIndexRoute() {
-  const { rows, total, page, perPage, q, filters } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
@@ -66,10 +82,17 @@ export default function AssemblyIndexRoute() {
     <Stack gap="lg">
       <Group justify="space-between" align="center">
         <Title order={2}>Assembly</Title>
-        <BreadcrumbSet breadcrumbs={[{ label: "Assembly", href: "/assembly" }]} />
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Assembly", href: "/assembly" }]}
+        />
       </Group>
       <Group>
-        <Button component="a" href="/assembly/new" variant="filled" color="blue">
+        <Button
+          component="a"
+          href="/assembly/new"
+          variant="filled"
+          color="blue"
+        >
           New Assembly
         </Button>
       </Group>
@@ -80,7 +103,13 @@ export default function AssemblyIndexRoute() {
         </Title>
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="q" label="Search" placeholder="Name, status, notes" defaultValue={q || ""} w={240} />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Name, status, notes"
+              defaultValue={q || ""}
+              w={240}
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
@@ -97,7 +126,8 @@ export default function AssemblyIndexRoute() {
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
           onRowClick={(_rec: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
+            const rec =
+              typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
             if (rec?.id != null) navigate(`/assembly/${rec.id}`);
           }}
           onPageChange={(p) => {

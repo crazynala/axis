@@ -16,6 +16,12 @@ Last updated: 2025-09-08
   - `GlobalFormProvider` at root
   - `RecordBrowserProvider` at root; routes push their lists on mount
   - Optional priority gating to avoid list flip-flop when multiple routes update
+  - Form field convention: Mantine inputs should use the component `label` prop; avoid separate `<Text>` labels + layout wrappers unless necessary for custom layouts
+  - RecordNavButtons usage:
+    - Always derive `recordBrowser` like:
+      - `const { records: masterRecords } = useMasterTable()`
+      - `const recordBrowser = useRecordBrowser(currentId, masterRecords)`
+    - Do not call `useRecordBrowser(currentId)` without the `masterRecords` list; the list comes from the surrounding layout route that provides the master table
 - Logging
   - Client logger with module levels from `window.__LOG_LEVELS__`
   - Server pino; warn/error beacons to `/log`
@@ -31,6 +37,11 @@ Last updated: 2025-09-08
 - Value Lists (where enabled)
   - Create/Delete list
   - Upload from Excel
+  - Imports
+    - Product Movements: also maps FileMaker IDs on header rows
+      - a_AssemblyActivityID → ProductMovement.assemblyActivityId
+      - a_AssemblyID → ProductMovement.assemblyId
+      - a_CostingsID → ProductMovement.costingId
 
 ---
 
@@ -84,6 +95,27 @@ Last updated: 2025-09-08
 - Detail (`/products/:id`)
   - Fields: ID, SKU, Name (others may include type/stock flags/costs)
   - Actions: edit/save (if implemented)
+  - Stock by Batch
+    - Filters:
+      - Scope switch: All | Current (Current hides zero-qty batches)
+      - Location SegmentedControl: All | <location names>
+  - Batch rows show location, batch code/name, and quantity (available qty computed server-side consistent with Products → Stock view)
+  - Stock panels
+    - By Location: aggregated totals per location
+    - By Batch: filters
+      - Scope: SegmentedControl [All | Current]; Current hides zero-qty batches
+      - Location: SegmentedControl [All | each location name present in data]
+      - Table columns: Batch Codes, Name, Location, Received, Qty
+  - Product Movements
+    - Right of Stock panel on desktop (stacks on mobile)
+    - Toggle: SegmentedControl [Movement | Line]
+      - Movement view: latest 500 ProductMovement headers for this product
+        - Columns: Date, Type, Out, In, Qty, Notes
+        - Out/In show location names when available (fallback to id)
+        - Transfers (Type "Transfer") display both Out and In when both ids are present
+      - Line view: latest 500 ProductMovementLine rows for this product
+        - Columns: Date, Type, Out, In, Batch, Qty, Notes
+        - Batch shows `codeMill | codeSartor` when present; falls back to `batchId`
 
 ---
 
@@ -105,9 +137,11 @@ Last updated: 2025-09-08
   - Top Left card
     - Not editable: id
     - Editable: projectCode, name, customer (company picker)
+    - Field labels: use Mantine input `label` prop
   - Top Right card
   - Editable: customerOrderDate, targetDate, dropDeadDate, startDate, endDate,
     jobType, status, type, endCustomerName, customerPoNum (new schema field)
+    - Field labels: use Mantine input `label` prop (DatePickerInput, TextInput)
   - Forms
     - React Hook Form (RHF) + `useInitGlobalFormContext` wired to the global `SaveCancelHeader`
     - Save/Cancel triggered from the header (and Cmd/Ctrl+S); no inline Save buttons
@@ -128,16 +162,46 @@ Last updated: 2025-09-08
   - Dynamic columns from variant set (assembly or product fallback)
   - Rows: Ordered, Cut, Make, Pack; totals shown where available
 - Costings panel
-  - Columns: ID, Component (name/sku/id), Usage, Qty/Unit, Unit Cost
+  - Columns: ID (product id, external link), SKU, Name, Usage, Qty/Unit, Required, Loc Stock, All Stock, Used, Unit Cost
+    - ID column links to `/products/:id` using the ExternalLink widget
+    - Required = (Ordered - Cut) × Qty/Unit
+    - Loc Stock = stock of the component at the job's location; All Stock = global stock
+    - Used = quantity consumed across activities for this assembly
   - Actions:
     - Add costing (modal): search products, Quantity Per Unit, Unit Cost, Usage Type (cut/make)
       - Action intent: `costing.create`
     - Delete costing: `costing.delete`
 - Activity History panel
   - Columns: ID, Name, Job, End, Variant qty columns, Notes
+  - Row click opens activity modal for editing (date, breakdown, batch consumption)
   - Actions: delete activity: `activity.delete`
 - Form actions
   - Update assembly fields (name, status): `assembly.update`
+  - Cut activity creation:
+    - "Cut" button opens a modal (reusable component) with:
+      - RHF-managed form: required project-wide
+      - Date field
+      - Quantity breakdown
+        - Columns respect `c_numVariants` if present, else trimmed variant set length
+        - Defaults to "left to cut" per variant from server extension if available; otherwise `ordered - already cut`
+      - Material consumption section
+        - Accordion per costing. Header: product link `#id [sku] name`; right: `consumed / expected`
+        - Batches: lazy-loaded on panel open; clicking Available fills Consume
+        - Filters:
+          - Scope: All | Current (default Current)
+          - Location: All | Job location (defaults to the job's location; label shows actual location name)
+        - Inputs are compact (unstyled) full-cell fields
+        - Cannot consume more than the available stock for a given batch (client-side clamp)
+        - Batch available quantities computed server-side for consistency and performance
+    - On save, creates an AssemblyActivity (type cut) and ProductMovement + ProductMovementLine rows:
+      - One ProductMovement per batch location consumed
+      - movementType = "Assembly"
+      - locationOutId = the location of the consumed batches (for that group)
+      - productId = the costing's component product id (fallback to batch's product)
+      - quantity = total consumed across that location group (sum of positive entered amounts)
+      - Each ProductMovementLine:
+        - productMovementId set to the created header movement id
+        - quantity stored as negative to represent consumption
 
 ---
 
@@ -175,3 +239,4 @@ Last updated: 2025-09-08
 - Avoid Router hooks inside provider singletons; pass navigate/location via props if needed.
 - Keep canonical route shapes consistent with record browser assumptions.
 - When changing fields/columns/behaviors, update this doc in the same PR.
+- IDs display: do not prefix with `#` in the UI.

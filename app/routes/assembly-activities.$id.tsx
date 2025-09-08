@@ -1,11 +1,32 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
-import { Button, Group, Select, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
-import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "packages/timber";
+import {
+  Button,
+  Group,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import {
+  BreadcrumbSet,
+  useRecordBrowser,
+  RecordNavButtons,
+  useRecordBrowserShortcuts,
+  useMasterTable,
+} from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.activity ? `Activity #${data.activity.id}` : "Activity" }];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [
+  { title: data?.activity ? `Activity #${data.activity.id}` : "Activity" },
+];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -31,10 +52,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const data = {
       name: (form.get("name") as string) || null,
       description: (form.get("description") as string) || null,
-      assemblyId: form.get("assemblyId") ? Number(form.get("assemblyId")) : null,
+      assemblyId: form.get("assemblyId")
+        ? Number(form.get("assemblyId"))
+        : null,
       jobId: form.get("jobId") ? Number(form.get("jobId")) : null,
-      startTime: form.get("startTime") ? new Date(form.get("startTime") as string) : null,
-      endTime: form.get("endTime") ? new Date(form.get("endTime") as string) : null,
+      startTime: form.get("startTime")
+        ? new Date(form.get("startTime") as string)
+        : null,
+      endTime: form.get("endTime")
+        ? new Date(form.get("endTime") as string)
+        : null,
       status: (form.get("status") as string) || null,
       notes: (form.get("notes") as string) || null,
     } as any;
@@ -55,6 +82,7 @@ export default function AssemblyActivityDetailRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   useRecordBrowserShortcuts(activity.id);
+  const { records: masterRecords } = useMasterTable();
 
   return (
     <Stack gap="md">
@@ -63,17 +91,32 @@ export default function AssemblyActivityDetailRoute() {
         <BreadcrumbSet
           breadcrumbs={[
             { label: "Assembly Activities", href: "/assembly-activities" },
-            { label: String(activity.id), href: `/assembly-activities/${activity.id}` },
+            {
+              label: String(activity.id),
+              href: `/assembly-activities/${activity.id}`,
+            },
           ]}
         />
       </Group>
-      <RecordNavButtons recordBrowser={useRecordBrowser(activity.id)} />
+      <RecordNavButtons
+        recordBrowser={useRecordBrowser(activity.id, masterRecords)}
+      />
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />
         <Group align="flex-end" wrap="wrap">
-          <TextInput name="name" label="Name" w={200} defaultValue={activity.name || ""} />
-          <Textarea name="description" label="Description" w={260} defaultValue={activity.description || ""} />
+          <TextInput
+            name="name"
+            label="Name"
+            w={200}
+            defaultValue={activity.name || ""}
+          />
+          <Textarea
+            name="description"
+            label="Description"
+            w={260}
+            defaultValue={activity.description || ""}
+          />
           <Select
             name="assemblyId"
             label="Assembly"
@@ -82,7 +125,9 @@ export default function AssemblyActivityDetailRoute() {
               value: String(a.id),
               label: a.name || `Assembly #${a.id}`,
             }))}
-            defaultValue={activity.assemblyId != null ? String(activity.assemblyId) : null}
+            defaultValue={
+              activity.assemblyId != null ? String(activity.assemblyId) : null
+            }
             clearable
           />
           <Select
@@ -93,13 +138,45 @@ export default function AssemblyActivityDetailRoute() {
               value: String(j.id),
               label: j.name || `Job #${j.id}`,
             }))}
-            defaultValue={activity.jobId != null ? String(activity.jobId) : null}
+            defaultValue={
+              activity.jobId != null ? String(activity.jobId) : null
+            }
             clearable
           />
-          <TextInput name="startTime" label="Start Time" type="datetime-local" w={200} defaultValue={activity.startTime ? new Date(activity.startTime).toISOString().slice(0, 16) : ""} />
-          <TextInput name="endTime" label="End Time" type="datetime-local" w={200} defaultValue={activity.endTime ? new Date(activity.endTime).toISOString().slice(0, 16) : ""} />
-          <TextInput name="status" label="Status" w={140} defaultValue={activity.status || ""} />
-          <Textarea name="notes" label="Notes" w={240} defaultValue={activity.notes || ""} />
+          <TextInput
+            name="startTime"
+            label="Start Time"
+            type="datetime-local"
+            w={200}
+            defaultValue={
+              activity.startTime
+                ? new Date(activity.startTime).toISOString().slice(0, 16)
+                : ""
+            }
+          />
+          <TextInput
+            name="endTime"
+            label="End Time"
+            type="datetime-local"
+            w={200}
+            defaultValue={
+              activity.endTime
+                ? new Date(activity.endTime).toISOString().slice(0, 16)
+                : ""
+            }
+          />
+          <TextInput
+            name="status"
+            label="Status"
+            w={140}
+            defaultValue={activity.status || ""}
+          />
+          <Textarea
+            name="notes"
+            label="Notes"
+            w={240}
+            defaultValue={activity.notes || ""}
+          />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
           </Button>

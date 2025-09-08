@@ -18,10 +18,37 @@ const base =
   globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
 
+// Export the base client (no extensions) for lightweight queries where
+// computed attachments are not needed, to avoid unnecessary fan-out work.
+export const prismaBase: PrismaClient = base;
+
 // Helper to safely coerce to number
 function toNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+// Small concurrency limiter for async maps
+async function mapLimit<T, U>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<U>
+): Promise<U[]> {
+  const results: U[] = new Array(items.length) as U[];
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    () =>
+      (async function run() {
+        while (true) {
+          const i = next++;
+          if (i >= items.length) break;
+          results[i] = await mapper(items[i], i);
+        }
+      })()
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 // Movement type classification (initial guess; will evolve with data)
@@ -35,6 +62,7 @@ const IN_TYPES = [
   "return",
   "transfer_in",
   // observed
+  "transfer",
   "po (receive)",
   "shipping (in)",
 ];
@@ -48,6 +76,7 @@ const OUT_TYPES = [
   "adjust_out",
   "transfer_out",
   // observed
+  "transfer",
   "shipping (out)",
   "po (return)",
   "assembly",
@@ -339,9 +368,9 @@ async function attachStockQty<T extends { id?: number } | null>(
 async function attachStockQtyMany<T extends Array<{ id?: number }>>(
   products: T
 ): Promise<T> {
-  // Optimize by grouping ids and doing a single grouped fetch when needed in the future.
-  // For now, keep it simple and reuse per-row computation.
-  return (await Promise.all(products.map((p) => attachStockQty(p)))) as T;
+  // Limit concurrency to avoid exhausting the DB connection pool.
+  const out = await mapLimit(products as any[], 6, (p) => attachStockQty(p));
+  return out as T;
 }
 
 // ---- Batch stock helpers ----
@@ -387,7 +416,10 @@ async function attachBatchStockQty<T extends MaybeBatch>(batch: T): Promise<T> {
 async function attachBatchStockQtyMany<T extends Array<MaybeBatch>>(
   batches: T
 ): Promise<T> {
-  return (await Promise.all(batches.map((b) => attachBatchStockQty(b)))) as T;
+  const out = await mapLimit(batches as any[], 8, (b) =>
+    attachBatchStockQty(b)
+  );
+  return out as T;
 }
 
 // ---- Product aggregates: byLocation and byBatch ----
@@ -396,29 +428,31 @@ async function computeProductByLocation(
 ): Promise<
   Array<{ location_id: number | null; location_name: string; qty: number }>
 > {
-  const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
-  const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
   const rows = (await base.$queryRawUnsafe(
     `
-    WITH typed AS (
-      SELECT
-        CASE
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN pm."locationInId"
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN pm."locationOutId"
-          ELSE COALESCE(pm."locationId", pm."locationInId", pm."locationOutId")
-        END AS lid,
-        CASE
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0)
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
-          ELSE COALESCE(pml.quantity,0)
-        END AS qty
-      FROM "ProductMovementLine" pml
-      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
-      WHERE pml."productId" = $1
+    WITH pm AS (
+      SELECT 
+        COALESCE(NULLIF(lower(trim(COALESCE("movementType", ''))), ''), '') AS mt,
+        "locationInId"  AS loc_in,
+        "locationOutId" AS loc_out,
+        COALESCE(ABS(quantity),0) AS q_abs
+      FROM "ProductMovement"
+      WHERE "productId" = $1
+    ), rows AS (
+      -- Transfers: deduct from out, add to in
+      SELECT loc_out AS lid, -q_abs AS qty FROM pm WHERE mt = 'transfer' AND loc_out IS NOT NULL
+      UNION ALL
+      SELECT loc_in  AS lid, +q_abs AS qty FROM pm WHERE mt = 'transfer' AND loc_in  IS NOT NULL
+      UNION ALL
+      -- Non-transfers: add to in if present
+      SELECT loc_in  AS lid, +q_abs AS qty FROM pm WHERE mt <> 'transfer' AND loc_in  IS NOT NULL
+      UNION ALL
+      -- Non-transfers: subtract from out if present
+      SELECT loc_out AS lid, -q_abs AS qty FROM pm WHERE mt <> 'transfer' AND loc_out IS NOT NULL
     )
     SELECT l.id AS location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(qty),0) AS qty
-    FROM typed t
-    LEFT JOIN "Location" l ON l.id = t.lid
+    FROM rows r
+    LEFT JOIN "Location" l ON l.id = r.lid
     GROUP BY l.id, l.name
     ORDER BY l.name NULLS LAST, l.id
     `,
@@ -490,6 +524,121 @@ async function computeProductByBatch(productId: number): Promise<
     ...r,
     qty: Math.round(100 * Number(r.qty ?? 0)) / 100,
   }));
+}
+
+// Public helper: get batches for a product including computed available qty
+export async function getBatchesWithComputedQty(productId: number) {
+  const rows = await computeProductByBatch(productId);
+  return rows.map((r) => ({
+    id: r.batch_id,
+    name: r.batch_name,
+    codeMill: r.code_mill,
+    codeSartor: r.code_sartor,
+    quantity: r.qty,
+    location: { id: r.location_id, name: r.location_name },
+  }));
+}
+
+// Debug helper: inspect by-location contributions and compare strategies
+export async function debugProductByLocation(productId: number) {
+  const pm = (await base.$queryRawUnsafe(
+    `
+    SELECT 
+      pm.id,
+      lower(trim(COALESCE(pm."movementType", ''))) AS mt,
+      pm."locationInId"  AS loc_in,
+      pm."locationOutId" AS loc_out,
+      COALESCE(pm.quantity,0) AS qty
+    FROM "ProductMovement" pm
+    WHERE pm."productId" = $1
+    ORDER BY pm.id
+    `,
+    productId
+  )) as Array<{
+    id: number;
+    mt: string | null;
+    loc_in: number | null;
+    loc_out: number | null;
+    qty: any;
+  }>;
+  const current = await computeProductByLocation(productId);
+  // Build contributions from PM rows (split transfers, sign non-transfers)
+  const contrib: Array<{
+    kind: string;
+    movement_id: number;
+    lid: number | null;
+    qty: number;
+    mt: string | null;
+  }> = [];
+  for (const r of pm) {
+    const absq = Math.abs(toNumber(r.qty));
+    const mt = (r.mt || "").toLowerCase();
+    if (mt === "transfer") {
+      if (r.loc_out != null)
+        contrib.push({
+          kind: "transfer_out",
+          movement_id: r.id,
+          lid: r.loc_out,
+          qty: -absq,
+          mt,
+        });
+      if (r.loc_in != null)
+        contrib.push({
+          kind: "transfer_in",
+          movement_id: r.id,
+          lid: r.loc_in,
+          qty: +absq,
+          mt,
+        });
+      continue;
+    }
+    if (r.loc_in != null)
+      contrib.push({
+        kind: "in",
+        movement_id: r.id,
+        lid: r.loc_in,
+        qty: +absq,
+        mt,
+      });
+    if (r.loc_out != null)
+      contrib.push({
+        kind: "out",
+        movement_id: r.id,
+        lid: r.loc_out,
+        qty: -absq,
+        mt,
+      });
+    if (r.loc_in == null && r.loc_out == null) {
+      // orphan; include zeroed row for visibility
+      contrib.push({
+        kind: "orphan",
+        movement_id: r.id,
+        lid: null,
+        qty: 0,
+        mt,
+      });
+    }
+  }
+  // Compare: ignore movementType entirely; just +in -out
+  const compareMap = new Map<number | null, number>();
+  for (const r of pm) {
+    const absq = Math.abs(toNumber(r.qty));
+    if (r.loc_out != null)
+      compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - absq);
+    if (r.loc_in != null)
+      compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + absq);
+  }
+  const compare = Array.from(compareMap.entries()).map(([lid, qty]) => ({
+    lid,
+    qty: Math.round(qty * 100) / 100,
+  }));
+  // For UI: include pmOnly aliasing to current for now (header-only strategy)
+  const pmOnly = current.map((r) => ({
+    lid: r.location_id,
+    name: r.location_name,
+    qty: r.qty,
+  }));
+  return { pm, current, compare, pmOnly, contrib };
 }
 
 async function attachProductAggregates<T extends { id?: number } | null>(

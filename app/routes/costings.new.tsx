@@ -1,26 +1,50 @@
 import { json, redirect } from "@remix-run/node";
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Button, Group, NumberInput, Select, Stack, Textarea, Title } from "@mantine/core";
+import {
+  Button,
+  Group,
+  NumberInput,
+  Select,
+  Stack,
+  Textarea,
+  Title,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
-import { BreadcrumbSet } from "packages/timber";
+import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "New Costing" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
   const [products, assemblies] = await Promise.all([
-    prisma.product.findMany({ select: { id: true, sku: true, name: true }, orderBy: { id: "asc" } }),
-    prisma.assembly.findMany({ select: { id: true, name: true }, orderBy: { id: "asc" } }),
+    prisma.product.findMany({
+      select: { id: true, sku: true, name: true },
+      orderBy: { id: "asc" },
+    }),
+    prisma.assembly.findMany({
+      select: { id: true, name: true },
+      orderBy: { id: "asc" },
+    }),
   ]);
   return json({ products, assemblies });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  const assemblyId = form.get("assemblyId") ? Number(form.get("assemblyId")) : null;
-  const componentId = form.get("componentId") ? Number(form.get("componentId")) : null;
-  const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
+  const assemblyId = form.get("assemblyId")
+    ? Number(form.get("assemblyId"))
+    : null;
+  const componentId = form.get("componentId")
+    ? Number(form.get("componentId"))
+    : null;
+  const quantityPerUnit = form.get("quantityPerUnit")
+    ? Number(form.get("quantityPerUnit"))
+    : null;
   const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
   const usageType = (form.get("usageType") as string) || null;
   const notes = (form.get("notes") as string) || null;
@@ -66,10 +90,14 @@ export default function NewCostingRoute() {
       <form
         onSubmit={form.handleSubmit((values) => {
           const fd = new FormData();
-          if (values.assemblyId != null) fd.set("assemblyId", String(values.assemblyId));
-          if (values.componentId != null) fd.set("componentId", String(values.componentId));
-          if (values.quantityPerUnit != null) fd.set("quantityPerUnit", String(values.quantityPerUnit));
-          if (values.unitCost != null) fd.set("unitCost", String(values.unitCost));
+          if (values.assemblyId != null)
+            fd.set("assemblyId", String(values.assemblyId));
+          if (values.componentId != null)
+            fd.set("componentId", String(values.componentId));
+          if (values.quantityPerUnit != null)
+            fd.set("quantityPerUnit", String(values.quantityPerUnit));
+          if (values.unitCost != null)
+            fd.set("unitCost", String(values.unitCost));
           if (values.usageType) fd.set("usageType", String(values.usageType));
           if (values.notes) fd.set("notes", String(values.notes));
           submit(fd, { method: "post" });
@@ -85,7 +113,10 @@ export default function NewCostingRoute() {
                 w={220}
                 value={field.value ? String(field.value) : null}
                 onChange={(v) => field.onChange(v ? Number(v) : null)}
-                data={assemblies.map((a: any) => ({ value: String(a.id), label: a.name || `Assembly #${a.id}` }))}
+                data={assemblies.map((a: any) => ({
+                  value: String(a.id),
+                  label: a.name || `Assembly #${a.id}`,
+                }))}
                 clearable
               />
             )}
@@ -99,7 +130,12 @@ export default function NewCostingRoute() {
                 w={220}
                 value={field.value ? String(field.value) : null}
                 onChange={(v) => field.onChange(v ? Number(v) : null)}
-                data={products.map((p: any) => ({ value: String(p.id), label: p.name ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})` : `#${p.id}` }))}
+                data={products.map((p: any) => ({
+                  value: String(p.id),
+                  label: p.name
+                    ? `${p.name} (#${p.id}${p.sku ? ", " + p.sku : ""})`
+                    : `#${p.id}`,
+                }))}
                 clearable
               />
             )}
@@ -107,12 +143,28 @@ export default function NewCostingRoute() {
           <Controller
             name="quantityPerUnit"
             control={form.control}
-            render={({ field }) => <NumberInput label="Qty / Unit" w={140} value={field.value ?? undefined} onChange={(v) => field.onChange(v === "" ? null : Number(v))} allowDecimal />}
+            render={({ field }) => (
+              <NumberInput
+                label="Qty / Unit"
+                w={140}
+                value={field.value ?? undefined}
+                onChange={(v) => field.onChange(v === "" ? null : Number(v))}
+                allowDecimal
+              />
+            )}
           />
           <Controller
             name="unitCost"
             control={form.control}
-            render={({ field }) => <NumberInput label="Unit Cost" w={140} value={field.value ?? undefined} onChange={(v) => field.onChange(v === "" ? null : Number(v))} allowDecimal />}
+            render={({ field }) => (
+              <NumberInput
+                label="Unit Cost"
+                w={140}
+                value={field.value ?? undefined}
+                onChange={(v) => field.onChange(v === "" ? null : Number(v))}
+                allowDecimal
+              />
+            )}
           />
           <Controller
             name="usageType"
@@ -131,7 +183,13 @@ export default function NewCostingRoute() {
               />
             )}
           />
-          <Textarea label="Notes" autosize minRows={1} w={240} {...form.register("notes")} />
+          <Textarea
+            label="Notes"
+            autosize
+            minRows={1}
+            w={240}
+            {...form.register("notes")}
+          />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
           </Button>

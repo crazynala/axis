@@ -1,10 +1,18 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "packages/timber";
+import {
+  BreadcrumbSet,
+  useRecordBrowser,
+  RecordNavButtons,
+  useRecordBrowserShortcuts,
+  useMasterTable,
+} from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.company ? `Contact ${data.company.name}` : "Contact" }];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [
+  { title: data?.company ? `Contact ${data.company.name}` : "Contact" },
+];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -18,17 +26,26 @@ export default function ContactDetailPlaceholderRoute() {
   const { company } = useLoaderData<typeof loader>();
   // Use company.id as the current record id for navigation
   useRecordBrowserShortcuts(company.id);
+  const { records: masterRecords } = useMasterTable();
   return (
     <div>
       <BreadcrumbSet
         breadcrumbs={[
           { label: "Contacts", href: "/contacts" },
-          { label: company.name || String(company.id), href: `/contacts/${company.id}` },
+          {
+            label: company.name || String(company.id),
+            href: `/contacts/${company.id}`,
+          },
         ]}
       />
-      <RecordNavButtons recordBrowser={useRecordBrowser(company.id)} />
+      <RecordNavButtons
+        recordBrowser={useRecordBrowser(company.id, masterRecords)}
+      />
       <h1>Contact</h1>
-      <p>This is a placeholder detail page using Company data until Contact exists.</p>
+      <p>
+        This is a placeholder detail page using Company data until Contact
+        exists.
+      </p>
       <p>
         <strong>Name:</strong> {company.name}
       </p>

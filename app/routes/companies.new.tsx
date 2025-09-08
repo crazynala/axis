@@ -1,9 +1,20 @@
 import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
 import { useNavigation, useSubmit, Link } from "@remix-run/react";
-import { Button, Checkbox, Group, Stack, TextInput, Title } from "@mantine/core";
+import {
+  Button,
+  Checkbox,
+  Group,
+  Stack,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
-import { GlobalFormProvider, SaveCancelHeader, BreadcrumbSet } from "packages/timber";
+import {
+  GlobalFormProvider,
+  SaveCancelHeader,
+  BreadcrumbSet,
+} from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "New Company" }];
@@ -27,7 +38,17 @@ export default function NewCompanyRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
-  const form = useForm({ defaultValues: { name: "", isCarrier: false, isCustomer: false, isSupplier: false, isInactive: false, isActive: true, notes: "" } });
+  const form = useForm({
+    defaultValues: {
+      name: "",
+      isCarrier: false,
+      isCustomer: false,
+      isSupplier: false,
+      isInactive: false,
+      isActive: true,
+      notes: "",
+    },
+  });
 
   const breadcrumbs = [
     { label: "Companies", href: "/companies" },
@@ -59,24 +80,58 @@ export default function NewCompanyRoute() {
             <Controller
               name="isCarrier"
               control={form.control}
-              render={({ field }) => <Checkbox label="Carrier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+              render={({ field }) => (
+                <Checkbox
+                  label="Carrier"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.currentTarget.checked)}
+                />
+              )}
             />
             <Controller
               name="isCustomer"
               control={form.control}
-              render={({ field }) => <Checkbox label="Customer" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+              render={({ field }) => (
+                <Checkbox
+                  label="Customer"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.currentTarget.checked)}
+                />
+              )}
             />
             <Controller
               name="isSupplier"
               control={form.control}
-              render={({ field }) => <Checkbox label="Supplier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+              render={({ field }) => (
+                <Checkbox
+                  label="Supplier"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.currentTarget.checked)}
+                />
+              )}
             />
             <Controller
               name="isInactive"
               control={form.control}
-              render={({ field }) => <Checkbox label="Inactive" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+              render={({ field }) => (
+                <Checkbox
+                  label="Inactive"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.currentTarget.checked)}
+                />
+              )}
             />
-            <Controller name="isActive" control={form.control} render={({ field }) => <Checkbox label="Active" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />} />
+            <Controller
+              name="isActive"
+              control={form.control}
+              render={({ field }) => (
+                <Checkbox
+                  label="Active"
+                  checked={!!field.value}
+                  onChange={(e) => field.onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
             <TextInput label="Notes" w={240} {...form.register("notes")} />
           </Group>
           <Group mt="md">

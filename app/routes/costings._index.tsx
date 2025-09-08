@@ -1,9 +1,30 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit, useSearchParams, useNavigate, Form, useRouteLoaderData } from "@remix-run/react";
-import { Button, Group, Stack, Title, Select, NumberInput, TextInput } from "@mantine/core";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  useSearchParams,
+  useNavigate,
+  Form,
+  useRouteLoaderData,
+} from "@remix-run/react";
+import {
+  Button,
+  Group,
+  Stack,
+  Title,
+  Select,
+  NumberInput,
+  TextInput,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
-import { BreadcrumbSet } from "packages/timber";
+import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
@@ -59,9 +80,15 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = form.get("_intent");
 
   if (intent === "create") {
-    const assemblyId = form.get("assemblyId") ? Number(form.get("assemblyId")) : null;
-    const componentId = form.get("componentId") ? Number(form.get("componentId")) : null;
-    const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
+    const assemblyId = form.get("assemblyId")
+      ? Number(form.get("assemblyId"))
+      : null;
+    const componentId = form.get("componentId")
+      ? Number(form.get("componentId"))
+      : null;
+    const quantityPerUnit = form.get("quantityPerUnit")
+      ? Number(form.get("quantityPerUnit"))
+      : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
@@ -88,7 +115,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CostingsIndexRoute() {
-  const { rows, total, page, perPage, q, filters, products, assemblies } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, products, assemblies } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
@@ -117,10 +145,17 @@ export default function CostingsIndexRoute() {
     <Stack gap="lg">
       <Group justify="space-between" align="center">
         <Title order={2}>Costings</Title>
-        <BreadcrumbSet breadcrumbs={[{ label: "Costings", href: "/costings" }]} />
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Costings", href: "/costings" }]}
+        />
       </Group>
       <Group>
-        <Button component={Link} to="/costings/new" variant="filled" color="blue">
+        <Button
+          component={Link}
+          to="/costings/new"
+          variant="filled"
+          color="blue"
+        >
           New Costing
         </Button>
       </Group>
@@ -131,7 +166,13 @@ export default function CostingsIndexRoute() {
         </Title>
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="q" label="Search" placeholder="Notes, usage" defaultValue={q || ""} w={200} />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Notes, usage"
+              defaultValue={q || ""}
+              w={200}
+            />
             <Select
               name="usageType"
               label="Usage"
@@ -143,8 +184,18 @@ export default function CostingsIndexRoute() {
               clearable
               w={140}
             />
-            <TextInput name="assemblyId" label="Assembly ID" defaultValue={filters?.assemblyId || ""} w={140} />
-            <TextInput name="componentId" label="Component ID" defaultValue={filters?.componentId || ""} w={140} />
+            <TextInput
+              name="assemblyId"
+              label="Assembly ID"
+              defaultValue={filters?.assemblyId || ""}
+              w={140}
+            />
+            <TextInput
+              name="componentId"
+              label="Component ID"
+              defaultValue={filters?.componentId || ""}
+              w={140}
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
@@ -161,7 +212,8 @@ export default function CostingsIndexRoute() {
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
           onRowClick={(_rec: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
+            const rec =
+              typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
             if (rec?.id != null) navigate(`/costings/${rec.id}`);
           }}
           onPageChange={(p) => {
@@ -185,7 +237,8 @@ export default function CostingsIndexRoute() {
             {
               accessor: "componentId",
               title: "Component",
-              render: (r: any) => r.component?.name || r.component?.sku || r.componentId,
+              render: (r: any) =>
+                r.component?.name || r.component?.sku || r.componentId,
             },
             { accessor: "usageType", title: "Usage" },
             { accessor: "quantityPerUnit", title: "Qty/Unit" },

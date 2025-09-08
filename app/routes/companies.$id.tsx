@@ -1,13 +1,38 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { useInitGlobalFormContext, useRecordBrowserShortcuts, RecordNavButtons } from "packages/timber";
-import { Button, Checkbox, Group, Stack, Text, TextInput, Title } from "@mantine/core";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+} from "@remix-run/react";
+import {
+  useInitGlobalFormContext,
+  useRecordBrowserShortcuts,
+  RecordNavButtons,
+  useRecordBrowser,
+  useMasterTable,
+} from "@aa/timber";
+import {
+  Button,
+  Checkbox,
+  Group,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.company?.name ? `Company ${data.company.name}` : "Company" }];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [
+  { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
+];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -50,9 +75,19 @@ export default function CompanyDetailRoute() {
   const busy = nav.state !== "idle";
   const submit = useSubmit();
   // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
-  const recordBrowser = useRecordBrowserShortcuts(company.id);
+  useRecordBrowserShortcuts(company.id);
+  const { records: masterRecords } = useMasterTable();
+  const recordBrowser = useRecordBrowser(company.id, masterRecords);
 
-  const form = useForm<{ name: string; notes: string; isCarrier: boolean; isCustomer: boolean; isSupplier: boolean; isInactive: boolean; isActive: boolean }>({
+  const form = useForm<{
+    name: string;
+    notes: string;
+    isCarrier: boolean;
+    isCustomer: boolean;
+    isSupplier: boolean;
+    isInactive: boolean;
+    isActive: boolean;
+  }>({
     defaultValues: {
       name: company.name || "",
       notes: company.notes || "",
@@ -79,7 +114,15 @@ export default function CompanyDetailRoute() {
   }, [company.id]);
 
   // Wire this form into the global Save/Cancel header via GlobalFormProvider in root
-  type FormValues = { name: string; notes: string; isCarrier: boolean; isCustomer: boolean; isSupplier: boolean; isInactive: boolean; isActive: boolean };
+  type FormValues = {
+    name: string;
+    notes: string;
+    isCarrier: boolean;
+    isCustomer: boolean;
+    isSupplier: boolean;
+    isInactive: boolean;
+    isActive: boolean;
+  };
   const save = (values: FormValues) => {
     const fd = new FormData();
     fd.set("_intent", "update");
@@ -93,7 +136,7 @@ export default function CompanyDetailRoute() {
     submit(fd, { method: "post" });
   };
 
-  useInitGlobalFormContext<FormValues>(form as any, save, () => form.reset());
+  useInitGlobalFormContext(form as any, save, () => form.reset());
 
   return (
     <Stack gap="md">
@@ -108,23 +151,61 @@ export default function CompanyDetailRoute() {
       <form onSubmit={form.handleSubmit(save)}>
         <Group align="flex-end" wrap="wrap">
           <TextInput label="Name" w={240} {...form.register("name")} />
-          <Controller name="isCarrier" control={form.control} render={({ field }) => <Checkbox label="Carrier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />} />
+          <Controller
+            name="isCarrier"
+            control={form.control}
+            render={({ field }) => (
+              <Checkbox
+                label="Carrier"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
+          />
           <Controller
             name="isCustomer"
             control={form.control}
-            render={({ field }) => <Checkbox label="Customer" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+            render={({ field }) => (
+              <Checkbox
+                label="Customer"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
           />
           <Controller
             name="isSupplier"
             control={form.control}
-            render={({ field }) => <Checkbox label="Supplier" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+            render={({ field }) => (
+              <Checkbox
+                label="Supplier"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
           />
           <Controller
             name="isInactive"
             control={form.control}
-            render={({ field }) => <Checkbox label="Inactive" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />}
+            render={({ field }) => (
+              <Checkbox
+                label="Inactive"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
           />
-          <Controller name="isActive" control={form.control} render={({ field }) => <Checkbox label="Active" checked={!!field.value} onChange={(e) => field.onChange(e.currentTarget.checked)} />} />
+          <Controller
+            name="isActive"
+            control={form.control}
+            render={({ field }) => (
+              <Checkbox
+                label="Active"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
+          />
           <TextInput label="Notes" w={300} {...form.register("notes")} />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
