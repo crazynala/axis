@@ -73,7 +73,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const me = await getUser(request);
   const colorScheme = (me?.colorScheme as "light" | "dark") ?? "light";
-  return json({ colorScheme, logLevels });
+  const desktopNavOpened = me?.desktopNavOpened ?? true;
+  return json({ colorScheme, desktopNavOpened, logLevels });
 }
 export function meta() {
   return [
@@ -159,9 +160,13 @@ const theme = createTheme({
 });
 
 export default function App() {
-  const { colorScheme, logLevels } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
+  const colorScheme = data.colorScheme;
+  const logLevels = (data as any).logLevels;
+  const desktopNavPref = (data as any).desktopNavOpened ?? true;
   const location = useLocation();
   const isLogin = location.pathname === "/login";
+  const isAdmin = location.pathname.startsWith("/admin");
   const navTopItems = [
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
     { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
@@ -181,7 +186,11 @@ export default function App() {
     { to: "/assembly", label: "Assembly" },
     { to: "/assembly-activities", label: "Assembly Activities" },
     { to: "/costings", label: "Costings" },
-    { to: "/admin", icon: <IconSettings />, label: "Admin" },
+    {
+      to: "/admin/value-lists/Category",
+      icon: <IconSettings />,
+      label: "Admin",
+    },
     { to: "/settings", icon: <IconAdjustments />, label: "Settings" },
   ];
 
@@ -205,13 +214,19 @@ export default function App() {
         />
         <MantineProvider defaultColorScheme={colorScheme} theme={theme}>
           <Notifications />
-          <GlobalFormProvider>
-            <GlobalHotkeys />
-            <AppShellLayout
-              navTopItems={navTopItems}
-              navBottomItems={navBottomItems}
-            />
-          </GlobalFormProvider>
+          {isLogin || isAdmin ? (
+            // Public auth pages render without the main AppShell
+            <Outlet />
+          ) : (
+            <GlobalFormProvider>
+              <GlobalHotkeys />
+              <AppShellLayout
+                desktopNavOpenedInitial={desktopNavPref}
+                navTopItems={navTopItems}
+                navBottomItems={navBottomItems}
+              />
+            </GlobalFormProvider>
+          )}
           <ScrollRestoration />
           <Scripts />
         </MantineProvider>
@@ -221,23 +236,40 @@ export default function App() {
 }
 
 function AppShellLayout({
+  desktopNavOpenedInitial,
   navTopItems,
   navBottomItems,
 }: {
+  desktopNavOpenedInitial: boolean;
   navTopItems: { to: string; label: string; icon?: ReactNode }[];
   navBottomItems: { to: string; label: string; icon?: ReactNode }[];
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
-  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(true);
+  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(
+    desktopNavOpenedInitial
+  );
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Persist desktop nav toggle per user
+  useEffect(() => {
+    // no-op on first render; changes only
+  }, []);
+  useEffect(() => {
+    // fire-and-forget; ignore errors
+    fetch("/api/nav-open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ desktopNavOpened }),
+    }).catch(() => {});
+  }, [desktopNavOpened]);
 
   // Color scheme toggle moved to settings page
   return (
     <AppShell
       padding="lg"
       navbar={{
-        width: desktopNavOpened ? 220 : 45,
+        width: desktopNavOpened ? 210 : 45,
         breakpoint: "sm",
         collapsed: { mobile: !mobileNavOpened },
       }}
@@ -321,7 +353,6 @@ function AppShellLayout({
                     component={RemixNavLink}
                     label={item.icon}
                     to={item.to}
-                    px={0}
                     key={item.to}
                   />
                 );

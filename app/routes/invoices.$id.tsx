@@ -12,6 +12,7 @@ import {
   useMasterTable,
   useRecordBrowserShortcuts,
   useInitGlobalFormContext,
+  RecordNavButtons,
 } from "@aa/timber";
 import {
   Card,
@@ -25,6 +26,7 @@ import {
   Table,
 } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
+import { CompanySelect, type CompanyOption } from "../components/CompanySelect";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -39,10 +41,34 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (!Number.isFinite(id)) throw new Response("Invalid id", { status: 400 });
   const invoice = await prisma.invoice.findUnique({
     where: { id },
-    include: { lines: true, company: { select: { name: true } } },
+    include: { lines: true, company: { select: { id: true, name: true } } },
   });
   if (!invoice) throw new Response("Not found", { status: 404 });
-  return json({ invoice });
+  const companies = await prisma.company.findMany({
+    select: {
+      id: true,
+      name: true,
+      isCustomer: true,
+      isSupplier: true,
+      isCarrier: true,
+    },
+    orderBy: { name: "asc" },
+    take: 1000,
+  });
+  // Totals
+  const totals = (invoice.lines || []).reduce(
+    (acc: any, l: any) => {
+      const qty = Number(l.quantity ?? 0);
+      const cost = Number(l.priceCost ?? 0);
+      const sell = Number(l.priceSell ?? 0);
+      acc.qty += qty;
+      acc.cost += cost * qty;
+      acc.sell += sell * qty;
+      return acc;
+    },
+    { qty: 0, cost: 0, sell: 0 }
+  );
+  return json({ invoice, companies, totals });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -54,9 +80,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const date = dateRaw ? new Date(dateRaw) : null;
     const status = (form.get("status") as string) || null;
     const notes = (form.get("notes") as string) || null;
+    const companyIdRaw = form.get("companyId") as string | null;
+    const companyId = companyIdRaw ? Number(companyIdRaw) : null;
     await prisma.invoice.update({
       where: { id },
-      data: { invoiceCode, date, status, notes },
+      data: { invoiceCode, date, status, notes, companyId },
     });
     return redirect(`/invoices/${id}`);
   }
@@ -64,7 +92,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function InvoiceDetailRoute() {
-  const { invoice } = useLoaderData<typeof loader>();
+  const { invoice, companies, totals } = useLoaderData<typeof loader>();
   useRecordBrowserShortcuts(invoice.id);
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
@@ -77,6 +105,7 @@ export default function InvoiceDetailRoute() {
       date: invoice.date
         ? new Date(invoice.date).toISOString().slice(0, 10)
         : "",
+      companyId: invoice.company?.id ?? null,
     },
   });
   useInitGlobalFormContext(form as any, (values: any) => {
@@ -86,6 +115,7 @@ export default function InvoiceDetailRoute() {
     fd.set("status", values.status || "");
     fd.set("notes", values.notes || "");
     fd.set("date", values.date || "");
+    if (values.companyId != null) fd.set("companyId", String(values.companyId));
     submit(fd, { method: "post" });
   });
   const recordBrowser = useRecordBrowser(invoice.id, masterRecords);
@@ -98,7 +128,7 @@ export default function InvoiceDetailRoute() {
             { label: String(invoice.id), href: `/invoices/${invoice.id}` },
           ]}
         />
-        {/* RecordNavButtons would go here if imported */}
+        <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
       <Card withBorder padding="md">
@@ -123,6 +153,27 @@ export default function InvoiceDetailRoute() {
             {...form.register("date")}
             mod="data-autoSize"
             placeholder="YYYY-MM-DD"
+          />
+          <Controller
+            name="companyId"
+            control={form.control}
+            render={({ field }) => (
+              <CompanySelect
+                label="Customer"
+                value={field.value as any}
+                onChange={(v) => field.onChange(v)}
+                options={
+                  companies.map((c) => ({
+                    value: c.id,
+                    label: c.name || String(c.id),
+                    isCustomer: !!c.isCustomer,
+                    isSupplier: !!c.isSupplier,
+                    isCarrier: !!c.isCarrier,
+                  })) as CompanyOption[]
+                }
+                filter="customer"
+              />
+            )}
           />
           <TextInput
             label="Status"
@@ -163,6 +214,20 @@ export default function InvoiceDetailRoute() {
                   <Table.Td>{l.priceSell ?? ""}</Table.Td>
                 </Table.Tr>
               ))}
+              <Table.Tr>
+                <Table.Td colSpan={2}>
+                  <strong>Totals</strong>
+                </Table.Td>
+                <Table.Td>
+                  <strong>{totals.qty}</strong>
+                </Table.Td>
+                <Table.Td>
+                  <strong>{totals.cost.toFixed(2)}</strong>
+                </Table.Td>
+                <Table.Td>
+                  <strong>{totals.sell.toFixed(2)}</strong>
+                </Table.Td>
+              </Table.Tr>
             </Table.Tbody>
           </Table>
         </Card>

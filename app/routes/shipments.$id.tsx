@@ -12,6 +12,7 @@ import {
   useMasterTable,
   useRecordBrowserShortcuts,
   useInitGlobalFormContext,
+  RecordNavButtons,
 } from "@aa/timber";
 import {
   Card,
@@ -111,7 +112,7 @@ export default function ShipmentDetailRoute() {
             { label: String(shipment.id), href: `/shipments/${shipment.id}` },
           ]}
         />
-        {/* RecordNavButtons could go here */}
+        <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
       <Card withBorder padding="md">
@@ -202,6 +203,8 @@ export default function ShipmentDetailRoute() {
                 <Table.Th>ID</Table.Th>
                 <Table.Th>Product</Table.Th>
                 <Table.Th>Qty</Table.Th>
+                <Table.Th>Job</Table.Th>
+                <Table.Th>Location</Table.Th>
                 <Table.Th>Status</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -211,6 +214,8 @@ export default function ShipmentDetailRoute() {
                   <Table.Td>{l.id}</Table.Td>
                   <Table.Td>{l.productId ?? ""}</Table.Td>
                   <Table.Td>{l.quantity ?? ""}</Table.Td>
+                  <Table.Td>{l.jobId ?? ""}</Table.Td>
+                  <Table.Td>{l.locationId ?? ""}</Table.Td>
                   <Table.Td>{l.status ?? ""}</Table.Td>
                 </Table.Tr>
               ))}

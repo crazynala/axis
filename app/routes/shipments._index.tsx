@@ -1,6 +1,11 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+} from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
@@ -24,6 +29,8 @@ export async function loader(args: LoaderFunctionArgs) {
         type: true,
         shipmentType: true,
         trackingNo: true,
+        companySender: { select: { name: true } },
+        companyReceiver: { select: { name: true } },
       },
     }),
     prisma.shipment.count({ where: prismaArgs.where }),
@@ -33,6 +40,25 @@ export async function loader(args: LoaderFunctionArgs) {
 
 export default function ShipmentsIndexRoute() {
   const data = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const onPageChange = (page: number) => {
+    const url = new URL(
+      location.pathname + location.search,
+      window.location.origin
+    );
+    url.searchParams.set("page", String(page));
+    navigate(url.pathname + "?" + url.searchParams.toString());
+  };
+  const onPerPageChange = (pp: number) => {
+    const url = new URL(
+      location.pathname + location.search,
+      window.location.origin
+    );
+    url.searchParams.set("perPage", String(pp));
+    url.searchParams.set("page", "1");
+    navigate(url.pathname + "?" + url.searchParams.toString());
+  };
   return (
     <div>
       <BreadcrumbSet
@@ -43,7 +69,10 @@ export default function ShipmentsIndexRoute() {
         records={data.rows as any}
         totalRecords={data.total}
         page={data.page}
+        onPageChange={onPageChange}
         recordsPerPage={data.perPage}
+        onRecordsPerPageChange={onPerPageChange}
+        recordsPerPageOptions={[10, 20, 50, 100]}
         columns={[
           {
             accessor: "id",
@@ -58,6 +87,16 @@ export default function ShipmentsIndexRoute() {
           { accessor: "shipmentType", title: "Ship Type" },
           { accessor: "status" },
           { accessor: "trackingNo", title: "Tracking" },
+          {
+            accessor: "companySender.name",
+            title: "From",
+            render: (r: any) => r.companySender?.name ?? "",
+          },
+          {
+            accessor: "companyReceiver.name",
+            title: "To",
+            render: (r: any) => r.companyReceiver?.name ?? "",
+          },
         ]}
       />
     </div>

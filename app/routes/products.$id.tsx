@@ -27,6 +27,11 @@ import {
 } from "@mantine/core";
 import { TextInput, Checkbox, NumberInput, Modal, Switch } from "@mantine/core";
 import { TaxCodeSelect, type TaxCodeOption } from "../components/TaxCodeSelect";
+import { CompanySelect, type CompanyOption } from "../components/CompanySelect";
+import {
+  CategorySelect,
+  type CategoryOption,
+} from "../components/CategorySelect";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
 import { useMemo, useState } from "react";
@@ -82,6 +87,22 @@ export async function loader({ params }: LoaderFunctionArgs) {
     where: { type: "Tax" },
     orderBy: { label: "asc" },
     select: { id: true, label: true },
+  });
+  const categories = await prisma.valueList.findMany({
+    where: { type: "Category" },
+    orderBy: { label: "asc" },
+    select: { id: true, label: true },
+  });
+  const companies = await prisma.company.findMany({
+    select: {
+      id: true,
+      name: true,
+      isCustomer: true,
+      isSupplier: true,
+      isCarrier: true,
+    },
+    orderBy: { name: "asc" },
+    take: 1000,
   });
   const productChoices = await prisma.product.findMany({
     select: {
@@ -164,6 +185,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
       value: t.id,
       label: t.label || String(t.id),
     })),
+    categoryOptions: categories.map((c) => ({
+      value: c.id,
+      label: c.label || String(c.id),
+    })),
+    companyOptions: companies.map((c) => ({
+      value: c.id,
+      label: c.name || String(c.id),
+      isCustomer: !!c.isCustomer,
+      isSupplier: !!c.isSupplier,
+      isCarrier: !!c.isCarrier,
+    })),
   });
 }
 
@@ -199,6 +231,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
     num("costPrice");
     num("manualSalePrice");
     num("purchaseTaxId");
+    num("categoryId");
+    num("customerId");
+    num("supplierId");
     bool("stockTrackingEnabled");
     bool("batchTrackingEnabled");
     await prisma.product.update({ where: { id }, data });
@@ -234,6 +269,8 @@ export default function ProductDetailRoute() {
     movementHeaders,
     locationNameById,
     taxCodeOptions,
+    categoryOptions,
+    companyOptions,
   } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -252,6 +289,10 @@ export default function ProductDetailRoute() {
       manualSalePrice: product.manualSalePrice ?? undefined,
       purchaseTaxId:
         (product as any).purchaseTaxId ?? product.purchaseTax?.id ?? undefined,
+      categoryId:
+        (product as any).categoryId ?? product.category?.id ?? undefined,
+      customerId: (product as any).customerId ?? product.customer?.id ?? null,
+      supplierId: (product as any).supplierId ?? product.supplier?.id ?? null,
       stockTrackingEnabled: !!product.stockTrackingEnabled,
       batchTrackingEnabled: !!product.batchTrackingEnabled,
     },
@@ -269,6 +310,12 @@ export default function ProductDetailRoute() {
       fd.set("manualSalePrice", String(values.manualSalePrice));
     if (values.purchaseTaxId != null)
       fd.set("purchaseTaxId", String(values.purchaseTaxId));
+    if (values.categoryId != null)
+      fd.set("categoryId", String(values.categoryId));
+    if (values.customerId != null)
+      fd.set("customerId", String(values.customerId));
+    if (values.supplierId != null)
+      fd.set("supplierId", String(values.supplierId));
     fd.set(
       "stockTrackingEnabled",
       values.stockTrackingEnabled ? "true" : "false"
@@ -377,11 +424,18 @@ export default function ProductDetailRoute() {
           </Card.Section>
           <Divider my="xs" />
           <Stack gap={6}>
-            <TextInput
-              label="Customer"
-              mod="data-autoSize"
-              readOnly
-              value={product.customer?.name || ""}
+            <Controller
+              name="customerId"
+              control={form.control}
+              render={({ field }) => (
+                <CompanySelect
+                  label="Customer"
+                  value={field.value as any}
+                  onChange={(v) => field.onChange(v)}
+                  options={companyOptions as unknown as CompanyOption[]}
+                  filter="customer"
+                />
+              )}
             />
             <TextInput
               label="Variant Set"
@@ -462,17 +516,30 @@ export default function ProductDetailRoute() {
                 />
               )}
             />
-            <TextInput
-              label="Category"
-              mod="data-autoSize"
-              readOnly
-              value={product.category?.label || product.subCategory || ""}
+            <Controller
+              name="categoryId"
+              control={form.control}
+              render={({ field }) => (
+                <CategorySelect
+                  label="Category"
+                  value={field.value as any}
+                  onChange={(v) => field.onChange(v)}
+                  options={categoryOptions as unknown as CategoryOption[]}
+                />
+              )}
             />
-            <TextInput
-              label="Supplier"
-              mod="data-autoSize"
-              readOnly
-              value={product.supplier?.name || ""}
+            <Controller
+              name="supplierId"
+              control={form.control}
+              render={({ field }) => (
+                <CompanySelect
+                  label="Supplier"
+                  value={field.value as any}
+                  onChange={(v) => field.onChange(v)}
+                  options={companyOptions as unknown as CompanyOption[]}
+                  filter="supplier"
+                />
+              )}
             />
           </Stack>
         </Card>

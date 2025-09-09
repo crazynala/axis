@@ -19,6 +19,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent !== "uploadExcel")
     return json({ error: "Invalid intent" }, { status: 400 });
 
+  // Helpers
   const normalizeKey = (s: string) =>
     String(s || "")
       .toLowerCase()
@@ -52,12 +53,6 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const d = new Date(String(raw));
     return isNaN(d.getTime()) ? null : d;
-  };
-  const asBool = (raw: any): boolean => {
-    const s = String(raw ?? "")
-      .trim()
-      .toLowerCase();
-    return ["1", "y", "yes", "true", "t"].includes(s);
   };
 
   const uploadMode = ((form.get("mode") as string) || "auto").toLowerCase();
@@ -132,24 +127,6 @@ export async function action({ request }: ActionFunctionArgs) {
     return null;
   };
 
-  const IMPORT_BATCH_SIZE = Number(process.env.IMPORT_BATCH_SIZE ?? 200);
-  const processRowsInBatches = async <T,>(
-    items: T[],
-    worker: (item: T, index: number) => Promise<void>,
-    opts?: { batchSize?: number; label?: string }
-  ) => {
-    const batchSize = opts?.batchSize ?? IMPORT_BATCH_SIZE;
-    const label = opts?.label ?? "rows";
-    for (let start = 0; start < items.length; start += batchSize) {
-      const end = Math.min(items.length, start + batchSize);
-      const slice = items.slice(start, end);
-      await Promise.allSettled(
-        slice.map((item, idx) => worker(item, start + idx))
-      );
-      console.log(`[import] ${label} ${end}/${items.length}`);
-    }
-  };
-
   const modeOf = (f: File): string | null =>
     uploadMode === "auto" ? inferMode(f.name) : uploadMode;
   const filesOrdered = [...files].sort((a, b) => {
@@ -187,14 +164,466 @@ export async function action({ request }: ActionFunctionArgs) {
       `[import] start mode=${finalMode} file="${file.name}" sheet="${chosenSheet}" totalRows=${rows.length}`
     );
 
-    // Implementations elided for brevity; call existing import logic where applicable
-    // For this refactor, we reuse admin.tsx's logic. Here, return a summary placeholder.
+    // Invoices
+    if (finalMode === "import:invoices") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        const companyId = asNum(pick(r, ["a_CompanyID"])) as number | null;
+        const invoiceCode = (
+          pick(r, ["Code", "InvoiceNo", "InvoiceCode"]) ?? ""
+        )
+          .toString()
+          .trim();
+        const date = asDate(pick(r, ["Date"])) as Date | null;
+        const productSkuCopy =
+          (pick(r, ["ProductSKU"]) ?? "").toString().trim() || null;
+        const productNameCopy =
+          (pick(r, ["ProductName"]) ?? "").toString().trim() || null;
+        const priceCost = asNum(pick(r, ["Price|Cost", "PriceCost"])) as
+          | number
+          | null;
+        const priceSell = asNum(pick(r, ["Price|Sell", "PriceSell"])) as
+          | number
+          | null;
+        const taxCodeId = asNum(pick(r, ["TaxCode"])) as number | null;
+        const taxRateCopy = asNum(pick(r, ["TaxRate"])) as number | null;
+        const data: any = {
+          companyId,
+          invoiceCode: invoiceCode || null,
+          date,
+          productSkuCopy,
+          productNameCopy,
+          priceCost,
+          priceSell,
+          taxCodeId,
+          taxRateCopy,
+        };
+        try {
+          if (idNum != null) {
+            await prisma.invoice.upsert({
+              where: { id: idNum },
+              create: { id: idNum, ...data },
+              update: data,
+            });
+          } else {
+            await prisma.invoice.create({ data });
+          }
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            companyId,
+            invoiceCode,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] invoices upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Invoice Lines
+    if (finalMode === "import:invoice_lines") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        if (idNum == null) {
+          skipped++;
+          errors.push({
+            index: i,
+            message: "Missing a__Serial/id for invoice line",
+          });
+          continue;
+        }
+        const data: any = {
+          id: idNum,
+          costingId: asNum(pick(r, ["a_CostingID"])) as number | null,
+          expenseId: asNum(pick(r, ["a_ExpenseID"])) as number | null,
+          invoiceId: asNum(pick(r, ["a_InvoiceID"])) as number | null,
+          jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
+          productId: asNum(
+            pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
+          ) as number | null,
+          purchaseOrderLineId: asNum(pick(r, ["a_PurchaseOrderLineID"])) as
+            | number
+            | null,
+          shippingIdActual: asNum(pick(r, ["a_ShippingID|Actual"])) as
+            | number
+            | null,
+          shippingIdDuty: asNum(pick(r, ["a_ShippingID|Duty"])) as
+            | number
+            | null,
+          category: (pick(r, ["Category"]) ?? "").toString().trim() || null,
+          details: (pick(r, ["Details"]) ?? "").toString().trim() || null,
+          subCategory:
+            (pick(r, ["SubCategory"]) ?? "").toString().trim() || null,
+          priceCost: asNum(pick(r, ["Price|Cost", "PriceCost"])) as
+            | number
+            | null,
+          priceSell: asNum(pick(r, ["Price|Sell", "PriceSell"])) as
+            | number
+            | null,
+          quantity: asNum(pick(r, ["Quantity"])) as number | null,
+          taxCodeId: asNum(pick(r, ["TaxCode|Cost", "a_TaxCodeID"])) as
+            | number
+            | null,
+          taxRateCopy: asNum(pick(r, ["TaxRate|Cost", "TaxRateCost"])) as
+            | number
+            | null,
+          invoicedTotalManual: asNum(pick(r, ["InvoicedTotalManual"])) as
+            | number
+            | null,
+        };
+        try {
+          await prisma.invoiceLine.upsert({
+            where: { id: idNum },
+            create: data,
+            update: data,
+          });
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            invoiceId: data.invoiceId,
+            jobId: data.jobId,
+            productId: data.productId,
+            purchaseOrderLineId: data.purchaseOrderLineId,
+            taxCodeId: data.taxCodeId,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] invoice_lines upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Purchase Orders
+    if (finalMode === "import:purchase_orders") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        if (idNum == null) {
+          skipped++;
+          errors.push({
+            index: i,
+            message: "Missing a__Serial/id for purchase order",
+          });
+          continue;
+        }
+        const data: any = {
+          id: idNum,
+          companyId: asNum(pick(r, ["a_CompanyID"])) as number | null,
+          consigneeCompanyId: asNum(pick(r, ["a_CompanyID|Consignee"])) as
+            | number
+            | null,
+          locationId: asNum(pick(r, ["a_LocationID|In"])) as number | null,
+          date: asDate(pick(r, ["Date"])) as Date | null,
+        };
+        try {
+          await prisma.purchaseOrder.upsert({
+            where: { id: idNum },
+            create: data,
+            update: data,
+          });
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] purchase_orders upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Purchase Order Lines
+    if (finalMode === "import:purchase_order_lines") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        if (idNum == null) {
+          skipped++;
+          errors.push({
+            index: i,
+            message: "Missing a__Serial/id for purchase order line",
+          });
+          continue;
+        }
+        const data: any = {
+          id: idNum,
+          assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
+          jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
+          purchaseOrderId: asNum(pick(r, ["a_PurchaseOrderID"])) as
+            | number
+            | null,
+          productId: asNum(
+            pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
+          ) as number | null,
+          productSkuCopy:
+            (pick(r, ["ProductSkuCopy"]) ?? "").toString().trim() || null,
+          productNameCopy:
+            (pick(r, ["ProductNameCopy"]) ?? "").toString().trim() || null,
+          priceCost: asNum(pick(r, ["PriceCost"])) as number | null,
+          priceSell: asNum(pick(r, ["PriceSell"])) as number | null,
+          qtyShipped: asNum(pick(r, ["QtyShipped"])) as number | null,
+          qtyReceived: asNum(pick(r, ["QtyReceived"])) as number | null,
+          quantity: asNum(pick(r, ["Quantity"])) as number | null,
+          quantityOrdered: asNum(pick(r, ["QuantityOrdered"])) as number | null,
+          taxCodeId: asNum(pick(r, ["a_TaxCodeID"])) as number | null,
+          taxRate: asNum(pick(r, ["TaxRate"])) as number | null,
+        };
+        try {
+          await prisma.purchaseOrderLine.upsert({
+            where: { id: idNum },
+            create: data,
+            update: data,
+          });
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            purchaseOrderId: data.purchaseOrderId,
+            productId: data.productId,
+            jobId: data.jobId,
+            assemblyId: data.assemblyId,
+            taxCodeId: data.taxCodeId,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] purchase_order_lines upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Shipments
+    if (finalMode === "import:shipments") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        if (idNum == null) {
+          skipped++;
+          errors.push({
+            index: i,
+            message: "Missing a__Serial/id for shipment",
+          });
+          continue;
+        }
+        const data: any = {
+          id: idNum,
+          addressIdShip: asNum(pick(r, ["a_AddressID|Ship"])) as number | null,
+          companyIdCarrier: asNum(pick(r, ["a_CompanyID_Carrier"])) as
+            | number
+            | null,
+          companyIdReceiver: asNum(pick(r, ["a_CompanyID_Receiver"])) as
+            | number
+            | null,
+          companyIdSender: asNum(pick(r, ["a_CompanyID_Sender"])) as
+            | number
+            | null,
+          locationId: asNum(pick(r, ["a_LocationID"])) as number | null,
+          contactIdReceiver: asNum(pick(r, ["a_ContactID_Receiver"])) as
+            | number
+            | null,
+          date: asDate(pick(r, ["Date"])) as Date | null,
+          dateReceived: asDate(pick(r, ["DateReceived"])) as Date | null,
+          trackingNo: (pick(r, ["TrackingNo"]) ?? "").toString().trim() || null,
+          packingSlipCode:
+            (pick(r, ["PackingSlipCode"]) ?? "").toString().trim() || null,
+          type: (pick(r, ["Type"]) ?? "").toString().trim() || null,
+          status: (pick(r, ["Status"]) ?? "").toString().trim() || null,
+        };
+        try {
+          await prisma.shipment.upsert({
+            where: { id: idNum },
+            create: data,
+            update: data,
+          });
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] shipments upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Shipment Lines
+    if (finalMode === "import:shipment_lines") {
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
+        if (idNum == null) {
+          skipped++;
+          errors.push({
+            index: i,
+            message: "Missing a__Serial/id for shipment line",
+          });
+          continue;
+        }
+        const data: any = {
+          id: idNum,
+          assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
+          jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
+          locationId: asNum(pick(r, ["a_LocationID"])) as number | null,
+          productId: asNum(
+            pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
+          ) as number | null,
+          shipmentId: asNum(pick(r, ["a_ShippingID"])) as number | null,
+          variantSetId: asNum(pick(r, ["a_VariantSetID"])) as number | null,
+          category: (pick(r, ["Category"]) ?? "").toString().trim() || null,
+          details: (pick(r, ["Details"]) ?? "").toString().trim() || null,
+          quantity: asNum(pick(r, ["Quantity"])) as number | null,
+          status: (pick(r, ["Status"]) ?? "").toString().trim() || null,
+          subCategory:
+            (pick(r, ["SubCategory"]) ?? "").toString().trim() || null,
+        };
+        try {
+          await prisma.shipmentLine.upsert({
+            where: { id: idNum },
+            create: data,
+            update: data,
+          });
+          created += 1;
+        } catch (e: any) {
+          const log = {
+            index: i,
+            id: idNum,
+            shipmentId: data.shipmentId,
+            productId: data.productId,
+            code: e?.code,
+            constraint: e?.meta?.field_name || e?.meta?.target || null,
+            message: e?.message,
+          };
+          errors.push(log);
+          console.error("[import] shipment_lines upsert error", log);
+        }
+      }
+      batchResults.push({
+        file: file.name,
+        target: finalMode,
+        sheet: chosenSheet,
+        total: rows.length,
+        imported: created + updated,
+        created,
+        updated,
+        skipped,
+        errors,
+      });
+      continue;
+    }
+
+    // Fallback
     batchResults.push({
       file: file.name,
       target: finalMode,
       sheet: chosenSheet,
       total: rows.length,
-      imported: rows.length,
+      imported: 0,
+      note: "Mode not implemented in this pass",
     });
   }
 

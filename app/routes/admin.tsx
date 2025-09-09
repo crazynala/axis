@@ -1,5 +1,6 @@
 import { Outlet, NavLink as RemixNavLink } from "@remix-run/react";
-import { AppShell, NavLink, Stack, Title } from "@mantine/core";
+import { AppShell, Divider, NavLink, Stack, Title } from "@mantine/core";
+import { IconArrowLeft } from "@tabler/icons-react";
 
 const items = [
   { to: "/admin/import", label: "Excel Import" },
@@ -22,6 +23,13 @@ export default function AdminLayoutRoute() {
         <Stack>
           <Title order={4}>Admin</Title>
           <Stack gap="xs">
+            <NavLink
+              component={RemixNavLink}
+              to="/"
+              label="Close"
+              leftSection={<IconArrowLeft />}
+            />
+            <Divider />
             {items.map((it) => (
               <NavLink
                 component={RemixNavLink}

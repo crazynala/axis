@@ -157,6 +157,7 @@ model ValueList {
     productsCategory    Product[]           @relation("Category")
     // Back-relations
     invoiceLinesTaxCode InvoiceLine[]       @relation("TaxCode")
+    invoicesTaxCode     Invoice[]           @relation("Inv_TaxCode")
     // Back-relations: Purchase Orders
     poLinesTaxCode      PurchaseOrderLine[] @relation("POL_TaxCode")
     // Metadata
@@ -167,32 +168,34 @@ model ValueList {
 }
 
 model Assembly {
-    id                  Int                @id @default(autoincrement())
+    id                  Int                 @id @default(autoincrement())
     name                String?
     status              String?
     quantity            Float?
     // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
-    qtyOrderedBreakdown Int[]              @default([])
+    qtyOrderedBreakdown Int[]               @default([])
     notes               String?
     variants            Variant[]
     // Removed direct Batch relation; batches are independent of assemblies
-    job                 Job?               @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
+    job                 Job?                @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
     jobId               Int?
     // Link Assembly to original Product by id only (no relation)
     productId           Int?
     // Optional link to a Variant Set (may mirror the Product's variant set)
     variantSetId        Int?
-    variantSet          VariantSet?        @relation(fields: [variantSetId], references: [id])
-    activities          AssemblyActivity[] @relation("Assembly_Activities")
+    variantSet          VariantSet?         @relation(fields: [variantSetId], references: [id])
+    activities          AssemblyActivity[]  @relation("Assembly_Activities")
     costings            Costing[]
     batches             Batch[]
     // Back-relations
     shipmentLines       ShipmentLine[]
+    // Back-relations: Purchase Order Lines referencing this assembly
+    purchaseOrderLines  PurchaseOrderLine[]
     // Metadata
     createdBy           String?
     modifiedBy          String?
-    createdAt           DateTime?          @default(now())
-    updatedAt           DateTime?          @updatedAt
+    createdAt           DateTime?           @default(now())
+    updatedAt           DateTime?           @updatedAt
 }
 
 model Variant {
@@ -452,16 +455,18 @@ model AssemblyActivity {
 
 // --- Auth models ---
 model User {
-    id             Int             @id @default(autoincrement())
-    email          String          @unique
-    passwordHash   String
-    name           String?
-    recordsPerPage Int             @default(25)
-    isActive       Boolean         @default(true)
-    colorScheme    ColorScheme     @default(light)
-    createdAt      DateTime        @default(now())
-    updatedAt      DateTime        @updatedAt
-    resets         PasswordReset[]
+    id               Int             @id @default(autoincrement())
+    email            String          @unique
+    passwordHash     String
+    name             String?
+    recordsPerPage   Int             @default(25)
+    isActive         Boolean         @default(true)
+    colorScheme      ColorScheme     @default(light)
+    // Persist UI preference for desktop sidebar open/closed
+    desktopNavOpened Boolean         @default(true)
+    createdAt        DateTime        @default(now())
+    updatedAt        DateTime        @updatedAt
+    resets           PasswordReset[]
 }
 
 model PasswordReset {
@@ -526,18 +531,26 @@ model ForexLine {
 }
 
 model Invoice {
-    id          Int           @id // a__Serial maps here
-    companyId   Int?
-    invoiceCode String?       @unique
-    date        DateTime?
-    notes       String?
-    status      String?
-    createdBy   String?
-    createdAt   DateTime?     @default(now())
-    modifiedBy  String?
-    updatedAt   DateTime?     @updatedAt
-    company     Company?      @relation(fields: [companyId], references: [id])
-    lines       InvoiceLine[]
+    id              Int           @id // a__Serial maps here
+    companyId       Int?
+    invoiceCode     String?       @unique
+    date            DateTime?
+    // Additional imported fields
+    productSkuCopy  String?
+    productNameCopy String?
+    priceCost       Float?
+    priceSell       Float?
+    taxCodeId       Int?
+    taxRateCopy     Float?
+    notes           String?
+    status          String?
+    createdBy       String?
+    createdAt       DateTime?     @default(now())
+    modifiedBy      String?
+    updatedAt       DateTime?     @updatedAt
+    company         Company?      @relation(fields: [companyId], references: [id])
+    taxCode         ValueList?    @relation("Inv_TaxCode", fields: [taxCodeId], references: [id])
+    lines           InvoiceLine[]
 }
 
 model InvoiceLine {
@@ -557,7 +570,8 @@ model InvoiceLine {
     priceSell           Float?
     quantity            Float?
     taxCodeId           Int?
-    taxRateCost         Float?
+    // Renamed to reflect source import naming
+    taxRateCopy         Float?
     invoicedTotalManual Float?
     createdBy           String?
     createdAt           DateTime?  @default(now())
@@ -632,7 +646,8 @@ model ShipmentLine {
     jobId        Int?
     locationId   Int?
     productId    Int?
-    shippingId   Int?
+    // Renamed from shippingId -> shipmentId
+    shipmentId   Int?
     variantSetId Int?
     category     String?
     details      String?
@@ -648,7 +663,7 @@ model ShipmentLine {
     job          Job?        @relation(fields: [jobId], references: [id])
     location     Location?   @relation(fields: [locationId], references: [id])
     product      Product?    @relation(fields: [productId], references: [id])
-    shipment     Shipment?   @relation(fields: [shippingId], references: [id])
+    shipment     Shipment?   @relation(fields: [shipmentId], references: [id])
     variantSet   VariantSet? @relation(fields: [variantSetId], references: [id])
 }
 
@@ -693,6 +708,8 @@ model PurchaseOrderLine {
     id              Int            @id // a__Serial maps here
     purchaseOrderId Int?
     jobId           Int?
+    // Optional link to assembly (for import mapping a_AssemblyID)
+    assemblyId      Int?
     productId       Int?
     productSkuCopy  String?
     productNameCopy String?
@@ -710,6 +727,7 @@ model PurchaseOrderLine {
     updatedAt       DateTime?      @updatedAt
     purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
     job             Job?           @relation(fields: [jobId], references: [id])
+    assembly        Assembly?      @relation(fields: [assemblyId], references: [id])
     product         Product?       @relation(fields: [productId], references: [id])
     taxCode         ValueList?     @relation("POL_TaxCode", fields: [taxCodeId], references: [id])
 }

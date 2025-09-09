@@ -2,7 +2,7 @@
 
 Purpose: Record what each route shows and can do so we can spot regressions quickly during refactors.
 
-Last updated: 2025-09-08
+Last updated: 2025-09-09
 
 ## Global UI and Behavior
 
@@ -30,9 +30,13 @@ Last updated: 2025-09-08
       - `const recordBrowser = useRecordBrowser(currentId, masterRecords)`
     - Do not call `useRecordBrowser(currentId)` without the `masterRecords` list; the list comes from the surrounding layout route that provides the master table
 - Logging
+
   - Client logger with module levels from `window.__LOG_LEVELS__`
   - Server pino; warn/error beacons to `/log`
   - Admin persists levels via Prisma `SavedView` (module=log, name=levels)
+
+- Auth screens (no AppShell)
+  - The `/login` route renders without the main AppShell/nav. Root checks `location.pathname === "/login"` and renders `<Outlet />` directly.
 
 ### Navigation (from `app/root.tsx`)
 
@@ -52,26 +56,49 @@ Last updated: 2025-09-08
 
 ## Admin (`/admin`)
 
+- Layout
+
+  - Dedicated Admin sidebar and content area using a nested AppShell at `app/routes/admin.tsx`.
+  - This nested AppShell visually overrides the root AppShell header/nav within the Admin section (details below).
+
+- Navigation entries (children routes)
+
+  - Import: `/admin/import` – Excel import tools
+  - Logging: `/admin/logging` – per-module log levels with persistence
+  - Value Lists: `/admin/value-lists/:listType` – list types include `Tax`, `Category`, `Subcategory`
+  - Forex: `/admin/forex/:fromCurrency/:toCurrency` – default link points to `/admin/forex/USD/TRY`
+  - DHL Records: `/admin/dhl-records` (list) and `/admin/dhl-records/:id` (detail)
+
+- Redirects (legacy → admin)
+
+  - `/forex` → `/admin/forex/USD/TRY`
+  - `/dhl-records` → `/admin/dhl-records`
+  - `/dhl-records/:id` → `/admin/dhl-records/:id`
+
 - Logging Settings
+
   - Per-module level dropdowns: silent, error, warn, info, debug, trace
   - Save persists and updates client levels without reload
-- Value Lists (where enabled)
-  - Create/Delete list
-  - Upload from Excel
-  - Imports
-    - Product Movements
-      - Maps core fields: Type, Date, Quantity, Movement_From (a_LocationID_Out), Movement_To (a_LocationID_In), ShippingType
-      - Product resolution: numeric Product.id OR SKU (case-insensitive)
-      - Direction: uses provided From/To as locationOutId/locationInId (no inference)
-      - Also maps FileMaker linkage IDs on header rows
-        - a_AssemblyActivityID → ProductMovement.assemblyActivityId
-        - a_AssemblyID → ProductMovement.assemblyId
-        - a_CostingsID → ProductMovement.costingId
-    - Product Movement Lines
-      - Maps: a_ProductMovementID (FK), a_ProductCode (numeric id or SKU), Quantity, Date, a_AssemblyLineID (costing), a_BatchID, a_PurchaseOrderLineID
-      - If referenced Batch.id is missing, auto-creates a per-product Regen batch (codeSartor = REGEN-<productId>) and reuses it
-      - Pre-scans to align Batch id sequence to avoid collisions under concurrency
-      - Ignores line-level MovementType; relies on the header’s movementType where needed
+
+- Value Lists
+
+  - Dynamic by `:listType` param (Tax, Category, Subcategory)
+  - Create/Delete entries; upload from Excel (where enabled)
+
+- Imports (Excel)
+  - Product Movements
+    - Maps core fields: Type, Date, Quantity, Movement_From (a_LocationID_Out), Movement_To (a_LocationID_In), ShippingType
+    - Product resolution: numeric Product.id OR SKU (case-insensitive)
+    - Direction: uses provided From/To as locationOutId/locationInId (no inference)
+    - Also maps FileMaker linkage IDs on header rows
+      - a_AssemblyActivityID → ProductMovement.assemblyActivityId
+      - a_AssemblyID → ProductMovement.assemblyId
+      - a_CostingsID → ProductMovement.costingId
+  - Product Movement Lines
+    - Maps: a_ProductMovementID (FK), a_ProductCode (numeric id or SKU), Quantity, Date, a_AssemblyLineID (costing), a_BatchID, a_PurchaseOrderLineID
+    - If referenced Batch.id is missing, auto-creates a per-product Regen batch (codeSartor = REGEN-<productId>) and reuses it
+    - Pre-scans to align Batch id sequence to avoid collisions under concurrency
+    - Ignores line-level MovementType; relies on the header’s movementType where needed
 
 ---
 
@@ -178,14 +205,28 @@ Last updated: 2025-09-08
 ## Invoices (`/invoices`)
 
 - Layout: provides master list to Record Browser
-- Index: columns ID, Code, Date, Status
-- Detail: editable fields code, date, status, notes; lines table with product/qty/cost/sell
+- Index
+  - Columns: ID, Code, Date, Company, Amount, Status
+  - Company shows the related company name when present
+  - Amount is computed as sum(priceSell × qty) across lines for each invoice
+  - Pagination and per-page dropdown wired to URL
+- Detail
+  - Editable: code, date, status, notes, customer (CompanySelect with filter=customer)
+  - Lines table: product, qty, cost, sell; totals row (Qty, Total Cost, Total Sell)
+  - Record Browser: prev/next across current invoice list
 
 ## Shipments (`/shipments`)
 
 - Layout: provides master list
-- Index: columns ID, Date, Type, Ship Type, Status, Tracking
-- Detail: editable fields date, dateReceived, type, status, tracking, packingSlipCode; read-only: carrier/sender/receiver/location; lines table id/product/qty/status
+- Index
+  - Columns: ID, Date, Type, Ship Type, Status, Tracking, From, To
+  - From/To resolve sender/receiver company names
+  - Pagination and per-page dropdown wired to URL
+- Detail
+  - Editable: date, dateReceived, type, status, tracking, packingSlipCode
+  - Read-only: carrier, sender, receiver, location names
+  - Lines table: id, product, qty, job, location, status (visible)
+  - Record Browser: prev/next across current shipment list
 
 ## Expenses (`/expenses`)
 
@@ -204,11 +245,25 @@ Last updated: 2025-09-08
 - Index-only: columns Date, From, To, Rate
 - No detail route
 
+### Admin Forex (`/admin/forex/:from/:to`)
+
+- Index-only for a specific pair: columns Date, From, To, Rate
+- Default link uses USD→TRY
+
 ## Purchase Orders (`/purchase-orders`)
 
 - Layout: provides master list
-- Index: columns ID, Date, Vendor, Consignee, Location
-- Detail: editable date; read-only vendor/consignee/location; lines table with product, qty ordered/current/shipped/received, costs, tax
+- Index
+  - Columns: ID, Date, Vendor, Consignee, Location, Total Cost
+  - Vendor/Consignee/Location resolve via relations; fallback to id→name lookup when relations are absent
+  - Total Cost = sum(priceCost × qty) across lines for each PO
+  - Pagination and per-page dropdown wired to URL
+- Detail
+  - Editable: date, status
+  - Read-only: vendor/consignee/location names (fallbacks shown when relations missing)
+  - Lines table: product, qty ordered/current, shipped, received, cost, sell; totals row (Qty Ordered, Qty, Total Cost, Total Sell)
+  - Add Line: opens a modal with Product picker + Qty Ordered; posts `_intent=line.add`
+  - Record Browser: prev/next across current PO list
 
 ### Import mapping
 
@@ -235,6 +290,41 @@ Last updated: 2025-09-08
   - QuantityOrdered → quantityOrdered (original)
   - TaxCodeID → taxCodeId
   - TaxRate → taxRate
+
+### Additional Import mappings
+
+- Shipment (import:shipments)
+
+  - a_AddressID|Ship → addressIdShip
+  - a_CompanyID_Carrier → companyIdCarrier
+  - a_CompanyID_Receiver → companyIdReceiver
+  - a_CompanyID_Sender → companyIdSender
+  - a_LocationID → locationId
+  - a_ContactID_Receiver → contactIdReceiver
+
+- Shipment Line (import:shipment_lines)
+
+  - a_AssemblyID → assemblyId
+  - a_JobNo → jobId
+  - a_LocationID → locationId
+  - a_ShippingID → shipmentId
+  - a_VariantSetID → variantSetId
+
+- Invoice Line (import:invoice_lines)
+
+  - Price|Cost → priceCost
+  - Price|Sell → priceSell
+  - TaxCode|Cost → taxCodeId
+  - TaxRate|Cost → taxRateCopy
+
+- Invoice (import:invoices)
+  - Code → invoiceCode
+  - ProductSKU → productSkuCopy
+  - ProductName → productNameCopy
+  - Price|Cost → priceCost
+  - Price|Sell → priceSell
+  - TaxCode → taxCodeId
+  - TaxRate → taxRateCopy
 
 ## Jobs (`/jobs`)
 
@@ -349,3 +439,13 @@ Last updated: 2025-09-08
 - Keep canonical route shapes consistent with record browser assumptions.
 - When changing fields/columns/behaviors, update this doc in the same PR.
 - IDs display: do not prefix with `#` in the UI.
+
+---
+
+## Notes on AppShell nesting (Root vs Admin)
+
+- Root (`app/root.tsx`) wraps most pages in a top-level AppShell (header + left nav). It conditionally skips the AppShell for `/login`, rendering the route’s `<Outlet />` directly.
+- Admin (`app/routes/admin.tsx`) is a layout route that renders its own Mantine AppShell (sidebar + content). Because it’s nested, the Admin layout’s visual chrome replaces the root chrome for its children. Practically:
+  - Root renders `<AppShell.Main><Outlet /></AppShell.Main>`; the child route (`/admin`) renders another AppShell inside that area, effectively becoming the visible frame.
+  - Admin sets `header={{ height: 0 }}` and provides its own sidebar; this makes the Admin area look distinct without duplicating headers.
+  - Record Browser still works because the Admin layout provides the master list (via `MasterTableProvider`) where needed.
