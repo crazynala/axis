@@ -16,7 +16,14 @@ Last updated: 2025-09-08
   - `GlobalFormProvider` at root
   - `RecordBrowserProvider` at root; routes push their lists on mount
   - Optional priority gating to avoid list flip-flop when multiple routes update
-  - Form field convention: Mantine inputs should use the component `label` prop; avoid separate `<Text>` labels + layout wrappers unless necessary for custom layouts
+  - Form field convention
+    - Use Mantine input `label` prop (no separate `<Text>` labels/wrappers unless layout demands it)
+    - Add `mod="data-autoSize"` to inputs so labels align and inputs expand to full width in our compact cards
+    - Pair with RHF `register` or controlled `value/onChange`
+    - Example
+      - Text: `<TextInput label="Name" mod="data-autoSize" {...form.register('name')} />`
+      - Number: `<NumberInput label="Unit Cost" mod="data-autoSize" value={v} onChange={setV} />`
+    - Note: The CSS that implements `data-autoSize` relies on Mantine's DOM structure: wrapper > label + input. Keep Mantine at v8 and avoid overriding that structure in custom components.
   - RecordNavButtons usage:
     - Always derive `recordBrowser` like:
       - `const { records: masterRecords } = useMasterTable()`
@@ -26,6 +33,20 @@ Last updated: 2025-09-08
   - Client logger with module levels from `window.__LOG_LEVELS__`
   - Server pino; warn/error beacons to `/log`
   - Admin persists levels via Prisma `SavedView` (module=log, name=levels)
+
+### Navigation (from `app/root.tsx`)
+
+- Top navigation items:
+  - Contacts → `/contacts`
+  - Companies → `/companies`
+  - Products → `/products`
+  - Costings → `/costings`
+  - Jobs → `/jobs`
+  - Assembly → `/assembly`
+  - Assembly Activities → `/assembly-activities`
+- Bottom navigation items:
+  - Admin → `/admin`
+  - Settings → `/settings`
 
 ---
 
@@ -125,6 +146,9 @@ Last updated: 2025-09-08
       - Line view: latest 500 ProductMovementLine rows for this product
         - Columns: Date, Type, Out, In, Batch, Qty, Notes
         - Batch shows `codeMill | codeSartor` when present; falls back to `batchId`
+  - Tax Codes
+    - Reusable TaxCodeSelect component (`app/components/TaxCodeSelect.tsx`)
+    - Used on Product detail to pick `purchaseTaxId` from `ValueList` where `type = 'Tax'`
 
 ### Inventory computation rules (server)
 
@@ -151,7 +175,66 @@ Last updated: 2025-09-08
   - Columns: ID, Component, Usage, Qty/Unit, Unit Cost
   - Actions: navigate to related product/assembly (where linked)
 
----
+## Invoices (`/invoices`)
+
+- Layout: provides master list to Record Browser
+- Index: columns ID, Code, Date, Status
+- Detail: editable fields code, date, status, notes; lines table with product/qty/cost/sell
+
+## Shipments (`/shipments`)
+
+- Layout: provides master list
+- Index: columns ID, Date, Type, Ship Type, Status, Tracking
+- Detail: editable fields date, dateReceived, type, status, tracking, packingSlipCode; read-only: carrier/sender/receiver/location; lines table id/product/qty/status
+
+## Expenses (`/expenses`)
+
+- Layout: provides master list
+- Index: columns ID, Date, Category, Details, Cost
+- Detail: editable fields date, category, details, memo, priceCost, priceSell
+
+## DHL Records (`/dhl-records`)
+
+- Layout: provides master list
+- Index: columns ID, Date, Invoice, AWB, Dest, Revenue EUR
+- Detail: read-only view with key DHL fields (invoice, dates, AWB, revenue, origin/destination)
+
+## Forex (`/forex`)
+
+- Index-only: columns Date, From, To, Rate
+- No detail route
+
+## Purchase Orders (`/purchase-orders`)
+
+- Layout: provides master list
+- Index: columns ID, Date, Vendor, Consignee, Location
+- Detail: editable date; read-only vendor/consignee/location; lines table with product, qty ordered/current/shipped/received, costs, tax
+
+### Import mapping
+
+- Purchase_Orders
+  - a\_\_Serial → id
+  - a\_\_CompanyID → companyId (vendor)
+  - a\_\_CompanyID|Consignee → consigneeCompanyId
+  - a\_\_LocationID|In → locationId (fallback: LocationID)
+  - Date → date
+  - Record_CreatedBy/Record_CreatedTimestamp → createdBy/createdAt
+  - Record_ModifiedBy/Record_ModifiedTimestamp → modifiedBy/updatedAt
+- Purchase_Order_Lines
+  - a\_\_Serial → id
+  - a\_\_PurchaseOrderID → purchaseOrderId
+  - a\_\_JobNo → jobId
+  - a_ProductCode/ProductCode → productId (numeric id or by SKU lookup)
+  - ProductSKU → productSkuCopy
+  - ProductName → productNameCopy
+  - Price|Cost → priceCost
+  - Price|Sell → priceSell
+  - QtyShipped → qtyShipped
+  - QtyReceived → qtyReceived
+  - Quantity → quantity (current)
+  - QuantityOrdered → quantityOrdered (original)
+  - TaxCodeID → taxCodeId
+  - TaxRate → taxRate
 
 ## Jobs (`/jobs`)
 

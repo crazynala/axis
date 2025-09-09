@@ -50,6 +50,11 @@ import {
   IconAutomation,
   IconSettings,
   IconSearch,
+  IconAdjustments,
+  IconBasketDollar,
+  IconFileDollar,
+  IconTruck,
+  IconCalendarDollar,
 } from "@tabler/icons-react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -161,14 +166,23 @@ export default function App() {
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
     { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
-    { to: "/costings", label: "Costings" },
     { to: "/jobs", icon: <IconAutomation />, label: "Jobs" },
-    { to: "/assembly", label: "Assembly" },
-    { to: "/assembly-activities", label: "Assembly Activities" },
+    {
+      to: "/purchase-orders",
+      icon: <IconBasketDollar />,
+      label: "Purchase Orders",
+    },
+    { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
+    { to: "/shipments", icon: <IconTruck />, label: "Shipments" },
+    { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
+    // Admin-only tools have moved under /admin
   ];
   const navBottomItems = [
-    { to: "/admin", label: "Admin" },
-    { to: "/settings", icon: <IconSettings />, label: "Settings" },
+    { to: "/assembly", label: "Assembly" },
+    { to: "/assembly-activities", label: "Assembly Activities" },
+    { to: "/costings", label: "Costings" },
+    { to: "/admin", icon: <IconSettings />, label: "Admin" },
+    { to: "/settings", icon: <IconAdjustments />, label: "Settings" },
   ];
 
   return (

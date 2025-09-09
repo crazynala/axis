@@ -68,6 +68,26 @@
 				"$tsc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build Remix Project",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "Build Remix Project",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Remix Project",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

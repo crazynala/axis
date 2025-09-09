@@ -65,6 +65,12 @@ model Product {
     Costing              Costing[]
     ProductLine          ProductLine[]
     Variant              Variant[]
+    // Back-relations
+    invoiceLines         InvoiceLine[]
+    shipmentLines        ShipmentLine[]
+    expenses             Expense[]
+    // Back-relations: Purchase Orders
+    purchaseOrderLines   PurchaseOrderLine[]
     // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
     // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
@@ -76,44 +82,55 @@ model Product {
 }
 
 model Company {
-    id                Int                    @id @default(autoincrement())
-    name              String?
-    address           String?
-    city              String?
-    state             String?
-    zip               String?
-    country           String?
-    phone             String?
-    email             String?
-    website           String?
-    notes             String?
-    isActive          Boolean?
-    isCarrier         Boolean?
-    isCustomer        Boolean?
-    isSupplier        Boolean?
-    isInactive        Boolean?
-    productsSupplied  Product[]              @relation("Supplier")
-    productsPurchased Product[]              @relation("Customer")
-    pricingGroups     SupplierPricingGroup[]
-    jobs              Job[]
+    id                        Int                    @id @default(autoincrement())
+    name                      String?
+    address                   String?
+    city                      String?
+    state                     String?
+    zip                       String?
+    country                   String?
+    phone                     String?
+    email                     String?
+    website                   String?
+    notes                     String?
+    isActive                  Boolean?
+    isCarrier                 Boolean?
+    isCustomer                Boolean?
+    isSupplier                Boolean?
+    isInactive                Boolean?
+    productsSupplied          Product[]              @relation("Supplier")
+    productsPurchased         Product[]              @relation("Customer")
+    pricingGroups             SupplierPricingGroup[]
+    jobs                      Job[]
+    // Back-relations
+    invoices                  Invoice[]
+    addresses                 Address[]
+    shipmentsAsCarrier        Shipment[]             @relation("CarrierCompany")
+    shipmentsAsReceiver       Shipment[]             @relation("ReceiverCompany")
+    shipmentsAsSender         Shipment[]             @relation("SenderCompany")
+    // Back-relations: Purchase Orders
+    purchaseOrders            PurchaseOrder[]
+    purchaseOrdersAsConsignee PurchaseOrder[]        @relation("POConsignee")
     // Metadata
-    createdBy         String?
-    modifiedBy        String?
-    createdAt         DateTime?              @default(now())
-    updatedAt         DateTime?              @updatedAt
+    createdBy                 String?
+    modifiedBy                String?
+    createdAt                 DateTime?              @default(now())
+    updatedAt                 DateTime?              @updatedAt
 }
 
 model VariantSet {
-    id         Int        @id @default(autoincrement())
-    name       String?
-    variants   String[]
-    products   Product[]
-    assemblies Assembly[]
+    id            Int            @id @default(autoincrement())
+    name          String?
+    variants      String[]
+    products      Product[]
+    assemblies    Assembly[]
+    // Back-relations
+    shipmentLines ShipmentLine[]
     // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime?  @default(now())
-    updatedAt  DateTime?  @updatedAt
+    createdBy     String?
+    modifiedBy    String?
+    createdAt     DateTime?      @default(now())
+    updatedAt     DateTime?      @updatedAt
 }
 
 model SupplierPricingGroup {
@@ -130,19 +147,23 @@ model SupplierPricingGroup {
 }
 
 model ValueList {
-    id               Int       @id @default(autoincrement())
-    code             String?
-    label            String?
-    value            Float?
-    type             String?
-    productsCurrency Product[] @relation("Currency")
-    productsTax      Product[] @relation("Tax")
-    productsCategory Product[] @relation("Category")
+    id                  Int                 @id @default(autoincrement())
+    code                String?
+    label               String?
+    value               Float?
+    type                String?
+    productsCurrency    Product[]           @relation("Currency")
+    productsTax         Product[]           @relation("Tax")
+    productsCategory    Product[]           @relation("Category")
+    // Back-relations
+    invoiceLinesTaxCode InvoiceLine[]       @relation("TaxCode")
+    // Back-relations: Purchase Orders
+    poLinesTaxCode      PurchaseOrderLine[] @relation("POL_TaxCode")
     // Metadata
-    createdBy        String?
-    modifiedBy       String?
-    createdAt        DateTime? @default(now())
-    updatedAt        DateTime? @updatedAt
+    createdBy           String?
+    modifiedBy          String?
+    createdAt           DateTime?           @default(now())
+    updatedAt           DateTime?           @updatedAt
 }
 
 model Assembly {
@@ -165,6 +186,8 @@ model Assembly {
     activities          AssemblyActivity[] @relation("Assembly_Activities")
     costings            Costing[]
     batches             Batch[]
+    // Back-relations
+    shipmentLines       ShipmentLine[]
     // Metadata
     createdBy           String?
     modifiedBy          String?
@@ -193,7 +216,7 @@ model Variant {
 }
 
 model Costing {
-    id                            Int          @id @default(autoincrement())
+    id                            Int           @id @default(autoincrement())
     assemblyId                    Int?
     componentId                   Int?
     usageType                     UsageType?
@@ -210,15 +233,17 @@ model Costing {
     flagIsBillableManual          Boolean?
     flagIsInvoiceableManual       Boolean?
     flagStockTracked              Boolean?
-    assembly                      Assembly?    @relation(fields: [assemblyId], references: [id])
-    component                     Product?     @relation(fields: [componentId], references: [id])
-    Variant                       Variant?     @relation(fields: [variantId], references: [id])
+    assembly                      Assembly?     @relation(fields: [assemblyId], references: [id])
+    component                     Product?      @relation(fields: [componentId], references: [id])
+    Variant                       Variant?      @relation(fields: [variantId], references: [id])
     variantId                     Int?
     // Metadata
     createdBy                     String?
     modifiedBy                    String?
-    createdAt                     DateTime?    @default(now())
-    updatedAt                     DateTime?    @updatedAt
+    createdAt                     DateTime?     @default(now())
+    updatedAt                     DateTime?     @updatedAt
+    // Back-relations
+    invoiceLines                  InvoiceLine[]
 }
 
 model ProductLine {
@@ -251,6 +276,11 @@ model Location {
     jobsOut               Job[]              @relation("Job_LocationOut")
     assemblyActivitiesIn  AssemblyActivity[] @relation("AssemblyActivity_LocationIn")
     assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
+    // Back-relations
+    shipments             Shipment[]
+    shipmentLines         ShipmentLine[]
+    // Back-relations: Purchase Orders
+    purchaseOrders        PurchaseOrder[]
     // Metadata
     createdBy             String?
     modifiedBy            String?
@@ -336,7 +366,7 @@ model ProductMovementLine {
 }
 
 model Job {
-    id                      Int                @id @default(autoincrement())
+    id                      Int                 @id @default(autoincrement())
     projectCode             String?
     name                    String?
     description             String?
@@ -348,11 +378,11 @@ model Job {
     notes                   String?
     endCustomerName         String?
     companyId               Int?
-    company                 Company?           @relation(fields: [companyId], references: [id])
+    company                 Company?            @relation(fields: [companyId], references: [id])
     locationInId            Int?
     locationOutId           Int?
-    locationIn              Location?          @relation("Job_LocationIn", fields: [locationInId], references: [id])
-    locationOut             Location?          @relation("Job_LocationOut", fields: [locationOutId], references: [id])
+    locationIn              Location?           @relation("Job_LocationIn", fields: [locationInId], references: [id])
+    locationOut             Location?           @relation("Job_LocationOut", fields: [locationOutId], references: [id])
     customerOrderDate       DateTime?
     customerOrderDateManual DateTime?
     cutSubmissionDate       DateTime?
@@ -364,13 +394,19 @@ model Job {
     customerPoNum           String?
     Variant                 Variant[]
     assemblyActivities      AssemblyActivity[]
-    assemblies              Assembly[]         @relation("Job_Assemblies")
+    assemblies              Assembly[]          @relation("Job_Assemblies")
     batches                 Batch[]
+    // Back-relations
+    invoiceLines            InvoiceLine[]
+    shipmentLines           ShipmentLine[]
+    expenses                Expense[]
+    // Back-relations: Purchase Orders
+    purchaseOrderLines      PurchaseOrderLine[]
     // Metadata
     createdBy               String?
     modifiedBy              String?
-    createdAt               DateTime?          @default(now())
-    updatedAt               DateTime?          @updatedAt
+    createdAt               DateTime?           @default(now())
+    updatedAt               DateTime?           @updatedAt
 }
 
 model SavedView {
@@ -437,4 +473,243 @@ model PasswordReset {
     expiresAt DateTime
     usedAt    DateTime?
     createdAt DateTime  @default(now())
+}
+
+// --- New data models from FileMaker imports ---
+
+model DHLReportLine {
+    id                         Int       @id // a__Serial maps here
+    accountName                String?
+    awbNumber                  String?
+    billedWeight               Float?
+    billingAccountNumber       String?
+    billingExchangeRate        Float?
+    destinationCountryCode     String?
+    destinationCountryName     String?
+    destinationServiceAreaCode String?
+    destinationServiceAreaName String?
+    globalProductCode          String?
+    globalProductName          String?
+    invoiceDate                DateTime?
+    invoiceNumber              String?
+    numberOfPieces             Int?
+    opsConsigneeContactName    String?
+    opsConsigneeName           String?
+    opsConsignorContactName    String?
+    opsConsignorName           String?
+    originCountryCode          String?
+    originCountryName          String?
+    originServiceAreaCode      String?
+    originServiceAreaName      String?
+    relativePeriod             String?
+    shipmentPickUpDate         DateTime?
+    shipmentReference          String?
+    shipperAccountNumber       String?
+    totalRevenueEUR            Float?
+    totalRevenueLCY            Float?
+    totalTaxEUR                Float?
+    totalTaxLCY                Float?
+    createdAt                  DateTime? @default(now())
+    updatedAt                  DateTime? @updatedAt
+}
+
+model ForexLine {
+    id           Int      @id @default(autoincrement())
+    date         DateTime
+    price        Float
+    currencyFrom String   @default("USD")
+    currencyTo   String   @default("TRY")
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+
+    @@unique([date, currencyFrom, currencyTo])
+}
+
+model Invoice {
+    id          Int           @id // a__Serial maps here
+    companyId   Int?
+    invoiceCode String?       @unique
+    date        DateTime?
+    notes       String?
+    status      String?
+    createdBy   String?
+    createdAt   DateTime?     @default(now())
+    modifiedBy  String?
+    updatedAt   DateTime?     @updatedAt
+    company     Company?      @relation(fields: [companyId], references: [id])
+    lines       InvoiceLine[]
+}
+
+model InvoiceLine {
+    id                  Int        @id // a__Serial maps here
+    costingId           Int?
+    expenseId           Int?
+    invoiceId           Int?
+    jobId               Int?
+    productId           Int?
+    purchaseOrderLineId Int?
+    shippingIdActual    Int?
+    shippingIdDuty      Int?
+    category            String?
+    details             String?
+    subCategory         String?
+    priceCost           Float?
+    priceSell           Float?
+    quantity            Float?
+    taxCodeId           Int?
+    taxRateCost         Float?
+    invoicedTotalManual Float?
+    createdBy           String?
+    createdAt           DateTime?  @default(now())
+    modifiedBy          String?
+    updatedAt           DateTime?  @updatedAt
+    invoice             Invoice?   @relation(fields: [invoiceId], references: [id])
+    costing             Costing?   @relation(fields: [costingId], references: [id])
+    expense             Expense?   @relation(fields: [expenseId], references: [id])
+    job                 Job?       @relation(fields: [jobId], references: [id])
+    product             Product?   @relation(fields: [productId], references: [id])
+    taxCode             ValueList? @relation("TaxCode", fields: [taxCodeId], references: [id])
+}
+
+model Expense {
+    id              Int           @id // a__Serial maps here
+    jobId           Int?
+    productId       Int?
+    purchaseOrderId Int?
+    shippingId      Int?
+    category        String?
+    date            DateTime?
+    details         String?
+    memo            String?
+    priceCost       Float?
+    priceSell       Float?
+    quantity        Float?
+    source          String?
+    subcategory     String?
+    createdBy       String?
+    createdAt       DateTime?     @default(now())
+    modifiedBy      String?
+    updatedAt       DateTime?     @updatedAt
+    job             Job?          @relation(fields: [jobId], references: [id])
+    product         Product?      @relation(fields: [productId], references: [id])
+    shipment        Shipment?     @relation(fields: [shippingId], references: [id])
+    // Back-relations
+    invoiceLines    InvoiceLine[]
+}
+
+model Shipment {
+    id                Int            @id // a__Serial maps here
+    addressIdShip     Int?
+    companyIdCarrier  Int?
+    companyIdReceiver Int?
+    companyIdSender   Int?
+    locationId        Int?
+    contactIdReceiver Int?
+    date              DateTime?
+    dateReceived      DateTime?
+    packingSlipCode   String?
+    shipmentType      String?
+    status            String?
+    trackingNo        String?
+    type              String? // "In" | "Out"
+    createdBy         String?
+    createdAt         DateTime?      @default(now())
+    modifiedBy        String?
+    updatedAt         DateTime?      @updatedAt
+    location          Location?      @relation(fields: [locationId], references: [id])
+    companyCarrier    Company?       @relation("CarrierCompany", fields: [companyIdCarrier], references: [id])
+    companyReceiver   Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
+    companySender     Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
+    addressShip       Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
+    lines             ShipmentLine[]
+    // Back-relations
+    expenses          Expense[]
+}
+
+model ShipmentLine {
+    id           Int         @id // a__Serial maps here
+    assemblyId   Int?
+    jobId        Int?
+    locationId   Int?
+    productId    Int?
+    shippingId   Int?
+    variantSetId Int?
+    category     String?
+    details      String?
+    quantity     Float?
+    qtyBreakdown Int[]       @default([]) // parsed from Qty_Breakdown_List_c
+    status       String?
+    subCategory  String?
+    createdBy    String?
+    createdAt    DateTime?   @default(now())
+    modifiedBy   String?
+    updatedAt    DateTime?   @updatedAt
+    assembly     Assembly?   @relation(fields: [assemblyId], references: [id])
+    job          Job?        @relation(fields: [jobId], references: [id])
+    location     Location?   @relation(fields: [locationId], references: [id])
+    product      Product?    @relation(fields: [productId], references: [id])
+    shipment     Shipment?   @relation(fields: [shippingId], references: [id])
+    variantSet   VariantSet? @relation(fields: [variantSetId], references: [id])
+}
+
+model Address {
+    id                 Int        @id // a__Serial maps here
+    companyId          Int?
+    contactId          Int?
+    addressCountry     String?
+    addressCountyState String?
+    addressLine1       String?
+    addressLine2       String?
+    addressLine3       String?
+    addressTownCity    String?
+    addressZipPostCode String?
+    createdBy          String?
+    createdAt          DateTime?  @default(now())
+    modifiedBy         String?
+    updatedAt          DateTime?  @updatedAt
+    company            Company?   @relation(fields: [companyId], references: [id])
+    shipments          Shipment[] @relation("Address_shipments")
+}
+
+// --- Purchase Orders ---
+
+model PurchaseOrder {
+    id                 Int                 @id // a__Serial maps here
+    companyId          Int?
+    consigneeCompanyId Int?
+    locationId         Int?
+    date               DateTime?
+    createdBy          String?
+    createdAt          DateTime?           @default(now())
+    modifiedBy         String?
+    updatedAt          DateTime?           @updatedAt
+    company            Company?            @relation(fields: [companyId], references: [id])
+    consignee          Company?            @relation("POConsignee", fields: [consigneeCompanyId], references: [id])
+    location           Location?           @relation(fields: [locationId], references: [id])
+    lines              PurchaseOrderLine[]
+}
+
+model PurchaseOrderLine {
+    id              Int            @id // a__Serial maps here
+    purchaseOrderId Int?
+    jobId           Int?
+    productId       Int?
+    productSkuCopy  String?
+    productNameCopy String?
+    priceCost       Float?
+    priceSell       Float?
+    qtyShipped      Float?
+    qtyReceived     Float?
+    quantity        Float?
+    quantityOrdered Float?
+    taxCodeId       Int?
+    taxRate         Float?
+    createdBy       String?
+    createdAt       DateTime?      @default(now())
+    modifiedBy      String?
+    updatedAt       DateTime?      @updatedAt
+    purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+    job             Job?           @relation(fields: [jobId], references: [id])
+    product         Product?       @relation(fields: [productId], references: [id])
+    taxCode         ValueList?     @relation("POL_TaxCode", fields: [taxCodeId], references: [id])
 }
