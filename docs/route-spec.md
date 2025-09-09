@@ -38,10 +38,19 @@ Last updated: 2025-09-08
   - Create/Delete list
   - Upload from Excel
   - Imports
-    - Product Movements: also maps FileMaker IDs on header rows
-      - a_AssemblyActivityID → ProductMovement.assemblyActivityId
-      - a_AssemblyID → ProductMovement.assemblyId
-      - a_CostingsID → ProductMovement.costingId
+    - Product Movements
+      - Maps core fields: Type, Date, Quantity, Movement_From (a_LocationID_Out), Movement_To (a_LocationID_In), ShippingType
+      - Product resolution: numeric Product.id OR SKU (case-insensitive)
+      - Direction: uses provided From/To as locationOutId/locationInId (no inference)
+      - Also maps FileMaker linkage IDs on header rows
+        - a_AssemblyActivityID → ProductMovement.assemblyActivityId
+        - a_AssemblyID → ProductMovement.assemblyId
+        - a_CostingsID → ProductMovement.costingId
+    - Product Movement Lines
+      - Maps: a_ProductMovementID (FK), a_ProductCode (numeric id or SKU), Quantity, Date, a_AssemblyLineID (costing), a_BatchID, a_PurchaseOrderLineID
+      - If referenced Batch.id is missing, auto-creates a per-product Regen batch (codeSartor = REGEN-<productId>) and reuses it
+      - Pre-scans to align Batch id sequence to avoid collisions under concurrency
+      - Ignores line-level MovementType; relies on the header’s movementType where needed
 
 ---
 
@@ -116,6 +125,23 @@ Last updated: 2025-09-08
       - Line view: latest 500 ProductMovementLine rows for this product
         - Columns: Date, Type, Out, In, Batch, Qty, Notes
         - Batch shows `codeMill | codeSartor` when present; falls back to `batchId`
+
+### Inventory computation rules (server)
+
+- By Location (used in product detail and debug tools)
+  - Transfers: +ABS(quantity) to locationInId; -ABS(quantity) from locationOutId
+  - Non-transfers: add signed quantity to locationInId; subtract signed quantity from locationOutId
+  - Movements with both locations null are ignored in totals
+- Totals by Product (fallback aware)
+  - If any ProductMovementLine exists for the product: total = sum(IN types ABS(line.qty)) - sum(OUT types ABS(line.qty)) + sum(unknown types signed line.qty)
+  - Else fallback to sum of `Batch.quantity`
+  - Same rule applies per-batch when computing batch stock
+- Movement type classification
+  - IN types: in, receive, purchase, adjust_in, return_in, return, transfer_in, transfer, po (receive), shipping (in)
+  - OUT types: out, issue, consume, ship, sale, deliver, adjust_out, transfer_out, transfer, shipping (out), po (return), assembly, expense
+- Debugger alignment
+  - `debugProductByLocation` shows contributions using the same rules above
+  - Negative non-transfer movements (e.g., Amendment with quantity -66.3) remain negative on the inbound contribution and subtract on the outbound side
 
 ---
 
