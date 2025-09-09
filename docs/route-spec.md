@@ -288,7 +288,7 @@ Last updated: 2025-09-09
   - QtyReceived → qtyReceived
   - Quantity → quantity (current)
   - QuantityOrdered → quantityOrdered (original)
-  - TaxCodeID → taxCodeId
+  - TaxCode → taxCode (string; maps to ValueList by type+code downstream)
   - TaxRate → taxRate
 
 ### Additional Import mappings

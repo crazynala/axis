@@ -72,7 +72,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   }
   const costings = await prisma.costing.findMany({
     where: { assemblyId },
-    include: { component: { select: { id: true, sku: true, name: true } } },
+    include: { product: { select: { id: true, sku: true, name: true } } },
   });
   const activities = await prisma.assemblyActivity.findMany({
     where: { assemblyId },
@@ -87,7 +87,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const compIds = Array.from(
     new Set(
       costings
-        .map((c) => c.component?.id || c.componentId || null)
+        .map((c) => c.product?.id || (c as any).productId || null)
         .filter((x): x is number => Number.isFinite(Number(x)))
         .map((x) => Number(x))
     )
@@ -154,7 +154,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     { allStock: number; locStock: number; used: number }
   > = {};
   for (const c of costings) {
-    const pid = c.component?.id || c.componentId || null;
+    const pid = c.product?.id || (c as any).productId || null;
     const info = pid ? compInfos.get(Number(pid)) : undefined;
     costingStats[c.id] = {
       allStock: info?.allStock ?? 0,
@@ -189,24 +189,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
   if (intent === "costing.create") {
-    const compRaw = form.get("componentId");
+    // Accept both productId (new) and componentId (legacy) keys
+    const compRaw = form.get("productId") ?? form.get("componentId");
     const compNum = compRaw == null || compRaw === "" ? null : Number(compRaw);
-    const componentId = Number.isFinite(compNum as any)
+    const productId = Number.isFinite(compNum as any)
       ? (compNum as number)
       : null;
     const quantityPerUnit = form.get("quantityPerUnit")
       ? Number(form.get("quantityPerUnit"))
       : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
-    const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
     await prisma.costing.create({
       data: {
         assemblyId: assemblyId,
-        componentId: componentId ?? undefined,
+        productId: productId ?? undefined,
         quantityPerUnit,
         unitCost,
-        usageType: usageType as any,
         notes,
       },
     });
@@ -312,7 +311,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       // Resolve header product from costing component
       const costing = await prisma.costing.findUnique({
         where: { id: Number(cons.costingId) },
-        select: { componentId: true },
+        select: { productId: true },
       });
       // Enrich with batch product/location and group by location
       const enriched = await Promise.all(
@@ -341,7 +340,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           0
         );
         const headerProductId =
-          costing?.componentId ??
+          costing?.productId ??
           lines.find((l) => l.productId != null)?.productId ??
           undefined;
         const movement = await prisma.productMovement.create({
@@ -595,7 +594,6 @@ export default function JobAssemblyRoute() {
                   <Table.Th>ID</Table.Th>
                   <Table.Th>SKU</Table.Th>
                   <Table.Th>Name</Table.Th>
-                  <Table.Th>Usage</Table.Th>
                   <Table.Th>Qty/Unit</Table.Th>
                   <Table.Th>Required</Table.Th>
                   <Table.Th>Loc Stock</Table.Th>
@@ -606,7 +604,7 @@ export default function JobAssemblyRoute() {
               </Table.Thead>
               <Table.Tbody>
                 {costings.map((c: any) => {
-                  const pid = c.component?.id || c.componentId;
+                  const pid = c.product?.id || (c as any).productId;
                   const stats = costingStats?.[c.id] || {
                     allStock: 0,
                     locStock: 0,
@@ -629,9 +627,10 @@ export default function JobAssemblyRoute() {
                           c.id
                         )}
                       </Table.Td>
-                      <Table.Td>{c.component?.sku || ""}</Table.Td>
-                      <Table.Td>{c.component?.name || c.componentId}</Table.Td>
-                      <Table.Td>{c.usageType}</Table.Td>
+                      <Table.Td>{c.product?.sku || ""}</Table.Td>
+                      <Table.Td>
+                        {c.product?.name || (c as any).productId}
+                      </Table.Td>
                       <Table.Td>{c.quantityPerUnit ?? ""}</Table.Td>
                       <Table.Td>{required}</Table.Td>
                       <Table.Td>{stats.locStock}</Table.Td>
@@ -809,7 +808,6 @@ function AddCostingButton({
   const submit = useSubmit();
   const [opened, setOpened] = useState(false);
   const [q, setQ] = useState("");
-  const [usageType, setUsageType] = useState<string | null>(null);
   const [quantityPerUnit, setQuantityPerUnit] = useState<string>("");
   const [unitCost, setUnitCost] = useState<string>("");
   const filtered = useMemo(() => {
@@ -858,14 +856,6 @@ function AddCostingButton({
                     setUnitCost(e.currentTarget.value)
                   }
                 />
-                <TextInput
-                  label="Usage Type (cut/make)"
-                  placeholder="cut or make"
-                  value={usageType ?? ""}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setUsageType(e.currentTarget.value)
-                  }
-                />
               </Group>
               <div style={{ maxHeight: 360, overflow: "auto" }}>
                 {filtered.map((p) => (
@@ -875,8 +865,7 @@ function AddCostingButton({
                     onClick={() => {
                       const fd = new FormData();
                       fd.set("_intent", "costing.create");
-                      fd.set("componentId", String(p.id));
-                      if (usageType) fd.set("usageType", usageType);
+                      fd.set("productId", String(p.id));
                       if (quantityPerUnit !== "")
                         fd.set("quantityPerUnit", quantityPerUnit);
                       if (unitCost !== "") fd.set("unitCost", unitCost);

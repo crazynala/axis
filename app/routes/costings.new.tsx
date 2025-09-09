@@ -39,22 +39,20 @@ export async function action({ request }: ActionFunctionArgs) {
   const assemblyId = form.get("assemblyId")
     ? Number(form.get("assemblyId"))
     : null;
-  const componentId = form.get("componentId")
-    ? Number(form.get("componentId"))
+  const productId = form.get("productId")
+    ? Number(form.get("productId"))
     : null;
   const quantityPerUnit = form.get("quantityPerUnit")
     ? Number(form.get("quantityPerUnit"))
     : null;
   const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
-  const usageType = (form.get("usageType") as string) || null;
   const notes = (form.get("notes") as string) || null;
   await prisma.costing.create({
     data: {
       assemblyId: assemblyId ?? undefined,
-      componentId: componentId ?? undefined,
+      productId: productId ?? undefined,
       quantityPerUnit,
       unitCost,
-      usageType: usageType as any,
       notes,
     },
   });
@@ -69,10 +67,9 @@ export default function NewCostingRoute() {
   const form = useForm({
     defaultValues: {
       assemblyId: null as number | null,
-      componentId: null as number | null,
+      productId: null as number | null,
       quantityPerUnit: null as number | null,
       unitCost: null as number | null,
-      usageType: null as string | null,
       notes: "",
     },
   });
@@ -92,13 +89,12 @@ export default function NewCostingRoute() {
           const fd = new FormData();
           if (values.assemblyId != null)
             fd.set("assemblyId", String(values.assemblyId));
-          if (values.componentId != null)
-            fd.set("componentId", String(values.componentId));
+          if (values.productId != null)
+            fd.set("productId", String(values.productId));
           if (values.quantityPerUnit != null)
             fd.set("quantityPerUnit", String(values.quantityPerUnit));
           if (values.unitCost != null)
             fd.set("unitCost", String(values.unitCost));
-          if (values.usageType) fd.set("usageType", String(values.usageType));
           if (values.notes) fd.set("notes", String(values.notes));
           submit(fd, { method: "post" });
         })}
@@ -122,11 +118,11 @@ export default function NewCostingRoute() {
             )}
           />
           <Controller
-            name="componentId"
+            name="productId"
             control={form.control}
             render={({ field }) => (
               <Select
-                label="Component"
+                label="Product"
                 w={220}
                 value={field.value ? String(field.value) : null}
                 onChange={(v) => field.onChange(v ? Number(v) : null)}
@@ -166,23 +162,7 @@ export default function NewCostingRoute() {
               />
             )}
           />
-          <Controller
-            name="usageType"
-            control={form.control}
-            render={({ field }) => (
-              <Select
-                label="Usage"
-                w={140}
-                value={field.value ?? null}
-                onChange={(v) => field.onChange(v ?? null)}
-                data={[
-                  { value: "cut", label: "cut" },
-                  { value: "make", label: "make" },
-                ]}
-                clearable
-              />
-            )}
-          />
+          {/* usageType removed from schema */}
           <Textarea
             label="Notes"
             autosize

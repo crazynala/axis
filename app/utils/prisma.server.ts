@@ -14,7 +14,8 @@ function sumIntArray(arr: number[] | null | undefined): number {
 }
 
 // Create base client
-const base = globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
+const base =
+  globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
 
 // Export the base client (no extensions) for lightweight queries where
@@ -28,17 +29,23 @@ function toNumber(v: unknown): number {
 }
 
 // Small concurrency limiter for async maps
-async function mapLimit<T, U>(items: T[], limit: number, mapper: (item: T, index: number) => Promise<U>): Promise<U[]> {
+async function mapLimit<T, U>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<U>
+): Promise<U[]> {
   const results: U[] = new Array(items.length) as U[];
   let next = 0;
-  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () =>
-    (async function run() {
-      while (true) {
-        const i = next++;
-        if (i >= items.length) break;
-        results[i] = await mapper(items[i], i);
-      }
-    })()
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    () =>
+      (async function run() {
+        while (true) {
+          const i = next++;
+          if (i >= items.length) break;
+          results[i] = await mapper(items[i], i);
+        }
+      })()
   );
   await Promise.all(workers);
   return results;
@@ -82,7 +89,9 @@ export const prisma: PrismaClient = (base as any).$extends({
     assembly: {
       c_qtyOrdered: {
         needs: { qtyOrderedBreakdown: true },
-        compute(assembly: { qtyOrderedBreakdown: number[] | null | undefined }) {
+        compute(assembly: {
+          qtyOrderedBreakdown: number[] | null | undefined;
+        }) {
           return sumIntArray(assembly.qtyOrderedBreakdown);
         },
       },
@@ -93,47 +102,107 @@ export const prisma: PrismaClient = (base as any).$extends({
   },
   query: {
     assembly: {
-      async findUnique({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async findFirst({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async findMany({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const results = await query(args);
         return await attachAssemblyComputedMany(results);
       },
-      async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async update({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
-      async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         return await attachAssemblyComputed(result);
       },
     },
     product: {
-      async findUnique({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findUnique({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         const withQty = await attachStockQty(result);
         return await attachProductAggregates(withQty);
       },
-      async findFirst({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findFirst({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const result = await query(args);
         const withQty = await attachStockQty(result);
         return await attachProductAggregates(withQty);
       },
-      async findMany({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async findMany({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         const results = await query(args);
         return await attachStockQtyMany(results);
       },
-      async create({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async create({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         // Ensure SKU uniqueness globally by suffixing -dup, -dup2, ... when needed
         if (args?.data) {
           const desired: string | null = args.data.sku ?? null;
@@ -146,7 +215,11 @@ export const prisma: PrismaClient = (base as any).$extends({
           return await attachProductAggregates(withQty);
         } catch (err: any) {
           // Handle rare race: retry once on unique violation for sku
-          if (err?.code === "P2002" && Array.isArray(err?.meta?.target) && err.meta.target.includes("sku")) {
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
             if (args?.data) {
               const desired: string | null = args.data.sku ?? null;
               const idHint: number | undefined = args.data.id;
@@ -159,7 +232,13 @@ export const prisma: PrismaClient = (base as any).$extends({
           throw err;
         }
       },
-      async update({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async update({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         if (args?.data) {
           const desired: string | null = args.data.sku ?? null;
           const idHint: number | undefined = args?.where?.id ?? undefined;
@@ -170,7 +249,11 @@ export const prisma: PrismaClient = (base as any).$extends({
           const withQty = await attachStockQty(result);
           return await attachProductAggregates(withQty);
         } catch (err: any) {
-          if (err?.code === "P2002" && Array.isArray(err?.meta?.target) && err.meta.target.includes("sku")) {
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
             if (args?.data) {
               const desired: string | null = args.data.sku ?? null;
               const idHint: number | undefined = args?.where?.id ?? undefined;
@@ -183,7 +266,13 @@ export const prisma: PrismaClient = (base as any).$extends({
           throw err;
         }
       },
-      async upsert({ args, query }: { args: any; query: (args: any) => Promise<any> }) {
+      async upsert({
+        args,
+        query,
+      }: {
+        args: any;
+        query: (args: any) => Promise<any>;
+      }) {
         if (args?.create) {
           const desired: string | null = args.create.sku ?? null;
           const idHint: number | undefined = args.create.id;
@@ -199,7 +288,11 @@ export const prisma: PrismaClient = (base as any).$extends({
           const withQty = await attachStockQty(result);
           return await attachProductAggregates(withQty);
         } catch (err: any) {
-          if (err?.code === "P2002" && Array.isArray(err?.meta?.target) && err.meta.target.includes("sku")) {
+          if (
+            err?.code === "P2002" &&
+            Array.isArray(err?.meta?.target) &&
+            err.meta.target.includes("sku")
+          ) {
             if (args?.update) {
               const desired: string | null = args.update.sku ?? null;
               const idHint: number | undefined = args?.where?.id ?? undefined;
@@ -257,18 +350,24 @@ async function computeProductStockQty(productId: number): Promise<number> {
   return batchQty;
 }
 
-async function attachStockQty<T extends { id?: number } | null>(product: T): Promise<T> {
+async function attachStockQty<T extends { id?: number } | null>(
+  product: T
+): Promise<T> {
   if (!product || !product.id) return product;
   const total = await computeProductStockQty(product.id);
   (product as any).c_stockQty = Math.round(total * 100) / 100;
   // If batches are already loaded on the product (via include), augment each with stockQty
   if (Array.isArray((product as any).batches)) {
-    (product as any).batches = await attachBatchStockQtyMany((product as any).batches);
+    (product as any).batches = await attachBatchStockQtyMany(
+      (product as any).batches
+    );
   }
   return product;
 }
 
-async function attachStockQtyMany<T extends Array<{ id?: number }>>(products: T): Promise<T> {
+async function attachStockQtyMany<T extends Array<{ id?: number }>>(
+  products: T
+): Promise<T> {
   // Limit concurrency to avoid exhausting the DB connection pool.
   const out = await mapLimit(products as any[], 6, (p) => attachStockQty(p));
   return out as T;
@@ -314,32 +413,57 @@ async function attachBatchStockQty<T extends MaybeBatch>(batch: T): Promise<T> {
   return batch;
 }
 
-async function attachBatchStockQtyMany<T extends Array<MaybeBatch>>(batches: T): Promise<T> {
-  const out = await mapLimit(batches as any[], 8, (b) => attachBatchStockQty(b));
+async function attachBatchStockQtyMany<T extends Array<MaybeBatch>>(
+  batches: T
+): Promise<T> {
+  const out = await mapLimit(batches as any[], 8, (b) =>
+    attachBatchStockQty(b)
+  );
   return out as T;
 }
 
 // ---- Product aggregates: byLocation and byBatch ----
-async function computeProductByLocation(productId: number): Promise<Array<{ location_id: number | null; location_name: string; qty: number }>> {
+async function computeProductByLocation(
+  productId: number
+): Promise<
+  Array<{ location_id: number | null; location_name: string; qty: number }>
+> {
+  const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
+  const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
   const rows = (await base.$queryRawUnsafe(
     `
-    SELECT
-      l.id AS location_id,
-      COALESCE(l.name, '') AS location_name,
-      COALESCE(SUM(
+    WITH typed AS (
+      SELECT 
+        pml."productId" AS pid,
+        pm."movementType"    AS mt_raw,
+        lower(trim(COALESCE(pm."movementType", ''))) AS mt,
+        pm."locationInId"    AS loc_in,
+        pm."locationOutId"   AS loc_out,
+        COALESCE(pml.quantity,0) AS q_raw,
         CASE
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) = 'transfer' AND pm."locationOutId" = l.id THEN -ABS(pm.quantity)
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) = 'transfer' AND pm."locationInId" = l.id THEN ABS(pm.quantity)
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) <> 'transfer' AND ( pm."locationInId" = l.id OR pm."locationOutId" = l.id ) THEN pm.quantity
-          ELSE 0
-        END
-      ), 0) AS qty
-    FROM "Location" l
-    LEFT JOIN "ProductMovement" pm ON pm."productId" = $1 AND (
-      pm."locationInId" = l.id OR pm."locationOutId" = l.id
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList})  THEN COALESCE(ABS(pml.quantity),0)
+          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
+          ELSE COALESCE(pml.quantity,0)
+        END AS q
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pml."productId" = $1
+    ), contrib AS (
+      -- Transfers: split abs qty between out (-) and in (+)
+      SELECT loc_out AS location_id, -ABS(q) AS qty FROM typed WHERE mt = 'transfer' AND loc_out IS NOT NULL
+      UNION ALL
+      SELECT loc_in  AS location_id,  ABS(q) AS qty FROM typed WHERE mt = 'transfer' AND loc_in  IS NOT NULL
+      UNION ALL
+      -- Non-transfers: positive to loc_in, negative to loc_out
+      SELECT loc_in  AS location_id,  q      AS qty FROM typed WHERE mt <> 'transfer' AND q > 0 AND loc_in  IS NOT NULL
+      UNION ALL
+      SELECT loc_out AS location_id,  q      AS qty FROM typed WHERE mt <> 'transfer' AND q < 0 AND loc_out IS NOT NULL
     )
-    GROUP BY l.id, l.name
-    ORDER BY l.name NULLS LAST, l.id
+    SELECT c.location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(c.qty),0) AS qty
+    FROM contrib c
+    LEFT JOIN "Location" l ON l.id = c.location_id
+    GROUP BY c.location_id, l.name
+    ORDER BY l.name NULLS LAST, c.location_id
     `,
     productId
   )) as Array<{ location_id: number | null; location_name: string; qty: any }>;
@@ -512,11 +636,15 @@ export async function debugProductByLocation(productId: number) {
     const absq = Math.abs(q);
     const mt = (r.mt || "").toLowerCase();
     if (mt === "transfer") {
-      if (r.loc_out != null) compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - absq);
-      if (r.loc_in != null) compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + absq);
+      if (r.loc_out != null)
+        compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - absq);
+      if (r.loc_in != null)
+        compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + absq);
     } else {
-      if (r.loc_out != null) compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - q);
-      if (r.loc_in != null) compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + q);
+      if (r.loc_out != null)
+        compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - q);
+      if (r.loc_in != null)
+        compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + q);
     }
   }
   const compare = Array.from(compareMap.entries()).map(([lid, qty]) => ({
@@ -532,23 +660,32 @@ export async function debugProductByLocation(productId: number) {
   return { pm, current, compare, pmOnly, contrib };
 }
 
-async function attachProductAggregates<T extends { id?: number } | null>(product: T): Promise<T> {
+async function attachProductAggregates<T extends { id?: number } | null>(
+  product: T
+): Promise<T> {
   if (!product || !product.id) return product;
-  const [byLoc, byBatch] = await Promise.all([computeProductByLocation(product.id), computeProductByBatch(product.id)]);
+  const [byLoc, byBatch] = await Promise.all([
+    computeProductByLocation(product.id),
+    computeProductByBatch(product.id),
+  ]);
   (product as any).c_byLocation = byLoc;
   (product as any).c_byBatch = byBatch;
   return product;
 }
 
 // ---- SKU uniqueness helper ----
-async function getUniqueSku(desired: string | null, currentId: number | null): Promise<string | null> {
+async function getUniqueSku(
+  desired: string | null,
+  currentId: number | null
+): Promise<string | null> {
   const skuBase = (desired || "").trim();
   if (!skuBase) return null;
   let candidate = skuBase;
   let n = 1;
   while (true) {
     const clash = await base.product.findFirst({ where: { sku: candidate } });
-    if (!clash || (currentId != null && clash.id === currentId)) return candidate;
+    if (!clash || (currentId != null && clash.id === currentId))
+      return candidate;
     n += 1;
     candidate = n === 2 ? `${skuBase}-dup` : `${skuBase}-dup${n - 1}`;
   }
@@ -560,12 +697,18 @@ type MaybeAssembly = {
   variantSetId?: number | null;
 } | null;
 
-function classifyActivityType(a: { name?: string | null; activityType?: string | null }, needle: "cut" | "make" | "pack") {
+function classifyActivityType(
+  a: { name?: string | null; activityType?: string | null },
+  needle: "cut" | "make" | "pack"
+) {
   const s = (a.activityType || a.name || "").toString().toLowerCase();
   return s.includes(needle);
 }
 
-function sumArrays(targetLen: number, arrays: Array<number[] | null | undefined>): number[] {
+function sumArrays(
+  targetLen: number,
+  arrays: Array<number[] | null | undefined>
+): number[] {
   const out = Array.from({ length: targetLen }, () => 0);
   for (const arr of arrays) {
     if (!Array.isArray(arr)) continue;
@@ -615,16 +758,23 @@ async function computeAssemblyBreakdowns(
   }
   if (len === 0) {
     // derive from max breakdown length
-    for (const a of activities) len = Math.max(len, a.qtyBreakdown?.length || 0);
+    for (const a of activities)
+      len = Math.max(len, a.qtyBreakdown?.length || 0);
   }
   type Act = {
     qtyBreakdown: number[] | null;
     name?: string | null;
     activityType?: string | null;
   };
-  const cutArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "cut")).map((a: Act) => a.qtyBreakdown);
-  const makeArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "make")).map((a: Act) => a.qtyBreakdown);
-  const packArrays = (activities as Act[]).filter((a: Act) => classifyActivityType(a, "pack")).map((a: Act) => a.qtyBreakdown);
+  const cutArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "cut"))
+    .map((a: Act) => a.qtyBreakdown);
+  const makeArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "make"))
+    .map((a: Act) => a.qtyBreakdown);
+  const packArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "pack"))
+    .map((a: Act) => a.qtyBreakdown);
   const c_qtyCut_Breakdown = sumArrays(len, cutArrays);
   const c_qtyMake_Breakdown = sumArrays(len, makeArrays);
   const c_qtyPack_Breakdown = sumArrays(len, packArrays);
@@ -639,15 +789,24 @@ async function computeAssemblyBreakdowns(
   };
 }
 
-async function attachAssemblyComputed<T extends MaybeAssembly>(assembly: T): Promise<T> {
+async function attachAssemblyComputed<T extends MaybeAssembly>(
+  assembly: T
+): Promise<T> {
   if (!assembly || !assembly.id) return assembly;
-  const comp = await computeAssemblyBreakdowns(assembly.id as number, (assembly as any).variantSetId ?? null);
+  const comp = await computeAssemblyBreakdowns(
+    assembly.id as number,
+    (assembly as any).variantSetId ?? null
+  );
   Object.assign(assembly as any, comp);
   return assembly;
 }
 
-async function attachAssemblyComputedMany<T extends Array<MaybeAssembly>>(assemblies: T): Promise<T> {
-  return (await Promise.all(assemblies.map((a) => attachAssemblyComputed(a)))) as T;
+async function attachAssemblyComputedMany<T extends Array<MaybeAssembly>>(
+  assemblies: T
+): Promise<T> {
+  return (await Promise.all(
+    assemblies.map((a) => attachAssemblyComputed(a))
+  )) as T;
 }
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;

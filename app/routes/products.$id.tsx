@@ -10,6 +10,7 @@ import {
   Form,
   useNavigation,
   useSubmit,
+  useActionData,
 } from "@remix-run/react";
 import {
   Stack,
@@ -26,23 +27,26 @@ import {
   Grid,
 } from "@mantine/core";
 import { TextInput, Checkbox, NumberInput, Modal, Switch } from "@mantine/core";
+import { useMemo, useState } from "react";
+import { useForm, Controller } from "react-hook-form";
+import {
+  BreadcrumbSet,
+  useMasterTable,
+  useRecordBrowser,
+  RecordNavButtons,
+  useRecordBrowserShortcuts,
+  useInitGlobalFormContext,
+} from "@aa/timber";
+import { FindProvider, useFind } from "../find/FindContext";
+import { FindToggle } from "../find/FindToggle";
+import { TriBool, NumberMaybeRange, TextAny } from "../find/FindWidgets";
 import { TaxCodeSelect, type TaxCodeOption } from "../components/TaxCodeSelect";
 import { CompanySelect, type CompanyOption } from "../components/CompanySelect";
 import {
   CategorySelect,
   type CategoryOption,
 } from "../components/CategorySelect";
-import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
-import { useMemo, useState } from "react";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-  useMasterTable,
-} from "@aa/timber";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -204,6 +208,69 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const id = idRaw && !Number.isNaN(Number(idRaw)) ? Number(idRaw) : NaN;
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  if (intent === "find") {
+    const raw = Object.fromEntries(form.entries());
+    const values: any = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k.startsWith("_")) continue;
+      values[k] = v === "" ? null : v;
+    }
+    const { productSearchSchema } = await import(
+      "../find/product.search-schema"
+    );
+    const { buildWhere } = await import("../find/buildWhere");
+    const where = buildWhere(values, productSearchSchema);
+    const first = await prisma.product.findFirst({
+      where,
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    const sp = new URLSearchParams();
+    sp.set("find", "1");
+    const push = (k: string, v: any) => {
+      if (v === undefined || v === null || v === "") return;
+      sp.set(k, String(v));
+    };
+    push("sku", values.sku);
+    push("name", values.name);
+    push("description", values.description);
+    push("type", values.type);
+    push("costPriceMin", values.costPriceMin);
+    push("costPriceMax", values.costPriceMax);
+    push("manualSalePriceMin", values.manualSalePriceMin);
+    push("manualSalePriceMax", values.manualSalePriceMax);
+    push("purchaseTaxId", values.purchaseTaxId);
+    push("categoryId", values.categoryId);
+    push("customerId", values.customerId);
+    push("supplierId", values.supplierId);
+    if (
+      values.stockTrackingEnabled === true ||
+      values.stockTrackingEnabled === "true"
+    )
+      push("stockTrackingEnabled", "true");
+    if (
+      values.stockTrackingEnabled === false ||
+      values.stockTrackingEnabled === "false"
+    )
+      push("stockTrackingEnabled", "false");
+    if (
+      values.batchTrackingEnabled === true ||
+      values.batchTrackingEnabled === "true"
+    )
+      push("batchTrackingEnabled", "true");
+    if (
+      values.batchTrackingEnabled === false ||
+      values.batchTrackingEnabled === "false"
+    )
+      push("batchTrackingEnabled", "false");
+    push("componentChildSku", values.componentChildSku);
+    push("componentChildName", values.componentChildName);
+    push("componentChildSupplierId", values.componentChildSupplierId);
+    push("componentChildType", values.componentChildType);
+    const qs = sp.toString();
+    if (first?.id != null) return redirect(`/products/${first.id}?${qs}`);
+    return redirect(`/products?${qs}`);
+  }
   if (intent === "update") {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
@@ -272,15 +339,41 @@ export default function ProductDetailRoute() {
     categoryOptions,
     companyOptions,
   } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   // Register local keyboard shortcuts for navigating records
   useRecordBrowserShortcuts(product.id);
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
-  const form = useForm({
+  type ProductFormValues = {
+    id: number;
+    sku: string | null;
+    name: string;
+    description: string;
+    type: string | null;
+    costPrice?: number | null;
+    manualSalePrice?: number | null;
+    purchaseTaxId?: number | null;
+    categoryId?: number | null;
+    customerId?: number | null;
+    supplierId?: number | null;
+    stockTrackingEnabled?: boolean;
+    batchTrackingEnabled?: boolean;
+    // search-only fields
+    costPriceMin?: number | null;
+    costPriceMax?: number | null;
+    manualSalePriceMin?: number | null;
+    manualSalePriceMax?: number | null;
+    componentChildSku?: string | null;
+    componentChildName?: string | null;
+    componentChildSupplierId?: number | null;
+    componentChildType?: string | null;
+  };
+  const form = useForm<ProductFormValues>({
     defaultValues: {
       id: product.id,
+
       sku: (product as any).sku || "",
       name: product.name || "",
       description: product.description || "",
@@ -295,6 +388,15 @@ export default function ProductDetailRoute() {
       supplierId: (product as any).supplierId ?? product.supplier?.id ?? null,
       stockTrackingEnabled: !!product.stockTrackingEnabled,
       batchTrackingEnabled: !!product.batchTrackingEnabled,
+      // search-only defaults
+      costPriceMin: undefined,
+      costPriceMax: undefined,
+      manualSalePriceMin: undefined,
+      manualSalePriceMax: undefined,
+      componentChildSku: undefined,
+      componentChildName: undefined,
+      componentChildSupplierId: undefined,
+      componentChildType: undefined,
     },
   });
   type FormVals = any;
@@ -371,481 +473,585 @@ export default function ProductDetailRoute() {
       arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
     return arr;
   }, [productChoices, pickerSearch, assemblyItemOnly]);
+  const { mode } = useFind();
 
   return (
-    <Stack gap="lg">
-      <Group justify="space-between" align="center">
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "Products", href: "/products" },
-            { label: String(product.id), href: `/products/${product.id}` },
-          ]}
-        />
-        <RecordNavButtons
-          recordBrowser={useRecordBrowser(product.id, masterRecords)}
-        />
-      </Group>
-
-      {/* Top info cards */}
-      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-        <Card withBorder padding="md">
-          <Stack gap={6}>
-            <TextInput
-              label="ID"
-              mod="data-autoSize"
-              readOnly
-              value={String(product.id)}
+    <FindProvider>
+      <Stack gap="lg">
+        <Group justify="space-between" align="center">
+          <BreadcrumbSet
+            breadcrumbs={[
+              { label: "Products", href: "/products" },
+              { label: String(product.id), href: `/products/${product.id}` },
+            ]}
+          />
+          <Group>
+            <FindToggle
+              onSearch={() => {
+                const v = form.getValues();
+                const fd = new FormData();
+                fd.set("_intent", "find");
+                const put = (k: string, val: any) => {
+                  if (val === undefined || val === null || val === "") return;
+                  fd.set(k, String(val));
+                };
+                put("sku", v.sku);
+                put("name", v.name);
+                put("description", v.description);
+                put("type", v.type);
+                put("costPriceMin", v.costPriceMin);
+                put("costPriceMax", v.costPriceMax);
+                put("manualSalePriceMin", v.manualSalePriceMin);
+                put("manualSalePriceMax", v.manualSalePriceMax);
+                put("purchaseTaxId", v.purchaseTaxId);
+                put("categoryId", v.categoryId);
+                put("customerId", v.customerId);
+                put("supplierId", v.supplierId);
+                if (v.stockTrackingEnabled === true)
+                  fd.set("stockTrackingEnabled", "true");
+                if (v.stockTrackingEnabled === false)
+                  fd.set("stockTrackingEnabled", "false");
+                if (v.batchTrackingEnabled === true)
+                  fd.set("batchTrackingEnabled", "true");
+                if (v.batchTrackingEnabled === false)
+                  fd.set("batchTrackingEnabled", "false");
+                put("componentChildSku", v.componentChildSku);
+                put("componentChildName", v.componentChildName);
+                put("componentChildSupplierId", v.componentChildSupplierId);
+                put("componentChildType", v.componentChildType);
+                submit(fd, { method: "post" });
+              }}
             />
-            <TextInput
-              label="SKU"
-              mod="data-autoSize"
-              {...form.register("sku")}
+            <RecordNavButtons
+              recordBrowser={useRecordBrowser(product.id, masterRecords)}
             />
-            <TextInput
-              label="Name"
-              mod="data-autoSize"
-              {...form.register("name")}
-            />
-            <TextInput
-              label="Description"
-              mod="data-autoSize"
-              {...form.register("description")}
-            />
-            <TextInput
-              label="Type"
-              mod="data-autoSize"
-              {...form.register("type")}
-            />
-          </Stack>
-        </Card>
-        <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Title order={4}>Relations</Title>
-          </Card.Section>
-          <Divider my="xs" />
-          <Stack gap={6}>
-            <Controller
-              name="customerId"
-              control={form.control}
-              render={({ field }) => (
-                <CompanySelect
-                  label="Customer"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  options={companyOptions as unknown as CompanyOption[]}
-                  filter="customer"
-                />
-              )}
-            />
-            <TextInput
-              label="Variant Set"
-              mod="data-autoSize"
-              readOnly
-              value={
-                product.variantSet?.name ||
-                (product.variantSet?.variants?.length
-                  ? `${product.variantSet?.variants.length} variants`
-                  : "")
-              }
-            />
-            <Controller
-              name="stockTrackingEnabled"
-              control={form.control}
-              render={({ field }) => (
-                <Switch
-                  label="Stock Tracking"
-                  checked={!!field.value}
-                  onChange={(e) => field.onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
-            <Controller
-              name="batchTrackingEnabled"
-              control={form.control}
-              render={({ field }) => (
-                <Switch
-                  label="Batch Tracking"
-                  checked={!!field.value}
-                  onChange={(e) => field.onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
-          </Stack>
-        </Card>
-        <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Title order={4}>Commercial</Title>
-          </Card.Section>
-          <Divider my="xs" />
-          <Stack gap={6}>
-            <Controller
-              name="costPrice"
-              control={form.control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Cost Price"
-                  mod="data-autoSize"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  allowDecimal
-                />
-              )}
-            />
-            <Controller
-              name="manualSalePrice"
-              control={form.control}
-              render={({ field }) => (
-                <NumberInput
-                  label="Manual Sale Price"
-                  mod="data-autoSize"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  allowDecimal
-                />
-              )}
-            />
-            <Controller
-              name="purchaseTaxId"
-              control={form.control}
-              render={({ field }) => (
-                <TaxCodeSelect
-                  label="Purchase Tax"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  options={taxCodeOptions as unknown as TaxCodeOption[]}
-                />
-              )}
-            />
-            <Controller
-              name="categoryId"
-              control={form.control}
-              render={({ field }) => (
-                <CategorySelect
-                  label="Category"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  options={categoryOptions as unknown as CategoryOption[]}
-                />
-              )}
-            />
-            <Controller
-              name="supplierId"
-              control={form.control}
-              render={({ field }) => (
-                <CompanySelect
-                  label="Supplier"
-                  value={field.value as any}
-                  onChange={(v) => field.onChange(v)}
-                  options={companyOptions as unknown as CompanyOption[]}
-                  filter="supplier"
-                />
-              )}
-            />
-          </Stack>
-        </Card>
-      </SimpleGrid>
-
-      {/* Bill of Materials */}
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Group justify="space-between" align="center">
-            <Title order={4}>Bill of Materials</Title>
-            <Button variant="light" onClick={() => setPickerOpen(true)}>
-              Add Component
-            </Button>
           </Group>
-        </Card.Section>
-        {/* <Divider my="xs" /> */}
-        {product.productLines.length > 0 && (
-          <Table striped withTableBorder withColumnBorders highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>ID</Table.Th>
-                <Table.Th>SKU</Table.Th>
-                <Table.Th>Product</Table.Th>
-                <Table.Th>Usage</Table.Th>
-                <Table.Th>Type</Table.Th>
-                <Table.Th>Supplier</Table.Th>
-                <Table.Th>Qty</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {product.productLines.map((pl: any) => (
-                <Table.Tr key={pl.id}>
-                  <Table.Td>{pl.id}</Table.Td>
-                  <Table.Td>{pl.child?.sku || ""}</Table.Td>
-                  <Table.Td>
-                    {pl.child ? (
-                      <Link to={`/products/${pl.child.id}`}>
-                        {pl.child.name || pl.child.id}
-                      </Link>
-                    ) : (
-                      pl.childId
-                    )}
-                  </Table.Td>
-                  <Table.Td>{pl.activityUsed || ""}</Table.Td>
-                  <Table.Td>{pl.child?.type || ""}</Table.Td>
-                  <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
-                  <Table.Td>{pl.quantity}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        )}
-      </Card>
+        </Group>
 
-      {/* Stock + Movements */}
-      <Grid gutter="md">
-        <Grid.Col span={{ base: 12, md: 5 }}>
-          <Stack>
-            {/* Stock by Location + Batch (left) */}
+        {/* Top info cards */}
+        <Form id="product-form" method="post">
+          <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
             <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Group justify="space-between" align="center">
-                  <Title order={4}>Stock by Location</Title>
-                  <Badge variant="light">
-                    Global: {Number((product as any).stockQty ?? 0)}
-                  </Badge>
-                </Group>
-              </Card.Section>
-              <Table striped withTableBorder withColumnBorders highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Location</Table.Th>
-                    <Table.Th>Qty</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {(stockByLocation || []).map((row: any) => (
-                    <Table.Tr key={row.location_id ?? "none"}>
-                      <Table.Td>
-                        {row.location_name || `${row.location_id ?? "(none)"}`}
-                      </Table.Td>
-                      <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Card>
-
-            {/* Stock by Batch */}
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Group justify="space-between" align="center">
-                  <Title order={4}>Stock by Location</Title>
-                  <Badge variant="light">
-                    Global: {Number((product as any).stockQty ?? 0)}
-                  </Badge>
-                </Group>
-              </Card.Section>
-              <Divider my="md" />
-              <Group justify="space-between" align="center" px={8} pb={6}>
-                <Title order={5}>Stock by Batch</Title>
-                <Group gap="sm" wrap="wrap">
-                  <SegmentedControl
-                    value={batchScope}
-                    onChange={(v) => setBatchScope(v as any)}
-                    data={[
-                      { value: "all", label: "All" },
-                      { value: "current", label: "Current" },
-                    ]}
-                  />
-                  <SegmentedControl
-                    value={batchLocation}
-                    onChange={(v) => setBatchLocation(v)}
-                    data={batchLocationOptions}
-                  />
-                </Group>
-              </Group>
-              <Table striped withTableBorder withColumnBorders highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Batch Codes</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Location</Table.Th>
-                    <Table.Th>Received</Table.Th>
-                    <Table.Th>Qty</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {filteredBatches.map((row: any) => (
-                    <Table.Tr key={row.batch_id}>
-                      <Table.Td>
-                        {row.code_mill || row.code_sartor ? (
-                          <>
-                            {row.code_mill || ""}
-                            {row.code_sartor
-                              ? (row.code_mill ? " | " : "") + row.code_sartor
-                              : ""}
-                          </>
-                        ) : (
-                          `${row.batch_id}`
-                        )}
-                      </Table.Td>
-                      <Table.Td>{row.batch_name || ""}</Table.Td>
-                      <Table.Td>
-                        {row.location_name ||
-                          (row.location_id ? `${row.location_id}` : "")}
-                      </Table.Td>
-                      <Table.Td>
-                        {row.received_at
-                          ? new Date(row.received_at).toLocaleDateString()
-                          : ""}
-                      </Table.Td>
-                      <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Card>
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 7 }}>
-          {/* Product Movements (right) */}
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Product Movements</Title>
-                <SegmentedControl
-                  value={movementView}
-                  onChange={(v) => setMovementView(v as any)}
-                  data={[
-                    { value: "header", label: "Movement" },
-                    { value: "line", label: "Line" },
-                  ]}
+              <Stack gap={6}>
+                <TextInput
+                  label="ID"
+                  mod="data-autoSize"
+                  readOnly
+                  value={String(product.id)}
                 />
-              </Group>
-            </Card.Section>
+                <TextAny
+                  label="SKU"
+                  mod="data-autoSize"
+                  {...form.register("sku")}
+                />
+                <TextAny
+                  label="Name"
+                  mod="data-autoSize"
+                  {...form.register("name")}
+                />
+                <TextAny
+                  label="Description"
+                  mod="data-autoSize"
+                  {...form.register("description")}
+                />
+                <TextAny
+                  label="Type"
+                  mod="data-autoSize"
+                  {...form.register("type")}
+                />
+              </Stack>
+            </Card>
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Title order={4}>Relations</Title>
+              </Card.Section>
+              <Divider my="xs" />
+              <Stack gap={6}>
+                <Controller
+                  name="customerId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <CompanySelect
+                      label="Customer"
+                      value={field.value as any}
+                      onChange={(v) => field.onChange(v)}
+                      options={companyOptions as unknown as CompanyOption[]}
+                      filter="customer"
+                    />
+                  )}
+                />
+                <TextInput
+                  label="Variant Set"
+                  mod="data-autoSize"
+                  readOnly
+                  value={
+                    product.variantSet?.name ||
+                    (product.variantSet?.variants?.length
+                      ? `${product.variantSet?.variants.length} variants`
+                      : "")
+                  }
+                />
+                <Controller
+                  name="stockTrackingEnabled"
+                  control={form.control}
+                  render={({ field }) => (
+                    <TriBool
+                      label="Stock Tracking"
+                      value={(field.value ?? "any") as any}
+                      onChange={(v) =>
+                        field.onChange(v === "any" ? undefined : v)
+                      }
+                    />
+                  )}
+                />
+                <Controller
+                  name="batchTrackingEnabled"
+                  control={form.control}
+                  render={({ field }) => (
+                    <TriBool
+                      label="Batch Tracking"
+                      value={(field.value ?? "any") as any}
+                      onChange={(v) =>
+                        field.onChange(v === "any" ? undefined : v)
+                      }
+                    />
+                  )}
+                />
+              </Stack>
+            </Card>
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Title order={4}>Commercial</Title>
+              </Card.Section>
+              <Divider my="xs" />
+              <Stack gap={6}>
+                <NumberMaybeRange
+                  label="Cost Price"
+                  value={form.getValues("costPrice")}
+                  onChange={(v) => form.setValue("costPrice", v as any)}
+                  minValue={form.getValues("costPriceMin")}
+                  maxValue={form.getValues("costPriceMax")}
+                  onMinChange={(v) => form.setValue("costPriceMin", v as any)}
+                  onMaxChange={(v) => form.setValue("costPriceMax", v as any)}
+                />
+                <NumberMaybeRange
+                  label="Manual Sale Price"
+                  value={form.getValues("manualSalePrice")}
+                  onChange={(v) => form.setValue("manualSalePrice", v as any)}
+                  minValue={form.getValues("manualSalePriceMin")}
+                  maxValue={form.getValues("manualSalePriceMax")}
+                  onMinChange={(v) =>
+                    form.setValue("manualSalePriceMin", v as any)
+                  }
+                  onMaxChange={(v) =>
+                    form.setValue("manualSalePriceMax", v as any)
+                  }
+                />
+                <Controller
+                  name="purchaseTaxId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <TaxCodeSelect
+                      label="Purchase Tax"
+                      value={field.value as any}
+                      onChange={(v) => field.onChange(v)}
+                      options={taxCodeOptions as unknown as TaxCodeOption[]}
+                    />
+                  )}
+                />
+                <Controller
+                  name="categoryId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <CategorySelect
+                      label="Category"
+                      value={field.value as any}
+                      onChange={(v) => field.onChange(v)}
+                      options={categoryOptions as unknown as CategoryOption[]}
+                    />
+                  )}
+                />
+                <Controller
+                  name="supplierId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <CompanySelect
+                      label="Supplier"
+                      value={field.value as any}
+                      onChange={(v) => field.onChange(v)}
+                      options={companyOptions as unknown as CompanyOption[]}
+                      filter="supplier"
+                    />
+                  )}
+                />
+              </Stack>
+            </Card>
+          </SimpleGrid>
+        </Form>
+
+        {/* Bill of Materials */}
+        <Card withBorder padding="md">
+          <Card.Section inheritPadding py="xs">
+            <Group justify="space-between" align="center">
+              <Title order={4}>Bill of Materials</Title>
+              <Button variant="light" onClick={() => setPickerOpen(true)}>
+                Add Component
+              </Button>
+            </Group>
+          </Card.Section>
+          {/* <Divider my="xs" /> */}
+          {product.productLines.length > 0 && (
             <Table striped withTableBorder withColumnBorders highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Date</Table.Th>
+                  <Table.Th>ID</Table.Th>
+                  <Table.Th>SKU</Table.Th>
+                  <Table.Th>Product</Table.Th>
+                  <Table.Th>Usage</Table.Th>
                   <Table.Th>Type</Table.Th>
-                  <Table.Th>Out</Table.Th>
-                  <Table.Th>In</Table.Th>
-                  {movementView === "line" && <Table.Th>Batch</Table.Th>}
+                  <Table.Th>Supplier</Table.Th>
                   <Table.Th>Qty</Table.Th>
-                  <Table.Th>Notes</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {movementView === "line"
-                  ? (movements || []).map((ml: any) => (
-                      <Table.Tr key={`line-${ml.id}`}>
-                        <Table.Td>
-                          {ml.movement?.date
-                            ? new Date(ml.movement.date).toLocaleDateString()
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{ml.movement?.movementType || ""}</Table.Td>
-                        <Table.Td>
-                          {ml.movement?.locationOutId != null
-                            ? locationNameById?.[ml.movement.locationOutId] ||
-                              ml.movement.locationOutId
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>
-                          {ml.movement?.locationInId != null
-                            ? locationNameById?.[ml.movement.locationInId] ||
-                              ml.movement.locationInId
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>
-                          {ml.batch?.codeMill || ml.batch?.codeSartor
-                            ? `${ml.batch?.codeMill || ""}${
-                                ml.batch?.codeMill && ml.batch?.codeSartor
-                                  ? " | "
-                                  : ""
-                              }${ml.batch?.codeSartor || ""}`
-                            : ml.batch?.id
-                            ? `${ml.batch.id}`
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{ml.quantity ?? ""}</Table.Td>
-                        <Table.Td>{ml.notes || ""}</Table.Td>
-                      </Table.Tr>
-                    ))
-                  : (movementHeaders || []).map((mh: any) => (
-                      <Table.Tr key={`hdr-${mh.id}`}>
-                        <Table.Td>
-                          {mh.date
-                            ? new Date(mh.date).toLocaleDateString()
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{mh.movementType || ""}</Table.Td>
-                        <Table.Td>
-                          {mh.locationOutId != null
-                            ? locationNameById?.[mh.locationOutId] ||
-                              mh.locationOutId
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>
-                          {mh.locationInId != null
-                            ? locationNameById?.[mh.locationInId] ||
-                              mh.locationInId
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{mh.quantity ?? ""}</Table.Td>
-                        <Table.Td>{mh.notes || ""}</Table.Td>
-                      </Table.Tr>
-                    ))}
+                {product.productLines.map((pl: any) => (
+                  <Table.Tr key={pl.id}>
+                    <Table.Td>{pl.id}</Table.Td>
+                    <Table.Td>{pl.child?.sku || ""}</Table.Td>
+                    <Table.Td>
+                      {pl.child ? (
+                        <Link to={`/products/${pl.child.id}`}>
+                          {pl.child.name || pl.child.id}
+                        </Link>
+                      ) : (
+                        pl.childId
+                      )}
+                    </Table.Td>
+                    <Table.Td>{pl.activityUsed || ""}</Table.Td>
+                    <Table.Td>{pl.child?.type || ""}</Table.Td>
+                    <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
+                    <Table.Td>{pl.quantity}</Table.Td>
+                  </Table.Tr>
+                ))}
               </Table.Tbody>
             </Table>
-          </Card>
-        </Grid.Col>
-      </Grid>
+          )}
+          {/* Criteria Row for Find */}
+          {mode === "find" && (
+            <Table withTableBorder withColumnBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Child SKU</Table.Th>
+                  <Table.Th>Child Name</Table.Th>
+                  <Table.Th>Child Type</Table.Th>
+                  <Table.Th>Child Supplier</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Td>
+                    <TextAny
+                      placeholder="contains…"
+                      {...form.register("componentChildSku")}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <TextAny
+                      placeholder="contains…"
+                      {...form.register("componentChildName")}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <TextAny
+                      placeholder="contains…"
+                      {...form.register("componentChildType")}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Controller
+                      name="componentChildSupplierId"
+                      control={form.control}
+                      render={({ field }) => (
+                        <CompanySelect
+                          label=""
+                          value={field.value as any}
+                          onChange={(v) => field.onChange(v)}
+                          options={companyOptions as any}
+                          filter="supplier"
+                        />
+                      )}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          )}
+        </Card>
 
-      {/* Add Component Picker */}
-      <Modal
-        opened={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        title="Add Component"
-        size="xl"
-        centered
-      >
-        <Stack>
-          <Group justify="space-between" align="flex-end">
-            <TextInput
-              placeholder="Search products..."
-              value={pickerSearch}
-              onChange={(e) => setPickerSearch(e.currentTarget.value)}
-              w={320}
-            />
-            <Checkbox
-              label="Assembly Item"
-              checked={assemblyItemOnly}
-              onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
-            />
-          </Group>
-          <div style={{ maxHeight: 420, overflow: "auto" }}>
-            {filtered.map((p: any) => (
-              <Group
-                key={p.id}
-                py={6}
-                onClick={() => {
-                  const fd = new FormData();
-                  fd.set("_intent", "product.addComponent");
-                  fd.set("childId", String(p.id));
-                  submit(fd, { method: "post" });
-                  setPickerOpen(false);
-                }}
-                style={{ cursor: "pointer" }}
-              >
-                <Text w={60}>{p.id}</Text>
-                <Text w={160}>{p.sku}</Text>
-                <Text style={{ flex: 1 }}>{p.name}</Text>
-              </Group>
-            ))}
-          </div>
-        </Stack>
-      </Modal>
+        {/* Stock + Movements */}
+        <Grid gutter="md">
+          <Grid.Col span={{ base: 12, md: 5 }}>
+            <Stack>
+              {/* Stock by Location + Batch (left) */}
+              <Card withBorder padding="md">
+                <Card.Section inheritPadding py="xs">
+                  <Group justify="space-between" align="center">
+                    <Title order={4}>Stock by Location</Title>
+                    <Badge variant="light">
+                      Global: {Number((product as any).stockQty ?? 0)}
+                    </Badge>
+                  </Group>
+                </Card.Section>
+                <Table
+                  striped
+                  withTableBorder
+                  withColumnBorders
+                  highlightOnHover
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Location</Table.Th>
+                      <Table.Th>Qty</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {(stockByLocation || []).map((row: any) => (
+                      <Table.Tr key={row.location_id ?? "none"}>
+                        <Table.Td>
+                          {row.location_name ||
+                            `${row.location_id ?? "(none)"}`}
+                        </Table.Td>
+                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Card>
 
-      <Form method="post">
-        <input type="hidden" name="_intent" value="delete" />
-        <Button color="red" variant="light" type="submit" disabled={busy}>
-          {busy ? "Deleting..." : "Delete product"}
-        </Button>
-      </Form>
-    </Stack>
+              {/* Stock by Batch */}
+              <Card withBorder padding="md">
+                <Card.Section inheritPadding py="xs">
+                  <Group justify="space-between" align="center">
+                    <Title order={4}>Stock by Location</Title>
+                    <Badge variant="light">
+                      Global: {Number((product as any).stockQty ?? 0)}
+                    </Badge>
+                  </Group>
+                </Card.Section>
+                <Divider my="md" />
+                <Group justify="space-between" align="center" px={8} pb={6}>
+                  <Title order={5}>Stock by Batch</Title>
+                  <Group gap="sm" wrap="wrap">
+                    <SegmentedControl
+                      value={batchScope}
+                      onChange={(v) => setBatchScope(v as any)}
+                      data={[
+                        { value: "all", label: "All" },
+                        { value: "current", label: "Current" },
+                      ]}
+                    />
+                    <SegmentedControl
+                      value={batchLocation}
+                      onChange={(v) => setBatchLocation(v)}
+                      data={batchLocationOptions}
+                    />
+                  </Group>
+                </Group>
+                <Table
+                  striped
+                  withTableBorder
+                  withColumnBorders
+                  highlightOnHover
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Batch Codes</Table.Th>
+                      <Table.Th>Name</Table.Th>
+                      <Table.Th>Location</Table.Th>
+                      <Table.Th>Received</Table.Th>
+                      <Table.Th>Qty</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {filteredBatches.map((row: any) => (
+                      <Table.Tr key={row.batch_id}>
+                        <Table.Td>
+                          {row.code_mill || row.code_sartor ? (
+                            <>
+                              {row.code_mill || ""}
+                              {row.code_sartor
+                                ? (row.code_mill ? " | " : "") + row.code_sartor
+                                : ""}
+                            </>
+                          ) : (
+                            `${row.batch_id}`
+                          )}
+                        </Table.Td>
+                        <Table.Td>{row.batch_name || ""}</Table.Td>
+                        <Table.Td>
+                          {row.location_name ||
+                            (row.location_id ? `${row.location_id}` : "")}
+                        </Table.Td>
+                        <Table.Td>
+                          {row.received_at
+                            ? new Date(row.received_at).toLocaleDateString()
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Card>
+            </Stack>
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, md: 7 }}>
+            {/* Product Movements (right) */}
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Group justify="space-between" align="center">
+                  <Title order={4}>Product Movements</Title>
+                  <SegmentedControl
+                    value={movementView}
+                    onChange={(v) => setMovementView(v as any)}
+                    data={[
+                      { value: "header", label: "Movement" },
+                      { value: "line", label: "Line" },
+                    ]}
+                  />
+                </Group>
+              </Card.Section>
+              <Table striped withTableBorder withColumnBorders highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Out</Table.Th>
+                    <Table.Th>In</Table.Th>
+                    {movementView === "line" && <Table.Th>Batch</Table.Th>}
+                    <Table.Th>Qty</Table.Th>
+                    <Table.Th>Notes</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {movementView === "line"
+                    ? (movements || []).map((ml) => (
+                        <Table.Tr key={`line-${ml.id}`}>
+                          <Table.Td>
+                            {ml.movement?.date
+                              ? new Date(ml.movement.date).toLocaleDateString()
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>{ml.movement?.movementType || ""}</Table.Td>
+                          <Table.Td>
+                            {ml.movement?.locationOutId != null
+                              ? locationNameById?.[ml.movement.locationOutId] ||
+                                ml.movement.locationOutId
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>
+                            {ml.movement?.locationInId != null
+                              ? locationNameById?.[ml.movement.locationInId] ||
+                                ml.movement.locationInId
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>
+                            {ml.batch?.codeMill || ml.batch?.codeSartor
+                              ? `${ml.batch?.codeMill || ""}${
+                                  ml.batch?.codeMill && ml.batch?.codeSartor
+                                    ? " | "
+                                    : ""
+                                }${ml.batch?.codeSartor || ""}`
+                              : ml.batch?.id
+                              ? `${ml.batch.id}`
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                          <Table.Td>{ml.notes || ""}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    : (movementHeaders || []).map((mh) => (
+                        <Table.Tr key={`hdr-${mh.id}`}>
+                          <Table.Td>
+                            {mh.date
+                              ? new Date(mh.date).toLocaleDateString()
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>{mh.movementType || ""}</Table.Td>
+                          <Table.Td>
+                            {mh.locationOutId != null
+                              ? locationNameById?.[mh.locationOutId] ||
+                                mh.locationOutId
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>
+                            {mh.locationInId != null
+                              ? locationNameById?.[mh.locationInId] ||
+                                mh.locationInId
+                              : ""}
+                          </Table.Td>
+                          <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                          <Table.Td>{mh.notes || ""}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                </Table.Tbody>
+              </Table>
+            </Card>
+          </Grid.Col>
+        </Grid>
+
+        {/* Add Component Picker */}
+        <Modal
+          opened={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          title="Add Component"
+          size="xl"
+          centered
+        >
+          <Stack>
+            <Group justify="space-between" align="flex-end">
+              <TextInput
+                placeholder="Search products..."
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.currentTarget.value)}
+                w={320}
+              />
+              <Checkbox
+                label="Assembly Item"
+                checked={assemblyItemOnly}
+                onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
+              />
+            </Group>
+            <div style={{ maxHeight: 420, overflow: "auto" }}>
+              {filtered.map((p: any) => (
+                <Group
+                  key={p.id}
+                  py={6}
+                  onClick={() => {
+                    const fd = new FormData();
+                    fd.set("_intent", "product.addComponent");
+                    fd.set("childId", String(p.id));
+                    submit(fd, { method: "post" });
+                    setPickerOpen(false);
+                  }}
+                  style={{ cursor: "pointer" }}
+                >
+                  <Text w={60}>{p.id}</Text>
+                  <Text w={160}>{p.sku}</Text>
+                  <Text style={{ flex: 1 }}>{p.name}</Text>
+                </Group>
+              ))}
+            </div>
+          </Stack>
+        </Modal>
+
+        <Form method="post">
+          <input type="hidden" name="_intent" value="delete" />
+          <Button color="red" variant="light" type="submit" disabled={busy}>
+            {busy ? "Deleting..." : "Delete product"}
+          </Button>
+        </Form>
+      </Stack>
+    </FindProvider>
   );
 }

@@ -50,7 +50,7 @@ The Admin → Import supports Excel files with FileMaker field names. The follow
   - a_AssemblyID → PurchaseOrderLine.assemblyId
   - a_JobNo → PurchaseOrderLine.jobId
   - a_PurchaseOrderID → PurchaseOrderLine.purchaseOrderId
-  - a_TaxCodeID → PurchaseOrderLine.taxCodeId
+  - TaxCode → PurchaseOrderLine.taxCode (string)
   - Plus common fields: product id/sku, priceCost, priceSell, qtyShipped, qtyReceived, quantity, quantityOrdered, taxRate
 
 IDs are treated as FileMaker serials (a\_\_Serial) when present and upserted.
