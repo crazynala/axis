@@ -50,6 +50,7 @@ export interface RenderContext {
   // Future: category lists, tax codes, etc.
   categoryOptions?: { value: string; label: string }[];
   taxCodeOptions?: { value: string; label: string }[];
+  customerOptions?: { value: string; label: string }[];
 }
 
 export function renderField(
@@ -78,44 +79,59 @@ export function renderField(
       return (
         <TextInput
           {...common}
+          mod="autoSize"
           readOnly
           value={record?.[field.name] != null ? String(record[field.name]) : ""}
         />
       );
-    case "customerPicker":
+    case "customerPicker": {
       if (mode === "find") {
         return (
           <TextInput
             {...common}
+            mod="autoSize"
             placeholder={field.findPlaceholder || "contains…"}
             {...form.register(field.name as any)}
           />
         );
       }
+      // Inline searchable select using provided customer options list if available
+      const options = (ctx as any)?.customerOptions?.length
+        ? (ctx as any).customerOptions
+        : record?.company
+        ? [
+            {
+              value: String(record.company.id),
+              label: record.company.name || String(record.company.id),
+            },
+          ]
+        : [];
       return (
-        <Group gap="md" align="center">
-          <TextInput
-            {...common}
-            readOnly
-            value={record?.company?.name || ""}
-            style={{ flex: 1 }}
-          />
-          <Button
-            variant="light"
-            onClick={(e) => {
-              e.preventDefault();
-              ctx?.openCustomerModal?.();
-            }}
-          >
-            Pick
-          </Button>
-        </Group>
+        <Select
+          {...common}
+          searchable
+          clearable
+          mod="autoSize"
+          data={options}
+          value={
+            form.watch(field.name as any) ??
+            (record?.company?.id ? String(record.company.id) : null)
+          }
+          onChange={(val) => {
+            // store ID as number when possible
+            const num = val != null && val !== "" ? Number(val) : undefined;
+            form.setValue(field.name as any, num as any, { shouldDirty: true });
+          }}
+          placeholder="Select customer…"
+        />
       );
+    }
     case "date":
       if (mode === "find") {
         return (
           <TextInput
             {...common}
+            mod="autoSize"
             placeholder={field.findPlaceholder || "yyyy-mm-dd"}
             {...form.register(field.name as any)}
           />
@@ -125,6 +141,7 @@ export function renderField(
       return (
         <DatePickerInput
           {...common}
+          mod="autoSize"
           value={val ? new Date(val) : null}
           onChange={(d) => form.setValue(field.name as any, d as any)}
         />
@@ -197,12 +214,14 @@ export function renderField(
           <Group gap="xs" align="flex-end" style={{ alignItems: "flex-end" }}>
             <TextInput
               label={field.label + " Min"}
+              mod="autoSize"
               placeholder="min"
               {...form.register(minField as any)}
               style={{ flex: 1 }}
             />
             <TextInput
               label={field.label + " Max"}
+              mod="autoSize"
               placeholder="max"
               {...form.register(maxField as any)}
               style={{ flex: 1 }}
@@ -213,6 +232,7 @@ export function renderField(
       return (
         <TextInput
           {...common}
+          mod="autoSize"
           type="number"
           value={record?.[field.name] ?? ""}
           onChange={(e) => form.setValue(field.name as any, e.target.value)}
@@ -229,6 +249,7 @@ export function renderField(
                 (field.findOp === "equals" ? "equals…" : "contains…")
               : undefined
           }
+          mod="autoSize"
           {...form.register(field.name as any)}
           readOnly={
             mode === "edit" && (field.editable === false || field.readOnly)

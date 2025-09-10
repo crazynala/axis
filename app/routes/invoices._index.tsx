@@ -10,21 +10,89 @@ import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
+import { InvoiceFindManager } from "../components/InvoiceFindManager";
+import { SavedViews } from "../components/find/SavedViews";
+import { listViews, saveView } from "../utils/views.server";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Invoices" }];
 
 export async function loader(args: LoaderFunctionArgs) {
+  const url = new URL(args.request.url);
   const params = parseTableParams(args.request.url);
-  const { where, orderBy, skip, take } = buildPrismaArgs(params, {
+  const views = await listViews("invoices");
+  const viewName = url.searchParams.get("view");
+  let effective = params;
+  if (viewName) {
+    const v = views.find((x: any) => x.name === viewName);
+    if (v) {
+      const saved = v.params as any;
+      effective = {
+        page: Number(url.searchParams.get("page") || saved.page || 1),
+        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
+        sort: (url.searchParams.get("sort") || saved.sort || null) as any,
+        dir: (url.searchParams.get("dir") || saved.dir || null) as any,
+        q: (url.searchParams.get("q") || saved.q || null) as any,
+        filters: { ...(saved.filters || {}), ...params.filters },
+      };
+      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) {
+        url.searchParams.set("findReqs", saved.filters.findReqs);
+      }
+    }
+  }
+  const findKeys = ["invoiceCode", "status", "companyName", "date"]; // companyName derived
+  let findWhere: any = null;
+  const hasFindIndicators =
+    findKeys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
+  if (hasFindIndicators) {
+    const values: Record<string, any> = {};
+    for (const k of findKeys) {
+      const v = url.searchParams.get(k);
+      if (v) values[k] = v;
+    }
+    const simple: any = {};
+    if (values.invoiceCode)
+      simple.invoiceCode = {
+        contains: values.invoiceCode,
+        mode: "insensitive",
+      };
+    if (values.status)
+      simple.status = { contains: values.status, mode: "insensitive" };
+    if (values.date)
+      simple.date = values.date ? new Date(values.date) : undefined;
+    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    if (multi) {
+      const interpreters: Record<string, (val: any) => any> = {
+        invoiceCode: (v) => ({
+          invoiceCode: { contains: v, mode: "insensitive" },
+        }),
+        status: (v) => ({ status: { contains: v, mode: "insensitive" } }),
+      };
+      const multiWhere = buildWhereFromRequests(multi, interpreters);
+      findWhere = mergeSimpleAndMulti(simple, multiWhere);
+    } else findWhere = simple;
+  }
+  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+  if (baseParams.filters) {
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacy,
+      ...rest
+    } = baseParams.filters;
+    baseParams = { ...baseParams, filters: rest };
+  }
+  const { where, orderBy, skip, take } = buildPrismaArgs(baseParams, {
     searchableFields: ["invoiceCode"],
-    filterMappers: {
-      invoiceCode: (v: string) => ({
-        invoiceCode: { contains: v, mode: "insensitive" },
-      }),
-      status: (v: string) => ({ status: { contains: v, mode: "insensitive" } }),
-    },
+    filterMappers: {},
     defaultSort: { field: "id", dir: "asc" },
   });
+  if (findWhere)
+    (where as any).AND = [...((where as any).AND || []), findWhere];
   const [rows, total] = await Promise.all([
     prisma.invoice.findMany({
       where,
@@ -41,7 +109,6 @@ export async function loader(args: LoaderFunctionArgs) {
     }),
     prisma.invoice.count({ where }),
   ]);
-  // Compute totals per invoice (sum of line item priceSell * quantity)
   const ids = rows.map((r) => r.id);
   const lines = await prisma.invoiceLine.findMany({
     where: { invoiceId: { in: ids } },
@@ -56,9 +123,39 @@ export async function loader(args: LoaderFunctionArgs) {
   return json({
     rows: withTotals,
     total,
-    page: params.page,
-    perPage: params.perPage,
+    page: baseParams.page,
+    perPage: baseParams.perPage,
+    views,
+    activeView: viewName || null,
   });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
+  if (form.get("_intent") === "saveView") {
+    const name = String(form.get("name") || "").trim();
+    if (!name) return redirect("/invoices");
+    const url = new URL(request.url);
+    const params = Object.fromEntries(url.searchParams.entries());
+    const page = Number(params.page || 1);
+    const perPage = Number(params.perPage || 20);
+    const sort = (params.sort as any) || null;
+    const dir = (params.dir as any) || null;
+    const q = (params.q as any) || null;
+    const filters: Record<string, any> = {};
+    for (const [k, v] of Object.entries(params)) {
+      if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
+      filters[k] = v;
+    }
+    if (params.findReqs) filters.findReqs = params.findReqs;
+    await saveView({
+      module: "invoices",
+      name,
+      params: { page, perPage, sort, dir, q, filters },
+    });
+    return redirect(`/invoices?view=${encodeURIComponent(name)}`);
+  }
+  return redirect("/invoices");
 }
 
 export default function InvoicesIndexRoute() {
@@ -84,7 +181,12 @@ export default function InvoicesIndexRoute() {
   };
   return (
     <div>
+      <InvoiceFindManager />
       <BreadcrumbSet breadcrumbs={[{ label: "Invoices", href: "/invoices" }]} />
+      <SavedViews
+        views={(data as any).views || []}
+        activeView={(data as any).activeView}
+      />
       <DataTable
         withRowBorders
         records={data.rows as any}

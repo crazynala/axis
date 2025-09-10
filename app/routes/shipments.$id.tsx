@@ -14,16 +14,9 @@ import {
   useInitGlobalFormContext,
   RecordNavButtons,
 } from "@aa/timber";
-import {
-  Card,
-  Divider,
-  Group,
-  Stack,
-  TextInput,
-  Title,
-  Table,
-} from "@mantine/core";
+import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
 import { useForm } from "react-hook-form";
+import { ShipmentDetailForm } from "../components/ShipmentDetailForm";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -115,82 +108,17 @@ export default function ShipmentDetailRoute() {
         <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={4}>Shipment</Title>
-        </Card.Section>
-        <Divider my="xs" />
-        <Stack gap={6}>
-          <TextInput
-            label="ID"
-            value={String(shipment.id)}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Date"
-            {...form.register("date")}
-            placeholder="YYYY-MM-DD"
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Date Received"
-            {...form.register("dateReceived")}
-            placeholder="YYYY-MM-DD"
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Type"
-            {...form.register("type")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Ship Type"
-            value={shipment.shipmentType || ""}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Status"
-            {...form.register("status")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Tracking"
-            {...form.register("trackingNo")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Packing Slip"
-            {...form.register("packingSlipCode")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Carrier"
-            value={shipment.companyCarrier?.name || ""}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Sender"
-            value={shipment.companySender?.name || ""}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Receiver"
-            value={shipment.companyReceiver?.name || ""}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Location"
-            value={shipment.location?.name || ""}
-            readOnly
-            mod="data-autoSize"
-          />
-        </Stack>
-      </Card>
+      <ShipmentDetailForm
+        mode="edit"
+        form={form as any}
+        shipment={{
+          ...shipment,
+          carrierName: shipment.companyCarrier?.name,
+          senderName: shipment.companySender?.name,
+          receiverName: shipment.companyReceiver?.name,
+          locationName: shipment.location?.name,
+        }}
+      />
 
       {shipment.lines?.length ? (
         <Card withBorder padding="md">

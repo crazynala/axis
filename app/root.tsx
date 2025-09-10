@@ -21,7 +21,9 @@ import {
   Stack,
   Title,
   Group,
+  Button,
   Burger,
+  Kbd,
   ColorSchemeScript,
   NavLink,
   ActionIcon,
@@ -59,6 +61,7 @@ import {
   IconTruck,
   IconCalendarDollar,
 } from "@tabler/icons-react";
+import { useFind } from "./find/FindContext";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -305,7 +308,9 @@ function AppShellLayout({
               />
             </Group>
           </SaveCancelHeader>
-          <Group w={desktopNavOpened ? 110 : 220} justify="flex-end" />
+          <Group w={desktopNavOpened ? 110 : 220} justify="flex-end">
+            <GlobalFindTrigger />
+          </Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar py="md" px={desktopNavOpened ? "md" : 0}>
@@ -386,7 +391,68 @@ function AppShellLayout({
 function GlobalHotkeys() {
   // Register global keyboard shortcuts (Cmd/Ctrl+S => save via GlobalFormProvider)
   useGlobalSaveShortcut();
+  // Cmd/Ctrl+F => open contextual Find if supported
+  const location = useLocation();
+  const { triggerFind } = useFind();
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const cmd = isMac ? e.metaKey : e.ctrlKey;
+      if (!cmd) return;
+      if (e.key === "f" || e.key === "F") {
+        // If user is typing inside an input/textarea/contenteditable, allow native find
+        const target = e.target as HTMLElement | null;
+        if (target) {
+          const tag = target.tagName;
+          if (
+            tag === "INPUT" ||
+            tag === "TEXTAREA" ||
+            target.isContentEditable
+          ) {
+            return;
+          }
+        }
+        if (isFindCapablePath(location.pathname)) {
+          e.preventDefault();
+          triggerFind();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [location.pathname, triggerFind]);
   return null;
+}
+
+// Utility: which paths support find
+function isFindCapablePath(pathname: string): boolean {
+  // Modules with registered FindManagers
+  if (pathname.startsWith("/jobs")) return true;
+  if (pathname === "/products" || pathname.startsWith("/products/"))
+    return true;
+  if (pathname.startsWith("/companies")) return true;
+  if (pathname.startsWith("/purchase-orders")) return true;
+  if (pathname.startsWith("/invoices")) return true;
+  if (pathname.startsWith("/shipments")) return true;
+  if (pathname.startsWith("/expenses")) return true;
+  return false;
+}
+
+// Central handler to invoke find behavior per module
+function GlobalFindTrigger() {
+  const location = useLocation();
+  const { triggerFind } = useFind();
+  if (!isFindCapablePath(location.pathname)) return null;
+  return (
+    <ActionIcon
+      variant="default"
+      aria-label="Find (Cmd+F)"
+      onClick={() => triggerFind()}
+      title="Find (Cmd+F)"
+    >
+      <IconSearch size={18} stroke={1.8} />
+    </ActionIcon>
+  );
 }
 
 function GlobalSearchTrigger() {

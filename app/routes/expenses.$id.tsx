@@ -13,16 +13,8 @@ import {
   useRecordBrowserShortcuts,
   useInitGlobalFormContext,
 } from "@aa/timber";
-import {
-  Card,
-  Divider,
-  Group,
-  Stack,
-  TextInput,
-  Title,
-  Textarea,
-  NumberInput,
-} from "@mantine/core";
+import { Card, Divider, Group, Stack, Title } from "@mantine/core";
+import { ExpenseDetailForm } from "../components/ExpenseDetailForm";
 import { useForm } from "react-hook-form";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
@@ -102,51 +94,7 @@ export default function ExpenseDetailRoute() {
         />
       </Group>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={4}>Expense</Title>
-        </Card.Section>
-        <Divider my="xs" />
-        <Stack gap={6}>
-          <TextInput
-            label="ID"
-            value={String(expense.id)}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Date"
-            {...form.register("date")}
-            placeholder="YYYY-MM-DD"
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Category"
-            {...form.register("category")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Details"
-            {...form.register("details")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Memo"
-            {...form.register("memo")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Cost"
-            {...form.register("priceCost")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Sell"
-            {...form.register("priceSell")}
-            mod="data-autoSize"
-          />
-        </Stack>
-      </Card>
+      <ExpenseDetailForm mode="edit" form={form as any} expense={expense} />
     </Stack>
   );
 }

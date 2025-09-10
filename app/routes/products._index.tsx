@@ -22,19 +22,27 @@ import {
   Title,
   Select,
 } from "@mantine/core";
+import { ProductFindManager } from "../components/ProductFindManager";
+import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
-import { prisma } from "../utils/prisma.server";
+import { prisma, prismaBase } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
 import { getUser } from "../utils/auth.server";
 import { DataTable } from "mantine-datatable";
 import { listViews, saveView } from "../utils/views.server";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Products" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
+  const lightweight = url.searchParams.get("light") === "1"; // performance bypass
   const params = parseTableParams(args.request.url);
   const me = await getUser(args.request);
   const defaultPerPage = me?.recordsPerPage ?? 20;
@@ -55,6 +63,15 @@ export async function loader(args: LoaderFunctionArgs) {
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
+      // If saved view had find params, inject them unless current URL overrides
+      if (saved.filters) {
+        if (saved.filters.find && !url.searchParams.has("find")) {
+          url.searchParams.set("find", saved.filters.find);
+        }
+        if (saved.filters.findReqs && !url.searchParams.has("findReqs")) {
+          url.searchParams.set("findReqs", saved.filters.findReqs);
+        }
+      }
     }
   }
   if (!viewName) {
@@ -66,7 +83,28 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   // If find-mode query params present, override where and reset to first page
   let findWhere: any = null;
-  if (url.searchParams.get("find")) {
+  const hasFindIndicators =
+    [
+      "sku",
+      "name",
+      "description",
+      "type",
+      "costPriceMin",
+      "costPriceMax",
+      "manualSalePriceMin",
+      "manualSalePriceMax",
+      "purchaseTaxId",
+      "categoryId",
+      "customerId",
+      "supplierId",
+      "stockTrackingEnabled",
+      "batchTrackingEnabled",
+      "componentChildSku",
+      "componentChildName",
+      "componentChildSupplierId",
+      "componentChildType",
+    ].some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  if (hasFindIndicators) {
     const values: any = {};
     const pass = (k: string) => {
       const v = url.searchParams.get(k);
@@ -92,36 +130,101 @@ export async function loader(args: LoaderFunctionArgs) {
       "componentChildSupplierId",
       "componentChildType",
     ].forEach(pass);
-    findWhere = buildWhere(values, productSearchSchema);
+    const simple = buildWhere(values, productSearchSchema);
+    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    if (multi) {
+      const interpreters: Record<string, (val: any) => any> = {
+        sku: (v) => ({ sku: { contains: v, mode: "insensitive" } }),
+        name: (v) => ({ name: { contains: v, mode: "insensitive" } }),
+        description: (v) => ({
+          description: { contains: v, mode: "insensitive" },
+        }),
+        type: (v) => ({ type: v }),
+        costPriceMin: (v) => ({ costPrice: { gte: Number(v) } }),
+        costPriceMax: (v) => ({ costPrice: { lte: Number(v) } }),
+        manualSalePriceMin: (v) => ({ manualSalePrice: { gte: Number(v) } }),
+        manualSalePriceMax: (v) => ({ manualSalePrice: { lte: Number(v) } }),
+        purchaseTaxId: (v) => ({ purchaseTaxId: Number(v) }),
+        categoryId: (v) => ({ categoryId: Number(v) }),
+        customerId: (v) => ({ customerId: Number(v) }),
+        supplierId: (v) => ({ supplierId: Number(v) }),
+        stockTrackingEnabled: (v) => ({
+          stockTrackingEnabled: v === "true" || v === true,
+        }),
+        batchTrackingEnabled: (v) => ({
+          batchTrackingEnabled: v === "true" || v === true,
+        }),
+        componentChildSku: (v) => ({
+          productLines: {
+            some: { child: { sku: { contains: v, mode: "insensitive" } } },
+          },
+        }),
+        componentChildName: (v) => ({
+          productLines: {
+            some: { child: { name: { contains: v, mode: "insensitive" } } },
+          },
+        }),
+        componentChildSupplierId: (v) => ({
+          productLines: { some: { child: { supplierId: Number(v) } } },
+        }),
+        componentChildType: (v) => ({
+          productLines: { some: { child: { type: v } } },
+        }),
+      };
+      const multiWhere = buildWhereFromRequests(multi, interpreters);
+      findWhere = mergeSimpleAndMulti(simple, multiWhere);
+    } else {
+      findWhere = simple;
+    }
   }
 
-  const prismaArgs = buildPrismaArgs<any>(
-    findWhere
-      ? { ...effective, page: 1 } // reset to first page for find results
-      : effective,
-    {
-      defaultSort: { field: "id", dir: "asc" },
-      searchableFields: ["name", "sku", "type"],
-      filterMappers: {
-        sku: (v: string) => ({ sku: { contains: v, mode: "insensitive" } }),
-        name: (v: string) => ({ name: { contains: v, mode: "insensitive" } }),
-        type: (v: string) => ({ type: v as any }),
-        stock: (v: string) => ({
-          stockTrackingEnabled: v === "1" || v === "true",
-        }),
-        batch: (v: string) => ({
-          batchTrackingEnabled: v === "1" || v === "true",
-        }),
-        minCost: (v: string) => ({ costPrice: { gte: Number(v) } }),
-        maxCost: (v: string) => ({ costPrice: { lte: Number(v) } }),
-      },
-    }
-  );
+  // Build base params (reset to page 1 if in find mode)
+  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+  // Sanitize internal find-only params so they never leak into Prisma where
+  if (baseParams.filters) {
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacyFindFlag,
+      ...rest
+    } = baseParams.filters;
+    baseParams = { ...baseParams, filters: rest };
+  }
+  const prismaArgs = buildPrismaArgs<any>(baseParams, {
+    defaultSort: { field: "id", dir: "asc" },
+    searchableFields: ["name", "sku", "type"],
+    filterMappers: {
+      sku: (v: string) => ({ sku: { contains: v, mode: "insensitive" } }),
+      name: (v: string) => ({ name: { contains: v, mode: "insensitive" } }),
+      type: (v: string) => ({ type: v as any }),
+      stock: (v: string) => ({
+        stockTrackingEnabled: v === "1" || v === "true",
+      }),
+      batch: (v: string) => ({
+        batchTrackingEnabled: v === "1" || v === "true",
+      }),
+      minCost: (v: string) => ({ costPrice: { gte: Number(v) } }),
+      maxCost: (v: string) => ({ costPrice: { lte: Number(v) } }),
+    },
+  });
   if (findWhere) prismaArgs.where = findWhere;
-  const [rows, total] = await Promise.all([
-    prisma.product.findMany({ ...prismaArgs }),
-    prisma.product.count({ where: prismaArgs.where }),
-  ]);
+  let rows: any[] = [];
+  let total: number = 0;
+  if (lightweight) {
+    // Use base client (no stock qty, aggregates) for faster listing
+    const [r, t] = await Promise.all([
+      prismaBase.product.findMany({ ...prismaArgs }),
+      prismaBase.product.count({ where: (prismaArgs as any).where }),
+    ]);
+    rows = r;
+    total = t;
+  } else {
+    const [r, t] = await Promise.all([
+      prisma.product.findMany({ ...prismaArgs }),
+      prisma.product.count({ where: (prismaArgs as any).where }),
+    ]);
+    rows = r;
+    total = t;
+  }
   return json({
     rows,
     total,
@@ -155,6 +258,9 @@ export async function action({ request }: ActionFunctionArgs) {
       if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
       filters[k] = v;
     }
+    // Include findReqs explicitly if present (no need for legacy find=1 flag)
+    const findReqs = params["findReqs"];
+    if (findReqs) filters.findReqs = findReqs;
     await saveView({
       module: "products",
       name,
@@ -185,6 +291,7 @@ export default function ProductsIndexRoute() {
 
   return (
     <Stack gap="lg">
+      <ProductFindManager />
       <Group justify="space-between" mb="xs" align="center">
         <Title order={2}>Products</Title>
         <BreadcrumbSet
@@ -195,112 +302,20 @@ export default function ProductsIndexRoute() {
         <Button component={Link} to="/products/new">
           New Product
         </Button>
+        <Button
+          variant={sp.get("light") === "1" ? "filled" : "light"}
+          onClick={() => {
+            const next = new URLSearchParams(sp);
+            if (sp.get("light") === "1") next.delete("light");
+            else next.set("light", "1");
+            navigate(`?${next.toString()}`);
+          }}
+        >
+          {sp.get("light") === "1" ? "Full Data" : "Light Mode"}
+        </Button>
       </Group>
-
       <section>
-        {/* Filters */}
-        <Form method="get">
-          <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput
-              name="sku"
-              label="SKU"
-              defaultValue={filters?.sku || ""}
-              w={160}
-            />
-            <TextInput
-              name="name"
-              label="Name"
-              defaultValue={filters?.name || ""}
-              w={220}
-            />
-            <TextInput
-              name="q"
-              label="Search"
-              placeholder="Any field"
-              defaultValue={q || ""}
-              w={200}
-            />
-            <Select
-              name="type"
-              label="Type"
-              data={["CMT", "Fabric", "Finished", "Trim", "Service"].map(
-                (v) => ({ value: v, label: v })
-              )}
-              defaultValue={filters?.type || null}
-              clearable
-              w={160}
-            />
-            <Checkbox
-              name="stock"
-              label="Stock"
-              defaultChecked={
-                filters?.stock === "1" || (filters?.stock as any) === true
-              }
-              onChange={() => {}}
-            />
-            <Checkbox
-              name="batch"
-              label="Batch"
-              defaultChecked={
-                filters?.batch === "1" || (filters?.batch as any) === true
-              }
-              onChange={() => {}}
-            />
-            <NumberInput
-              name="minCost"
-              label="Min Cost"
-              w={140}
-              defaultValue={
-                filters?.minCost ? Number(filters.minCost) : undefined
-              }
-              allowDecimal
-            />
-            <NumberInput
-              name="maxCost"
-              label="Max Cost"
-              w={140}
-              defaultValue={
-                filters?.maxCost ? Number(filters.maxCost) : undefined
-              }
-              allowDecimal
-            />
-            <Button type="submit" variant="default">
-              Apply
-            </Button>
-          </Group>
-        </Form>
-
-        {/* Saved views */}
-        <Group align="center" mb="sm" gap="xs">
-          <Select
-            placeholder="Saved views"
-            data={(views || []).map((v: any) => ({
-              value: v.name,
-              label: v.name,
-            }))}
-            defaultValue={activeView || null}
-            onChange={(val) => {
-              const next = new URLSearchParams(sp);
-              if (val) next.set("view", val);
-              else next.delete("view");
-              next.set("page", "1");
-              navigate(`?${next.toString()}`);
-            }}
-            w={220}
-            clearable
-          />
-          <Form method="post">
-            <input type="hidden" name="_intent" value="saveView" />
-            <Group gap="xs" align="center">
-              <TextInput
-                name="name"
-                placeholder="Save current filters as…"
-                w={220}
-              />
-              <Button type="submit">Save view</Button>
-            </Group>
-          </Form>
-        </Group>
+        <SavedViews views={views as any} activeView={activeView} />
 
         <DataTable
           withTableBorder

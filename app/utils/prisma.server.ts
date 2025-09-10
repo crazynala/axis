@@ -336,6 +336,17 @@ export const prisma: PrismaClient = (base as any).$extends({
   },
 });
 
+// --- Domain helpers (exports used by API routes) ---
+export async function getBatchesWithComputedQty(productId: number) {
+  if (!Number.isFinite(productId)) return [];
+  // Pull batches for product; adjust select shape as needed later
+  const batches = await prisma.batch.findMany({
+    where: { productId },
+    orderBy: { id: "asc" },
+  } as any);
+  return batches as any[];
+}
+
 async function computeProductStockQty(productId: number): Promise<number> {
   // 1) Movement-based: sum ProductMovement.quantity for this product, ignoring transfers (net zero overall stock)
   // Treat IN_TYPES as positive (absolute value), OUT_TYPES as negative (absolute value), others as signed quantity.

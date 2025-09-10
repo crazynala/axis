@@ -17,15 +17,8 @@ import {
   useRecordBrowser,
   useMasterTable,
 } from "@aa/timber";
-import {
-  Button,
-  Checkbox,
-  Group,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
+import { Button, Checkbox, Group, Stack, Text, Title } from "@mantine/core";
+import { CompanyDetailForm } from "../components/CompanyDetailForm";
 import { Controller, useForm } from "react-hook-form";
 import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
@@ -148,70 +141,7 @@ export default function CompanyDetailRoute() {
         </Group>
       </Group>
 
-      <form onSubmit={form.handleSubmit(save)}>
-        <Group align="flex-end" wrap="wrap">
-          <TextInput label="Name" w={240} {...form.register("name")} />
-          <Controller
-            name="isCarrier"
-            control={form.control}
-            render={({ field }) => (
-              <Checkbox
-                label="Carrier"
-                checked={!!field.value}
-                onChange={(e) => field.onChange(e.currentTarget.checked)}
-              />
-            )}
-          />
-          <Controller
-            name="isCustomer"
-            control={form.control}
-            render={({ field }) => (
-              <Checkbox
-                label="Customer"
-                checked={!!field.value}
-                onChange={(e) => field.onChange(e.currentTarget.checked)}
-              />
-            )}
-          />
-          <Controller
-            name="isSupplier"
-            control={form.control}
-            render={({ field }) => (
-              <Checkbox
-                label="Supplier"
-                checked={!!field.value}
-                onChange={(e) => field.onChange(e.currentTarget.checked)}
-              />
-            )}
-          />
-          <Controller
-            name="isInactive"
-            control={form.control}
-            render={({ field }) => (
-              <Checkbox
-                label="Inactive"
-                checked={!!field.value}
-                onChange={(e) => field.onChange(e.currentTarget.checked)}
-              />
-            )}
-          />
-          <Controller
-            name="isActive"
-            control={form.control}
-            render={({ field }) => (
-              <Checkbox
-                label="Active"
-                checked={!!field.value}
-                onChange={(e) => field.onChange(e.currentTarget.checked)}
-              />
-            )}
-          />
-          <TextInput label="Notes" w={300} {...form.register("notes")} />
-          <Button type="submit" disabled={busy}>
-            {busy ? "Saving..." : "Save"}
-          </Button>
-        </Group>
-      </form>
+      <CompanyDetailForm mode="edit" form={form as any} company={company} />
 
       <form method="post">
         <input type="hidden" name="_intent" value="delete" />

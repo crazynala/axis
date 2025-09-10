@@ -1,5 +1,6 @@
 import type { FieldConfig } from "./fieldConfigShared";
-export { renderField } from "./fieldConfigShared";
+import { extractFindValues } from "./fieldConfigShared";
+export { renderField, extractFindValues } from "./fieldConfigShared";
 
 // Overview / identity fields
 export const productIdentityFields: FieldConfig[] = [
@@ -88,3 +89,12 @@ export const productBomFindFields: FieldConfig[] = [
 ];
 
 // Future: spec validation hook similar to jobs.
+
+export function allProductFindFields() {
+  return [
+    ...productIdentityFields,
+    ...productAssocFields,
+    ...productPricingFields,
+    ...productBomFindFields,
+  ];
+}

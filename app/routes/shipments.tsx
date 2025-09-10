@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { MasterTableProvider } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
+import { ShipmentFindManager } from "../components/ShipmentFindManager";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const shipments = await prisma.shipment.findMany({
@@ -22,6 +23,7 @@ export default function ShipmentsLayout() {
   const data = useLoaderData() as { shipments?: any[] };
   return (
     <MasterTableProvider initialRecords={data.shipments}>
+      <ShipmentFindManager />
       <Outlet />
     </MasterTableProvider>
   );

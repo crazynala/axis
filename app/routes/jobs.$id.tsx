@@ -39,19 +39,16 @@ import {
   useRecordBrowserShortcuts,
 } from "@aa/timber";
 import { useInitGlobalFormContext, useMasterTable } from "@aa/timber";
-import { useJobFindify } from "../find/jobFindify";
+// useJobFindify removed (modal-based find standard)
 import { prisma } from "../utils/prisma.server";
 // Legacy jobSearchSchema/buildWhere replaced by config-driven builder
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../utils/getVariantLabels";
 import React from "react";
+import { useFind } from "../find/FindContext";
+import { JobDetailForm } from "../components/JobDetailForm";
 import * as jobDetail from "../formConfigs/jobDetail";
-const {
-  jobDateStatusLeft,
-  jobDateStatusRight,
-  jobOverviewFields,
-  renderField,
-} = jobDetail as any;
+import { JobFindManager } from "../components/JobFindManager";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -111,6 +108,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const raw: Record<string, any> = {};
     for (const [k, v] of form.entries()) {
       if (k.startsWith("_")) continue;
+      if (k === "find") continue;
       raw[k] = v === "" ? null : v;
     }
     // Build where from config fields that have findOp metadata
@@ -119,7 +117,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       ...((jobDetail as any).jobDateStatusLeft || []),
       ...((jobDetail as any).jobDateStatusRight || []),
     ];
-    const where = buildWhereFromConfig(searchFields as any, raw as any);
+    // buildWhereFromConfig(values, configs)
+    const where = buildWhereFromConfig(raw as any, searchFields as any);
     const first = await prisma.job.findFirst({
       where,
       select: { id: true },
@@ -244,21 +243,75 @@ export default function JobDetailRoute() {
   const [cutAsm, setCutAsm] = useState<any>(null);
   const [cutArr, setCutArr] = useState<number[]>([]);
   const { records: masterRecords } = useMasterTable();
-  // Integrate findify
-  const {
-    editForm: jobForm,
-    findForm,
-    activeForm,
-    mode,
-    toggleFind,
-    buildUpdatePayload,
-    buildFindPayload,
-  } = useJobFindify(job, nav);
-  type JobFormValues = any;
-  const save = (values: JobFormValues) => {
-    submit(buildUpdatePayload(values), { method: "post" });
+  // Local edit form only
+  const jobForm = useForm<any>({
+    defaultValues: {
+      id: job.id,
+      projectCode: job.projectCode || "",
+      name: job.name || "",
+      status: job.status || "",
+      jobType: job.jobType || "",
+      endCustomerName: job.endCustomerName || "",
+      companyId: job.companyId ?? job.company?.id ?? undefined,
+      customerOrderDate: job.customerOrderDate?.slice?.(0, 10) || "",
+      targetDate: job.targetDate?.slice?.(0, 10) || "",
+      dropDeadDate: job.dropDeadDate?.slice?.(0, 10) || "",
+      cutSubmissionDate: job.cutSubmissionDate?.slice?.(0, 10) || "",
+    },
+  });
+  const originalDefaults = useMemo(() => jobForm.getValues(), []);
+  const { registerFindCallback } = useFind();
+  const save = (values: any) => {
+    const fd = new FormData();
+    fd.set("_intent", "job.update");
+    const simple = [
+      "projectCode",
+      "name",
+      "status",
+      "jobType",
+      "endCustomerName",
+    ];
+    simple.forEach((k) => {
+      if (values[k] != null) fd.set(k, values[k]);
+    });
+    if (values.companyId != null && values.companyId !== "")
+      fd.set("companyId", String(values.companyId));
+    [
+      "customerOrderDate",
+      "targetDate",
+      "dropDeadDate",
+      "cutSubmissionDate",
+    ].forEach((df) => {
+      if (values[df]) fd.set(df, values[df]);
+    });
+    submit(fd, { method: "post" });
   };
-  useInitGlobalFormContext(jobForm as any, save, () => jobForm.reset());
+  useInitGlobalFormContext(jobForm as any, save, () => {
+    jobForm.reset(originalDefaults);
+    console.log("[jobs.$id] discard changes -> form reset to original", {
+      id: job.id,
+    });
+  });
+
+  // Dirty state transition logging
+  useEffect(() => {
+    const sub = jobForm.watch((_val, info) => {
+      // no-op; watch ensures formState updates promptly
+    });
+    return () => sub.unsubscribe();
+  }, [jobForm]);
+  const dirtyRef = React.useRef(jobForm.formState.isDirty);
+  useEffect(() => {
+    if (jobForm.formState.isDirty !== dirtyRef.current) {
+      console.log("[jobs.$id] dirty state", {
+        id: job.id,
+        was: dirtyRef.current,
+        now: jobForm.formState.isDirty,
+        changed: Object.keys(jobForm.formState.dirtyFields || {}),
+      });
+      dirtyRef.current = jobForm.formState.isDirty;
+    }
+  }, [jobForm.formState.isDirty, jobForm.formState.dirtyFields, job.id]);
   const [customerSearch, setCustomerSearch] = useState("");
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();
@@ -293,20 +346,9 @@ export default function JobDetailRoute() {
     setOrderedArr(initial);
   }, [qtyAsm]);
 
-  // Auto-enter find mode if query param present
-  useEffect(() => {
-    if (sp.get("find") === "1" && mode !== "find") {
-      // attempt to enter find silently (ignore dirty check as we just loaded)
-      try {
-        (findForm as any).reset();
-        toggleFind();
-      } catch {}
-    }
-  }, [sp, mode]);
+  // Find modal handled via JobFindManager now
 
-  const returnUrl = sp.get("return")
-    ? decodeURIComponent(sp.get("return") as string)
-    : null;
+  // returnUrl no longer used (find handled externally)
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -317,92 +359,25 @@ export default function JobDetailRoute() {
           ]}
         />
         <Group>
-          {mode === "find" && returnUrl && (
-            <Button
-              variant="light"
-              onClick={() => {
-                navigate(returnUrl);
-              }}
-            >
-              Cancel
-            </Button>
-          )}
-          <Button
-            variant={mode === "find" ? "filled" : "light"}
-            onClick={toggleFind}
-          >
-            {mode === "find" ? "Exit Find" : "Find"}
-          </Button>
-          {mode === "find" && (
-            <Button
-              variant="light"
-              onClick={() =>
-                submit(buildFindPayload(findForm.getValues()), {
-                  method: "post",
-                })
-              }
-            >
-              Search
-            </Button>
-          )}
           <RecordNavButtons
             recordBrowser={useRecordBrowser(job.id, masterRecords)}
           />
         </Group>
       </Group>
 
-      <div key={`mode-${mode}`}>
-        {" "}
-        {/* force remount on mode change */}
-        <Grid>
-          <Grid.Col span={{ base: 12, md: 5 }}>
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Group justify="space-between" align="center">
-                  <Title order={4}>Overview</Title>
-                  {mode === "find" && <Badge variant="light">Find Mode</Badge>}
-                </Group>
-              </Card.Section>
-              <Divider my="xs" />
-              <Stack gap={8}>
-                {jobOverviewFields.map((cfg: any) => (
-                  <React.Fragment key={cfg.name}>
-                    {renderField(activeForm as any, cfg, mode as any, job, {
-                      openCustomerModal: () => setCustomerModalOpen(true),
-                    })}
-                  </React.Fragment>
-                ))}
-              </Stack>
-            </Card>
-          </Grid.Col>
-          <Grid.Col span={{ base: 12, md: 7 }}>
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Title order={4}>Dates & Status</Title>
-              </Card.Section>
-              <Divider my="xs" />
-              <SimpleGrid cols={2} spacing="md">
-                <Stack gap={8}>
-                  {jobDateStatusLeft.map((cfg: any) => (
-                    <React.Fragment key={cfg.name}>
-                      {renderField(activeForm as any, cfg, mode as any, job)}
-                    </React.Fragment>
-                  ))}
-                </Stack>
-                <Stack gap={8}>
-                  {jobDateStatusRight.map((cfg: any) => (
-                    <React.Fragment key={cfg.name}>
-                      {renderField(activeForm as any, cfg, mode as any, job)}
-                    </React.Fragment>
-                  ))}
-                </Stack>
-              </SimpleGrid>
-            </Card>
-          </Grid.Col>
-        </Grid>
+      <div>
+        <JobDetailForm
+          mode="edit"
+          form={jobForm as any}
+          job={job}
+          openCustomerModal={() => setCustomerModalOpen(true)}
+          showModeBadge={false}
+        />
       </div>
 
-      {mode === "edit" && (
+      <JobFindManager jobSample={job} />
+
+      {true && (
         <Card withBorder padding="md">
           <Card.Section inheritPadding py="xs">
             <Group justify="space-between" align="center">

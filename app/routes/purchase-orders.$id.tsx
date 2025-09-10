@@ -14,17 +14,10 @@ import {
   useInitGlobalFormContext,
   RecordNavButtons,
 } from "@aa/timber";
-import {
-  Card,
-  Divider,
-  Group,
-  Stack,
-  TextInput,
-  Title,
-  Table,
-} from "@mantine/core";
+import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { NumberInput, Button, Modal } from "@mantine/core";
+import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
 import { ProductSelect, type ProductOption } from "../components/ProductSelect";
 import { useState } from "react";
 
@@ -157,61 +150,16 @@ export default function PurchaseOrderDetailRoute() {
         <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={4}>Purchase Order</Title>
-        </Card.Section>
-        <Divider my="xs" />
-        <Stack gap={6}>
-          <TextInput
-            label="ID"
-            value={String(purchaseOrder.id)}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Date"
-            {...form.register("date")}
-            mod="data-autoSize"
-            placeholder="YYYY-MM-DD"
-          />
-          <TextInput
-            label="Status"
-            {...form.register("status")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Vendor"
-            value={
-              purchaseOrder.company?.name ||
-              (purchaseOrder as any).companyId ||
-              ""
-            }
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Consignee"
-            value={
-              purchaseOrder.consignee?.name ||
-              (purchaseOrder as any).consigneeCompanyId ||
-              ""
-            }
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Location"
-            value={
-              purchaseOrder.location?.name ||
-              (purchaseOrder as any).locationId ||
-              ""
-            }
-            readOnly
-            mod="data-autoSize"
-          />
-        </Stack>
-      </Card>
+      <PurchaseOrderDetailForm
+        mode="edit"
+        form={form as any}
+        purchaseOrder={{
+          ...purchaseOrder,
+          vendorName: purchaseOrder.company?.name,
+          consigneeName: purchaseOrder.consignee?.name,
+          locationName: purchaseOrder.location?.name,
+        }}
+      />
 
       <Card withBorder padding="md">
         <Card.Section inheritPadding py="xs">

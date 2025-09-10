@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
 import { MasterTableProvider, getLogger } from "@aa/timber";
+import { PurchaseOrderFindManager } from "../components/PurchaseOrderFindManager";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const log = getLogger("purchase-orders");
@@ -24,6 +25,7 @@ export default function PurchaseOrdersLayout() {
   const data = useLoaderData() as { purchaseOrders?: any[] };
   return (
     <MasterTableProvider initialRecords={data.purchaseOrders}>
+      <PurchaseOrderFindManager />
       <Outlet />
     </MasterTableProvider>
   );

@@ -14,17 +14,8 @@ import {
   useInitGlobalFormContext,
   RecordNavButtons,
 } from "@aa/timber";
-import {
-  Card,
-  Divider,
-  Group,
-  NumberInput,
-  Stack,
-  TextInput,
-  Title,
-  Textarea,
-  Table,
-} from "@mantine/core";
+import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
+import { InvoiceDetailForm } from "../components/InvoiceDetailForm";
 import { Controller, useForm } from "react-hook-form";
 import { CompanySelect, type CompanyOption } from "../components/CompanySelect";
 
@@ -131,63 +122,15 @@ export default function InvoiceDetailRoute() {
         <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={4}>Invoice</Title>
-        </Card.Section>
-        <Divider my="xs" />
-        <Stack gap={6}>
-          <TextInput
-            label="ID"
-            value={String(invoice.id)}
-            readOnly
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Code"
-            {...form.register("invoiceCode")}
-            mod="data-autoSize"
-          />
-          <TextInput
-            label="Date"
-            {...form.register("date")}
-            mod="data-autoSize"
-            placeholder="YYYY-MM-DD"
-          />
-          <Controller
-            name="companyId"
-            control={form.control}
-            render={({ field }) => (
-              <CompanySelect
-                label="Customer"
-                value={field.value as any}
-                onChange={(v) => field.onChange(v)}
-                options={
-                  companies.map((c) => ({
-                    value: c.id,
-                    label: c.name || String(c.id),
-                    isCustomer: !!c.isCustomer,
-                    isSupplier: !!c.isSupplier,
-                    isCarrier: !!c.isCarrier,
-                  })) as CompanyOption[]
-                }
-                filter="customer"
-              />
-            )}
-          />
-          <TextInput
-            label="Status"
-            {...form.register("status")}
-            mod="data-autoSize"
-          />
-          <Textarea
-            label="Notes"
-            {...form.register("notes")}
-            autosize
-            minRows={2}
-          />
-        </Stack>
-      </Card>
+      <InvoiceDetailForm
+        mode="edit"
+        form={form as any}
+        invoice={{ ...invoice, companyName: invoice.company?.name }}
+        customerOptions={companies.map((c) => ({
+          value: String(c.id),
+          label: c.name || String(c.id),
+        }))}
+      />
 
       {invoice.lines?.length ? (
         <Card withBorder padding="md">

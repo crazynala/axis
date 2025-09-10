@@ -1,15 +1,9 @@
 import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useNavigation } from "@remix-run/react";
-import {
-  Button,
-  Checkbox,
-  Group,
-  NumberInput,
-  Stack,
-  TextInput,
-  Title,
-} from "@mantine/core";
+import { Form, useNavigation, useSubmit } from "@remix-run/react";
+import { Button, Group, Stack, Title } from "@mantine/core";
+import { useForm } from "react-hook-form";
+import { ProductDetailForm } from "../components/ProductDetailForm";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];
@@ -41,44 +35,48 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function NewProductRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const submit = useSubmit();
+  const form = useForm({
+    defaultValues: {
+      sku: "",
+      name: "",
+      type: "",
+      costPrice: undefined as any,
+      manualSalePrice: undefined as any,
+      autoSalePrice: undefined as any,
+      stockTrackingEnabled: false,
+      batchTrackingEnabled: false,
+    },
+  });
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const values = form.getValues();
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(values)) {
+      if (v === undefined || v === null || v === "") continue;
+      if (typeof v === "boolean") {
+        if (v) fd.set(k, "on");
+      } else {
+        fd.set(k, String(v));
+      }
+    }
+    submit(fd, { method: "post" });
+  };
   return (
     <Stack>
       <Title order={2}>Create New Product</Title>
-      <Form method="post">
-        <Stack>
-          <TextInput name="sku" label="SKU" w={240} />
-          <TextInput name="name" label="Name" w={360} />
-          <TextInput name="type" label="Type" w={200} />
-          <NumberInput
-            name="costPrice"
-            label="Cost Price"
-            step={0.01}
-            w={200}
-            allowDecimal
-          />
-          <NumberInput
-            name="manualSalePrice"
-            label="Manual Sale Price"
-            step={0.01}
-            w={220}
-            allowDecimal
-          />
-          <NumberInput
-            name="autoSalePrice"
-            label="Auto Sale Price"
-            step={0.01}
-            w={220}
-            allowDecimal
-          />
-          <Checkbox name="stockTrackingEnabled" label="Stock Tracking" />
-          <Checkbox name="batchTrackingEnabled" label="Batch Tracking" />
-          <Group>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Saving..." : "Create"}
-            </Button>
-          </Group>
-        </Stack>
-      </Form>
+      <form onSubmit={onSubmit}>
+        <ProductDetailForm
+          mode="edit"
+          form={form as any}
+          showModeBadge={false}
+        />
+        <Group mt="md">
+          <Button type="submit" disabled={busy}>
+            {busy ? "Saving..." : "Create"}
+          </Button>
+        </Group>
+      </form>
     </Stack>
   );
 }

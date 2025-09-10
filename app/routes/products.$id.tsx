@@ -51,12 +51,8 @@ import {
 import { FindToggle } from "../find/FindToggle"; // will adapt usage inline without provider
 // Replaced custom widgets with config-driven system
 import { renderField } from "../formConfigs/fieldConfigShared";
-import {
-  productIdentityFields,
-  productAssocFields,
-  productPricingFields,
-  productBomFindFields,
-} from "../formConfigs/productDetail";
+import { productBomFindFields } from "../formConfigs/productDetail";
+import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { prisma } from "../utils/prisma.server";
 
@@ -462,29 +458,19 @@ export default function ProductDetailRoute() {
       {/* Force remount of inputs on mode change to isolate Controllers */}
       <div key={`mode-${mode}`}>
         <Form id="product-form" method="post">
-          <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-            {[
-              productIdentityFields,
-              productAssocFields,
-              productPricingFields,
-            ].map((group, idx) => (
-              <Card key={idx} withBorder padding="md">
-                <Stack gap={6}>
-                  {group.map((f) =>
-                    renderField(activeForm as any, f, mode as any, product, {
-                      categoryOptions: (categoryOptions as any).map(
-                        (o: any) => ({ value: String(o.value), label: o.label })
-                      ),
-                      taxCodeOptions: (taxCodeOptions as any).map((o: any) => ({
-                        value: String(o.value),
-                        label: o.label,
-                      })),
-                    })
-                  )}
-                </Stack>
-              </Card>
-            ))}
-          </SimpleGrid>
+          <ProductDetailForm
+            mode={mode as any}
+            form={activeForm as any}
+            product={product}
+            categoryOptions={(categoryOptions as any).map((o: any) => ({
+              value: String(o.value),
+              label: o.label,
+            }))}
+            taxCodeOptions={(taxCodeOptions as any).map((o: any) => ({
+              value: String(o.value),
+              label: o.label,
+            }))}
+          />
         </Form>
 
         {/* Find-only criteria row */}

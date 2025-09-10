@@ -8,19 +8,53 @@ import {
   useNavigate,
 } from "@remix-run/react";
 import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
+import { JobFindModal } from "../components/JobFindModal";
+import * as jobDetail from "../formConfigs/jobDetail";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { DataTable } from "mantine-datatable";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const params = parseTableParams(args.request.url);
+  // Remove control param 'find' from generic filters so it is not treated as a field
+  if ((params as any).filters && "find" in (params as any).filters) {
+    delete (params as any).filters.find;
+  }
   const prismaArgs = buildPrismaArgs<any>(params, {
     defaultSort: { field: "id", dir: "asc" },
     searchableFields: ["name", "projectCode", "status", "jobType"],
   });
+  // Apply find filters if ?find=1 present
+  const url = new URL(args.request.url);
+  const isFind = url.searchParams.get("find") === "1";
+  if (isFind) {
+    const fields: any[] = [
+      ...((jobDetail as any).jobOverviewFields || []),
+      ...((jobDetail as any).jobDateStatusLeft || []),
+      ...((jobDetail as any).jobDateStatusRight || []),
+    ];
+    const raw: Record<string, any> = {};
+    for (const [k, v] of url.searchParams.entries()) {
+      if (
+        k === "find" ||
+        k === "page" ||
+        k === "perPage" ||
+        k === "sort" ||
+        k === "dir"
+      )
+        continue;
+      const fieldCfg = fields.find((f) => f.name === k);
+      if (!fieldCfg) continue;
+      if (v !== null && v !== "") raw[k] = v;
+    }
+    // buildWhereFromConfig(values, configs)
+    const where = buildWhereFromConfig(raw as any, fields as any);
+    prismaArgs.where = { ...(prismaArgs.where || {}), ...(where || {}) };
+  }
   const [rows, total] = await Promise.all([
     prisma.job.findMany({
       ...prismaArgs,
@@ -191,6 +225,19 @@ export default function JobsIndexRoute() {
     dir ||
     "asc";
 
+  const findOpen = sp.get("find") === "1";
+  // Extract initial find values from URL params
+  const initialFind: Record<string, any> = {};
+  const fields: any[] = [
+    ...((jobDetail as any).jobOverviewFields || []),
+    ...((jobDetail as any).jobDateStatusLeft || []),
+    ...((jobDetail as any).jobDateStatusRight || []),
+  ];
+  for (const f of fields) {
+    const v = sp.get(f.name);
+    if (v !== null) initialFind[f.name] = v;
+  }
+
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -202,27 +249,22 @@ export default function JobsIndexRoute() {
         <Button component="a" href="/jobs/new" variant="filled" color="blue">
           New Job
         </Button>
-        {/* Enter find mode: navigate to first row (or stay) with find flag */}
-        {rows.length > 0 && (
-          <Button
-            variant="light"
-            onClick={() => {
-              const current =
-                typeof window !== "undefined"
-                  ? window.location.pathname + window.location.search
-                  : "/jobs";
-              const firstId = (rows as any[])[0]?.id;
-              if (firstId != null) {
-                const sp2 = new URLSearchParams();
-                sp2.set("find", "1");
-                sp2.set("return", encodeURIComponent(current));
-                navigate(`/jobs/${firstId}?${sp2.toString()}`);
-              }
-            }}
-          >
-            Find
-          </Button>
-        )}
+        <Button
+          variant="light"
+          onClick={() => {
+            const next = new URLSearchParams(sp);
+            if (next.get("find") === "1") {
+              next.delete("find");
+              // also remove field params
+              for (const f of fields) next.delete(f.name);
+            } else {
+              next.set("find", "1");
+            }
+            navigate(`?${next.toString()}`);
+          }}
+        >
+          {findOpen ? "Close Find" : "Find"}
+        </Button>
       </Group>
 
       <section>
@@ -514,6 +556,21 @@ export default function JobsIndexRoute() {
           ]}
         />
       </section>
+      <JobFindModal
+        opened={findOpen}
+        onClose={() => {
+          const next = new URLSearchParams(sp);
+          next.delete("find");
+          for (const f of fields) next.delete(f.name);
+          navigate(`?${next.toString()}`);
+        }}
+        initialValues={initialFind}
+        onSearch={(qs) => {
+          // Replace current query but keep pagination reset
+          navigate(`?${qs}`);
+        }}
+        jobSample={{}}
+      />
     </Stack>
   );
 }

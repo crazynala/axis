@@ -54,3 +54,15 @@ The Admin → Import supports Excel files with FileMaker field names. The follow
   - Plus common fields: product id/sku, priceCost, priceSell, qtyShipped, qtyReceived, quantity, quantityOrdered, taxRate
 
 IDs are treated as FileMaker serials (a\_\_Serial) when present and upserted.
+
+## Find Architecture (Overview)
+
+Unified, FileMaker‑style find system:
+
+- Global hotkey triggers context-registered callback (FindContext + FindManagers).
+- Shared DetailForm components (e.g., `JobDetailForm`, `ProductDetailForm`) render edit & find modes via FieldConfig metadata.
+- Simple queries: individual URL params (e.g., `sku=ABC`).
+- Multi-request (advanced) queries: base64 JSON stack in `findReqs` enabling (A OR B) minus (C) semantics using omit flag.
+- Saved Views (extension) store both simple params and `findReqs`.
+
+See `docs/find-pattern.md` for complete details.

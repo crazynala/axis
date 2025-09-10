@@ -4,11 +4,21 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { useRecordBrowserContext } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
+import { CompanyFindManager } from "../components/CompanyFindManager";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const companies = await prisma.company.findMany({
     orderBy: { id: "asc" },
-    select: { id: true, name: true, notes: true, isCarrier: true, isCustomer: true, isSupplier: true, isInactive: true, isActive: true },
+    select: {
+      id: true,
+      name: true,
+      notes: true,
+      isCarrier: true,
+      isCustomer: true,
+      isSupplier: true,
+      isInactive: true,
+      isActive: true,
+    },
   });
   return json({ companies });
 }
@@ -20,5 +30,10 @@ export default function CompaniesLayout() {
     if (!ctx) return;
     if (data?.companies) ctx.updateRecords(data.companies);
   }, [ctx, data?.companies]);
-  return <Outlet />;
+  return (
+    <>
+      <CompanyFindManager />
+      <Outlet />
+    </>
+  );
 }
