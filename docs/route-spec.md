@@ -38,6 +38,23 @@ Last updated: 2025-09-09
 - Auth screens (no AppShell)
   - The `/login` route renders without the main AppShell/nav. Root checks `location.pathname === "/login"` and renders `<Outlet />` directly.
 
+### Findify (Global Find/Edit Mode Toggle)
+
+- Purpose: Enable per-detail-route ad‑hoc searching ("find mode") without leaving the record context.
+- State Provider: `FindProvider` supplies `{ mode: 'edit' | 'find', setMode }`.
+- Toggle Component: `FindToggle` switches modes and exposes an `onSearch()` callback (executes criteria submission) and `beforeEnterFind()` guard (prevents losing unsaved edits).
+- Two-Form Pattern:
+  - Edit Mode: Normal RHF form bound to persisted record fields; integrated with `GlobalFormProvider` for global Save/Cancel and dirty tracking.
+  - Find Mode: Separate RHF form with blank (undefined/empty) defaults for all searchable criteria; not registered with global Save/Cancel.
+- Mode Gating: Entering find mode is blocked if the edit form is dirty (user must Save or Discard first).
+- Auto Exit: After a successful search submission (navigation completes), detail routes auto-switch back to `edit` so real panels (stock, movements, etc.) reappear while the record cursor reflects filtered results.
+- Criteria Submission: Posts `_intent=find` with only non-empty fields; server responds by updating the master list (record browser cursor) and reloading the current detail (or first match) while edit mode resumes.
+- ID Handling: In edit mode ID is read-only; in find mode ID becomes an editable criteria field (exact match).
+- Remount Strategy: Form subtree keyed by mode (`key={"mode-"+mode}`) so RHF applies the correct default set when toggling.
+- Custom Widgets: Shared widgets (`TextAny`, `TriBool`, `NumberMaybeRange`) adapt: TriBool shows segmented Any/Yes/No in find mode, single switch in edit mode.
+- Visibility Rules: Data-heavy panels (BOM, Stock, Movements) render only in edit mode; find mode shows criteria-only cards to avoid visual noise and stale data confusion.
+- Extensibility: Additional modules can opt-in by wrapping their detail route in `FindProvider`, implementing dual RHF forms, and gating entry with dirty check—no global changes required.
+
 ### Navigation (from `app/root.tsx`)
 
 - Top navigation items:
@@ -176,6 +193,15 @@ Last updated: 2025-09-09
   - Tax Codes
     - Reusable TaxCodeSelect component (`app/components/TaxCodeSelect.tsx`)
     - Used on Product detail to pick `purchaseTaxId` from `ValueList` where `type = 'Tax'`
+  - Findify Implementation
+    - Dual RHF forms: `editForm` (record defaults) + `findForm` (blank criteria)
+    - Guard prevents entering find if `editForm` is dirty; user must save/discard first
+    - ID field becomes criteria input in find mode (exact match); read-only otherwise
+    - `_intent=find` submission builds a FormData with only non-empty criteria (including ranges: costPriceMin/Max, manualSalePriceMin/Max, componentChild* fields, tri-bool stock/batch tracking where specified)
+    - Auto exit back to edit mode after navigation completes to show real data panels with the filtered record cursor
+    - BOM / Stock / Movement panels hidden in find mode; replaced with a BOM criteria card for component child filters
+    - Keyed subtree (`key=mode-*`) forces RHF remount on mode change ensuring blank form appears instantly
+    - Shared widgets adapt presentation (e.g., TriBool segmented Any/Yes/No vs Switch)
 
 ### Inventory computation rules (server)
 

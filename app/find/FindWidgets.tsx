@@ -1,31 +1,12 @@
 // app/find/FindWidgets.tsx
-import {
-  Group,
-  NumberInput,
-  TextInput,
-  SegmentedControl,
-  Switch,
-} from "@mantine/core";
+import { Group, NumberInput, TextInput, SegmentedControl, Switch } from "@mantine/core";
+import { forwardRef } from "react";
 import { useFind } from "./FindContext";
 
-export function TriBool({
-  value,
-  onChange,
-  label,
-}: {
-  value: boolean | "any" | undefined;
-  onChange: (v: boolean | "any") => void;
-  label: string;
-}) {
+export function TriBool({ value, onChange, label }: { value: boolean | "any" | undefined; onChange: (v: boolean | "any") => void; label: string }) {
   const { mode } = useFind();
   if (mode === "edit") {
-    return (
-      <Switch
-        label={label}
-        checked={!!(value === true)}
-        onChange={(e) => onChange(e.currentTarget.checked)}
-      />
-    );
+    return <Switch label={label} checked={!!(value === true)} onChange={(e) => onChange(e.currentTarget.checked)} />;
   }
   return (
     <Group gap="xs">
@@ -62,33 +43,17 @@ export function NumberMaybeRange({
 }) {
   const { mode } = useFind();
   if (mode === "edit") {
-    return (
-      <NumberInput
-        label={label}
-        value={(value as any) ?? undefined}
-        onChange={(v) => onChange?.((v as number) ?? null)}
-        allowDecimal
-      />
-    );
+    return <NumberInput label={label} value={(value as any) ?? undefined} onChange={(v) => onChange?.((v as number) ?? null)} allowDecimal />;
   }
   return (
     <Group align="end" grow>
-      <NumberInput
-        label={`${label} (Min)`}
-        value={(minValue as any) ?? undefined}
-        onChange={(v) => onMinChange?.((v as number) ?? null)}
-        allowDecimal
-      />
-      <NumberInput
-        label={`${label} (Max)`}
-        value={(maxValue as any) ?? undefined}
-        onChange={(v) => onMaxChange?.((v as number) ?? null)}
-        allowDecimal
-      />
+      <NumberInput label={`${label} (Min)`} value={(minValue as any) ?? undefined} onChange={(v) => onMinChange?.((v as number) ?? null)} allowDecimal />
+      <NumberInput label={`${label} (Max)`} value={(maxValue as any) ?? undefined} onChange={(v) => onMaxChange?.((v as number) ?? null)} allowDecimal />
     </Group>
   );
 }
 
-export function TextAny(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput {...props} />;
-}
+export const TextAny = forwardRef<HTMLInputElement, React.ComponentProps<typeof TextInput>>(function TextAny(props, ref) {
+  // Forward RHF register ref to Mantine's native input via inputRef
+  return <TextInput {...props} ref={ref as any} />;
+});
