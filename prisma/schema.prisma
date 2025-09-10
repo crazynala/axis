@@ -108,6 +108,7 @@ model Company {
     shipmentsAsCarrier        Shipment[]             @relation("CarrierCompany")
     shipmentsAsReceiver       Shipment[]             @relation("ReceiverCompany")
     shipmentsAsSender         Shipment[]             @relation("SenderCompany")
+    contacts                  Contact[]
     // Back-relations: Purchase Orders
     purchaseOrders            PurchaseOrder[]
     purchaseOrdersAsConsignee PurchaseOrder[]        @relation("POConsignee")
@@ -658,6 +659,30 @@ model Address {
     updatedAt          DateTime?  @updatedAt
     company            Company?   @relation(fields: [companyId], references: [id])
     shipments          Shipment[] @relation("Address_shipments")
+    contacts           Contact[]
+}
+
+// --- Contacts ---
+model Contact {
+    id          Int       @id // a__Serial maps here
+    addressId   Int?
+    companyId   Int?
+    email       String?
+    department  String?
+    firstName   String?
+    lastName    String?
+    title       String?
+    phoneDirect String?
+    phoneHome   String?
+    phoneMobile String?
+    position    String?
+    recordType  String? // Employee | Contact | Customer
+    createdBy   String?
+    createdAt   DateTime? @default(now())
+    modifiedBy  String?
+    updatedAt   DateTime? @updatedAt
+    address     Address?  @relation(fields: [addressId], references: [id])
+    company     Company?  @relation(fields: [companyId], references: [id])
 }
 
 // --- Purchase Orders ---

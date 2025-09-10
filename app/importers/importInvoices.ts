@@ -38,30 +38,83 @@ export async function importInvoices(rows: any[]): Promise<ImportResult> {
       taxCodeId,
       taxRateCopy,
     };
-    try {
-      if (idNum != null) {
-        await prisma.invoice.upsert({
-          where: { id: idNum },
-          create: { id: idNum, ...data },
-          update: data,
-        });
-      } else {
-        await prisma.invoice.create({ data });
+    let attempt = 0;
+    let localData = { ...data };
+    while (attempt < 2) {
+      try {
+        if (idNum != null) {
+          await prisma.invoice.upsert({
+            where: { id: idNum },
+            create: { id: idNum, ...localData },
+            update: localData,
+          });
+        } else {
+          await prisma.invoice.create({ data: localData });
+        }
+        created += 1;
+        break;
+      } catch (e: any) {
+        if (
+          e?.code === "P2002" &&
+          Array.isArray(e?.meta?.target) &&
+          e.meta.target.includes("invoiceCode") &&
+          attempt === 0
+        ) {
+          // Deduplicate invoiceCode by appending -dup or -dupN
+          const base = (localData.invoiceCode || "").toString();
+          if (base) {
+            let n = 1;
+            let candidate = base + "-dup";
+            while (
+              await prisma.invoice.findFirst({
+                where: { invoiceCode: candidate },
+              })
+            ) {
+              n += 1;
+              candidate = base + `-dup${n}`;
+              if (n > 50) break; // safety
+            }
+            localData = { ...localData, invoiceCode: candidate };
+            attempt++;
+            continue; // retry once with new code
+          }
+        }
+        const log = {
+          index: i,
+          id: idNum,
+          companyId,
+          invoiceCode: localData.invoiceCode,
+          code: e?.code,
+          constraint: e?.meta?.field_name || e?.meta?.target || null,
+          message: e?.message,
+        };
+        errors.push(log);
+        break; // don't loop further
       }
-      created += 1;
-    } catch (e: any) {
-      const log = {
-        index: i,
-        id: idNum,
-        companyId,
-        invoiceCode,
-        code: e?.code,
-        constraint: e?.meta?.field_name || e?.meta?.target || null,
-        message: e?.message,
-      };
-      errors.push(log);
-      console.error("[import] invoices upsert error", log);
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] invoices progress ${i + 1}/${
+          rows.length
+        } created=${created} skipped=${skipped} errors=${errors.length}`
+      );
+    }
+  }
+  console.log(
+    `[import] invoices complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
+  );
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; ids: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.constraint || e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, ids: [] };
+      grouped[key].count++;
+      grouped[key].ids.push(e.id ?? null);
+    }
+    console.log("[import] invoices error summary", Object.values(grouped));
   }
   return { created, updated, skipped, errors };
 }

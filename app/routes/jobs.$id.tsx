@@ -1,13 +1,57 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import { Stack, Title, Group, Table, Text, Card, SimpleGrid, Grid, Divider, Button, Modal, TextInput, Switch } from "@mantine/core";
-import { DatePickerInput } from "@mantine/dates";
-import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
-import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts } from "@aa/timber";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  Form,
+  useSearchParams,
+  useNavigate,
+} from "@remix-run/react";
+import {
+  Stack,
+  Title,
+  Group,
+  Table,
+  Text,
+  Card,
+  SimpleGrid,
+  Grid,
+  Divider,
+  Button,
+  Modal,
+  TextInput,
+  Switch,
+  Badge,
+} from "@mantine/core";
+import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useForm, Controller } from "react-hook-form";
+import {
+  BreadcrumbSet,
+  useRecordBrowser,
+  RecordNavButtons,
+  useRecordBrowserShortcuts,
+} from "@aa/timber";
 import { useInitGlobalFormContext, useMasterTable } from "@aa/timber";
+import { useJobFindify } from "../find/jobFindify";
 import { prisma } from "../utils/prisma.server";
+// Legacy jobSearchSchema/buildWhere replaced by config-driven builder
+import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
+import { getVariantLabels } from "../utils/getVariantLabels";
+import React from "react";
+import * as jobDetail from "../formConfigs/jobDetail";
+const {
+  jobDateStatusLeft,
+  jobDateStatusRight,
+  jobOverviewFields,
+  renderField,
+} = jobDetail as any;
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -20,7 +64,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   if (!job) throw new Response("Not Found", { status: 404 });
   // Gather product details for assemblies
-  const productIds = Array.from(new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))) as number[];
+  const productIds = Array.from(
+    new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))
+  ) as number[];
   const products = productIds.length
     ? await prisma.product.findMany({
         where: { id: { in: productIds } },
@@ -32,7 +78,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
         },
       })
     : [];
-  const productsById: Record<number, any> = Object.fromEntries(products.map((p: any) => [p.id, p]));
+  const productsById: Record<number, any> = Object.fromEntries(
+    products.map((p: any) => [p.id, p])
+  );
   const customers = await prisma.company.findMany({
     where: { isCustomer: true },
     select: { id: true, name: true },
@@ -59,15 +107,64 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!id) throw new Response("Not Found", { status: 404 });
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  if (intent === "find") {
+    const raw: Record<string, any> = {};
+    for (const [k, v] of form.entries()) {
+      if (k.startsWith("_")) continue;
+      raw[k] = v === "" ? null : v;
+    }
+    // Build where from config fields that have findOp metadata
+    const searchFields: any[] = [
+      ...((jobDetail as any).jobOverviewFields || []),
+      ...((jobDetail as any).jobDateStatusLeft || []),
+      ...((jobDetail as any).jobDateStatusRight || []),
+    ];
+    const where = buildWhereFromConfig(searchFields as any, raw as any);
+    const first = await prisma.job.findFirst({
+      where,
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    const sp = new URLSearchParams();
+    sp.set("find", "1");
+    const returnParam = form.get("return");
+    if (returnParam) sp.set("return", String(returnParam));
+    const push = (k: string, v: any) => {
+      if (v === undefined || v === null || v === "") return;
+      sp.set(k, String(v));
+    };
+    push("id", raw.id);
+    push("projectCode", raw.projectCode);
+    push("name", raw.name);
+    push("status", raw.status);
+    push("jobType", raw.jobType);
+    push("endCustomerName", raw.endCustomerName);
+    push("companyId", raw.companyId);
+    const qs = sp.toString();
+    if (first?.id != null) return redirect(`/jobs/${first.id}?${qs}`);
+    return redirect(`/jobs?${qs}`);
+  }
   if (intent === "job.update") {
     const data: any = {};
-    const fields = ["projectCode", "name", "status", "jobType", "endCustomerName"];
-    for (const f of fields) if (form.has(f)) data[f] = (form.get(f) as string) || null;
+    const fields = [
+      "projectCode",
+      "name",
+      "status",
+      "jobType",
+      "endCustomerName",
+    ];
+    for (const f of fields)
+      if (form.has(f)) data[f] = (form.get(f) as string) || null;
     if (form.has("companyId")) {
       const cid = Number(form.get("companyId"));
       data.companyId = Number.isFinite(cid) ? cid : null;
     }
-    const dateFields = ["customerOrderDate", "targetDate", "dropDeadDate", "cutSubmissionDate"];
+    const dateFields = [
+      "customerOrderDate",
+      "targetDate",
+      "dropDeadDate",
+      "cutSubmissionDate",
+    ];
     for (const df of dateFields)
       if (form.has(df)) {
         const v = form.get(df) as string;
@@ -92,7 +189,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
       if (prod) {
         const vsLen = prod.variantSet?.variants?.length || 0;
-        const ordered: number[] = vsLen > 0 ? Array.from({ length: vsLen }, () => 0) : [];
+        const ordered: number[] =
+          vsLen > 0 ? Array.from({ length: vsLen }, () => 0) : [];
         const data: any = {
           name: prod.name || `Assembly ${productId}`,
           productId: prod.id,
@@ -112,7 +210,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
     try {
       const arr = JSON.parse(arrStr);
       if (Array.isArray(arr)) {
-        const ints = arr.map((n: any) => (Number.isFinite(Number(n)) ? Number(n) | 0 : 0));
+        const ints = arr.map((n: any) =>
+          Number.isFinite(Number(n)) ? Number(n) | 0 : 0
+        );
         await prisma.assembly.update({
           where: { id: assemblyId },
           data: { qtyOrderedBreakdown: ints as any },
@@ -125,10 +225,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function JobDetailRoute() {
-  const { job, productsById, customers, productChoices } = useLoaderData<typeof loader>();
+  const { job, productsById, customers, productChoices } =
+    useLoaderData<typeof loader>();
   useRecordBrowserShortcuts(job.id);
   const nav = useNavigation();
   const submit = useSubmit();
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
   const busy = nav.state !== "idle";
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -136,44 +239,33 @@ export default function JobDetailRoute() {
   const [qtyAsm, setQtyAsm] = useState<any>(null);
   const [qtyLabels, setQtyLabels] = useState<string[]>([]);
   const [orderedArr, setOrderedArr] = useState<number[]>([]);
+  // Cut modal state
+  const [cutModalOpen, setCutModalOpen] = useState(false);
+  const [cutAsm, setCutAsm] = useState<any>(null);
+  const [cutArr, setCutArr] = useState<number[]>([]);
   const { records: masterRecords } = useMasterTable();
-  const jobForm = useForm<any>({
-    defaultValues: {
-      projectCode: (job as any).projectCode || "",
-      name: job.name || "",
-      companyId: (job as any).companyId || null,
-      customerName: (job as any).company?.name || "",
-      customerOrderDate: (job as any).customerOrderDate ? new Date((job as any).customerOrderDate) : null,
-      targetDate: (job as any).targetDate ? new Date((job as any).targetDate) : null,
-      dropDeadDate: (job as any).dropDeadDate ? new Date((job as any).dropDeadDate) : null,
-      cutSubmissionDate: (job as any).cutSubmissionDate ? new Date((job as any).cutSubmissionDate) : null,
-      status: job.status || "",
-      jobType: (job as any).jobType || "",
-      endCustomerName: (job as any).endCustomerName || "",
-    },
-  });
+  // Integrate findify
+  const {
+    editForm: jobForm,
+    findForm,
+    activeForm,
+    mode,
+    toggleFind,
+    buildUpdatePayload,
+    buildFindPayload,
+  } = useJobFindify(job, nav);
   type JobFormValues = any;
   const save = (values: JobFormValues) => {
-    const fd = new FormData();
-    fd.set("_intent", "job.update");
-    if (values.projectCode) fd.set("projectCode", values.projectCode);
-    if (values.name) fd.set("name", values.name);
-    if (values.companyId) fd.set("companyId", String(values.companyId));
-    if (values.customerOrderDate) fd.set("customerOrderDate", new Date(values.customerOrderDate).toISOString().slice(0, 10));
-    if (values.targetDate) fd.set("targetDate", new Date(values.targetDate).toISOString().slice(0, 10));
-    if (values.dropDeadDate) fd.set("dropDeadDate", new Date(values.dropDeadDate).toISOString().slice(0, 10));
-    if (values.cutSubmissionDate) fd.set("cutSubmissionDate", new Date(values.cutSubmissionDate).toISOString().slice(0, 10));
-    if (values.status) fd.set("status", values.status);
-    if (values.jobType) fd.set("jobType", values.jobType);
-    if (values.endCustomerName) fd.set("endCustomerName", values.endCustomerName);
-    submit(fd, { method: "post" });
+    submit(buildUpdatePayload(values), { method: "post" });
   };
   useInitGlobalFormContext(jobForm as any, save, () => jobForm.reset());
   const [customerSearch, setCustomerSearch] = useState("");
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();
     if (!q) return customers;
-    return customers.filter((c: any) => (c.name || "").toLowerCase().includes(q));
+    return customers.filter((c: any) =>
+      (c.name || "").toLowerCase().includes(q)
+    );
   }, [customers, customerSearch]);
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(false);
@@ -181,31 +273,40 @@ export default function JobDetailRoute() {
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
     if (!q) return productChoices;
-    return productChoices.filter((p: any) => ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q));
+    return productChoices.filter((p: any) =>
+      ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
+    );
   }, [productChoices, productSearch]);
 
   useEffect(() => {
     if (!qtyAsm) return;
     const labels: string[] = Array.isArray(qtyAsm.labels) ? qtyAsm.labels : [];
-    // Determine number of variants to show: prefer server-computed c_numVariants when present
-    // else derive from last non-empty label; fallback to labels length
-    let num = Number.isFinite(qtyAsm.c_numVariants) ? (qtyAsm.c_numVariants as number) : 0;
-    if (!num) {
-      let last = -1;
-      for (let i = labels.length - 1; i >= 0; i--) {
-        if ((labels[i] || "").toString().trim()) {
-          last = i;
-          break;
-        }
-      }
-      num = last >= 0 ? last + 1 : labels.length;
-    }
-    const cols = labels.slice(0, num);
+    const cols = getVariantLabels(labels, qtyAsm.c_numVariants as any);
     setQtyLabels(cols);
-    const arr: number[] = Array.isArray(qtyAsm.qtyOrderedBreakdown) ? qtyAsm.qtyOrderedBreakdown : [];
-    const initial = Array.from({ length: num }, (_, i) => arr[i] || 0);
+    const orderedRaw: number[] = Array.isArray(qtyAsm.qtyOrderedBreakdown)
+      ? qtyAsm.qtyOrderedBreakdown
+      : [];
+    const initial = Array.from(
+      { length: cols.length },
+      (_, i) => orderedRaw[i] || 0
+    );
     setOrderedArr(initial);
   }, [qtyAsm]);
+
+  // Auto-enter find mode if query param present
+  useEffect(() => {
+    if (sp.get("find") === "1" && mode !== "find") {
+      // attempt to enter find silently (ignore dirty check as we just loaded)
+      try {
+        (findForm as any).reset();
+        toggleFind();
+      } catch {}
+    }
+  }, [sp, mode]);
+
+  const returnUrl = sp.get("return")
+    ? decodeURIComponent(sp.get("return") as string)
+    : null;
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -215,145 +316,198 @@ export default function JobDetailRoute() {
             { label: String(job.id), href: `/jobs/${job.id}` },
           ]}
         />
-        <RecordNavButtons recordBrowser={useRecordBrowser(job.id, masterRecords)} />
+        <Group>
+          {mode === "find" && returnUrl && (
+            <Button
+              variant="light"
+              onClick={() => {
+                navigate(returnUrl);
+              }}
+            >
+              Cancel
+            </Button>
+          )}
+          <Button
+            variant={mode === "find" ? "filled" : "light"}
+            onClick={toggleFind}
+          >
+            {mode === "find" ? "Exit Find" : "Find"}
+          </Button>
+          {mode === "find" && (
+            <Button
+              variant="light"
+              onClick={() =>
+                submit(buildFindPayload(findForm.getValues()), {
+                  method: "post",
+                })
+              }
+            >
+              Search
+            </Button>
+          )}
+          <RecordNavButtons
+            recordBrowser={useRecordBrowser(job.id, masterRecords)}
+          />
+        </Group>
       </Group>
 
-      <Grid>
-        <Grid.Col span={{ base: 12, md: 5 }}>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Title order={4}>Overview</Title>
-            </Card.Section>
-            <Divider my="xs" />
-            <Stack gap={8}>
-              <Group gap="md">
-                <Text fw={600} w={140}>
-                  ID
-                </Text>
-                <Text>{job.id}</Text>
-              </Group>
-              <TextInput label="Project Code" mod="data-autoSize" {...jobForm.register("projectCode")} />
-              <TextInput label="Name" mod="data-autoSize" {...jobForm.register("name")} />
-              <Group gap="md" align="center">
-                <input type="hidden" value={jobForm.watch("companyId") ?? ""} />
-                <TextInput label="Customer" mod="data-autoSize" readOnly value={jobForm.watch("customerName") || (job as any).company?.name || ""} style={{ flex: 1 }} />
-                <Button
-                  variant="light"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setCustomerModalOpen(true);
-                  }}
-                >
-                  Pick
-                </Button>
-              </Group>
-            </Stack>
-          </Card>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 7 }}>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Title order={4}>Dates & Status</Title>
-            </Card.Section>
-            <Divider my="xs" />
-            <SimpleGrid cols={2} spacing="md">
+      <div key={`mode-${mode}`}>
+        {" "}
+        {/* force remount on mode change */}
+        <Grid>
+          <Grid.Col span={{ base: 12, md: 5 }}>
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Group justify="space-between" align="center">
+                  <Title order={4}>Overview</Title>
+                  {mode === "find" && <Badge variant="light">Find Mode</Badge>}
+                </Group>
+              </Card.Section>
+              <Divider my="xs" />
               <Stack gap={8}>
-                <DatePickerInput
-                  label="Order Date"
-                  mod="data-autoSize"
-                  value={jobForm.watch("customerOrderDate")}
-                  onChange={(v) => jobForm.setValue("customerOrderDate", v)}
-                  valueFormat="YYYY-MM-DD"
-                  clearable
-                />
-                <DatePickerInput label="Target Date" mod="data-autoSize" value={jobForm.watch("targetDate")} onChange={(v) => jobForm.setValue("targetDate", v)} valueFormat="YYYY-MM-DD" clearable />
-                <DatePickerInput label="Drop Dead" mod="data-autoSize" value={jobForm.watch("dropDeadDate")} onChange={(v) => jobForm.setValue("dropDeadDate", v)} valueFormat="YYYY-MM-DD" clearable />
-                <DatePickerInput
-                  label="Submitted"
-                  mod="data-autoSize"
-                  value={jobForm.watch("cutSubmissionDate")}
-                  onChange={(v) => jobForm.setValue("cutSubmissionDate", v)}
-                  valueFormat="YYYY-MM-DD"
-                  clearable
-                />
+                {jobOverviewFields.map((cfg: any) => (
+                  <React.Fragment key={cfg.name}>
+                    {renderField(activeForm as any, cfg, mode as any, job, {
+                      openCustomerModal: () => setCustomerModalOpen(true),
+                    })}
+                  </React.Fragment>
+                ))}
               </Stack>
-              <Stack gap={8}>
-                <TextInput label="Status" mod="data-autoSize" {...jobForm.register("status")} />
-                <TextInput label="Type" mod="data-autoSize" {...jobForm.register("jobType")} />
-                <TextInput label="End Customer" mod="data-autoSize" {...jobForm.register("endCustomerName")} />
-              </Stack>
-            </SimpleGrid>
-          </Card>
-        </Grid.Col>
-      </Grid>
+            </Card>
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, md: 7 }}>
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Title order={4}>Dates & Status</Title>
+              </Card.Section>
+              <Divider my="xs" />
+              <SimpleGrid cols={2} spacing="md">
+                <Stack gap={8}>
+                  {jobDateStatusLeft.map((cfg: any) => (
+                    <React.Fragment key={cfg.name}>
+                      {renderField(activeForm as any, cfg, mode as any, job)}
+                    </React.Fragment>
+                  ))}
+                </Stack>
+                <Stack gap={8}>
+                  {jobDateStatusRight.map((cfg: any) => (
+                    <React.Fragment key={cfg.name}>
+                      {renderField(activeForm as any, cfg, mode as any, job)}
+                    </React.Fragment>
+                  ))}
+                </Stack>
+              </SimpleGrid>
+            </Card>
+          </Grid.Col>
+        </Grid>
+      </div>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Group justify="space-between" align="center">
-            <Title order={4}>Assemblies</Title>
-            <Button variant="light" onClick={() => setProductModalOpen(true)}>
-              Add Assembly
-            </Button>
-          </Group>
-        </Card.Section>
-        <Divider my="xs" />
-        <Table striped withTableBorder withColumnBorders highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>ID</Table.Th>
-              <Table.Th>Product SKU</Table.Th>
-              <Table.Th>Product Name</Table.Th>
-              <Table.Th>Variant Set</Table.Th>
-              <Table.Th># Ordered</Table.Th>
-              <Table.Th>Cut</Table.Th>
-              <Table.Th>Make</Table.Th>
-              <Table.Th>Pack</Table.Th>
-              <Table.Th>Status</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {(job.assemblies || []).map((a: any) => {
-              const p = a.productId ? (productsById as any)[a.productId] : null;
-              return (
-                <Table.Tr key={a.id}>
-                  <Table.Td>
-                    <Link to={`/assembly/${a.id}`}>{a.id}</Link>
-                  </Table.Td>
-                  <Table.Td>{p?.sku || ""}</Table.Td>
-                  <Table.Td>{p?.name || ""}</Table.Td>
-                  <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
-                  <Table.Td>
-                    <Button
-                      size="xs"
-                      variant="subtle"
-                      onClick={() => {
-                        const labels = (p?.variantSet?.variants || []) as string[];
-                        setQtyAsm({ ...a, labels });
-                        setQtyModalOpen(true);
-                      }}
-                    >
-                      {(a as any).c_qtyOrdered ?? 0}
-                    </Button>
-                  </Table.Td>
-                  <Table.Td>{(a as any).c_qtyCut ?? ""}</Table.Td>
-                  <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
-                  <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
-                  <Table.Td>{a.status || ""}</Table.Td>
-                </Table.Tr>
-              );
-            })}
-          </Table.Tbody>
-        </Table>
-      </Card>
+      {mode === "edit" && (
+        <Card withBorder padding="md">
+          <Card.Section inheritPadding py="xs">
+            <Group justify="space-between" align="center">
+              <Title order={4}>Assemblies</Title>
+              <Button variant="light" onClick={() => setProductModalOpen(true)}>
+                Add Assembly
+              </Button>
+            </Group>
+          </Card.Section>
+          <Divider my="xs" />
+          <Table striped withTableBorder withColumnBorders highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>Product SKU</Table.Th>
+                <Table.Th>Product Name</Table.Th>
+                <Table.Th>Variant Set</Table.Th>
+                <Table.Th># Ordered</Table.Th>
+                <Table.Th>Cut</Table.Th>
+                <Table.Th>Make</Table.Th>
+                <Table.Th>Pack</Table.Th>
+                <Table.Th>Status</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {(job.assemblies || []).map((a: any) => {
+                const p = a.productId
+                  ? (productsById as any)[a.productId]
+                  : null;
+                return (
+                  <Table.Tr key={a.id}>
+                    <Table.Td>
+                      <Link to={`/assembly/${a.id}`}>{a.id}</Link>
+                    </Table.Td>
+                    <Table.Td>{p?.sku || ""}</Table.Td>
+                    <Table.Td>{p?.name || ""}</Table.Td>
+                    <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => {
+                          const labels = (p?.variantSet?.variants ||
+                            []) as string[];
+                          setQtyAsm({ ...a, labels });
+                          setQtyModalOpen(true);
+                        }}
+                      >
+                        {(a as any).c_qtyOrdered ?? 0}
+                      </Button>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => {
+                          const labels = (p?.variantSet?.variants ||
+                            []) as string[];
+                          // use existing variant logic for lengths
+                          const cols = getVariantLabels(
+                            labels,
+                            p?.variantSet?.variants?.length as any
+                          );
+                          const current = Array.isArray(a.qtyCutBreakdown)
+                            ? a.qtyCutBreakdown
+                            : [];
+                          const initial = Array.from(
+                            { length: cols.length },
+                            (_, i) => current[i] || 0
+                          );
+                          setCutAsm({ ...a, labels: cols });
+                          setCutArr(initial);
+                          setCutModalOpen(true);
+                        }}
+                      >
+                        {(a as any).c_qtyCut ?? 0}
+                      </Button>
+                    </Table.Td>
+                    <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
+                    <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
+                    <Table.Td>{a.status || ""}</Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Card>
+      )}
 
       {/* Customer Picker Modal */}
-      <Modal.Root opened={customerModalOpen} onClose={() => setCustomerModalOpen(false)} centered>
+      <Modal.Root
+        opened={customerModalOpen}
+        onClose={() => setCustomerModalOpen(false)}
+        centered
+      >
         <Modal.Overlay />
         <Modal.Content>
           <Modal.Header>
             <Stack>
               <Text>Select Customer</Text>
-              <TextInput placeholder="Search customers..." value={customerSearch} onChange={(e) => setCustomerSearch(e.currentTarget.value)} />
+              <TextInput
+                placeholder="Search customers..."
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.currentTarget.value)}
+              />
             </Stack>
           </Modal.Header>
           <Modal.Body>
@@ -362,8 +516,7 @@ export default function JobDetailRoute() {
                 key={c.id}
                 py={6}
                 onClick={() => {
-                  jobForm.setValue("companyId", c.id);
-                  jobForm.setValue("customerName", c.name);
+                  jobForm.setValue("companyId", c.id as any);
                   setCustomerModalOpen(false);
                 }}
                 style={{ cursor: "pointer" }}
@@ -376,19 +529,46 @@ export default function JobDetailRoute() {
       </Modal.Root>
 
       {/* Product Picker Modal for new Assembly */}
-      <Modal opened={productModalOpen} onClose={() => setProductModalOpen(false)} title="Add Assembly from Product" size="xl" centered>
+      <Modal
+        opened={productModalOpen}
+        onClose={() => setProductModalOpen(false)}
+        title="Add Assembly from Product"
+        size="xl"
+        centered
+      >
         <Stack>
           <Group align="flex-end" justify="space-between">
-            <TextInput placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.currentTarget.value)} w={320} />
+            <TextInput
+              placeholder="Search products..."
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.currentTarget.value)}
+              w={320}
+            />
             <Group>
-              <Switch label="Customer" checked={customerFilter} onChange={(e) => setCustomerFilter(e.currentTarget.checked)} />
-              <Switch label="Assembly" checked={assemblyOnly} onChange={(e) => setAssemblyOnly(e.currentTarget.checked)} />
+              <Switch
+                label="Customer"
+                checked={customerFilter}
+                onChange={(e) => setCustomerFilter(e.currentTarget.checked)}
+              />
+              <Switch
+                label="Assembly"
+                checked={assemblyOnly}
+                onChange={(e) => setAssemblyOnly(e.currentTarget.checked)}
+              />
             </Group>
           </Group>
           <div style={{ maxHeight: 420, overflow: "auto" }}>
             {filteredProducts
-              .filter((p: any) => !customerFilter || (jobForm.watch("companyId") ? p.customerId === jobForm.watch("companyId") : true))
-              .filter((p: any) => !assemblyOnly || (p._count?.productLines ?? 0) > 0)
+              .filter(
+                (p: any) =>
+                  !customerFilter ||
+                  (jobForm.watch("companyId")
+                    ? p.customerId === jobForm.watch("companyId")
+                    : true)
+              )
+              .filter(
+                (p: any) => !assemblyOnly || (p._count?.productLines ?? 0) > 0
+              )
               .map((p: any) => (
                 <Group
                   key={p.id}
@@ -429,9 +609,17 @@ export default function JobDetailRoute() {
               setQtyModalOpen(false);
             }}
           >
-            <input type="hidden" name="_intent" value="assembly.updateOrderedBreakdown" />
+            <input
+              type="hidden"
+              name="_intent"
+              value="assembly.updateOrderedBreakdown"
+            />
             <input type="hidden" name="assemblyId" value={qtyAsm.id} />
-            <input type="hidden" name="orderedArr" value={JSON.stringify(orderedArr)} />
+            <input
+              type="hidden"
+              name="orderedArr"
+              value={JSON.stringify(orderedArr)}
+            />
             <Table withTableBorder withColumnBorders striped>
               <Table.Thead>
                 <Table.Tr>
@@ -452,8 +640,85 @@ export default function JobDetailRoute() {
                         type="number"
                         value={orderedArr[i]}
                         onChange={(e) => {
-                          const v = e.currentTarget.value === "" ? 0 : Number(e.currentTarget.value);
-                          setOrderedArr((prev) => prev.map((x, idx) => (idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x)));
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setOrderedArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
+                        }}
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+            <Group justify="end" mt="md">
+              <Button type="submit" variant="filled">
+                Save
+              </Button>
+            </Group>
+          </form>
+        )}
+      </Modal>
+
+      {/* Edit Cut Breakdown Modal */}
+      <Modal
+        opened={cutModalOpen}
+        onClose={() => {
+          setCutModalOpen(false);
+          setCutAsm(null);
+        }}
+        title="Edit Cut Quantities"
+        size="auto"
+        centered
+      >
+        {cutAsm && (
+          <form
+            method="post"
+            onSubmit={() => {
+              setCutModalOpen(false);
+            }}
+          >
+            <input
+              type="hidden"
+              name="_intent"
+              value="assembly.updateCutBreakdown"
+            />
+            <input type="hidden" name="assemblyId" value={cutAsm.id} />
+            <input type="hidden" name="cutArr" value={JSON.stringify(cutArr)} />
+            <Table withTableBorder withColumnBorders striped>
+              <Table.Thead>
+                <Table.Tr>
+                  {Array.from({ length: cutArr.length }, (_, i) => (
+                    <Table.Th key={`ch-${i}`} ta="center">
+                      {cutAsm.labels?.[i] || `#${i + 1}`}
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  {Array.from({ length: cutArr.length }, (_, i) => (
+                    <Table.Td key={`cc-${i}`}>
+                      <TextInput
+                        w="60px"
+                        styles={{ input: { textAlign: "center" } }}
+                        type="number"
+                        value={cutArr[i]}
+                        onChange={(e) => {
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setCutArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
                         }}
                       />
                     </Table.Td>

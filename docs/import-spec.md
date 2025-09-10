@@ -27,6 +27,18 @@ Located in `app/importers/utils.ts`:
 - Each importer returns `{ created, updated, skipped, errors }` and pushes a batch result row.
 - Errors are captured with index, key fields, and Prisma error metadata; failures are log-only.
 - Server logs include start/end with totals per mode.
+- Progress logging: Importers now emit a progress line every 100 processed rows (configurable per file edits) formatted as:
+  `[import] <mode> progress <n>/<total> created=<c> skipped=<s> errors=<e>`
+- Completion logging: Final summary emits `[import] <mode> complete total=<t> created=<c> skipped=<s> errors=<e>`.
+- Consolidated error summary: Every importer prints a grouped summary line when any errors occurred:
+  `[import] <mode> error summary [ { key, count, ids:[...] }, ... ]`
+  - `key`: Constraint name (FK / unique) else Prisma `code` else `"error"`.
+  - `count`: Number of failed rows in that group.
+  - `ids`: Full list of row primary ids (or null) for direct reconciliation (no truncation).
+    Per-row error logging is suppressed (except internally captured) to reduce noise; rely on this summary plus the returned `errors` array for detail.
+    Invoice dedup: On unique (`P2002`) invoiceCode clashes the importer auto-appends `-dup`, `-dup2`, etc. before recording an error, ensuring maximal insertion.
+- Error objects (per row) include: `index`, primary key `id` (when available), Prisma `code` (e.g., P2003 for FK violations), `constraint` (resolved from `meta.field_name` or `meta.target`), and full `message`.
+- Foreign key (P2003) troubleshooting: The reported `constraint` indicates the relation field whose referenced parent row is missing. Example: `Batch_productId_fkey` means the `productId` on the batch points to a non-existent `Product.id`.
 
 ## Server/client split
 
@@ -50,6 +62,18 @@ Below are the key fields handled per mode. Column names are matched loosely usin
 
 ### Locations (`import:locations`)
 
+### Contacts (`import:contacts`)
+
+- Keys: `a__Serial` (id)
+- Fields: `addressId` (`a_AddressID_c`), `companyId` (`a_CompanyID`), `email`, `department`, `firstName` (`Name_First`), `lastName` (`Name_Last`), `title` (`Name_Title`), phones (`Phone|Direct`, `Phone|Home`, `Phone|Mobile`), `position`, `recordType` (Employee|Contact|Customer).
+- Behavior: Upsert by id. Progress every 100 rows, final summary, structured errors.
+
+### Addresses (`import:addresses`)
+
+- Keys: `a__Serial` (id)
+- Fields: `companyId` (`a__CompanyID`), `contactId` (`a__ContactID`), `addressCountry`, `addressCountyState`, `addressLine1/2/3`, `addressTownCity`, `addressZipPostCode` (column headers with underscores or combined tokens tolerated via `pick`).
+- Behavior: Upsert by id. Referenced by Shipments (`addressIdShip`) and Contacts (`addressId`).
+
 - Keys: `a__Serial|a_Serial|id`, `Location|Name`
 - Fields: `name`, `notes`.
 - Upsert: match by `name` if present.
@@ -70,6 +94,7 @@ Below are the key fields handled per mode. Column names are matched loosely usin
   - `categoryId`: resolved from string `Category|category|categoryId` by matching ValueList where `type="Category"` on `code` or `label` (case-insensitive) or numeric id.
   - `variantSetId`: linked if the set id exists.
 - Behavior: enforce SKU uniqueness; prefer numeric id for stable linkage.
+- Progress: logs every 100 rows with counts (created/updated/skipped/renamedSku) and final summary including variant set and supplier linkage stats.
 
 ### Variant Sets (`import:variant_sets`)
 
@@ -85,6 +110,8 @@ Below are the key fields handled per mode. Column names are matched loosely usin
 
 - Keys: `a__Serial` (id).
 - Fields: `assemblyId`, `jobId`, `locationId`, `productId` (numeric), `shipmentId` (renamed from shippingId), `variantSetId`, `category`, `details`, `quantity`, `status`, `subCategory`, `qtyBreakdown` (parsed from `Qty_Breakdown_List_c`).
+- Progress: logs every 100 rows and final summary.
+- FK Errors: `ShipmentLine_productId_fkey` or `ShipmentLine_shipmentId_fkey` indicate missing parent Product/Shipment.
 
 ### Product Movements (`import:product_movements`)
 
@@ -103,6 +130,8 @@ Below are the key fields handled per mode. Column names are matched loosely usin
 
 - Invoice: id, company, date, status, optional product copy fields, tax code relation (`taxCodeId`) and `taxRateCopy`.
 - Invoice Line: id, costing/expense/invoice/job/product/PO line, shipping split ids (Actual/Duty), priceCost/priceSell, quantity, `taxCodeId`, `taxRateCopy`, `invoicedTotalManual`.
+- Progress: both modes log every 100 rows and a final summary.
+- FK Errors: `InvoiceLine_productId_fkey` / `InvoiceLine_invoiceId_fkey` / others show missing parent entities; ensure products and invoices imported first. Unique errors (`P2002`) for `invoiceCode` logged with constraint array.
 
 ### Purchase Orders (`import:purchase_orders`) and Lines (`import:purchase_order_lines`)
 
@@ -118,9 +147,19 @@ Below are the key fields handled per mode. Column names are matched loosely usin
 
 - Keys: product + location; quantities by location.
 
+### DHL Report Lines (`import:dhl_report_lines`)
+
+- Keys: Synthetic sequential id = row index (1-based) in the provided sheet; any `a__Serial` / `id` column values are ignored.
+- Rationale: Source exports lacked stable numeric identifiers; using the row position guarantees deterministic re-import and allows updates (row N overwrites prior row N).
+- Fields: Wide set of DHL billing columns (account, AWB data, weights, revenue/tax, origin/destination, dates) mapped verbatim as documented in code (`importDhlReportLines.ts`).
+- Progress: Logs every 100 rows and on completion. Consolidated error summary groups constraint/code failures; missing id errors no longer occur because ids are synthesized.
+
 ### Jobs, Assemblies, Assembly Activities, Product Lines, Costings
 
 - Standard numeric key mapping, dates, enums where applicable, arrays for breakdowns (e.g., activities `qtyBreakdown`).
+- Progress: jobs, assembly_activities, and costings importers log every 100 rows and a final summary.
+- Costings logging: Emits `[import] costings progress n/total created= updated= skipped= errors=` every 100 rows and a final `[import] costings complete ...` line plus grouped error summary (by Prisma `code`) when errors occur.
+- FK Errors: `AssemblyActivity_assemblyId_fkey` indicates the referenced `Assembly.id` was not present at import time—verify assemblies imported first and IDs align. Rows with missing parent are logged but processing continues.
 
 ## Assumptions and edge cases
 

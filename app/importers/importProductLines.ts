@@ -46,6 +46,26 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
     } catch (e: any) {
       errors.push({ index: i, id, message: e?.message, code: e?.code });
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] product_lines progress ${i + 1}/${
+          rows.length
+        } created=${created} skipped=${skipped} errors=${errors.length}`
+      );
+    }
+  }
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; ids: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, ids: [] };
+      grouped[key].count++;
+      grouped[key].ids.push(e.id ?? null);
+    }
+    console.log("[import] product_lines error summary", Object.values(grouped));
   }
   return { created, updated, skipped, errors };
 }

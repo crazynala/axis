@@ -45,3 +45,7 @@ export function FindProvider({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={v}>{children}</Ctx.Provider>;
 }
 export const useFind = () => useContext(Ctx);
+export function useIsFindMode() {
+  const { mode } = useFind();
+  return mode === "find";
+}

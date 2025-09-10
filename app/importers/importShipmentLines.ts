@@ -55,8 +55,34 @@ export async function importShipmentLines(rows: any[]): Promise<ImportResult> {
         message: e?.message,
       };
       errors.push(log);
-      console.error("[import] shipment_lines upsert error", log);
+      // per-row error suppressed; consolidated summary will report
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] shipment_lines progress ${i + 1}/${
+          rows.length
+        } created=${created} skipped=${skipped} errors=${errors.length}`
+      );
+    }
+  }
+  console.log(
+    `[import] shipment_lines complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
+  );
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; ids: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.constraint || e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, ids: [] };
+      grouped[key].count++;
+      grouped[key].ids.push(e.id ?? null);
+    }
+    console.log(
+      "[import] shipment_lines error summary",
+      Object.values(grouped)
+    );
   }
   return { created, updated, skipped, errors };
 }

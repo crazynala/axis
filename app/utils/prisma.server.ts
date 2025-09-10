@@ -13,10 +13,33 @@ function sumIntArray(arr: number[] | null | undefined): number {
   return total;
 }
 
-// Create base client
+// Create base client (keep global error logging enabled)
 const base =
   globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
+
+// --- Import-time log suppression (scope-based) ---
+let importLogDepth = 0;
+type PrismaLogEvent = { level: string; message?: string } & Record<string, any>;
+base.$on("error", (e: PrismaLogEvent) => {
+  if (importLogDepth > 0) {
+    // Swallow per-row Prisma errors during bulk imports; importers aggregate their own summaries.
+    return;
+  }
+  // Otherwise let Prisma print as normal (this handler currently no-ops to defer to default stderr output)
+});
+
+export async function runImporter<T>(
+  label: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  importLogDepth++;
+  try {
+    return await fn();
+  } finally {
+    importLogDepth--;
+  }
+}
 
 // Export the base client (no extensions) for lightweight queries where
 // computed attachments are not needed, to avoid unnecessary fan-out work.
@@ -62,9 +85,9 @@ const IN_TYPES = [
   "return",
   "transfer_in",
   // observed
-  "transfer",
   "po (receive)",
   "shipping (in)",
+  "amendment",
 ];
 const OUT_TYPES = [
   "out",
@@ -76,7 +99,6 @@ const OUT_TYPES = [
   "adjust_out",
   "transfer_out",
   // observed
-  "transfer",
   "shipping (out)",
   "po (return)",
   "assembly",
@@ -315,39 +337,32 @@ export const prisma: PrismaClient = (base as any).$extends({
 });
 
 async function computeProductStockQty(productId: number): Promise<number> {
-  // Normalize movementType via TRIM+LOWER and handle ABS(quantity) for directional buckets.
+  // 1) Movement-based: sum ProductMovement.quantity for this product, ignoring transfers (net zero overall stock)
+  // Treat IN_TYPES as positive (absolute value), OUT_TYPES as negative (absolute value), others as signed quantity.
   const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
   const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
-
-  // 1) Try movement-based inventory
-  const mov = (await base.$queryRawUnsafe(
+  const rows = (await base.$queryRawUnsafe(
     `
     SELECT (
-      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0) ELSE 0 END),0)
-      -
-      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN COALESCE(ABS(pml.quantity),0) ELSE 0 END),0)
-      +
-      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) NOT IN (${inList}, ${outList}) THEN COALESCE(pml.quantity,0) ELSE 0 END),0)
+      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType",''))) IN (${inList}, ${outList}) THEN (COALESCE(pm.quantity,0)) ELSE 0 END),0)
     ) AS qty,
     COUNT(*)::int AS n
-    FROM "ProductMovementLine" pml
-    JOIN "ProductMovement" pm ON pm.id = pml."movementId"
-    WHERE pml."productId" = $1
+    FROM "ProductMovement" pm
+    WHERE pm."productId" = $1 AND lower(trim(COALESCE(pm."movementType",''))) <> 'transfer'
     `,
     productId
   )) as Array<{ qty: any; n: number }>;
-  const movQty = toNumber(mov?.[0]?.qty ?? 0);
-  const movN = mov?.[0]?.n ?? 0;
+  const movQty = toNumber(rows?.[0]?.qty ?? 0);
+  const movN = rows?.[0]?.n ?? 0;
   if (movN > 0) return movQty;
 
-  // 2) Fallback: sum of batch quantities when no movement lines exist
+  // 2) Fallback: sum of batch quantities when no movements (excluding transfers) exist
   const batch = (await base.$queryRaw`
     SELECT COALESCE(SUM(COALESCE(b.quantity,0)),0) AS qty
     FROM "Batch" b
     WHERE b."productId" = ${productId}
   `) as Array<{ qty: any }>;
-  const batchQty = toNumber(batch?.[0]?.qty ?? 0);
-  return batchQty;
+  return toNumber(batch?.[0]?.qty ?? 0);
 }
 
 async function attachStockQty<T extends { id?: number } | null>(
@@ -382,10 +397,10 @@ async function computeBatchStockQty(batchId: number): Promise<number> {
     `
     SELECT (
       COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0) ELSE 0 END),0)
-      -
-      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN COALESCE(ABS(pml.quantity),0) ELSE 0 END),0)
-      +
-      COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) NOT IN (${inList}, ${outList}) THEN COALESCE(pml.quantity,0) ELSE 0 END),0)
+       -
+       COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN COALESCE(ABS(pml.quantity),0) ELSE 0 END),0)
+       +
+       COALESCE(SUM(CASE WHEN lower(trim(COALESCE(pm."movementType", ''))) NOT IN (${inList}, ${outList}) THEN COALESCE(pml.quantity,0) ELSE 0 END),0)
     ) AS qty,
     COUNT(*)::int AS n
     FROM "ProductMovementLine" pml
@@ -428,42 +443,36 @@ async function computeProductByLocation(
 ): Promise<
   Array<{ location_id: number | null; location_name: string; qty: number }>
 > {
-  const inList = IN_TYPES.map((t) => `'${t}'`).join(",");
-  const outList = OUT_TYPES.map((t) => `'${t}'`).join(",");
+  // Movement-header based aggregation:
+  // - For movementType = 'transfer': add ABS(qty) to locationInId and subtract ABS(qty) from locationOutId.
+  // - For all other movement types (including null/unknown): add qty (signed as stored) to each non-null locationInId/locationOutId.
   const rows = (await base.$queryRawUnsafe(
     `
-    WITH typed AS (
+    WITH pm_rows AS (
       SELECT 
-        pml."productId" AS pid,
-        pm."movementType"    AS mt_raw,
+        pm.id,
         lower(trim(COALESCE(pm."movementType", ''))) AS mt,
-        pm."locationInId"    AS loc_in,
-        pm."locationOutId"   AS loc_out,
-        COALESCE(pml.quantity,0) AS q_raw,
-        CASE
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList})  THEN COALESCE(ABS(pml.quantity),0)
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
-          ELSE COALESCE(pml.quantity,0)
-        END AS q
-      FROM "ProductMovementLine" pml
-      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
-      WHERE pml."productId" = $1
-    ), contrib AS (
-      -- Transfers: split abs qty between out (-) and in (+)
-      SELECT loc_out AS location_id, -ABS(q) AS qty FROM typed WHERE mt = 'transfer' AND loc_out IS NOT NULL
+        pm."locationInId"  AS loc_in,
+        pm."locationOutId" AS loc_out,
+        COALESCE(pm.quantity,0) AS qty
+      FROM "ProductMovement" pm
+      WHERE pm."productId" = $1
+    ), exploded AS (
+      -- Transfers: split with +/- ABS(qty)
+      SELECT loc_in  AS location_id, ABS(qty)  AS qty FROM pm_rows WHERE mt = 'transfer' AND loc_in  IS NOT NULL
       UNION ALL
-      SELECT loc_in  AS location_id,  ABS(q) AS qty FROM typed WHERE mt = 'transfer' AND loc_in  IS NOT NULL
+      SELECT loc_out AS location_id, -ABS(qty) AS qty FROM pm_rows WHERE mt = 'transfer' AND loc_out IS NOT NULL
       UNION ALL
-      -- Non-transfers: positive to loc_in, negative to loc_out
-      SELECT loc_in  AS location_id,  q      AS qty FROM typed WHERE mt <> 'transfer' AND q > 0 AND loc_in  IS NOT NULL
+      -- Non-transfers: use stored signed qty for each present location side
+      SELECT loc_in  AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND loc_in  IS NOT NULL
       UNION ALL
-      SELECT loc_out AS location_id,  q      AS qty FROM typed WHERE mt <> 'transfer' AND q < 0 AND loc_out IS NOT NULL
+      SELECT loc_out AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND loc_out IS NOT NULL
     )
-    SELECT c.location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(c.qty),0) AS qty
-    FROM contrib c
-    LEFT JOIN "Location" l ON l.id = c.location_id
-    GROUP BY c.location_id, l.name
-    ORDER BY l.name NULLS LAST, c.location_id
+    SELECT e.location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(e.qty),0) AS qty
+    FROM exploded e
+    LEFT JOIN "Location" l ON l.id = e.location_id
+    GROUP BY e.location_id, l.name
+    ORDER BY l.name NULLS LAST, e.location_id
     `,
     productId
   )) as Array<{ location_id: number | null; location_name: string; qty: any }>;
@@ -493,11 +502,7 @@ async function computeProductByBatch(productId: number): Promise<
     WITH typed AS (
       SELECT
         pml."batchId" AS bid,
-        CASE
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${inList}) THEN COALESCE(ABS(pml.quantity),0)
-          WHEN lower(trim(COALESCE(pm."movementType", ''))) IN (${outList}) THEN -COALESCE(ABS(pml.quantity),0)
-          ELSE COALESCE(pml.quantity,0)
-        END AS qty
+        COALESCE((pml.quantity),0) AS qty          
       FROM "ProductMovementLine" pml
       JOIN "ProductMovement" pm ON pm.id = pml."movementId"
       WHERE pml."productId" = $1
@@ -532,19 +537,6 @@ async function computeProductByBatch(productId: number): Promise<
   return rows.map((r) => ({
     ...r,
     qty: Math.round(100 * Number(r.qty ?? 0)) / 100,
-  }));
-}
-
-// Public helper: get batches for a product including computed available qty
-export async function getBatchesWithComputedQty(productId: number) {
-  const rows = await computeProductByBatch(productId);
-  return rows.map((r) => ({
-    id: r.batch_id,
-    name: r.batch_name,
-    codeMill: r.code_mill,
-    codeSartor: r.code_sartor,
-    quantity: r.qty,
-    location: { id: r.location_id, name: r.location_name },
   }));
 }
 

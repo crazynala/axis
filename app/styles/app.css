@@ -1,5 +1,5 @@
 /* app.css */
-@layer mantine {
+@layer app {
   /* Inline labels from md+ */
   @media (min-width: 62em) {
     .mantine-InputWrapper-root[data-autoSize] {
@@ -54,89 +54,14 @@ html[data-find-mode] body {
   background-color: color-mix(in srgb, var(--mantine-color-body), var(--mantine-color-blue-5) 6%);
 }
 
-html[data-find-mode][data-find-style="tint"] .mantine-AppShell-main {
+html[data-find-mode] .mantine-AppShell-main {
   position: relative;
   /* inner focus ring / shadow to signal mode */
   box-shadow: inset 0 0 0 3px rgba(0, 120, 255, 0.35), inset 0 0 18px rgba(0, 120, 255, 0.25);
   transition: box-shadow 120ms ease, background-color 200ms ease;
 }
 
-/* Dotted variant */
-html[data-find-mode][data-find-style="dotted"] .mantine-AppShell-main {
-  position: relative;
-  border: 5px dotted var(--mantine-color-blue-6);
-  border-radius: var(--mantine-radius-md);
-  padding: 0.5rem; /* adjust layout slightly inside dotted frame */
-  box-shadow: none;
-}
-
-/* Accent variant: shift global accent & card borders */
-html[data-find-mode][data-find-style="accent"] {
-  --find-accent: var(--mantine-color-yellow-6);
-  --find-bg: color-mix(in srgb, var(--find-accent) 12%, transparent);
-}
-html[data-find-mode][data-find-style="accent"] .mantine-AppShell-main {
-  background: linear-gradient(115deg, var(--find-bg), transparent 60%);
-  box-shadow: inset 0 0 0 2px var(--find-accent), 0 0 0 1px rgba(0, 0, 0, 0.05);
-}
-html[data-find-mode][data-find-style="accent"] .mantine-Card-root,
-html[data-find-mode][data-find-style="accent"] .card {
-  position: relative;
-  border-color: var(--find-accent) !important;
-  box-shadow: 0 0 0 1px var(--find-accent) inset, 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-html[data-find-mode][data-find-style="accent"] .mantine-Card-root::before,
-html[data-find-mode][data-find-style="accent"] .card::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: var(--find-accent);
-  border-radius: 999px;
-}
-
-/* Criteria variant: emphasize searchable inputs */
-html[data-find-mode][data-find-style="criteria"] {
-  --find-accent: var(--mantine-color-grape-5);
-  --find-bg: color-mix(in srgb, var(--find-accent) 10%, transparent);
-}
-html[data-find-mode][data-find-style="criteria"] .mantine-AppShell-main {
-  background: linear-gradient(135deg, var(--find-bg), transparent 55%);
-}
-html[data-find-mode][data-find-style="criteria"] .mantine-Input-input,
-html[data-find-mode][data-find-style="criteria"] input,
-html[data-find-mode][data-find-style="criteria"] .mantine-Select-input {
-  background: var(--find-bg);
-  outline: 1px dashed var(--find-accent);
-  outline-offset: 2px;
-  transition: outline-color 120ms ease, background-color 160ms ease;
-}
-html[data-find-mode][data-find-style="criteria"] .mantine-Input-input:focus-within,
-html[data-find-mode][data-find-style="criteria"] input:focus {
-  outline-style: solid;
-  outline-width: 2px;
-}
-html[data-find-mode][data-find-style="criteria"] input[type="text"] {
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>');
-  background-repeat: no-repeat;
-  background-position: 0.5rem 50%;
-  padding-left: 2rem;
-}
-html[data-find-mode][data-find-style="criteria"] input::placeholder,
-html[data-find-mode][data-find-style="criteria"] .mantine-Input-input::placeholder {
-  font-style: italic;
-  opacity: 0.8;
-}
-
-@media (prefers-color-scheme: dark) {
-  html[data-find-mode] body {
-    background-color: color-mix(in srgb, var(--mantine-color-body), var(--mantine-color-blue-8) 12%);
-  }
-}
-
-/* Subtle animated corner glow (accessibility mindful: no motion if reduced) */
-@media (prefers-reduced-motion: no-preference) {
-  html[data-find-mode][data-find-style="tint"] .mantine-AppShell-main::after {
+  html[data-find-mode] .mantine-AppShell-main::after {
     content: "";
     pointer-events: none;
     position: absolute;
@@ -148,13 +73,59 @@ html[data-find-mode][data-find-style="criteria"] .mantine-Input-input::placehold
   @keyframes find-mode-pulse {
     0%,
     100% {
-      opacity: 0.85;
+      opacity: 0.95;
     }
     50% {
-      opacity: 0.55;
+      opacity: 0.15;
     }
   }
+
+/* Criteria variant: emphasize searchable inputs */
+html[data-find-mode] {
+  /* --find-accent: var(--mantine-color-grape-5); */
+  --find-accent: rgba(0, 120, 255,.5);
 }
+
+html[data-find-mode][data-find-style="criteria"] .mantine-AppShell-main {
+  background: linear-gradient(135deg, var(--find-bg), transparent 55%);
+}
+
+html[data-find-mode].mantine-Input-input,
+html[data-find-mode] input,
+html[data-find-mode] .mantine-Select-input {
+  background: var(--find-bg);
+  outline: 1px dashed var(--find-accent); 
+  outline-offset: 0px;
+  transition: outline-color 120ms ease, background-color 160ms ease;
+}
+html[data-find-mode] .mantine-Input-input:focus-within,
+html[data-find-mode] input:focus {
+  outline-style: solid;
+  outline-width: 2px;
+}
+
+html[data-find-mode] input[type="text"] {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>');
+  background-repeat: no-repeat;
+  background-position: 0.5rem 50%;
+  padding-left: 2rem;
+}
+html[data-find-mode] input::placeholder,
+html[data-find-mode] .mantine-Input-input::placeholder {
+  font-style: italic;
+  /* opacity: 0.8; */
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-find-mode] body {
+    background-color: color-mix(in srgb, var(--mantine-color-body), var(--mantine-color-blue-8) 12%);
+  }
+}
+
+/* Subtle animated corner glow (accessibility mindful: no motion if reduced) */
+
+
+
 
 html:not([data-find-mode]) .mantine-AppShell-main::after {
   content: none !important;

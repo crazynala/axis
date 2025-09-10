@@ -70,8 +70,47 @@ export async function importAssemblyActivities(
       });
       created++;
     } catch (e: any) {
-      errors.push({ index: i, id, message: e?.message, code: e?.code });
+      errors.push({
+        index: i,
+        id,
+        assemblyId: data.assemblyId,
+        message: e?.message,
+        code: e?.code,
+      });
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] assembly_activities progress ${i + 1}/${
+          rows.length
+        } created=${created} skipped=${skipped} errors=${errors.length}`
+      );
+    }
+  }
+  console.log(
+    `[import] assembly_activities complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
+  );
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      {
+        key: string;
+        count: number;
+        ids: (number | null)[];
+        assemblyIds: (number | null)[];
+      }
+    > = {};
+    for (const e of errors) {
+      const key = e.code || "error";
+      if (!grouped[key])
+        grouped[key] = { key, count: 0, ids: [], assemblyIds: [] };
+      grouped[key].count++;
+      grouped[key].ids.push(e.id ?? null);
+      grouped[key].assemblyIds.push(e.assemblyId ?? null);
+    }
+    console.log(
+      "[import] assembly_activities error summary",
+      Object.values(grouped)
+    );
   }
   return { created, updated, skipped, errors };
 }

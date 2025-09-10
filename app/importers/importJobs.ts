@@ -76,6 +76,30 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
         code: e?.code,
       });
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] jobs progress ${i + 1}/${
+          rows.length
+        } created=${created} skipped=${skipped} errors=${errors.length}`
+      );
+    }
+  }
+  console.log(
+    `[import] jobs complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
+  );
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; samples: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, samples: [] };
+      grouped[key].count++;
+      if (grouped[key].samples.length < 5)
+        grouped[key].samples.push(e.id ?? null);
+    }
+    console.log("[import] jobs error summary", Object.values(grouped));
   }
   return { created, updated, skipped, errors };
 }

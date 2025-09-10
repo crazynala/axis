@@ -40,9 +40,12 @@ import {
   RecordBrowserWidget,
 } from "@aa/timber";
 import { Notifications } from "@mantine/notifications";
-import mantineCss from "./styles/mantine.css?url";
-import appCss from "./styles/app.css?url";
+import "@mantine/core/styles.css";
+import "@mantine/dates/styles.css";
+import "mantine-datatable/styles.layer.css";
+import "./styles/app.css";
 import { getUser, getUserId } from "./utils/auth.server";
+import { FindProvider } from "./find/FindContext";
 import {
   IconBrandDatabricks,
   IconWoman,
@@ -82,11 +85,6 @@ export function meta() {
     { name: "viewport", content: "width=device-width, initial-scale=1" },
   ];
 }
-
-export const links: LinksFunction = () => [
-  { rel: "stylesheet", href: mantineCss },
-  { rel: "stylesheet", href: appCss },
-];
 
 const theme = createTheme({
   components: {
@@ -218,14 +216,16 @@ export default function App() {
             // Public auth pages render without the main AppShell
             <Outlet />
           ) : (
-            <GlobalFormProvider>
-              <GlobalHotkeys />
-              <AppShellLayout
-                desktopNavOpenedInitial={desktopNavPref}
-                navTopItems={navTopItems}
-                navBottomItems={navBottomItems}
-              />
-            </GlobalFormProvider>
+            <FindProvider>
+              <GlobalFormProvider>
+                <GlobalHotkeys />
+                <AppShellLayout
+                  desktopNavOpenedInitial={desktopNavPref}
+                  navTopItems={navTopItems}
+                  navBottomItems={navBottomItems}
+                />
+              </GlobalFormProvider>
+            </FindProvider>
           )}
           <ScrollRestoration />
           <Scripts />

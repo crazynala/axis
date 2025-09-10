@@ -17,6 +17,7 @@ import { importPurchaseOrderLines } from "../importers/importPurchaseOrderLines"
 import { importShipments } from "../importers/importShipments";
 import { importShipmentLines } from "../importers/importShipmentLines";
 import { importAddresses } from "../importers/importAddresses";
+import { importContacts } from "../importers/importContacts";
 import { importLocations } from "../importers/importLocations";
 import { importJobs } from "../importers/importJobs";
 import { importProducts } from "../importers/importProducts";
@@ -29,6 +30,7 @@ import { importProductLines } from "../importers/importProductLines";
 import { importExpenses } from "../importers/importExpenses";
 import { importCostings } from "../importers/importCostings";
 import { importProductLocations } from "../importers/importProductLocations";
+import { runImporter } from "../utils/prisma.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_composeUploadHandlers(
@@ -82,33 +84,35 @@ export async function action({ request }: ActionFunctionArgs) {
   ) as File[];
 
   const modePriority: Record<string, number> = {
-    "import:dhl_report_lines": 2,
-    "import:forex_lines": 3,
-    "import:variant_sets": 5,
-    "import:companies": 10,
-    "import:addresses": 12,
-    "import:locations": 15,
-    "import:products": 20,
-    "import:jobs": 30,
-    "import:assemblies": 40,
-    "import:assembly_activities": 50,
-    "import:shipments": 60,
-    "import:shipment_lines": 61,
-    "import:purchase_orders": 62,
-    "import:purchase_order_lines": 63,
-    "import:invoices": 64,
-    "import:invoice_lines": 65,
-    "import:expenses": 66,
-    "import:product_batches": 70,
-    "import:product_locations": 80,
-    "import:product_movements": 90,
-    "import:product_movement_lines": 110,
-    "import:product_lines": 120,
-    "import:costings": 130,
+    "import:dhl_report_lines": 10,
+    "import:forex_lines": 20,
+    "import:variant_sets": 30,
+    "import:companies": 40,
+    "import:addresses": 50,
+    "import:contacts": 60,
+    "import:locations": 70,
+    "import:products": 80,
+    "import:jobs": 90,
+    "import:assemblies": 100,
+    "import:assembly_activities": 110,
+    "import:shipments": 120,
+    "import:shipment_lines": 130,
+    "import:purchase_orders": 140,
+    "import:purchase_order_lines": 150,
+    "import:expenses": 160,
+    "import:invoices": 170,
+    "import:invoice_lines": 180,
+    "import:product_batches": 190,
+    "import:product_locations": 200,
+    "import:product_movements": 210,
+    "import:product_movement_lines": 220,
+    "import:product_lines": 230,
+    "import:costings": 240,
   };
 
   const inferMode = (filename: string): string | null => {
     const n = filename.toLowerCase();
+    if (n.includes("contact")) return "import:contacts";
     if (n.includes("dhl")) return "import:dhl_report_lines";
     if (n.includes("forex") || n.includes("fx")) return "import:forex_lines";
     if (n.includes("variantset") || n.includes("variant_set"))
@@ -208,117 +212,132 @@ export async function action({ request }: ActionFunctionArgs) {
     };
 
     if (finalMode === "import:dhl_report_lines") {
-      const r = await importDhlReportLines(rows);
+      const r = await runImporter(finalMode, () => importDhlReportLines(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:forex_lines") {
-      const r = await importForexLines(rows);
+      const r = await runImporter(finalMode, () => importForexLines(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:variant_sets") {
-      const r = await importVariantSets(rows);
+      const r = await runImporter(finalMode, () => importVariantSets(rows));
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
+    if (finalMode === "import:contacts") {
+      const r = await runImporter(finalMode, () => importContacts(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:companies") {
-      const r = await importCompanies(rows);
+      const r = await runImporter(finalMode, () => importCompanies(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:addresses") {
-      const r = await importAddresses(rows);
+      const r = await runImporter(finalMode, () => importAddresses(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:locations") {
-      const r = await importLocations(rows);
+      const r = await runImporter(finalMode, () => importLocations(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:products") {
-      const r = await importProducts(rows);
+      const r = await runImporter(finalMode, () => importProducts(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:jobs") {
-      const r = await importJobs(rows);
+      const r = await runImporter(finalMode, () => importJobs(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:assemblies") {
-      const r = await importAssemblies(rows);
+      const r = await runImporter(finalMode, () => importAssemblies(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:assembly_activities") {
-      const r = await importAssemblyActivities(rows);
+      const r = await runImporter(finalMode, () =>
+        importAssemblyActivities(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:shipments") {
-      const r = await importShipments(rows);
+      const r = await runImporter(finalMode, () => importShipments(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:shipment_lines") {
-      const r = await importShipmentLines(rows);
+      const r = await runImporter(finalMode, () => importShipmentLines(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:purchase_orders") {
-      const r = await importPurchaseOrders(rows);
+      const r = await runImporter(finalMode, () => importPurchaseOrders(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:purchase_order_lines") {
-      const r = await importPurchaseOrderLines(rows);
+      const r = await runImporter(finalMode, () =>
+        importPurchaseOrderLines(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:invoices") {
-      const r = await importInvoices(rows);
+      const r = await runImporter(finalMode, () => importInvoices(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:invoice_lines") {
-      const r = await importInvoiceLines(rows);
+      const r = await runImporter(finalMode, () => importInvoiceLines(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:expenses") {
-      const r = await importExpenses(rows);
+      const r = await runImporter(finalMode, () => importExpenses(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:product_batches") {
-      const r = await importBatches(rows);
+      const r = await runImporter(finalMode, () => importBatches(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:product_locations") {
-      const r = await importProductLocations(rows);
+      const r = await runImporter(finalMode, () =>
+        importProductLocations(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:product_movements") {
-      const r = await importProductMovements(rows);
+      const r = await runImporter(finalMode, () =>
+        importProductMovements(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:product_movement_lines") {
-      const r = await importProductMovementLines(rows);
+      const r = await runImporter(finalMode, () =>
+        importProductMovementLines(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:product_lines") {
-      const r = await importProductLines(rows);
+      const r = await runImporter(finalMode, () => importProductLines(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
     if (finalMode === "import:costings") {
-      const r = await importCostings(rows);
+      const r = await runImporter(finalMode, () => importCostings(rows));
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }

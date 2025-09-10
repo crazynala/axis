@@ -22,7 +22,11 @@
     "postinstall": "prisma generate",
     "db:who": "npx dotenv -e .env -- sh -c 'echo DATABASE_URL=$DATABASE_URL; psql \"$DATABASE_URL\" -c \"\\\\conninfo\"'",
     "db:truncate": "npx dotenv -e .env -- sh -c 'psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f scripts/truncate-db.sql'",
-    "db:truncate:confirm": "npx node -e \"const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});rl.question('This will TRUNCATE all public tables (except _prisma_migrations). Continue? [y/N] ', a=>{if(a.toLowerCase()==='y'){process.exit(0)}else{process.exit(1)}})\" && npm run db:truncate"
+    "db:truncate:confirm": "npx node -e \"const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});rl.question('This will TRUNCATE all public tables (except _prisma_migrations). Continue? [y/N] ', a=>{if(a.toLowerCase()==='y'){process.exit(0)}else{process.exit(1)}})\" && npm run db:truncate",
+    "spec:verify": "tsx ./scripts/verify-spec.ts",
+    "precommit": "npm run spec:verify && npm run typecheck",
+    "test": "npm run spec:verify && tsx ./scripts/test-buildWhere.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@mantine/core": "^8.2.0",
@@ -44,10 +48,12 @@
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "mantine-datatable": "^7.15.1",
+    "npm": "^11.6.0",
     "pino": "^9.9.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.62.0",
+    "test": "^3.3.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -63,6 +69,7 @@
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
     "prisma": "^5.18.0",
+    "tsx": "^4.7.0",
     "typescript": "^5.4.5",
     "vite": "^5.4.0"
   }

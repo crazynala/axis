@@ -45,8 +45,21 @@ export async function importForexLines(rows: any[]): Promise<ImportResult> {
         message: e?.message,
       };
       errors.push(log);
-      console.error("[import] forex_lines upsert error", log);
+      // per-row error suppressed; consolidated summary will report
     }
+  }
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; samples: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.constraint || e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, samples: [] };
+      grouped[key].count++;
+      if (grouped[key].samples.length < 5) grouped[key].samples.push(null);
+    }
+    console.log("[import] forex_lines error summary", Object.values(grouped));
   }
   return { created, updated, skipped, errors };
 }

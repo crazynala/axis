@@ -202,6 +202,27 @@ export default function JobsIndexRoute() {
         <Button component="a" href="/jobs/new" variant="filled" color="blue">
           New Job
         </Button>
+        {/* Enter find mode: navigate to first row (or stay) with find flag */}
+        {rows.length > 0 && (
+          <Button
+            variant="light"
+            onClick={() => {
+              const current =
+                typeof window !== "undefined"
+                  ? window.location.pathname + window.location.search
+                  : "/jobs";
+              const firstId = (rows as any[])[0]?.id;
+              if (firstId != null) {
+                const sp2 = new URLSearchParams();
+                sp2.set("find", "1");
+                sp2.set("return", encodeURIComponent(current));
+                navigate(`/jobs/${firstId}?${sp2.toString()}`);
+              }
+            }}
+          >
+            Find
+          </Button>
+        )}
       </Group>
 
       <section>
@@ -225,7 +246,18 @@ export default function JobsIndexRoute() {
                 ? (rows as any[])[rowIndex]
                 : _record;
             const id = rec?.id;
-            if (id != null) navigate(`/jobs/${id}`);
+            if (id != null) {
+              const hasFind = sp.get("find") === "1";
+              const ret = sp.get("return");
+              if (hasFind) {
+                const sp2 = new URLSearchParams();
+                sp2.set("find", "1");
+                if (ret) sp2.set("return", ret);
+                navigate(`/jobs/${id}?${sp2.toString()}`);
+              } else {
+                navigate(`/jobs/${id}`);
+              }
+            }
           }}
           onPageChange={(p) => {
             const next = new URLSearchParams(sp);

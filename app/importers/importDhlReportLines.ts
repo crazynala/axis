@@ -9,12 +9,8 @@ export async function importDhlReportLines(rows: any[]): Promise<ImportResult> {
   const errors: any[] = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
-    const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
-    if (idNum == null) {
-      skipped++;
-      errors.push({ index: i, message: "Missing a__Serial/id for DHL line" });
-      continue;
-    }
+    // Synthetic stable id: row number (1-based). Ignore any a__Serial/id column.
+    const idNum = i + 1;
     const data: any = {
       id: idNum,
       accountName:
@@ -128,12 +124,16 @@ export async function importDhlReportLines(rows: any[]): Promise<ImportResult> {
       totalTaxLCY: asNum(pick(r, ["TotalTaxLCY"])) as number | null,
     };
     try {
-      await prisma.dHLReportLine.upsert({
+      const existing = await prisma.dHLReportLine.findUnique({
         where: { id: idNum },
-        create: data,
-        update: data,
       });
-      created += 1;
+      if (existing) {
+        await prisma.dHLReportLine.update({ where: { id: idNum }, data });
+        updated++;
+      } else {
+        await prisma.dHLReportLine.create({ data });
+        created++;
+      }
     } catch (e: any) {
       const log = {
         index: i,
@@ -143,8 +143,37 @@ export async function importDhlReportLines(rows: any[]): Promise<ImportResult> {
         message: e?.message,
       };
       errors.push(log);
-      console.error("[import] dhl_report_lines upsert error", log);
+      // per-row error suppressed; consolidated summary will report
     }
+    if ((i + 1) % 100 === 0) {
+      console.log(
+        `[import] dhl_report_lines progress ${i + 1}/${
+          rows.length
+        } created=${created} updated=${updated} skipped=${skipped} errors=${
+          errors.length
+        }`
+      );
+    }
+  }
+  console.log(
+    `[import] dhl_report_lines complete total=${rows.length} created=${created} updated=${updated} skipped=${skipped} errors=${errors.length}`
+  );
+  if (errors.length) {
+    const grouped: Record<
+      string,
+      { key: string; count: number; samples: (number | null)[] }
+    > = {};
+    for (const e of errors) {
+      const key = e.constraint || e.code || "error";
+      if (!grouped[key]) grouped[key] = { key, count: 0, samples: [] };
+      grouped[key].count++;
+      if (grouped[key].samples.length < 5)
+        grouped[key].samples.push(e.id ?? null);
+    }
+    console.log(
+      "[import] dhl_report_lines error summary",
+      Object.values(grouped)
+    );
   }
   return { created, updated, skipped, errors };
 }
