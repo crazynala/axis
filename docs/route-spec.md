@@ -54,6 +54,7 @@ Last updated: 2025-09-09
 - Custom Widgets: Shared widgets (`TextAny`, `TriBool`, `NumberMaybeRange`) adapt: TriBool shows segmented Any/Yes/No in find mode, single switch in edit mode.
 - Visibility Rules: Data-heavy panels (BOM, Stock, Movements) render only in edit mode; find mode shows criteria-only cards to avoid visual noise and stale data confusion.
 - Extensibility: Additional modules can opt-in by wrapping their detail route in `FindProvider`, implementing dual RHF forms, and gating entry with dirty check—no global changes required.
+- Global Visual Indicator: While in `find` mode the root `<html>` gets `data-find-mode` causing a subtle blue inner glow + background tint across the main content region; clears automatically on unmount/exit and respects reduced-motion.
 
 ### Navigation (from `app/root.tsx`)
 
@@ -197,7 +198,7 @@ Last updated: 2025-09-09
     - Dual RHF forms: `editForm` (record defaults) + `findForm` (blank criteria)
     - Guard prevents entering find if `editForm` is dirty; user must save/discard first
     - ID field becomes criteria input in find mode (exact match); read-only otherwise
-    - `_intent=find` submission builds a FormData with only non-empty criteria (including ranges: costPriceMin/Max, manualSalePriceMin/Max, componentChild* fields, tri-bool stock/batch tracking where specified)
+    - `_intent=find` submission builds a FormData with only non-empty criteria (including ranges: costPriceMin/Max, manualSalePriceMin/Max, componentChild\* fields, tri-bool stock/batch tracking where specified)
     - Auto exit back to edit mode after navigation completes to show real data panels with the filtered record cursor
     - BOM / Stock / Movement panels hidden in find mode; replaced with a BOM criteria card for component child filters
     - Keyed subtree (`key=mode-*`) forces RHF remount on mode change ensuring blank form appears instantly
