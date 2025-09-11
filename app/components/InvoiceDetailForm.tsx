@@ -8,26 +8,16 @@ export interface InvoiceDetailFormProps {
   mode: "edit" | "find";
   form: UseFormReturn<any>;
   invoice?: any;
-  showModeBadge?: boolean;
   customerOptions?: { value: string; label: string }[]; // for customer picker
 }
 
-export function InvoiceDetailForm({
-  mode,
-  form,
-  invoice,
-  showModeBadge,
-  customerOptions,
-}: InvoiceDetailFormProps) {
+export function InvoiceDetailForm({ mode, form, invoice, customerOptions }: InvoiceDetailFormProps) {
   const merged = { ...(invoice || {}), ...form.getValues() };
   return (
     <Card withBorder padding="md">
       <Card.Section inheritPadding py="xs">
         <Group justify="space-between" align="center">
           <Title order={4}>Invoice</Title>
-          {showModeBadge && mode === "find" && (
-            <Badge variant="light">Find Mode</Badge>
-          )}
         </Group>
       </Card.Section>
       <Divider my="xs" />

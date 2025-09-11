@@ -1,39 +1,18 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, Link, useLoaderData, useNavigation } from "@remix-run/react";
-import {
-  Button,
-  Group,
-  NumberInput,
-  Select,
-  Stack,
-  Text,
-  Textarea,
-  Title,
-} from "@mantine/core";
+import { Button, Group, NumberInput, Select, Stack, Text, Textarea, Title } from "@mantine/core";
 import { prisma } from "../utils/prisma.server";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  useMasterTable,
-} from "@aa/timber";
+import { BreadcrumbSet, useRecordBrowser, RecordNavButtons, useRecordBrowserShortcuts, useMasterTable } from "@aa/timber";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [
-  { title: data?.costing ? `Costing ${data.costing.id}` : "Costing" },
-];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.costing ? `Costing ${data.costing.id}` : "Costing" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
   if (!id) throw new Response("Not Found", { status: 404 });
   const costing = await prisma.costing.findUnique({
     where: { id },
-    include: { assembly: true, component: true },
+    include: { assembly: true, product: true },
   });
   if (!costing) throw new Response("Not Found", { status: 404 });
   const products = await prisma.product.findMany({
@@ -53,26 +32,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = form.get("_intent");
 
   if (intent === "update") {
-    const assemblyId = form.get("assemblyId")
-      ? Number(form.get("assemblyId"))
-      : null;
-    const componentId = form.get("componentId")
-      ? Number(form.get("componentId"))
-      : null;
-    const quantityPerUnit = form.get("quantityPerUnit")
-      ? Number(form.get("quantityPerUnit"))
-      : null;
+    const assemblyId = form.get("assemblyId") ? Number(form.get("assemblyId")) : null;
+    const productId = form.get("productId") ? Number(form.get("productId")) : null;
+    const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
-    const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
     await prisma.costing.update({
       where: { id },
       data: {
         assemblyId: assemblyId ?? undefined,
-        componentId: componentId ?? undefined,
+        productId: productId ?? undefined,
         quantityPerUnit,
         unitCost,
-        usageType: usageType as any,
         notes,
       },
     });
@@ -106,9 +77,7 @@ export default function CostingDetailRoute() {
           ]}
         />
       </Group>
-      <RecordNavButtons
-        recordBrowser={useRecordBrowser(costing.id, masterRecords)}
-      />
+      <RecordNavButtons recordBrowser={useRecordBrowser(costing.id, masterRecords)} />
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />
@@ -121,57 +90,23 @@ export default function CostingDetailRoute() {
               value: String(a.id),
               label: a.name || `Assembly #${a.id}`,
             }))}
-            defaultValue={
-              costing.assemblyId != null ? String(costing.assemblyId) : null
-            }
+            defaultValue={costing.assemblyId != null ? String(costing.assemblyId) : null}
             clearable
           />
           <Select
-            name="componentId"
-            label="Component"
+            name="productId"
+            label="Product"
             w={200}
             data={products.map((p: any) => ({
               value: String(p.id),
-              label: p.name
-                ? `${p.name} (${p.id}${p.sku ? ", " + p.sku : ""})`
-                : `${p.id}`,
+              label: p.name ? `${p.name} (${p.id}${p.sku ? ", " + p.sku : ""})` : `${p.id}`,
             }))}
-            defaultValue={
-              costing.componentId != null ? String(costing.componentId) : null
-            }
+            defaultValue={(costing as any).productId != null ? String((costing as any).productId) : null}
             clearable
           />
-          <NumberInput
-            name="quantityPerUnit"
-            label="Qty / Unit"
-            w={140}
-            defaultValue={costing.quantityPerUnit ?? undefined}
-            allowDecimal
-          />
-          <NumberInput
-            name="unitCost"
-            label="Unit Cost"
-            w={140}
-            defaultValue={costing.unitCost ?? undefined}
-            allowDecimal
-          />
-          <Select
-            name="usageType"
-            label="Usage"
-            w={140}
-            data={[
-              { value: "cut", label: "cut" },
-              { value: "make", label: "make" },
-            ]}
-            defaultValue={(costing as any).usageType || null}
-            clearable
-          />
-          <Textarea
-            name="notes"
-            label="Notes"
-            w={260}
-            defaultValue={costing.notes || ""}
-          />
+          <NumberInput name="quantityPerUnit" label="Qty / Unit" w={140} defaultValue={costing.quantityPerUnit ?? undefined} allowDecimal />
+          <NumberInput name="unitCost" label="Unit Cost" w={140} defaultValue={costing.unitCost ?? undefined} allowDecimal />
+          <Textarea name="notes" label="Notes" w={260} defaultValue={costing.notes || ""} />
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Save"}
           </Button>

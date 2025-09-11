@@ -1,23 +1,14 @@
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useLocation,
-  useNavigate,
-} from "@remix-run/react";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { Link, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { DataTable } from "mantine-datatable";
+import { NavDataTable } from "../components/NavDataTable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { ShipmentFindManager } from "../components/ShipmentFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
@@ -45,22 +36,8 @@ export async function loader(args: LoaderFunctionArgs) {
     }
   }
   let findWhere: any = null;
-  const findKeys = [
-    "date",
-    "dateReceived",
-    "type",
-    "shipmentType",
-    "status",
-    "trackingNo",
-    "packingSlipCode",
-    "carrierName",
-    "senderName",
-    "receiverName",
-    "locationName",
-  ];
-  const hasFindIndicators =
-    findKeys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const findKeys = ["date", "dateReceived", "type", "shipmentType", "status", "trackingNo", "packingSlipCode", "carrierName", "senderName", "receiverName", "locationName"];
+  const hasFindIndicators = findKeys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of findKeys) {
@@ -69,28 +46,21 @@ export async function loader(args: LoaderFunctionArgs) {
     }
     // simple where (basic contains/equals heuristics)
     const simple: any = {};
-    if (values.status)
-      simple.status = { contains: values.status, mode: "insensitive" };
-    if (values.type)
-      simple.type = { contains: values.type, mode: "insensitive" };
+    if (values.status) simple.status = { contains: values.status, mode: "insensitive" };
+    if (values.type) simple.type = { contains: values.type, mode: "insensitive" };
     if (values.shipmentType)
       simple.shipmentType = {
         contains: values.shipmentType,
         mode: "insensitive",
       };
-    if (values.trackingNo)
-      simple.trackingNo = { contains: values.trackingNo, mode: "insensitive" };
+    if (values.trackingNo) simple.trackingNo = { contains: values.trackingNo, mode: "insensitive" };
     if (values.packingSlipCode)
       simple.packingSlipCode = {
         contains: values.packingSlipCode,
         mode: "insensitive",
       };
-    if (values.date)
-      simple.date = values.date ? new Date(values.date) : undefined;
-    if (values.dateReceived)
-      simple.dateReceived = values.dateReceived
-        ? new Date(values.dateReceived)
-        : undefined;
+    if (values.date) simple.date = values.date ? new Date(values.date) : undefined;
+    if (values.dateReceived) simple.dateReceived = values.dateReceived ? new Date(values.dateReceived) : undefined;
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
@@ -112,11 +82,7 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const {
-      findReqs: _omitFindReqs,
-      find: _legacyFind,
-      ...rest
-    } = baseParams.filters;
+    const { findReqs: _omitFindReqs, find: _legacyFind, ...rest } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -183,18 +149,12 @@ export default function ShipmentsIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const onPageChange = (page: number) => {
-    const url = new URL(
-      location.pathname + location.search,
-      window.location.origin
-    );
+    const url = new URL(location.pathname + location.search, window.location.origin);
     url.searchParams.set("page", String(page));
     navigate(url.pathname + "?" + url.searchParams.toString());
   };
   const onPerPageChange = (pp: number) => {
-    const url = new URL(
-      location.pathname + location.search,
-      window.location.origin
-    );
+    const url = new URL(location.pathname + location.search, window.location.origin);
     url.searchParams.set("perPage", String(pp));
     url.searchParams.set("page", "1");
     navigate(url.pathname + "?" + url.searchParams.toString());
@@ -202,22 +162,25 @@ export default function ShipmentsIndexRoute() {
   return (
     <div>
       <ShipmentFindManager />
-      <BreadcrumbSet
-        breadcrumbs={[{ label: "Shipments", href: "/shipments" }]}
-      />
-      <SavedViews
-        views={(data as any).views || []}
-        activeView={(data as any).activeView}
-      />
-      <DataTable
+      <BreadcrumbSet breadcrumbs={[{ label: "Shipments", href: "/shipments" }]} />
+      <SavedViews views={(data as any).views || []} activeView={(data as any).activeView} />
+      <NavDataTable
         withRowBorders
         records={data.rows as any}
         totalRecords={data.total}
         page={data.page}
-        onPageChange={onPageChange}
+        onPageChange={(p: number) => onPageChange(p)}
         recordsPerPage={data.perPage}
-        onRecordsPerPageChange={onPerPageChange}
+        onRecordsPerPageChange={(n: number) => onPerPageChange(n)}
         recordsPerPageOptions={[10, 20, 50, 100]}
+        autoFocusFirstRow
+        keyboardNavigation
+        onRowActivate={(rec: any) => {
+          if (rec?.id != null) navigate(`/shipments/${rec.id}`);
+        }}
+        onRowClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/shipments/${rec.id}`);
+        }}
         columns={[
           {
             accessor: "id",
@@ -225,8 +188,7 @@ export default function ShipmentsIndexRoute() {
           },
           {
             accessor: "date",
-            render: (r: any) =>
-              r.date ? new Date(r.date).toLocaleDateString() : "",
+            render: (r: any) => (r.date ? new Date(r.date).toLocaleDateString() : ""),
           },
           { accessor: "type" },
           { accessor: "shipmentType", title: "Ship Type" },

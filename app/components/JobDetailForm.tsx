@@ -1,14 +1,5 @@
 import React from "react";
-import {
-  Card,
-  Divider,
-  Grid,
-  SimpleGrid,
-  Stack,
-  Title,
-  Group,
-  Badge,
-} from "@mantine/core";
+import { Card, Divider, Grid, SimpleGrid, Stack, Title, Group, Badge } from "@mantine/core";
 import { renderField } from "../formConfigs/fieldConfigShared";
 import * as jobDetailCfg from "../formConfigs/jobDetail";
 import type { UseFormReturn } from "react-hook-form";
@@ -18,16 +9,9 @@ export type JobDetailFormProps = {
   form: UseFormReturn<any>;
   job: any;
   openCustomerModal?: () => void;
-  showModeBadge?: boolean;
 };
 
-export function JobDetailForm({
-  mode,
-  form,
-  job,
-  openCustomerModal,
-  showModeBadge,
-}: JobDetailFormProps) {
+export function JobDetailForm({ mode, form, job, openCustomerModal }: JobDetailFormProps) {
   // derive customer options from job.company if present (single) - could be injected by parent
   const customerOptions = job?.company
     ? [
@@ -44,9 +28,6 @@ export function JobDetailForm({
           <Card.Section inheritPadding py="xs">
             <Group justify="space-between" align="center">
               <Title order={4}>Overview</Title>
-              {showModeBadge && mode === "find" && (
-                <Badge variant="light">Find Mode</Badge>
-              )}
             </Group>
           </Card.Section>
           <Divider my="xs" />

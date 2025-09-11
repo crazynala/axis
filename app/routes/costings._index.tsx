@@ -1,33 +1,13 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSubmit,
-  useSearchParams,
-  useNavigate,
-  Form,
-  useRouteLoaderData,
-} from "@remix-run/react";
-import {
-  Button,
-  Group,
-  Stack,
-  Title,
-  Select,
-  NumberInput,
-  TextInput,
-} from "@mantine/core";
+import { Link, useLoaderData, useNavigation, useSubmit, useSearchParams, useNavigate, Form, useRouteLoaderData } from "@remix-run/react";
+import { Button, Group, Stack, Title, Select, NumberInput, TextInput } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
-import { DataTable } from "mantine-datatable";
+import { NavDataTable } from "../components/NavDataTable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { idLinkColumn, simpleColumn } from "../components/tableColumns";
 
 export const meta: MetaFunction = () => [{ title: "Costings" }];
 
@@ -36,11 +16,10 @@ export async function loader(args: LoaderFunctionArgs) {
   const params = parseTableParams(args.request.url);
   const prismaArgs = buildPrismaArgs<any>(params, {
     defaultSort: { field: "id", dir: "asc" },
-    searchableFields: ["notes", "usageType", "activityUsed"],
+    searchableFields: ["notes", "activityUsed"],
     filterMappers: {
       assemblyId: (v: string) => ({ assemblyId: Number(v) }),
-      componentId: (v: string) => ({ componentId: Number(v) }),
-      usageType: (v: string) => ({ usageType: v as any }),
+      productId: (v: string) => ({ productId: Number(v) }),
     },
   });
   const [rows, total, products, assemblies] = await Promise.all([
@@ -48,7 +27,7 @@ export async function loader(args: LoaderFunctionArgs) {
       ...prismaArgs,
       include: {
         assembly: { select: { id: true, name: true } },
-        component: { select: { id: true, sku: true, name: true } },
+        product: { select: { id: true, sku: true, name: true } },
       },
     }),
     prisma.costing.count({ where: prismaArgs.where }),
@@ -80,25 +59,17 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = form.get("_intent");
 
   if (intent === "create") {
-    const assemblyId = form.get("assemblyId")
-      ? Number(form.get("assemblyId"))
-      : null;
-    const componentId = form.get("componentId")
-      ? Number(form.get("componentId"))
-      : null;
-    const quantityPerUnit = form.get("quantityPerUnit")
-      ? Number(form.get("quantityPerUnit"))
-      : null;
+    const assemblyId = form.get("assemblyId") ? Number(form.get("assemblyId")) : null;
+    const productId = form.get("productId") ? Number(form.get("productId")) : null;
+    const quantityPerUnit = form.get("quantityPerUnit") ? Number(form.get("quantityPerUnit")) : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
-    const usageType = (form.get("usageType") as string) || null;
     const notes = (form.get("notes") as string) || null;
     await prisma.costing.create({
       data: {
         assemblyId: assemblyId ?? undefined,
-        componentId: componentId ?? undefined,
+        productId: productId ?? undefined,
         quantityPerUnit,
         unitCost,
-        usageType: usageType as any,
         notes,
       },
     });
@@ -115,8 +86,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CostingsIndexRoute() {
-  const { rows, total, page, perPage, q, filters, products, assemblies } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, products, assemblies } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
@@ -145,17 +115,10 @@ export default function CostingsIndexRoute() {
     <Stack gap="lg">
       <Group justify="space-between" align="center">
         <Title order={2}>Costings</Title>
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Costings", href: "/costings" }]}
-        />
+        <BreadcrumbSet breadcrumbs={[{ label: "Costings", href: "/costings" }]} />
       </Group>
       <Group>
-        <Button
-          component={Link}
-          to="/costings/new"
-          variant="filled"
-          color="blue"
-        >
+        <Button component={Link} to="/costings/new" variant="filled" color="blue">
           New Costing
         </Button>
       </Group>
@@ -166,42 +129,15 @@ export default function CostingsIndexRoute() {
         </Title>
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput
-              name="q"
-              label="Search"
-              placeholder="Notes, usage"
-              defaultValue={q || ""}
-              w={200}
-            />
-            <Select
-              name="usageType"
-              label="Usage"
-              data={[
-                { value: "cut", label: "cut" },
-                { value: "make", label: "make" },
-              ]}
-              defaultValue={filters?.usageType || null}
-              clearable
-              w={140}
-            />
-            <TextInput
-              name="assemblyId"
-              label="Assembly ID"
-              defaultValue={filters?.assemblyId || ""}
-              w={140}
-            />
-            <TextInput
-              name="componentId"
-              label="Component ID"
-              defaultValue={filters?.componentId || ""}
-              w={140}
-            />
+            <TextInput name="q" label="Search" placeholder="Notes, usage" defaultValue={q || ""} w={200} />
+            <TextInput name="assemblyId" label="Assembly ID" defaultValue={filters?.assemblyId || ""} w={140} />
+            <TextInput name="productId" label="Product ID" defaultValue={filters?.productId || ""} w={140} />
             <Button type="submit" variant="default">
               Apply
             </Button>
           </Group>
         </Form>
-        <DataTable
+        <NavDataTable
           withTableBorder
           withColumnBorders
           highlightOnHover
@@ -211,12 +147,16 @@ export default function CostingsIndexRoute() {
           page={page}
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
+          autoFocusFirstRow
+          keyboardNavigation
           onRowClick={(_rec: any, rowIndex?: number) => {
-            const rec =
-              typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
+            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
             if (rec?.id != null) navigate(`/costings/${rec.id}`);
           }}
-          onPageChange={(p) => {
+          onRowActivate={(rec: any) => {
+            if (rec?.id != null) navigate(`/costings/${rec.id}`);
+          }}
+          onPageChange={(p: number) => {
             const next = new URLSearchParams(sp);
             next.set("page", String(p));
             navigate(`?${next.toString()}`);
@@ -237,8 +177,7 @@ export default function CostingsIndexRoute() {
             {
               accessor: "componentId",
               title: "Component",
-              render: (r: any) =>
-                r.component?.name || r.component?.sku || r.componentId,
+              render: (r: any) => r.component?.name || r.component?.sku || r.componentId,
             },
             { accessor: "usageType", title: "Usage" },
             { accessor: "quantityPerUnit", title: "Qty/Unit" },

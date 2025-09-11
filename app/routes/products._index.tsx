@@ -1,27 +1,7 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSearchParams,
-  useNavigate,
-  Form,
-} from "@remix-run/react";
-import {
-  Button,
-  Checkbox,
-  NumberInput,
-  TextInput,
-  Group,
-  Stack,
-  Title,
-  Select,
-} from "@mantine/core";
+import { Link, useLoaderData, useNavigation, useSearchParams, useNavigate, Form } from "@remix-run/react";
+import { Button, Checkbox, NumberInput, TextInput, Group, Stack, Title, Select } from "@mantine/core";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
@@ -30,13 +10,9 @@ import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
 import { getUser } from "../utils/auth.server";
-import { DataTable } from "mantine-datatable";
+import { NavDataTable } from "../components/NavDataTable";
 import { listViews, saveView } from "../utils/views.server";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Products" }];
 
@@ -55,9 +31,7 @@ export async function loader(args: LoaderFunctionArgs) {
       const saved = v.params as any;
       effective = {
         page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(
-          url.searchParams.get("perPage") || saved.perPage || defaultPerPage
-        ),
+        perPage: Number(url.searchParams.get("perPage") || saved.perPage || defaultPerPage),
         sort: (url.searchParams.get("sort") || saved.sort || null) as any,
         dir: (url.searchParams.get("dir") || saved.dir || null) as any,
         q: (url.searchParams.get("q") || saved.q || null) as any,
@@ -182,11 +156,7 @@ export async function loader(args: LoaderFunctionArgs) {
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   // Sanitize internal find-only params so they never leak into Prisma where
   if (baseParams.filters) {
-    const {
-      findReqs: _omitFindReqs,
-      find: _legacyFindFlag,
-      ...rest
-    } = baseParams.filters;
+    const { findReqs: _omitFindReqs, find: _legacyFindFlag, ...rest } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -211,17 +181,11 @@ export async function loader(args: LoaderFunctionArgs) {
   let total: number = 0;
   if (lightweight) {
     // Use base client (no stock qty, aggregates) for faster listing
-    const [r, t] = await Promise.all([
-      prismaBase.product.findMany({ ...prismaArgs }),
-      prismaBase.product.count({ where: (prismaArgs as any).where }),
-    ]);
+    const [r, t] = await Promise.all([prismaBase.product.findMany({ ...prismaArgs }), prismaBase.product.count({ where: (prismaArgs as any).where })]);
     rows = r;
     total = t;
   } else {
-    const [r, t] = await Promise.all([
-      prisma.product.findMany({ ...prismaArgs }),
-      prisma.product.count({ where: (prismaArgs as any).where }),
-    ]);
+    const [r, t] = await Promise.all([prisma.product.findMany({ ...prismaArgs }), prisma.product.count({ where: (prismaArgs as any).where })]);
     rows = r;
     total = t;
   }
@@ -273,30 +237,21 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ProductsIndexRoute() {
-  const { rows, total, page, perPage, q, filters, views, activeView } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, views, activeView } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
 
-  const sortAccessor =
-    (typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("sort")
-      : null) || "id";
-  const sortDirection =
-    ((typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("dir")
-      : null) as any) || "asc";
+  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || "id";
+  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || "asc";
 
   return (
     <Stack gap="lg">
       <ProductFindManager />
       <Group justify="space-between" mb="xs" align="center">
         <Title order={2}>Products</Title>
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Products", href: "/products" }]}
-        />
+        <BreadcrumbSet breadcrumbs={[{ label: "Products", href: "/products" }]} />
       </Group>
       <Group justify="flex-end" mb="xs">
         <Button component={Link} to="/products/new">
@@ -317,7 +272,7 @@ export default function ProductsIndexRoute() {
       <section>
         <SavedViews views={views as any} activeView={activeView} />
 
-        <DataTable
+        <NavDataTable
           withTableBorder
           withColumnBorders
           highlightOnHover
@@ -327,15 +282,17 @@ export default function ProductsIndexRoute() {
           page={page}
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
+          autoFocusFirstRow
+          keyboardNavigation
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec =
-              typeof rowIndex === "number"
-                ? (rows as any[])[rowIndex]
-                : _record;
+            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
             const id = rec?.id;
             if (id != null) navigate(`/products/${id}`);
           }}
-          onPageChange={(p) => {
+          onRowActivate={(rec: any) => {
+            if (rec?.id != null) navigate(`/products/${rec.id}`);
+          }}
+          onPageChange={(p: number) => {
             const next = new URLSearchParams(sp);
             next.set("page", String(p));
             navigate(`?${next.toString()}`);
@@ -350,7 +307,7 @@ export default function ProductsIndexRoute() {
             columnAccessor: sortAccessor,
             direction: sortDirection,
           }}
-          onSortStatusChange={({ columnAccessor, direction }) => {
+          onSortStatusChange={({ columnAccessor, direction }: { columnAccessor: string; direction: any }) => {
             const next = new URLSearchParams(sp);
             next.set("sort", String(columnAccessor));
             next.set("dir", direction);

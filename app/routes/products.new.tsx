@@ -12,19 +12,14 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const sku = (form.get("sku") as string | null)?.trim() || null;
   const name = (form.get("name") as string | null)?.trim() || null;
-  if (!sku && !name)
-    return json({ error: "SKU or Name is required" }, { status: 400 });
+  if (!sku && !name) return json({ error: "SKU or Name is required" }, { status: 400 });
   const data = {
     sku,
     name,
     type: (form.get("type") as string | null)?.trim() || null,
     costPrice: form.get("costPrice") ? Number(form.get("costPrice")) : null,
-    manualSalePrice: form.get("manualSalePrice")
-      ? Number(form.get("manualSalePrice"))
-      : null,
-    autoSalePrice: form.get("autoSalePrice")
-      ? Number(form.get("autoSalePrice"))
-      : null,
+    manualSalePrice: form.get("manualSalePrice") ? Number(form.get("manualSalePrice")) : null,
+    autoSalePrice: form.get("autoSalePrice") ? Number(form.get("autoSalePrice")) : null,
     stockTrackingEnabled: form.get("stockTrackingEnabled") === "on",
     batchTrackingEnabled: form.get("batchTrackingEnabled") === "on",
   } as const;
@@ -66,11 +61,7 @@ export default function NewProductRoute() {
     <Stack>
       <Title order={2}>Create New Product</Title>
       <form onSubmit={onSubmit}>
-        <ProductDetailForm
-          mode="edit"
-          form={form as any}
-          showModeBadge={false}
-        />
+        <ProductDetailForm mode="edit" form={form as any} />
         <Group mt="md">
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Create"}

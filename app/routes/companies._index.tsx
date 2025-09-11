@@ -1,27 +1,14 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useNavigation,
-  useSearchParams,
-  useNavigate,
-  useLoaderData,
-} from "@remix-run/react";
+import { Link, useNavigation, useSearchParams, useNavigate, useLoaderData } from "@remix-run/react";
 import { Button, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "../../packages/timber";
-import { DataTable } from "mantine-datatable";
+// Replaced raw mantine DataTable with keyboard-enhanced NavDataTable
+import { NavDataTable } from "../components/NavDataTable";
 import { CompanyFindManagerNew } from "../components/CompanyFindManagerNew";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import { prisma } from "../utils/prisma.server";
 
@@ -45,22 +32,13 @@ export async function loader(args: LoaderFunctionArgs) {
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
-        url.searchParams.set("findReqs", saved.filters.findReqs);
+      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
-  const triKeys = [
-    "isCarrier",
-    "isCustomer",
-    "isSupplier",
-    "isInactive",
-    "isActive",
-  ];
+  const triKeys = ["isCarrier", "isCustomer", "isSupplier", "isInactive", "isActive"];
   const keys = ["name", "notes", ...triKeys];
   let findWhere: any = null;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const hasFindIndicators = keys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
@@ -68,10 +46,8 @@ export async function loader(args: LoaderFunctionArgs) {
       if (v) values[k] = v;
     }
     const simple: any = {};
-    if (values.name)
-      simple.name = { contains: values.name, mode: "insensitive" };
-    if (values.notes)
-      simple.notes = { contains: values.notes, mode: "insensitive" };
+    if (values.name) simple.name = { contains: values.name, mode: "insensitive" };
+    if (values.notes) simple.notes = { contains: values.notes, mode: "insensitive" };
     for (const tk of triKeys) {
       const raw = values[tk];
       if (raw === "true") simple[tk] = true;
@@ -94,11 +70,7 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const {
-      findReqs: _omitFindReqs,
-      find: _legacy,
-      ...rest
-    } = baseParams.filters;
+    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -163,43 +135,25 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CompaniesIndexRoute() {
-  const { rows, total, page, perPage, sort, dir, views, activeView } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, sort, dir, views, activeView } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const sortAccessor =
-    (typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("sort")
-      : null) ||
-    sort ||
-    "id";
-  const sortDirection =
-    ((typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("dir")
-      : null) as any) ||
-    dir ||
-    "asc";
+  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || sort || "id";
+  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || dir || "asc";
 
   // New is handled in /companies/new; delete handled via this route's action
 
   return (
     <Stack gap="lg">
       <CompanyFindManagerNew />
-      <BreadcrumbSet
-        breadcrumbs={[{ label: "Companies", href: "/companies" }]}
-      />
+      <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
       <SavedViews views={views as any} activeView={activeView as any} />
       <Title order={2}>Companies</Title>
 
       <section>
-        <Button
-          component="a"
-          href="/companies/new"
-          variant="filled"
-          color="blue"
-        >
+        <Button component="a" href="/companies/new" variant="filled" color="blue">
           New Company
         </Button>
       </section>
@@ -208,7 +162,7 @@ export default function CompaniesIndexRoute() {
         <Title order={4} mb="sm">
           All Companies
         </Title>
-        <DataTable
+        <NavDataTable
           withTableBorder
           withColumnBorders
           highlightOnHover
@@ -219,15 +173,17 @@ export default function CompaniesIndexRoute() {
           recordsPerPage={perPage}
           recordsPerPageOptions={[10, 20, 50, 100]}
           fetching={busy}
+          autoFocusFirstRow
+          keyboardNavigation
           onRowClick={(_record: any, rowIndex?: number) => {
-            const rec =
-              typeof rowIndex === "number"
-                ? (rows as any[])[rowIndex]
-                : _record;
+            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
             const id = rec?.id;
             if (id != null) navigate(`/companies/${id}`);
           }}
-          onPageChange={(p) => {
+          onRowActivate={(rec: any) => {
+            if (rec?.id != null) navigate(`/companies/${rec.id}`);
+          }}
+          onPageChange={(p: number) => {
             const next = new URLSearchParams(sp);
             next.set("page", String(p));
             navigate(`?${next.toString()}`);
@@ -242,7 +198,7 @@ export default function CompaniesIndexRoute() {
             columnAccessor: sortAccessor,
             direction: sortDirection as any,
           }}
-          onSortStatusChange={({ columnAccessor, direction }) => {
+          onSortStatusChange={({ columnAccessor, direction }: { columnAccessor: string; direction: any }) => {
             const next = new URLSearchParams(sp);
             next.set("sort", String(columnAccessor));
             next.set("dir", direction);
@@ -260,11 +216,7 @@ export default function CompaniesIndexRoute() {
               accessor: "name",
               title: "Name",
               sortable: true,
-              render: (r: any) => (
-                <Link to={`/companies/${r.id}`}>
-                  {r.name || `Company #${r.id}`}
-                </Link>
-              ),
+              render: (r: any) => <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>,
             },
             {
               accessor: "isCarrier",

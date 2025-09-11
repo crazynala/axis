@@ -1,28 +1,16 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useLocation,
-  useNavigate,
-  useSearchParams,
-} from "@remix-run/react";
+import { Link, useLoaderData, useLocation, useNavigate, useSearchParams } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { DataTable } from "mantine-datatable";
+import { NavDataTable } from "../components/NavDataTable";
+import { idLinkColumn, dateColumn, simpleColumn } from "../components/tableColumns";
+import { buildRowNavHandlers } from "../components/tableRowHandlers";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { PurchaseOrderFindManager } from "../components/PurchaseOrderFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Purchase Orders" }];
 
@@ -44,16 +32,13 @@ export async function loader(args: LoaderFunctionArgs) {
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
-        url.searchParams.set("findReqs", saved.filters.findReqs);
+      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
   // Simple find keys
   const keys = ["vendorName", "consigneeName", "locationName", "date"]; // plus any advanced via multi-find
   let findWhere: any = null;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const hasFindIndicators = keys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
@@ -97,11 +82,7 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const {
-      findReqs: _omitFindReqs,
-      find: _legacy,
-      ...rest
-    } = baseParams.filters;
+    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -134,15 +115,9 @@ export async function loader(args: LoaderFunctionArgs) {
     const amt = (l.priceCost ?? 0) * (l.quantity ?? 0);
     totals.set(l.purchaseOrderId!, (totals.get(l.purchaseOrderId!) ?? 0) + amt);
   }
-  const vendorIds = Array.from(
-    new Set(rowsRaw.map((r: any) => r.companyId).filter(Boolean))
-  );
-  const consigneeIds = Array.from(
-    new Set(rowsRaw.map((r: any) => r.consigneeCompanyId).filter(Boolean))
-  );
-  const locationIds = Array.from(
-    new Set(rowsRaw.map((r: any) => r.locationId).filter(Boolean))
-  );
+  const vendorIds = Array.from(new Set(rowsRaw.map((r: any) => r.companyId).filter(Boolean)));
+  const consigneeIds = Array.from(new Set(rowsRaw.map((r: any) => r.consigneeCompanyId).filter(Boolean)));
+  const locationIds = Array.from(new Set(rowsRaw.map((r: any) => r.locationId).filter(Boolean)));
   const [vendors, consignees, locations] = await Promise.all([
     vendorIds.length
       ? prisma.company.findMany({
@@ -163,23 +138,14 @@ export async function loader(args: LoaderFunctionArgs) {
         })
       : Promise.resolve([]),
   ]);
-  const vendorById = Object.fromEntries(
-    (vendors as any[]).map((c) => [c.id, c.name || String(c.id)])
-  );
-  const consigneeById = Object.fromEntries(
-    (consignees as any[]).map((c) => [c.id, c.name || String(c.id)])
-  );
-  const locationById = Object.fromEntries(
-    (locations as any[]).map((l) => [l.id, l.name || String(l.id)])
-  );
+  const vendorById = Object.fromEntries((vendors as any[]).map((c) => [c.id, c.name || String(c.id)]));
+  const consigneeById = Object.fromEntries((consignees as any[]).map((c) => [c.id, c.name || String(c.id)]));
+  const locationById = Object.fromEntries((locations as any[]).map((l) => [l.id, l.name || String(l.id)]));
   const rows = rowsRaw.map((r: any) => ({
     ...r,
     vendorName: r.company?.name ?? (r.companyId ? vendorById[r.companyId] : ""),
-    consigneeName:
-      r.consignee?.name ??
-      (r.consigneeCompanyId ? consigneeById[r.consigneeCompanyId] : ""),
-    locationName:
-      r.location?.name ?? (r.locationId ? locationById[r.locationId] : ""),
+    consigneeName: r.consignee?.name ?? (r.consigneeCompanyId ? consigneeById[r.consigneeCompanyId] : ""),
+    locationName: r.location?.name ?? (r.locationId ? locationById[r.locationId] : ""),
     totalCost: totals.get(r.id) ?? 0,
   }));
   return json({
@@ -221,8 +187,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function PurchaseOrdersIndexRoute() {
-  const { rows, total, page, perPage, views, activeView } =
-    useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, views, activeView } = useLoaderData<typeof loader>();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const onPageChange = (p: number) => {
@@ -239,39 +204,27 @@ export default function PurchaseOrdersIndexRoute() {
   return (
     <div>
       <PurchaseOrderFindManager />
-      <BreadcrumbSet
-        breadcrumbs={[{ label: "Purchase Orders", href: "/purchase-orders" }]}
-      />
+      <BreadcrumbSet breadcrumbs={[{ label: "Purchase Orders", href: "/purchase-orders" }]} />
       <SavedViews views={views as any} activeView={activeView as any} />
-      <DataTable
+      <NavDataTable
         withRowBorders
         records={rows as any}
         totalRecords={total}
         page={page}
-        onPageChange={onPageChange}
+        onPageChange={(p: number) => onPageChange(p)}
         recordsPerPage={perPage}
-        onRecordsPerPageChange={onPerPageChange}
+        onRecordsPerPageChange={(n: number) => onPerPageChange(n)}
         recordsPerPageOptions={[10, 20, 50, 100]}
+        autoFocusFirstRow
+        keyboardNavigation
+        {...buildRowNavHandlers("purchase-orders", navigate)}
         columns={[
-          {
-            accessor: "id",
-            render: (r: any) => (
-              <Link to={`/purchase-orders/${r.id}`}>{r.id}</Link>
-            ),
-          },
-          {
-            accessor: "date",
-            render: (r: any) =>
-              r.date ? new Date(r.date).toLocaleDateString() : "",
-          },
-          { accessor: "vendorName", title: "Vendor" },
-          { accessor: "consigneeName", title: "Consignee" },
-          { accessor: "locationName", title: "Location" },
-          {
-            accessor: "totalCost",
-            title: "Total Cost",
-            render: (r: any) => (r.totalCost ?? 0).toFixed(2),
-          },
+          idLinkColumn("purchase-orders"),
+          dateColumn("date", "Date"),
+          simpleColumn("vendorName", "Vendor"),
+          simpleColumn("consigneeName", "Consignee"),
+          simpleColumn("locationName", "Location"),
+          { accessor: "totalCost", title: "Total Cost", render: (r: any) => (r.totalCost ?? 0).toFixed(2) },
         ]}
       />
     </div>

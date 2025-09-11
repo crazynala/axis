@@ -35,7 +35,7 @@ Goals:
 3. Shared DetailForm Components
 
    - JobDetailForm, ProductDetailForm encapsulate layout & field rendering for edit + find.
-   - Props: mode ("edit" | "find"), react-hook-form instance, record data, option lists, showModeBadge.
+   - Props: mode ("edit" | "find"), react-hook-form instance, record data, option lists.
    - In find mode, form fields are still controlled via react-hook-form but only used to build a query; no persistence.
 
 4. Find Managers / Modals

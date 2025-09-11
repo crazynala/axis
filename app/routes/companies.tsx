@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
+import { MasterTableProvider } from "@aa/timber";
 import { useEffect } from "react";
 import { useRecordBrowserContext } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
@@ -31,9 +32,9 @@ export default function CompaniesLayout() {
     if (data?.companies) ctx.updateRecords(data.companies);
   }, [ctx, data?.companies]);
   return (
-    <>
+    <MasterTableProvider initialRecords={data.companies || []}>
       <CompanyFindManager />
       <Outlet />
-    </>
+    </MasterTableProvider>
   );
 }

@@ -11,29 +11,15 @@ type CutConsumption = {
   lines: CutConsumptionLine[];
 };
 
-export async function createCutActivity(options: {
-  assemblyId: number;
-  jobId: number;
-  activityDate: Date;
-  qtyBreakdown: number[];
-  notes?: string | null;
-  consumptions: CutConsumption[];
-}) {
-  const { assemblyId, jobId, activityDate, qtyBreakdown, notes, consumptions } =
-    options;
-  const totalCut = (qtyBreakdown || []).reduce(
-    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
-    0
-  );
+export async function createCutActivity(options: { assemblyId: number; jobId: number; activityDate: Date; qtyBreakdown: number[]; notes?: string | null; consumptions: CutConsumption[] }) {
+  const { assemblyId, jobId, activityDate, qtyBreakdown, notes, consumptions } = options;
+  const totalCut = (qtyBreakdown || []).reduce((t, n) => (Number.isFinite(n) ? t + (n as number) : t), 0);
   console.log("[activity] createCutActivity begin", {
     assemblyId,
     jobId,
     activityDate: activityDate?.toISOString?.() || activityDate,
     totalCut,
-    lines: (consumptions || []).reduce(
-      (t, c) => t + (c?.lines?.length || 0),
-      0
-    ),
+    lines: (consumptions || []).reduce((t, c) => t + (c?.lines?.length || 0), 0),
   });
 
   return await prisma.$transaction(async (tx) => {
@@ -45,7 +31,6 @@ export async function createCutActivity(options: {
         name: "Cut",
         activityType: "cut",
         activityDate,
-        endTime: activityDate,
         qtyBreakdown: qtyBreakdown as any,
         quantity: totalCut,
         notes: notes ?? null,
@@ -54,15 +39,13 @@ export async function createCutActivity(options: {
 
     // For each costing selection, create ProductMovements grouped by batch location
     for (const cons of consumptions || []) {
-      const rawLines = (cons?.lines || []).filter(
-        (l) => Number(l.qty) > 0 && Number.isFinite(Number(l.qty))
-      );
+      const rawLines = (cons?.lines || []).filter((l) => Number(l.qty) > 0 && Number.isFinite(Number(l.qty)));
       if (!rawLines.length) continue;
 
-      // Fetch costing to determine the component productId for the header
+      // Fetch costing to determine the productId for the header
       const costing = await tx.costing.findUnique({
         where: { id: cons.costingId },
-        select: { componentId: true },
+        select: { productId: true },
       });
 
       // Enrich lines with batch product/location and group by locationId
@@ -92,15 +75,9 @@ export async function createCutActivity(options: {
       }
 
       for (const [locId, lines] of byLocation.entries()) {
-        const totalQty = lines.reduce(
-          (t, l) => t + Math.abs(Number(l.qty) || 0),
-          0
-        );
-        // Prefer costing.componentId; fallback to first line's productId
-        const headerProductId =
-          costing?.componentId ??
-          lines.find((l) => l.productId != null)?.productId ??
-          undefined;
+        const totalQty = lines.reduce((t, l) => t + Math.abs(Number(l.qty) || 0), 0);
+        // Prefer costing.productId; fallback to first line's productId
+        const headerProductId = costing?.productId ?? lines.find((l) => l.productId != null)?.productId ?? undefined;
         const movement = await tx.productMovement.create({
           data: {
             movementType: "Assembly",
@@ -120,9 +97,7 @@ export async function createCutActivity(options: {
             data: {
               movementId: movement.id,
               productMovementId: movement.id,
-              productId: (line.productId ?? headerProductId) as
-                | number
-                | undefined,
+              productId: (line.productId ?? headerProductId) as number | undefined,
               batchId: line.batchId,
               costingId: cons.costingId,
               quantity: -Math.abs(Number(line.qty)),

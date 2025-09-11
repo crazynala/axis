@@ -1,21 +1,8 @@
 import React from "react";
-import {
-  Card,
-  Divider,
-  Grid,
-  SimpleGrid,
-  Stack,
-  Title,
-  Group,
-  Badge,
-} from "@mantine/core";
+import { Card, Divider, Grid, SimpleGrid, Stack, Title, Group, Badge } from "@mantine/core";
 import type { UseFormReturn } from "react-hook-form";
 import { renderField } from "../formConfigs/fieldConfigShared";
-import {
-  productIdentityFields,
-  productAssocFields,
-  productPricingFields,
-} from "../formConfigs/productDetail";
+import { productIdentityFields, productAssocFields, productPricingFields } from "../formConfigs/productDetail";
 
 export type ProductDetailFormProps = {
   mode: "edit" | "find";
@@ -23,17 +10,9 @@ export type ProductDetailFormProps = {
   product?: any; // initial product record when editing
   categoryOptions?: { value: string; label: string }[];
   taxCodeOptions?: { value: string; label: string }[];
-  showModeBadge?: boolean;
 };
 
-export function ProductDetailForm({
-  mode,
-  form,
-  product,
-  categoryOptions,
-  taxCodeOptions,
-  showModeBadge,
-}: ProductDetailFormProps) {
+export function ProductDetailForm({ mode, form, product, categoryOptions, taxCodeOptions }: ProductDetailFormProps) {
   const mergedVals = { ...(product || {}), ...form.getValues() };
   const renderGroup = (fields: any[]) => (
     <Stack gap={6}>
@@ -56,9 +35,6 @@ export function ProductDetailForm({
             <Card.Section inheritPadding py="xs">
               <Group justify="space-between" align="center">
                 <Title order={4}>Identity</Title>
-                {showModeBadge && mode === "find" && (
-                  <Badge variant="light">Find Mode</Badge>
-                )}
               </Group>
             </Card.Section>
             <Divider my="xs" />
