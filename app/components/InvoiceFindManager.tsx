@@ -12,6 +12,13 @@ export function InvoiceFindManager() {
 
   const [opened, setOpened] = useState(false);
 
+  useEffect(
+    () => registerFindCallback(() => setOpened(true)),
+    [registerFindCallback]
+  );
+
+  const open = () => setOpened(true);
+
   const close = () => {
     setOpened(false);
     const next = new URLSearchParams(sp);

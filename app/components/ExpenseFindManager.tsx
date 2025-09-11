@@ -7,19 +7,28 @@ export function ExpenseFindManager() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const { registerFindCallback } = useFind();
-  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+
   useEffect(
-    () => registerFindCallback(() => setOpen(true)),
+    () => registerFindCallback(() => setOpened(true)),
     [registerFindCallback]
   );
+
+  const close = () => {
+    setOpened(false);
+    const next = new URLSearchParams(sp);
+    next.delete("findMode");
+    navigate(`?${next.toString()}`);
+  };
+
   const onSearch = (qs: string) => {
-    setOpen(false);
+    setOpened(false);
     navigate(`/expenses?${qs}`);
   };
   return (
     <ExpenseFindModal
-      opened={open}
-      onClose={() => setOpen(false)}
+      opened={opened}
+      onClose={() => setOpened(false)}
       onSearch={onSearch}
     />
   );

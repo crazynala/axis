@@ -6,12 +6,16 @@ import { ShipmentFindModal } from "./ShipmentFindModal";
 export function ShipmentFindManager() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const opened = sp.get("findMode") === "1";
-  const open = () => {
-    const next = new URLSearchParams(sp);
-    next.set("findMode", "1");
-    navigate(`?${next.toString()}`);
-  };
+
+  const { registerFindCallback } = useFind();
+  const [opened, setOpened] = useState(false);
+
+  useEffect(
+    () => registerFindCallback(() => setOpened(true)),
+    [registerFindCallback]
+  );
+  const open = () => setOpened(true);
+
   const close = () => {
     const next = new URLSearchParams(sp);
     next.delete("findMode");
