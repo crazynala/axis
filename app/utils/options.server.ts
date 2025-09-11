@@ -61,7 +61,7 @@ export async function loadOptions(): Promise<OptionsData> {
     jobTypesVL,
     jobStatusesVL,
     carriers,
-  locations,
+    locations,
     variantSets,
   ] = await Promise.all([
     prisma.valueList.findMany({
@@ -316,7 +316,7 @@ export async function loadOptions(): Promise<OptionsData> {
     customers: value.customerOptions.length,
     suppliers: value.supplierOptions.length,
     carriers: value.carrierOptions.length,
-  locations: value.locationOptions.length,
+    locations: value.locationOptions.length,
     jobTypes: value.jobTypeOptions.length,
     jobStatuses: value.jobStatusOptions.length,
     variantSets: value.variantSetOptions.length,

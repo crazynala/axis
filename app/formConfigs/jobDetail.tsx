@@ -56,6 +56,7 @@ export const jobOverviewFields: FieldConfig[] = [
     label: "ID",
     editable: false,
     readOnly: true,
+    hiddenInModes: ["create"],
     widget: "idStatic",
     findOp: "equals",
     findPlaceholder: "equals...",
@@ -66,7 +67,7 @@ export const jobOverviewFields: FieldConfig[] = [
     name: "companyId",
     label: "Customer",
     widget: "select",
-    optionsKey: "customers",
+    optionsKey: "customer",
     findOp: "contains",
   },
 ];

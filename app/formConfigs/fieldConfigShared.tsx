@@ -1,7 +1,13 @@
 import React from "react";
 import { Controller, type UseFormReturn } from "react-hook-form";
 import { DatePickerInput } from "@mantine/dates";
-import { TextInput, Select, Group, SegmentedControl, Indicator } from "@mantine/core";
+import {
+  TextInput,
+  Select,
+  Group,
+  SegmentedControl,
+  Indicator,
+} from "@mantine/core";
 import { useOptions } from "../options/OptionsContext";
 
 export type FieldMode = "edit" | "find" | "create";
@@ -97,13 +103,19 @@ export function renderField(
         a.getFullYear() === b.getFullYear() &&
         a.getMonth() === b.getMonth() &&
         a.getDate() === b.getDate();
-      const dayRenderer = (date: Date) => {
+      const dayRenderer = (dateInput: any) => {
         const today = new Date();
-        const day = date.getDate();
-        const isToday = isSameDay(date, today);
+        const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+        const valid = d instanceof Date && !isNaN(d.getTime());
+        const isToday = valid && isSameDay(d, today);
+        const label = valid
+          ? d.getDate()
+          : typeof dateInput === "number"
+          ? dateInput
+          : "";
         return (
           <Indicator size={6} color="red" offset={-5} disabled={!isToday}>
-            <div>{day}</div>
+            <div>{label}</div>
           </Indicator>
         );
       };

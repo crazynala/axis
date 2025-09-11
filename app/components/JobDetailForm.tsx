@@ -40,12 +40,6 @@ export function JobDetailForm({
     <Grid>
       <Grid.Col span={{ base: 12, md: 5 }}>
         <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Group justify="space-between" align="center">
-              <Title order={4}>Overview</Title>
-            </Group>
-          </Card.Section>
-          <Divider my="xs" />
           <Stack gap={8}>
             {(jobDetailCfg as any).jobOverviewFields?.map((cfg: any) => (
               <RenderField
@@ -62,10 +56,6 @@ export function JobDetailForm({
       </Grid.Col>
       <Grid.Col span={{ base: 12, md: 7 }}>
         <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Title order={4}>Dates & Status</Title>
-          </Card.Section>
-          <Divider my="xs" />
           <SimpleGrid cols={2} spacing="md">
             <Stack gap={8}>
               {(jobDetailCfg as any).jobDateStatusLeft?.map((cfg: any) => (

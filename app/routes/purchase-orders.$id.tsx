@@ -14,9 +14,16 @@ import {
   useInitGlobalFormContext,
   RecordNavButtons,
 } from "@aa/timber";
-import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
+import {
+  Card,
+  Group,
+  Stack,
+  Title,
+  Table,
+  Button,
+} from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
-import { NumberInput, Button, Modal } from "@mantine/core";
+import { NumberInput, Modal } from "@mantine/core";
 import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
 import { ProductSelect, type ProductOption } from "../components/ProductSelect";
 import { useState } from "react";
@@ -58,7 +65,20 @@ export async function loader({ params }: LoaderFunctionArgs) {
     { qty: 0, qtyOrdered: 0, cost: 0, sell: 0 }
   );
 
-  return json({ purchaseOrder, totals });
+  // Lightweight product options for adding lines
+  const products = await prisma.product.findMany({
+    select: { id: true, sku: true, name: true },
+    orderBy: [{ sku: "asc" }, { name: "asc" }],
+    take: 5000,
+  });
+  const productOptions = products.map((p) => ({
+    value: p.id,
+    label: [p.sku, p.name].filter(Boolean).join(" · ") || String(p.id),
+    sku: p.sku,
+    name: p.name,
+  }));
+
+  return json({ purchaseOrder, totals, productOptions });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -134,6 +154,31 @@ export default function PurchaseOrderDetailRoute() {
     fd.set("quantityOrdered", String(newQtyOrdered || 0));
     submit(fd, { method: "post" });
   };
+  const openPrint = () => {
+    window.open(`/purchase-orders/${purchaseOrder.id}/print`, "_blank");
+  };
+  const downloadPdf = () => {
+    window.open(`/purchase-orders/${purchaseOrder.id}/pdf`, "_blank");
+  };
+  const emailDraft = async () => {
+    const resp = await fetch(`/purchase-orders/${purchaseOrder.id}/pdf`);
+    const arr = new Uint8Array(await resp.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+    const b64 = btoa(binary);
+    const boundary = "----=_NextPart_" + Math.random().toString(36).slice(2);
+    const subject = `Purchase Order ${purchaseOrder.id}`;
+    const bodyText = `Dear Vendor,\n\nPlease find attached Purchase Order ${purchaseOrder.id}.\n\nBest regards,\n`;
+    const filename = `PO-${purchaseOrder.id}.pdf`;
+    const eml = `From: \nTo: \nSubject: ${subject}\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="${boundary}"\n\n--${boundary}\nContent-Type: text/plain; charset="UTF-8"\nContent-Transfer-Encoding: 7bit\n\n${bodyText}\n\n--${boundary}\nContent-Type: application/pdf; name="${filename}"\nContent-Transfer-Encoding: base64\nContent-Disposition: attachment; filename="${filename}"\n\n${b64}\n--${boundary}--`;
+    const blob = new Blob([eml], { type: "message/rfc822" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `PO-${purchaseOrder.id}.eml`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -146,7 +191,18 @@ export default function PurchaseOrderDetailRoute() {
             },
           ]}
         />
-        <RecordNavButtons recordBrowser={recordBrowser} />
+        <Group gap="xs">
+          <Button size="xs" variant="default" onClick={openPrint}>
+            Print
+          </Button>
+          <Button size="xs" variant="default" onClick={downloadPdf}>
+            Download PDF
+          </Button>
+          <Button size="xs" variant="light" onClick={emailDraft}>
+            Email draft (.eml)
+          </Button>
+          <RecordNavButtons recordBrowser={recordBrowser} />
+        </Group>
       </Group>
 
       <PurchaseOrderDetailForm
