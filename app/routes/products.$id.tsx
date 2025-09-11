@@ -37,7 +37,7 @@ import {
   Select,
 } from "@mantine/core";
 import { useProductFindify } from "../find/productFindify";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { Controller } from "react-hook-form";
 import {
   useInitGlobalFormContext,
@@ -48,13 +48,17 @@ import {
   useRecordBrowserShortcuts,
 } from "@aa/timber";
 
-import { FindToggle } from "../find/FindToggle"; // will adapt usage inline without provider
 // Replaced custom widgets with config-driven system
-import { renderField } from "../formConfigs/fieldConfigShared";
-import { productBomFindFields } from "../formConfigs/productDetail";
+import {
+  productIdentityFields,
+  productAssocFields,
+  productPricingFields,
+  productBomFindFields,
+} from "../formConfigs/productDetail";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { prisma } from "../utils/prisma.server";
+import { ProductFindManager } from "../components/ProductFindManager";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -213,9 +217,54 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const idRaw = params.id;
-  const id = idRaw && !Number.isNaN(Number(idRaw)) ? Number(idRaw) : NaN;
+  const isNew = idRaw === "new";
+  const id =
+    !isNew && idRaw && !Number.isNaN(Number(idRaw)) ? Number(idRaw) : NaN;
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  // Shared form processing to keep create/update consistent
+  const buildProductData = (form: FormData) => {
+    const data: any = {};
+    const str = (k: string) => {
+      if (form.has(k)) data[k] = (form.get(k) as string)?.trim() || null;
+    };
+    const num = (k: string) => {
+      if (form.has(k)) {
+        const v = form.get(k) as string;
+        data[k] = v === "" || v == null ? null : Number(v);
+      }
+    };
+    const bool = (k: string) => {
+      if (form.has(k)) {
+        const v = String(form.get(k));
+        data[k] = v === "true" || v === "on";
+      }
+    };
+    // strings
+    str("sku");
+    str("name");
+    str("description");
+    str("type");
+    // numerics
+    num("costPrice");
+    num("manualSalePrice");
+    num("autoSalePrice");
+    num("purchaseTaxId");
+    num("categoryId");
+    num("customerId");
+    num("supplierId");
+    // booleans
+    bool("stockTrackingEnabled");
+    bool("batchTrackingEnabled");
+    return data;
+  };
+  // Creation path: accept either explicit _intent or posting to /products/new
+  if (isNew || intent === "create") {
+    const created = await prisma.product.create({
+      data: buildProductData(form),
+    });
+    return redirect(`/products/${created.id}`);
+  }
   if (intent === "find") {
     const raw = Object.fromEntries(form.entries());
     const values: any = {};
@@ -284,35 +333,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "update") {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
-    const data: any = {};
-    const str = (k: string) => {
-      if (form.has(k)) data[k] = (form.get(k) as string) || null;
-    };
-    const num = (k: string) => {
-      if (form.has(k)) {
-        const v = form.get(k) as string;
-        data[k] = v === "" || v == null ? null : Number(v);
-      }
-    };
-    const bool = (k: string) => {
-      if (form.has(k)) {
-        const v = String(form.get(k));
-        data[k] = v === "true" || v === "on";
-      }
-    };
-    // accept sku/type as strings
-    str("sku");
-    str("name");
-    str("description");
-    str("type");
-    num("costPrice");
-    num("manualSalePrice");
-    num("purchaseTaxId");
-    num("categoryId");
-    num("customerId");
-    num("supplierId");
-    bool("stockTrackingEnabled");
-    bool("batchTrackingEnabled");
+    const data = buildProductData(form);
     await prisma.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
@@ -358,20 +379,16 @@ export default function ProductDetailRoute() {
   const submit = useSubmit();
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
-  const {
-    editForm,
-    findForm,
-    activeForm,
-    mode,
-    toggleFind,
-    buildUpdatePayload,
-    buildFindPayload,
-  } = useProductFindify(product, nav);
+  const { editForm, buildUpdatePayload } = useProductFindify(product, nav);
+
+  // Find modal is handled via ProductFindManager now (no inline find toggle)
 
   // Only wire header Save/Cancel to the real edit form
   const saveUpdate = useCallback(
     (values: any) => {
-      submit(buildUpdatePayload(values), { method: "post" });
+      const updatePayload = buildUpdatePayload(values);
+      console.log("Saving with payload", updatePayload);
+      submit(updatePayload, { method: "post" });
     },
     [buildUpdatePayload, submit]
   );
@@ -422,6 +439,20 @@ export default function ProductDetailRoute() {
     return arr;
   }, [productChoices, pickerSearch, assemblyItemOnly]);
 
+  // Normalize arrays/records for safe rendering across loader branches
+  const lines = useMemo(
+    () => ((movements as any[]) || []).filter(Boolean),
+    [movements]
+  );
+  const headers = useMemo(
+    () => ((movementHeaders as any[]) || []).filter(Boolean),
+    [movementHeaders]
+  );
+  const locById = useMemo(
+    () => (locationNameById as any as Record<number | string, string>) || {},
+    [locationNameById]
+  );
+
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -432,325 +463,245 @@ export default function ProductDetailRoute() {
           ]}
         />
         <Group>
-          <Button
-            variant={mode === "find" ? "filled" : "light"}
-            onClick={toggleFind}
-          >
-            {mode === "find" ? "Exit Find" : "Find"}
-          </Button>
-          {mode === "find" && (
-            <Button
-              variant="light"
-              onClick={() =>
-                submit(buildFindPayload(findForm.getValues()), {
-                  method: "post",
-                })
-              }
-            >
-              Search
-            </Button>
-          )}
           <RecordNavButtons
             recordBrowser={useRecordBrowser(product.id, masterRecords)}
           />
         </Group>
       </Group>
-      {/* Force remount of inputs on mode change to isolate Controllers */}
-      <div key={`mode-${mode}`}>
-        <Form id="product-form" method="post">
-          <ProductDetailForm
-            mode={mode as any}
-            form={activeForm as any}
-            product={product}
-            categoryOptions={(categoryOptions as any).map((o: any) => ({
-              value: String(o.value),
-              label: o.label,
-            }))}
-            taxCodeOptions={(taxCodeOptions as any).map((o: any) => ({
-              value: String(o.value),
-              label: o.label,
-            }))}
-          />
-        </Form>
-
-        {/* Find-only criteria row */}
-        {mode === "find" && (
-          <Card withBorder padding="md">
-            <Table withTableBorder withColumnBorders>
-              <Table.Thead>
-                <Table.Tr>
-                  {productBomFindFields.map((f) => (
-                    <Table.Th key={f.name}>{f.label}</Table.Th>
-                  ))}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                <Table.Tr>
-                  {productBomFindFields.map((f) => (
-                    <Table.Td key={f.name}>
-                      {renderField(
-                        findForm as any,
-                        f,
-                        "find",
-                        {},
-                        {
-                          categoryOptions: (categoryOptions as any).map(
-                            (o: any) => ({
-                              value: String(o.value),
-                              label: o.label,
-                            })
-                          ),
-                          taxCodeOptions: (taxCodeOptions as any).map(
-                            (o: any) => ({
-                              value: String(o.value),
-                              label: o.label,
-                            })
-                          ),
-                        }
-                      )}
-                    </Table.Td>
-                  ))}
-                </Table.Tr>
-              </Table.Tbody>
-            </Table>
-          </Card>
-        )}
-      </div>
+      <ProductFindManager />
+      <Form id="product-form" method="post">
+        <ProductDetailForm
+          mode={"edit" as any}
+          form={editForm as any}
+          product={product}
+          categoryOptions={(categoryOptions as any).map((o: any) => ({
+            value: String(o.value),
+            label: o.label,
+          }))}
+          taxCodeOptions={(taxCodeOptions as any).map((o: any) => ({
+            value: String(o.value),
+            label: o.label,
+          }))}
+        />
+      </Form>
       {/* Bill of Materials */}
-      {mode === "edit" && (
-        <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Group justify="space-between" align="center">
-              <Title order={4}>Bill of Materials</Title>
-              <Button variant="light" onClick={() => setPickerOpen(true)}>
-                Add Component
-              </Button>
-            </Group>
-          </Card.Section>
-          {/* <Divider my="xs" /> */}
-          {product.productLines.length > 0 && (
-            <Table striped withTableBorder withColumnBorders highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>ID</Table.Th>
-                  <Table.Th>SKU</Table.Th>
-                  <Table.Th>Product</Table.Th>
-                  <Table.Th>Usage</Table.Th>
-                  <Table.Th>Type</Table.Th>
-                  <Table.Th>Supplier</Table.Th>
-                  <Table.Th>Qty</Table.Th>
+      <Card withBorder padding="md">
+        <Card.Section inheritPadding py="xs">
+          <Group justify="space-between" align="center">
+            <Title order={4}>Bill of Materials</Title>
+            <Button variant="light" onClick={() => setPickerOpen(true)}>
+              Add Component
+            </Button>
+          </Group>
+        </Card.Section>
+        {/* <Divider my="xs" /> */}
+        {product.productLines.length > 0 && (
+          <Table striped withTableBorder withColumnBorders highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>SKU</Table.Th>
+                <Table.Th>Product</Table.Th>
+                <Table.Th>Usage</Table.Th>
+                <Table.Th>Type</Table.Th>
+                <Table.Th>Supplier</Table.Th>
+                <Table.Th>Qty</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {product.productLines.map((pl: any) => (
+                <Table.Tr key={pl.id}>
+                  <Table.Td>{pl.id}</Table.Td>
+                  <Table.Td>{pl.child?.sku || ""}</Table.Td>
+                  <Table.Td>
+                    {pl.child ? (
+                      <Link to={`/products/${pl.child.id}`}>
+                        {pl.child.name || pl.child.id}
+                      </Link>
+                    ) : (
+                      pl.childId
+                    )}
+                  </Table.Td>
+                  <Table.Td>{pl.activityUsed || ""}</Table.Td>
+                  <Table.Td>{pl.child?.type || ""}</Table.Td>
+                  <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
+                  <Table.Td>{pl.quantity}</Table.Td>
                 </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {product.productLines.map((pl: any) => (
-                  <Table.Tr key={pl.id}>
-                    <Table.Td>{pl.id}</Table.Td>
-                    <Table.Td>{pl.child?.sku || ""}</Table.Td>
-                    <Table.Td>
-                      {pl.child ? (
-                        <Link to={`/products/${pl.child.id}`}>
-                          {pl.child.name || pl.child.id}
-                        </Link>
-                      ) : (
-                        pl.childId
-                      )}
-                    </Table.Td>
-                    <Table.Td>{pl.activityUsed || ""}</Table.Td>
-                    <Table.Td>{pl.child?.type || ""}</Table.Td>
-                    <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
-                    <Table.Td>{pl.quantity}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          )}
-        </Card>
-      )}
-      {/* Legacy BOM find criteria block removed (now handled above) */}
+              ))}
+            </Table.Tbody>
+          </Table>
+        )}
+      </Card>
+      {/* Legacy BOM find criteria block removed (now handled via modal) */}
       {/* Stock + Movements */}
-      {mode === "edit" && (
-        <Grid gutter="md">
-          <Grid.Col span={{ base: 12, md: 5 }}>
-            <Stack>
-              {/* Stock by Location + Batch (left) */}
-              <Card withBorder padding="md">
-                <Card.Section inheritPadding py="xs">
-                  <Group justify="space-between" align="center">
-                    <Title order={4}>Stock by Location</Title>
-                    <Badge variant="light">
-                      Global: {Number((product as any).stockQty ?? 0)}
-                    </Badge>
-                  </Group>
-                </Card.Section>
-                <Table
-                  striped
-                  withTableBorder
-                  withColumnBorders
-                  highlightOnHover
-                >
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Location</Table.Th>
-                      <Table.Th>Qty</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {(stockByLocation || []).map((row: any) => (
-                      <Table.Tr key={row.location_id ?? "none"}>
-                        <Table.Td>
-                          {row.location_name ||
-                            `${row.location_id ?? "(none)"}`}
-                        </Table.Td>
-                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Card>
-              {/* Stock by Batch */}
-              <Card withBorder padding="md">
-                <Card.Section inheritPadding py="xs">
-                  <Group justify="space-between" align="center" px={8} pb={6}>
-                    <Title order={5}>Stock by Batch</Title>
-                    <Group gap="sm" wrap="wrap"></Group>
-                  </Group>
-                </Card.Section>
-                <Table
-                  striped
-                  withTableBorder
-                  withColumnBorders
-                  highlightOnHover
-                >
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Batch Codes</Table.Th>
-                      <Table.Th>Name</Table.Th>
-                      <Table.Th>Location</Table.Th>
-                      <Table.Th>Received</Table.Th>
-                      <Table.Th>Qty</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {filteredBatches.map((row: any) => (
-                      <Table.Tr key={row.batch_id}>
-                        <Table.Td>
-                          {row.code_mill || row.code_sartor ? (
-                            <>
-                              {row.code_mill || ""}
-                              {row.code_sartor
-                                ? (row.code_mill ? " | " : "") + row.code_sartor
-                                : ""}
-                            </>
-                          ) : (
-                            `${row.batch_id}`
-                          )}
-                        </Table.Td>
-                        <Table.Td>{row.batch_name || ""}</Table.Td>
-                        <Table.Td>
-                          {row.location_name ||
-                            (row.location_id ? `${row.location_id}` : "")}
-                        </Table.Td>
-                        <Table.Td>
-                          {row.received_at
-                            ? new Date(row.received_at).toLocaleDateString()
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Card>
-            </Stack>
-          </Grid.Col>
-          <Grid.Col span={{ base: 12, md: 7 }}>
-            {/* Product Movements (right) */}
+      <Grid gutter="md">
+        <Grid.Col span={{ base: 12, md: 5 }}>
+          <Stack>
+            {/* Stock by Location + Batch (left) */}
             <Card withBorder padding="md">
               <Card.Section inheritPadding py="xs">
                 <Group justify="space-between" align="center">
-                  <Title order={4}>Product Movements</Title>
-                  {/* view switch removed */}
+                  <Title order={4}>Stock by Location</Title>
+                  <Badge variant="light">
+                    Global: {Number((product as any).stockQty ?? 0)}
+                  </Badge>
                 </Group>
               </Card.Section>
               <Table striped withTableBorder withColumnBorders highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>Date</Table.Th>
-                    <Table.Th>Type</Table.Th>
-                    <Table.Th>Out</Table.Th>
-                    <Table.Th>In</Table.Th>
-                    {movementView === "line" && <Table.Th>Batch</Table.Th>}
+                    <Table.Th>Location</Table.Th>
                     <Table.Th>Qty</Table.Th>
-                    <Table.Th>Notes</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {movementView === "line"
-                    ? (movements || []).map((ml) => (
-                        <Table.Tr key={`line-${ml.id}`}>
-                          <Table.Td>
-                            {ml.movement?.date
-                              ? new Date(ml.movement.date).toLocaleDateString()
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>{ml.movement?.movementType || ""}</Table.Td>
-                          <Table.Td>
-                            {ml.movement?.locationOutId != null
-                              ? locationNameById?.[ml.movement.locationOutId] ||
-                                ml.movement.locationOutId
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>
-                            {ml.movement?.locationInId != null
-                              ? locationNameById?.[ml.movement.locationInId] ||
-                                ml.movement.locationInId
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>
-                            {ml.batch?.codeMill || ml.batch?.codeSartor
-                              ? `${ml.batch?.codeMill || ""}${
-                                  ml.batch?.codeMill && ml.batch?.codeSartor
-                                    ? " | "
-                                    : ""
-                                }${ml.batch?.codeSartor || ""}`
-                              : ml.batch?.id
-                              ? `${ml.batch.id}`
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>{ml.quantity ?? ""}</Table.Td>
-                          <Table.Td>{ml.notes || ""}</Table.Td>
-                        </Table.Tr>
-                      ))
-                    : (movementHeaders || []).map((mh) => (
-                        <Table.Tr key={`hdr-${mh.id}`}>
-                          <Table.Td>
-                            {mh.date
-                              ? new Date(mh.date).toLocaleDateString()
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>{mh.movementType || ""}</Table.Td>
-                          <Table.Td>
-                            {mh.locationOutId != null
-                              ? locationNameById?.[mh.locationOutId] ||
-                                mh.locationOutId
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>
-                            {mh.locationInId != null
-                              ? locationNameById?.[mh.locationInId] ||
-                                mh.locationInId
-                              : ""}
-                          </Table.Td>
-                          <Table.Td>{mh.quantity ?? ""}</Table.Td>
-                          <Table.Td>{mh.notes || ""}</Table.Td>
-                        </Table.Tr>
-                      ))}
+                  {(stockByLocation || []).map((row: any) => (
+                    <Table.Tr key={row.location_id ?? "none"}>
+                      <Table.Td>
+                        {row.location_name || `${row.location_id ?? "(none)"}`}
+                      </Table.Td>
+                      <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                    </Table.Tr>
+                  ))}
                 </Table.Tbody>
               </Table>
             </Card>
-          </Grid.Col>
-        </Grid>
-      )}
+            {/* Stock by Batch */}
+            <Card withBorder padding="md">
+              <Card.Section inheritPadding py="xs">
+                <Group justify="space-between" align="center" px={8} pb={6}>
+                  <Title order={5}>Stock by Batch</Title>
+                  <Group gap="sm" wrap="wrap"></Group>
+                </Group>
+              </Card.Section>
+              <Table striped withTableBorder withColumnBorders highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Batch Codes</Table.Th>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Location</Table.Th>
+                    <Table.Th>Received</Table.Th>
+                    <Table.Th>Qty</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {filteredBatches.map((row: any) => (
+                    <Table.Tr key={row.batch_id}>
+                      <Table.Td>
+                        {row.code_mill || row.code_sartor ? (
+                          <>
+                            {row.code_mill || ""}
+                            {row.code_sartor
+                              ? (row.code_mill ? " | " : "") + row.code_sartor
+                              : ""}
+                          </>
+                        ) : (
+                          `${row.batch_id}`
+                        )}
+                      </Table.Td>
+                      <Table.Td>{row.batch_name || ""}</Table.Td>
+                      <Table.Td>
+                        {row.location_name ||
+                          (row.location_id ? `${row.location_id}` : "")}
+                      </Table.Td>
+                      <Table.Td>
+                        {row.received_at
+                          ? new Date(row.received_at).toLocaleDateString()
+                          : ""}
+                      </Table.Td>
+                      <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Card>
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 7 }}>
+          {/* Product Movements (right) */}
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Title order={4}>Product Movements</Title>
+                {/* view switch removed */}
+              </Group>
+            </Card.Section>
+            <Table striped withTableBorder withColumnBorders highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Date</Table.Th>
+                  <Table.Th>Type</Table.Th>
+                  <Table.Th>Out</Table.Th>
+                  <Table.Th>In</Table.Th>
+                  {movementView === "line" && <Table.Th>Batch</Table.Th>}
+                  <Table.Th>Qty</Table.Th>
+                  <Table.Th>Notes</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {movementView === "line"
+                  ? lines.map((ml: any) => (
+                      <Table.Tr key={`line-${ml.id}`}>
+                        <Table.Td>
+                          {ml.movement?.date
+                            ? new Date(ml.movement.date).toLocaleDateString()
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>{ml.movement?.movementType || ""}</Table.Td>
+                        <Table.Td>
+                          {ml.movement?.locationOutId != null
+                            ? locById?.[ml.movement.locationOutId] ||
+                              ml.movement.locationOutId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>
+                          {ml.movement?.locationInId != null
+                            ? locById?.[ml.movement.locationInId] ||
+                              ml.movement.locationInId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>
+                          {ml.batch?.codeMill || ml.batch?.codeSartor
+                            ? `${ml.batch?.codeMill || ""}${
+                                ml.batch?.codeMill && ml.batch?.codeSartor
+                                  ? " | "
+                                  : ""
+                              }${ml.batch?.codeSartor || ""}`
+                            : ml.batch?.id
+                            ? `${ml.batch.id}`
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                        <Table.Td>{ml.notes || ""}</Table.Td>
+                      </Table.Tr>
+                    ))
+                  : headers.map((mh: any) => (
+                      <Table.Tr key={`hdr-${mh.id}`}>
+                        <Table.Td>
+                          {mh.date
+                            ? new Date(mh.date).toLocaleDateString()
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>{mh.movementType || ""}</Table.Td>
+                        <Table.Td>
+                          {mh.locationOutId != null
+                            ? locById?.[mh.locationOutId] || mh.locationOutId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>
+                          {mh.locationInId != null
+                            ? locById?.[mh.locationInId] || mh.locationInId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                        <Table.Td>{mh.notes || ""}</Table.Td>
+                      </Table.Tr>
+                    ))}
+              </Table.Tbody>
+            </Table>
+          </Card>
+        </Grid.Col>
+      </Grid>
       {/* Add Component Picker (single instance near top return) */}
       <Modal
         opened={pickerOpen}

@@ -16,6 +16,7 @@ export function PurchaseOrderFindManager() {
     () => registerFindCallback(() => setOpened(true)),
     [registerFindCallback]
   );
+
   const open = () => setOpened(true);
   const close = () => {
     setOpened(false);
@@ -35,10 +36,23 @@ export function PurchaseOrderFindManager() {
     navigate(url.pathname + "?" + url.searchParams.toString());
   };
   return (
-    <PurchaseOrderFindModal
-      opened={open}
-      onClose={() => setOpen(false)}
-      onSearch={onSearch}
-    />
+    <>
+      <Tooltip label="Find Purchase Orders" position="right">
+        <ActionIcon
+          onClick={open}
+          variant={opened ? "filled" : "light"}
+          color="blue"
+          size="lg"
+          style={{ position: "fixed", bottom: 16, left: 16, zIndex: 200 }}
+        >
+          <IconSearch size={18} />
+        </ActionIcon>
+      </Tooltip>
+      <PurchaseOrderFindModal
+        opened={opened}
+        onClose={close}
+        onSearch={onSearch}
+      />
+    </>
   );
 }

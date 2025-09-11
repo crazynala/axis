@@ -47,13 +47,13 @@ export default function DHLRecordDetailRoute() {
             label="ID"
             value={String(row.id)}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="Invoice"
             value={row.invoiceNumber || ""}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="Date"
@@ -63,31 +63,31 @@ export default function DHLRecordDetailRoute() {
                 : ""
             }
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="AWB"
             value={row.awbNumber || ""}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="From"
             value={row.originCountryCode || ""}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="To"
             value={row.destinationCountryCode || ""}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
           <TextInput
             label="Revenue EUR"
             value={String(row.totalRevenueEUR ?? "")}
             readOnly
-            mod="data-autoSize"
+            mod="data-autosize"
           />
         </Stack>
       </Card>

@@ -48,6 +48,9 @@ import "mantine-datatable/styles.layer.css";
 import "./styles/app.css";
 import { getUser, getUserId } from "./utils/auth.server";
 import { FindProvider } from "./find/FindContext";
+import { loadOptions } from "./utils/options.server";
+import { setGlobalOptions, type OptionsData } from "./options/OptionsClient";
+import { OptionsProvider } from "./options/OptionsContext";
 import {
   IconBrandDatabricks,
   IconWoman,
@@ -80,7 +83,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const me = await getUser(request);
   const colorScheme = (me?.colorScheme as "light" | "dark") ?? "light";
   const desktopNavOpened = me?.desktopNavOpened ?? true;
-  return json({ colorScheme, desktopNavOpened, logLevels });
+  const options = await loadOptions();
+  // console.log("Root loaded options: ", options);
+  return json({ colorScheme, desktopNavOpened, logLevels, options });
 }
 export function meta() {
   return [
@@ -161,10 +166,11 @@ const theme = createTheme({
 });
 
 export default function App() {
-  const data = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>() as any;
   const colorScheme = data.colorScheme;
   const logLevels = (data as any).logLevels;
   const desktopNavPref = (data as any).desktopNavOpened ?? true;
+  const options: OptionsData | undefined = data.options;
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
@@ -202,6 +208,7 @@ export default function App() {
       suppressHydrationWarning
     >
       <head>
+        <meta charSet="utf-8" />
         <Meta />
         {/* Ensures color scheme is applied before styles to avoid flicker */}
         <ColorSchemeScript defaultColorScheme={colorScheme} />
@@ -221,12 +228,15 @@ export default function App() {
           ) : (
             <FindProvider>
               <GlobalFormProvider>
-                <GlobalHotkeys />
-                <AppShellLayout
-                  desktopNavOpenedInitial={desktopNavPref}
-                  navTopItems={navTopItems}
-                  navBottomItems={navBottomItems}
-                />
+                <OptionsProvider value={options ?? null}>
+                  {options ? (setGlobalOptions(options), null) : null}
+                  <GlobalHotkeys />
+                  <AppShellLayout
+                    desktopNavOpenedInitial={desktopNavPref}
+                    navTopItems={navTopItems}
+                    navBottomItems={navBottomItems}
+                  />
+                </OptionsProvider>
               </GlobalFormProvider>
             </FindProvider>
           )}

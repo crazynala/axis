@@ -2,6 +2,8 @@ import { useSearchParams, useNavigate } from "@remix-run/react";
 import { ActionIcon, Tooltip } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
 import { ShipmentFindModal } from "./ShipmentFindModal";
+import React, { useEffect, useState } from "react";
+import { useFind } from "../find/FindContext";
 
 export function ShipmentFindManager() {
   const [sp] = useSearchParams();
@@ -17,6 +19,7 @@ export function ShipmentFindManager() {
   const open = () => setOpened(true);
 
   const close = () => {
+    setOpened(false);
     const next = new URLSearchParams(sp);
     next.delete("findMode");
     navigate(`?${next.toString()}`);
@@ -31,6 +34,7 @@ export function ShipmentFindManager() {
     });
     for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
     url.searchParams.delete("findMode");
+    setOpened(false);
     navigate(url.pathname + "?" + url.searchParams.toString());
   };
   return (

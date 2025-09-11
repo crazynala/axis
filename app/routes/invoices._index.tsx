@@ -1,14 +1,28 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+} from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { NavDataTable } from "../components/NavDataTable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
+import { Button, Group } from "@mantine/core";
 import { InvoiceFindManager } from "../components/InvoiceFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
 
 export const meta: MetaFunction = () => [{ title: "Invoices" }];
 
@@ -37,7 +51,9 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   const findKeys = ["invoiceCode", "status", "companyName", "date"]; // companyName derived
   let findWhere: any = null;
-  const hasFindIndicators = findKeys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const hasFindIndicators =
+    findKeys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of findKeys) {
@@ -50,8 +66,10 @@ export async function loader(args: LoaderFunctionArgs) {
         contains: values.invoiceCode,
         mode: "insensitive",
       };
-    if (values.status) simple.status = { contains: values.status, mode: "insensitive" };
-    if (values.date) simple.date = values.date ? new Date(values.date) : undefined;
+    if (values.status)
+      simple.status = { contains: values.status, mode: "insensitive" };
+    if (values.date)
+      simple.date = values.date ? new Date(values.date) : undefined;
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
@@ -66,7 +84,11 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacy,
+      ...rest
+    } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const { where, orderBy, skip, take } = buildPrismaArgs(baseParams, {
@@ -74,7 +96,8 @@ export async function loader(args: LoaderFunctionArgs) {
     filterMappers: {},
     defaultSort: { field: "id", dir: "asc" },
   });
-  if (findWhere) (where as any).AND = [...((where as any).AND || []), findWhere];
+  if (findWhere)
+    (where as any).AND = [...((where as any).AND || []), findWhere];
   const [rows, total] = await Promise.all([
     prisma.invoice.findMany({
       where,
@@ -145,12 +168,18 @@ export default function InvoicesIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const onPageChange = (page: number) => {
-    const url = new URL(location.pathname + location.search, window.location.origin);
+    const url = new URL(
+      location.pathname + location.search,
+      window.location.origin
+    );
     url.searchParams.set("page", String(page));
     navigate(url.pathname + "?" + url.searchParams.toString());
   };
   const onPerPageChange = (pp: number) => {
-    const url = new URL(location.pathname + location.search, window.location.origin);
+    const url = new URL(
+      location.pathname + location.search,
+      window.location.origin
+    );
     url.searchParams.set("perPage", String(pp));
     url.searchParams.set("page", "1");
     navigate(url.pathname + "?" + url.searchParams.toString());
@@ -158,8 +187,23 @@ export default function InvoicesIndexRoute() {
   return (
     <div>
       <InvoiceFindManager />
-      <BreadcrumbSet breadcrumbs={[{ label: "Invoices", href: "/invoices" }]} />
-      <SavedViews views={(data as any).views || []} activeView={(data as any).activeView} />
+      <Group justify="space-between" align="center" mb="sm">
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Invoices", href: "/invoices" }]}
+        />
+        <Button
+          component={Link}
+          to="/invoices/new"
+          variant="filled"
+          color="blue"
+        >
+          New
+        </Button>
+      </Group>
+      <SavedViews
+        views={(data as any).views || []}
+        activeView={(data as any).activeView}
+      />
       <NavDataTable
         withRowBorders
         records={data.rows as any}
@@ -185,7 +229,8 @@ export default function InvoicesIndexRoute() {
           { accessor: "invoiceCode", title: "Code" },
           {
             accessor: "date",
-            render: (r: any) => (r.date ? new Date(r.date).toLocaleDateString() : ""),
+            render: (r: any) =>
+              r.date ? new Date(r.date).toLocaleDateString() : "",
           },
           {
             accessor: "company.name",

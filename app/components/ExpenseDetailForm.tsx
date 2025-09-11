@@ -1,7 +1,7 @@
 import React from "react";
 import { Card, Divider, Stack, Title, Group, Badge } from "@mantine/core";
 import type { UseFormReturn } from "react-hook-form";
-import { renderField } from "../formConfigs/fieldConfigShared";
+import { RenderGroup } from "../formConfigs/fieldConfigShared";
 import { expenseMainFields } from "../formConfigs/expenseDetail";
 
 export interface ExpenseDetailFormProps {
@@ -10,7 +10,11 @@ export interface ExpenseDetailFormProps {
   expense?: any;
 }
 
-export function ExpenseDetailForm({ mode, form, expense }: ExpenseDetailFormProps) {
+export function ExpenseDetailForm({
+  mode,
+  form,
+  expense,
+}: ExpenseDetailFormProps) {
   const merged = { ...(expense || {}), ...form.getValues() };
   return (
     <Card withBorder padding="md">
@@ -21,9 +25,11 @@ export function ExpenseDetailForm({ mode, form, expense }: ExpenseDetailFormProp
       </Card.Section>
       <Divider my="xs" />
       <Stack gap={6}>
-        {expenseMainFields.map((f) => (
-          <React.Fragment key={f.name}>{renderField(form as any, f, mode as any, merged)}</React.Fragment>
-        ))}
+        <RenderGroup
+          form={form as any}
+          fields={expenseMainFields as any}
+          mode={mode as any}
+        />
       </Stack>
     </Card>
   );

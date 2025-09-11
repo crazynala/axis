@@ -18,6 +18,7 @@ export async function importAddresses(rows: any[]): Promise<ImportResult> {
       id: idNum,
       companyId: asNum(pick(r, ["a__CompanyID", "CompanyID"])) as number | null,
       contactId: asNum(pick(r, ["a__ContactID", "ContactID"])) as number | null,
+      name: (pick(r, ["Name", "name"]) ?? null) as any,
       addressCountry: (pick(r, ["Address_Country"]) ?? null) as any,
       addressCountyState: (pick(r, ["Address_County_State"]) ?? null) as any,
       addressLine1: (pick(r, ["Address_Line1"]) ?? null) as any,

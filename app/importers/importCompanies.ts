@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, fixMojibake } from "./utils";
 
 export async function importCompanies(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -10,14 +10,19 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const idNum = asNum(pick(r, ["a__Serial"])) as number | null;
-    const name = (pick(r, ["Company", "Name"]) ?? "").toString().trim();
+    const name = fixMojibake(
+      (pick(r, ["Company", "Name"]) ?? "").toString().trim()
+    );
     if (!name && idNum == null) {
       skipped++;
       continue;
     }
-    const email = (pick(r, ["Email"]) ?? "").toString().trim() || null;
-    const phone = (pick(r, ["Phone"]) ?? "").toString().trim() || null;
-    const category = (pick(r, ["Category"]) ?? "").toString().trim() || null;
+    const email =
+      fixMojibake((pick(r, ["Email"]) ?? "").toString().trim()) || null;
+    const phone =
+      fixMojibake((pick(r, ["Phone"]) ?? "").toString().trim()) || null;
+    const category =
+      fixMojibake((pick(r, ["Category"]) ?? "").toString().trim()) || null;
     const customerPricingCategory =
       (pick(r, ["CustomerPricingCategory"]) ?? "").toString().trim() || null;
     const customerPricingDiscount = asNum(

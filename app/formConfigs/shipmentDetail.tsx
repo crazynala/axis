@@ -2,7 +2,7 @@ import type { FieldConfig } from "./fieldConfigShared";
 export { renderField } from "./fieldConfigShared";
 
 // Shipment primary fields (editable subset + read-only associations)
-export const shipmentMainFields: FieldConfig[] = [
+export const shipmentInfoFields: FieldConfig[] = [
   {
     name: "id",
     label: "ID",
@@ -11,14 +11,25 @@ export const shipmentMainFields: FieldConfig[] = [
     readOnly: true,
     findOp: "equals",
   },
-  { name: "date", label: "Date", type: "date", findOp: "equals" },
-  {
-    name: "dateReceived",
-    label: "Date Received",
-    type: "date",
-    findOp: "equals",
-  },
   { name: "type", label: "Type", findOp: "contains" },
+  { name: "trackingNo", label: "AWB / Tracking", findOp: "contains" },
+  { name: "packingSlipCode", label: "Packing Slip", findOp: "contains" },
+  { name: "date", label: "Date", type: "date", findOp: "equals" },
+
+  { name: "status", label: "Status", findOp: "contains" },
+];
+
+export const shipmentAddressFields: FieldConfig[] = [
+  { name: "addressName", label: "Address Name", findOp: "contains" },
+  { name: "addressLine1", label: "Address Line 1", findOp: "contains" },
+  { name: "addressLine2", label: "Address Line 2", findOp: "contains" },
+  { name: "addressCity", label: "City", findOp: "contains" },
+  { name: "addressCountyState", label: "County/State", findOp: "contains" },
+  { name: "addressPostalCode", label: "Postal Code", findOp: "contains" },
+  { name: "addressCountry", label: "Country", findOp: "contains" },
+];
+
+export const shipmentDetailFields: FieldConfig[] = [
   {
     name: "shipmentType",
     label: "Ship Type",
@@ -26,30 +37,38 @@ export const shipmentMainFields: FieldConfig[] = [
     readOnly: true,
     findOp: "contains",
   },
-  { name: "status", label: "Status", findOp: "contains" },
-  { name: "trackingNo", label: "Tracking", findOp: "contains" },
-  { name: "packingSlipCode", label: "Packing Slip", findOp: "contains" },
-  // Associations read-only in edit, but searchable text contains for now
   {
-    name: "carrierName",
+    name: "companyIdCarrier",
     label: "Carrier",
-    editable: false,
-    readOnly: true,
     findOp: "contains",
+    widget: "select",
+    optionsKey: "carrier",
   },
   {
-    name: "senderName",
+    name: "companyIdSender",
     label: "Sender",
-    editable: false,
-    readOnly: true,
+    widget: "select",
+    optionsKey: "supplier",
     findOp: "contains",
+    showIf: ({ form, mode }) => {
+      // In edit mode, honor dynamic visibility based on shipment type
+      // In find mode, show both fields so users can filter on either
+      if (mode === "find") return true;
+      const t = form.getValues()?.type;
+      return t === "In";
+    },
   },
   {
-    name: "receiverName",
+    name: "companyIdReceiver",
     label: "Receiver",
-    editable: false,
-    readOnly: true,
+    widget: "select",
+    optionsKey: "customer",
     findOp: "contains",
+    showIf: ({ form, mode }) => {
+      if (mode === "find") return true;
+      const t = form.getValues()?.type;
+      return t === "Out";
+    },
   },
   {
     name: "locationName",
@@ -61,5 +80,6 @@ export const shipmentMainFields: FieldConfig[] = [
 ];
 
 export function allShipmentFindFields() {
-  return [...shipmentMainFields];
+  // showIf returns true in find mode, so both sender/receiver are included
+  return [...shipmentInfoFields, ...shipmentDetailFields];
 }

@@ -8,7 +8,7 @@ export function TaxCodeSelect({
   onChange,
   options,
   label = "Purchase Tax",
-  mod = "data-autoSize",
+  mod = "data-autosize",
   placeholder = "Select tax code",
 }: {
   value: number | null | undefined;

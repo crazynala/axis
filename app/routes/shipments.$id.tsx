@@ -32,21 +32,51 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const shipment = await prisma.shipment.findUnique({
     where: { id },
     include: {
-      lines: true,
-      companyCarrier: { select: { name: true } },
-      companySender: { select: { name: true } },
-      companyReceiver: { select: { name: true } },
-      location: { select: { name: true } },
+      lines: { include: { product: true } },
+      companyCarrier: { select: { id: true } },
+      companySender: { select: { id: true } },
+      companyReceiver: { select: { id: true } },
+      location: { select: { id: true } },
     },
   });
+  console.log("Returning shipment:", shipment);
   if (!shipment) throw new Response("Not found", { status: 404 });
   return json({ shipment });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const id = Number(params.id);
+  const idRaw = params.id;
+  const isNew = idRaw === "new";
+  const id = !isNew && idRaw ? Number(idRaw) : NaN;
   const form = await request.formData();
-  if (form.get("_intent") === "shipment.update") {
+  const intent = String(form.get("_intent") || "");
+  if (isNew || intent === "shipment.create") {
+    const status = (form.get("status") as string) || null;
+    const type = (form.get("type") as string) || null;
+    const shipmentType = (form.get("shipmentType") as string) || null;
+    const trackingNo = (form.get("trackingNo") as string) || null;
+    const packingSlipCode = (form.get("packingSlipCode") as string) || null;
+    const dateRaw = form.get("date") as string | null;
+    const dateReceivedRaw = form.get("dateReceived") as string | null;
+    const date = dateRaw ? new Date(dateRaw) : null;
+    const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
+    const max = await prisma.shipment.aggregate({ _max: { id: true } });
+    const nextId = (max._max.id || 0) + 1;
+    const created = await prisma.shipment.create({
+      data: {
+        id: nextId,
+        status,
+        type,
+        shipmentType,
+        trackingNo,
+        packingSlipCode,
+        date,
+        dateReceived,
+      } as any,
+    });
+    return redirect(`/shipments/${created.id}`);
+  }
+  if (intent === "shipment.update") {
     const status = (form.get("status") as string) || null;
     const type = (form.get("type") as string) || null;
     const trackingNo = (form.get("trackingNo") as string) || null;
@@ -66,23 +96,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function ShipmentDetailRoute() {
   const { shipment } = useLoaderData<typeof loader>();
+  console.log("Shipment in component:", shipment);
   useRecordBrowserShortcuts(shipment.id);
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
   const form = useForm({
-    defaultValues: {
-      id: shipment.id,
-      trackingNo: shipment.trackingNo || "",
-      status: shipment.status || "",
-      type: shipment.type || "",
-      packingSlipCode: shipment.packingSlipCode || "",
-      date: shipment.date
-        ? new Date(shipment.date).toISOString().slice(0, 10)
-        : "",
-      dateReceived: shipment.dateReceived
-        ? new Date(shipment.dateReceived).toISOString().slice(0, 10)
-        : "",
-    },
+    defaultValues: shipment,
+    // id: shipment.id,
+    // trackingNo: shipment.trackingNo || "",
+    // status: shipment.status || "",
+    // type: shipment.type || "",
+    // packingSlipCode: shipment.packingSlipCode || "",
+    // date: shipment.date
+    //   ? new Date(shipment.date).toISOString().slice(0, 10)
+    //   : "",
+    // dateReceived: shipment.dateReceived
+    //   ? new Date(shipment.dateReceived).toISOString().slice(0, 10)
+    //   : "",
   });
   useInitGlobalFormContext(form as any, (values: any) => {
     const fd = new FormData();
@@ -108,17 +138,7 @@ export default function ShipmentDetailRoute() {
         <RecordNavButtons recordBrowser={recordBrowser} />
       </Group>
 
-      <ShipmentDetailForm
-        mode="edit"
-        form={form as any}
-        shipment={{
-          ...shipment,
-          carrierName: shipment.companyCarrier?.name,
-          senderName: shipment.companySender?.name,
-          receiverName: shipment.companyReceiver?.name,
-          locationName: shipment.location?.name,
-        }}
-      />
+      <ShipmentDetailForm mode="edit" form={form as any} shipment={shipment} />
 
       {shipment.lines?.length ? (
         <Card withBorder padding="md">
@@ -129,7 +149,8 @@ export default function ShipmentDetailRoute() {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>ID</Table.Th>
-                <Table.Th>Product</Table.Th>
+                <Table.Th>SKU</Table.Th>
+                <Table.Th>Name</Table.Th>
                 <Table.Th>Qty</Table.Th>
                 <Table.Th>Job</Table.Th>
                 <Table.Th>Location</Table.Th>
@@ -140,7 +161,8 @@ export default function ShipmentDetailRoute() {
               {shipment.lines.map((l: any) => (
                 <Table.Tr key={l.id}>
                   <Table.Td>{l.id}</Table.Td>
-                  <Table.Td>{l.productId ?? ""}</Table.Td>
+                  <Table.Td>{l.product?.id ?? ""}</Table.Td>
+                  <Table.Td>{l.product?.name ?? ""}</Table.Td>
                   <Table.Td>{l.quantity ?? ""}</Table.Td>
                   <Table.Td>{l.jobId ?? ""}</Table.Td>
                   <Table.Td>{l.locationId ?? ""}</Table.Td>

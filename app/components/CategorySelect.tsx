@@ -8,7 +8,7 @@ export function CategorySelect({
   onChange,
   options,
   label = "Category",
-  mod = "data-autoSize",
+  mod = "data-autosize",
   placeholder = "Select category",
 }: {
   value: number | null | undefined;

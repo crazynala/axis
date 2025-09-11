@@ -15,6 +15,13 @@ export default function AdminIndex() {
             <Link to="/admin/logging">Logging</Link>
             <Link to="/admin/value-lists/Tax">Value Lists: Tax Codes</Link>
             <Link to="/admin/value-lists/Category">Value Lists: Category</Link>
+            <Link to="/admin/value-lists/ProductType">
+              Value Lists: Product Type
+            </Link>
+            <Link to="/admin/value-lists/JobType">Value Lists: Job Type</Link>
+            <Link to="/admin/value-lists/JobStatus">
+              Value Lists: Job Status
+            </Link>
             <Link to="/admin/value-lists/Subcategory">
               Value Lists: Subcategory
             </Link>

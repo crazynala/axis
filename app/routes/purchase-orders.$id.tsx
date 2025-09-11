@@ -35,18 +35,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const purchaseOrder = await prisma.purchaseOrder.findUnique({
     where: { id },
     include: {
-      lines: true,
+      lines: { include: { product: true } },
       company: { select: { name: true } },
       consignee: { select: { name: true } },
       location: { select: { name: true } },
     },
   });
   if (!purchaseOrder) throw new Response("Not found", { status: 404 });
-  const products = await prisma.product.findMany({
-    select: { id: true, sku: true, name: true },
-    orderBy: [{ sku: "asc" }, { name: "asc" }],
-    take: 1000,
-  });
+
   const totals = (purchaseOrder.lines || []).reduce(
     (acc: any, l: any) => {
       const qty = Number(l.quantity ?? 0);
@@ -61,25 +57,34 @@ export async function loader({ params }: LoaderFunctionArgs) {
     },
     { qty: 0, qtyOrdered: 0, cost: 0, sell: 0 }
   );
-  const productOptions = products.map((p) => ({
-    value: p.id,
-    label: `${p.sku ? `[${p.sku}] ` : ""}${p.name || p.id}`,
-    sku: p.sku,
-    name: p.name,
-  }));
-  return json({ purchaseOrder, totals, productOptions });
+
+  return json({ purchaseOrder, totals });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const id = Number(params.id);
+  const idRaw = params.id;
+  const isNew = idRaw === "new";
+  const id = !isNew && idRaw ? Number(idRaw) : NaN;
   const form = await request.formData();
-  if (form.get("_intent") === "po.update") {
+  const intent = String(form.get("_intent") || "");
+  if (isNew || intent === "po.create") {
+    const dateRaw = form.get("date") as string | null;
+    const date = dateRaw ? new Date(dateRaw) : null;
+    const status = (form.get("status") as string) || null;
+    const max = await prisma.purchaseOrder.aggregate({ _max: { id: true } });
+    const nextId = (max._max.id || 0) + 1;
+    const created = await prisma.purchaseOrder.create({
+      data: { id: nextId, date, status } as any,
+    });
+    return redirect(`/purchase-orders/${created.id}`);
+  }
+  if (intent === "po.update") {
     const dateRaw = form.get("date") as string | null;
     const date = dateRaw ? new Date(dateRaw) : null;
     await prisma.purchaseOrder.update({ where: { id }, data: { date } });
     return redirect(`/purchase-orders/${id}`);
   }
-  if (form.get("_intent") === "line.add") {
+  if (intent === "line.add") {
     if (!Number.isFinite(id)) return redirect(`/purchase-orders/${params.id}`);
     const productId = Number(form.get("productId"));
     const qtyOrdered = Number(form.get("quantityOrdered"));
@@ -110,13 +115,7 @@ export default function PurchaseOrderDetailRoute() {
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
   const form = useForm({
-    defaultValues: {
-      id: purchaseOrder.id,
-      date: purchaseOrder.date
-        ? new Date(purchaseOrder.date).toISOString().slice(0, 10)
-        : "",
-      status: (purchaseOrder as any).status || "",
-    },
+    defaultValues: purchaseOrder,
   });
   useInitGlobalFormContext(form as any, (values: any) => {
     const fd = new FormData();
@@ -203,9 +202,10 @@ export default function PurchaseOrderDetailRoute() {
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
-              <Table.Th>Product</Table.Th>
-              <Table.Th>Qty Ordered</Table.Th>
-              <Table.Th>Qty</Table.Th>
+              <Table.Th>SKU</Table.Th>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Order Qty</Table.Th>
+              <Table.Th>Actual Qty</Table.Th>
               <Table.Th>Shipped</Table.Th>
               <Table.Th>Received</Table.Th>
               <Table.Th>Cost</Table.Th>
@@ -216,7 +216,8 @@ export default function PurchaseOrderDetailRoute() {
             {purchaseOrder.lines?.map((l: any, idx: number) => (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.id}</Table.Td>
-                <Table.Td>{l.productId ?? ""}</Table.Td>
+                <Table.Td>{l.product?.sku ?? ""}</Table.Td>
+                <Table.Td>{l.product?.name ?? ""}</Table.Td>
                 <Table.Td>
                   <Controller
                     name={`lines.${idx}.quantityOrdered` as any}
@@ -225,9 +226,10 @@ export default function PurchaseOrderDetailRoute() {
                     render={({ field }) => (
                       <NumberInput
                         {...field}
+                        hideControls
                         allowNegative={false}
                         min={0}
-                        size="xs"
+                        w="5rem"
                       />
                     )}
                   />
@@ -240,9 +242,10 @@ export default function PurchaseOrderDetailRoute() {
                     render={({ field }) => (
                       <NumberInput
                         {...field}
+                        hideControls
                         allowNegative={false}
                         min={0}
-                        size="xs"
+                        w="5rem"
                       />
                     )}
                   />

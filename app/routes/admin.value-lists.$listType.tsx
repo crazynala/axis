@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
+import { invalidateValueList } from "../utils/options.server";
 import {
   Button,
   Group,
@@ -32,9 +33,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const valueRaw = form.get("value") as string | null;
     const value = valueRaw ? Number(valueRaw) : null;
     await prisma.valueList.create({ data: { code, label, value, type } });
+    invalidateValueList(type);
   } else if (intent === "delete") {
     const id = Number(form.get("id"));
     if (id) await prisma.valueList.delete({ where: { id } });
+    invalidateValueList(type);
   }
   const values = await prisma.valueList.findMany({
     where: { type },

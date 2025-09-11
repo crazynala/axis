@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asBool, asNum, pick } from "./utils";
+import { asBool, asNum, pick, fixMojibake } from "./utils";
 
 export async function importProducts(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -56,19 +56,21 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     const sku =
       (pick(r, ["SKU", "sku", "sku code"]) as any)?.toString().trim() || null;
     const name =
-      (
-        pick(r, [
-          "name",
-          "product_name",
-          "product name",
-          "productname",
-          "item name",
-          "description",
-          "product description",
-        ]) ?? ""
-      )
-        .toString()
-        .trim() || null;
+      fixMojibake(
+        (
+          pick(r, [
+            "name",
+            "product_name",
+            "product name",
+            "productname",
+            "item name",
+            "description",
+            "product description",
+          ]) ?? ""
+        )
+          .toString()
+          .trim()
+      ) || null;
     const typeRaw = (pick(r, ["type", "product_type", "product type"]) ?? "")
       .toString()
       .trim();
@@ -145,7 +147,9 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     }
     // Resolve supplier id from numeric a_CompanyID or Supplier name
     const supplierIdRaw = asNum(pick(r, ["a_CompanyID"])) as number | null;
-    const supplierName = (pick(r, ["Supplier"]) ?? "").toString().trim();
+    const supplierName = fixMojibake(
+      (pick(r, ["Supplier"]) ?? "").toString().trim()
+    );
     let resolvedSupplierId: number | null = null;
     if (supplierIdRaw != null) {
       const s = await prisma.company.findUnique({

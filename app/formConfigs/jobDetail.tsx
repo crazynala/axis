@@ -3,8 +3,20 @@ import type { FieldConfig } from "./fieldConfigShared";
 export { renderField } from "./fieldConfigShared";
 
 export const jobDateStatusLeft: FieldConfig[] = [
-  { name: "status", label: "Status", findOp: "contains" },
-  { name: "jobType", label: "Job Type", findOp: "contains" },
+  {
+    name: "status",
+    label: "Status",
+    widget: "select",
+    optionsKey: "jobStatus",
+    findOp: "contains",
+  },
+  {
+    name: "jobType",
+    label: "Job Type",
+    widget: "select",
+    optionsKey: "jobType",
+    findOp: "contains",
+  },
   { name: "endCustomerName", label: "End Customer", findOp: "contains" },
   {
     name: "customerOrderNumber",
@@ -50,13 +62,12 @@ export const jobOverviewFields: FieldConfig[] = [
   },
   { name: "projectCode", label: "Project Code", findOp: "contains" },
   { name: "name", label: "Name", findOp: "contains" },
-  { name: "endCustomerName", label: "End Customer", findOp: "contains" },
   {
     name: "companyId",
     label: "Customer",
-    widget: "customerPicker",
-    hiddenInModes: ["find"],
-    editable: false,
+    widget: "select",
+    optionsKey: "customers",
+    findOp: "contains",
   },
 ];
 

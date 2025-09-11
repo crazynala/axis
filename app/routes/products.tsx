@@ -49,7 +49,7 @@ export async function loader(_args: LoaderFunctionArgs) {
 
 export default function ProductsLayout() {
   const data = useLoaderData() as { products?: any[] };
-  console.log("Found products:", data.products);
+  // console.log("Found products:", data.products);
   return (
     <MasterTableProvider initialRecords={data.products}>
       <Outlet />

@@ -39,10 +39,19 @@ export function InvoiceFindManager() {
   };
 
   return (
-    <InvoiceFindModal
-      opened={open}
-      onClose={() => setOpen(false)}
-      onSearch={onSearch}
-    />
+    <>
+      <Tooltip label="Find Invoices" position="right">
+        <ActionIcon
+          onClick={open}
+          variant={opened ? "filled" : "light"}
+          color="blue"
+          size="lg"
+          style={{ position: "fixed", bottom: 16, left: 16, zIndex: 200 }}
+        >
+          <IconSearch size={18} />
+        </ActionIcon>
+      </Tooltip>
+      <InvoiceFindModal opened={opened} onClose={close} onSearch={onSearch} />
+    </>
   );
 }

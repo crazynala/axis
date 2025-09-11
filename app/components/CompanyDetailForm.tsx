@@ -10,7 +10,11 @@ export interface CompanyDetailFormProps {
   company?: any;
 }
 
-export function CompanyDetailForm({ mode, form, company }: CompanyDetailFormProps) {
+export function CompanyDetailForm({
+  mode,
+  form,
+  company,
+}: CompanyDetailFormProps) {
   const merged = { ...(company || {}), ...form.getValues() };
   return (
     <Card withBorder padding="md">
@@ -22,7 +26,9 @@ export function CompanyDetailForm({ mode, form, company }: CompanyDetailFormProp
       <Divider my="xs" />
       <Stack gap={6}>
         {companyMainFields.map((f) => (
-          <React.Fragment key={f.name}>{renderField(form as any, f, mode as any, merged)}</React.Fragment>
+          <React.Fragment key={f.name}>
+            {renderField(form as any, f, mode as any)}
+          </React.Fragment>
         ))}
       </Stack>
     </Card>

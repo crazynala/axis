@@ -1,30 +1,41 @@
-import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { Form, useNavigation, useSubmit } from "@remix-run/react";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { ProductDetailForm } from "../components/ProductDetailForm";
-import { prisma } from "../utils/prisma.server";
+import { action as productAction } from "./products.$id";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];
 
-export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  const sku = (form.get("sku") as string | null)?.trim() || null;
-  const name = (form.get("name") as string | null)?.trim() || null;
-  if (!sku && !name) return json({ error: "SKU or Name is required" }, { status: 400 });
-  const data = {
-    sku,
-    name,
-    type: (form.get("type") as string | null)?.trim() || null,
-    costPrice: form.get("costPrice") ? Number(form.get("costPrice")) : null,
-    manualSalePrice: form.get("manualSalePrice") ? Number(form.get("manualSalePrice")) : null,
-    autoSalePrice: form.get("autoSalePrice") ? Number(form.get("autoSalePrice")) : null,
-    stockTrackingEnabled: form.get("stockTrackingEnabled") === "on",
-    batchTrackingEnabled: form.get("batchTrackingEnabled") === "on",
-  } as const;
-  const created = await prisma.product.create({ data: data as any });
-  return redirect(`/products/${created.id}`);
+export async function loader(_args: LoaderFunctionArgs) {
+  // Provide minimal defaults to render the edit form for a new product
+  return json({
+    product: {
+      id: 0,
+      sku: "",
+      name: "",
+      description: "",
+      type: "",
+      costPrice: null,
+      manualSalePrice: null,
+      autoSalePrice: null,
+      stockTrackingEnabled: false,
+      batchTrackingEnabled: false,
+    },
+  });
+}
+
+export async function action(args: ActionFunctionArgs) {
+  // Delegate to products.$id action with params.id = 'new'
+  return productAction({
+    ...(args as any),
+    params: { ...(args.params as any), id: "new" },
+  } as any);
 }
 
 export default function NewProductRoute() {

@@ -1,5 +1,5 @@
 import type { FieldConfig } from "./fieldConfigShared";
-export { renderField } from "./fieldConfigShared";
+export { RenderField, RenderGroup } from "./fieldConfigShared";
 
 export const expenseMainFields: FieldConfig[] = [
   {

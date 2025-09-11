@@ -1,30 +1,45 @@
 import React from "react";
-import { Card, Divider, Stack, Title, Group, Badge } from "@mantine/core";
+import { Card, Divider, Stack, Title, Group, SimpleGrid } from "@mantine/core";
 import type { UseFormReturn } from "react-hook-form";
-import { renderField } from "../formConfigs/fieldConfigShared";
-import { shipmentMainFields } from "../formConfigs/shipmentDetail";
+import { RenderGroup } from "../formConfigs/fieldConfigShared";
+import {
+  shipmentInfoFields,
+  shipmentDetailFields,
+  shipmentAddressFields,
+} from "../formConfigs/shipmentDetail";
 
 export interface ShipmentDetailFormProps {
-  mode: "edit" | "find";
+  mode: "edit" | "find" | "create";
   form: UseFormReturn<any>;
   shipment?: any;
 }
 
-export function ShipmentDetailForm({ mode, form, shipment }: ShipmentDetailFormProps) {
-  const merged = { ...(shipment || {}), ...form.getValues() };
+export function ShipmentDetailForm({ mode, form }: ShipmentDetailFormProps) {
+  console.log("Form values:", form.getValues());
+
   return (
-    <Card withBorder padding="md">
-      <Card.Section inheritPadding py="xs">
-        <Group justify="space-between" align="center">
-          <Title order={4}>Shipment</Title>
-        </Group>
-      </Card.Section>
-      <Divider my="xs" />
-      <Stack gap={6}>
-        {shipmentMainFields.map((f) => (
-          <React.Fragment key={f.name}>{renderField(form as any, f, mode as any, merged)}</React.Fragment>
-        ))}
-      </Stack>
-    </Card>
+    <SimpleGrid cols={3}>
+      <Card withBorder padding="md">
+        <RenderGroup
+          form={form as any}
+          fields={shipmentInfoFields as any}
+          mode={mode as any}
+        />
+      </Card>
+      <Card withBorder padding="md">
+        <RenderGroup
+          form={form as any}
+          fields={shipmentAddressFields as any}
+          mode={mode as any}
+        />
+      </Card>
+      <Card withBorder padding="md">
+        <RenderGroup
+          form={form as any}
+          fields={shipmentDetailFields as any}
+          mode={mode as any}
+        />
+      </Card>
+    </SimpleGrid>
   );
 }

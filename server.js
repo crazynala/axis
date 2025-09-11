@@ -5,6 +5,7 @@ const cors = require("cors");
 const compression = require("compression");
 const { createRequestHandler } = require("@remix-run/express");
 const { broadcastDevReady } = require("@remix-run/node");
+const helmet = require("helmet");
 
 const isProduction = process.env.NODE_ENV === "production";
 const root = process.cwd();
@@ -30,6 +31,18 @@ async function createServer() {
 
   // Middleware
   app.use(cors());
+  // Security headers & charset hints
+  app.use(
+    helmet.contentSecurityPolicy({
+      useDefaults: true,
+      directives: { upgradeInsecureRequests: null },
+    })
+  );
+  // Hint UTF-8 for text/* when possible
+  app.use((req, res, next) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    next();
+  });
   app.use(express.json());
   app.use(compression());
   app.use(express.static(path.join(root, "public")));

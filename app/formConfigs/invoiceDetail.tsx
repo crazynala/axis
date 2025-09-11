@@ -16,19 +16,10 @@ export const invoiceMainFields: FieldConfig[] = [
   {
     name: "companyId",
     label: "Customer",
-    widget: "customerPicker",
-    hiddenInModes: ["find"],
-    editable: false,
+    widget: "select",
+    optionsKey: "customer",
   },
   { name: "notes", label: "Notes", findOp: "contains" },
-  // Derived / read-only helpers for find mode
-  {
-    name: "companyName",
-    label: "Company",
-    editable: false,
-    readOnly: true,
-    findOp: "contains",
-  },
 ];
 
 export function allInvoiceFindFields() {

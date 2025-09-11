@@ -1,7 +1,17 @@
 import React from "react";
-import { Card, Divider, Grid, SimpleGrid, Stack, Title, Group, Badge } from "@mantine/core";
-import { renderField } from "../formConfigs/fieldConfigShared";
-import * as jobDetailCfg from "../formConfigs/jobDetail";
+import {
+  Card,
+  Divider,
+  Grid,
+  SimpleGrid,
+  Stack,
+  Title,
+  Group,
+  Badge,
+} from "@mantine/core";
+import { RenderField } from "../formConfigs/fieldConfigShared";
+import * as jobDetailCfg from "~/formConfigs/jobDetail";
+// options are injected via OptionsProvider and consumed in RenderField
 import type { UseFormReturn } from "react-hook-form";
 
 export type JobDetailFormProps = {
@@ -11,7 +21,12 @@ export type JobDetailFormProps = {
   openCustomerModal?: () => void;
 };
 
-export function JobDetailForm({ mode, form, job, openCustomerModal }: JobDetailFormProps) {
+export function JobDetailForm({
+  mode,
+  form,
+  job,
+  openCustomerModal,
+}: JobDetailFormProps) {
   // derive customer options from job.company if present (single) - could be injected by parent
   const customerOptions = job?.company
     ? [
@@ -33,18 +48,14 @@ export function JobDetailForm({ mode, form, job, openCustomerModal }: JobDetailF
           <Divider my="xs" />
           <Stack gap={8}>
             {(jobDetailCfg as any).jobOverviewFields?.map((cfg: any) => (
-              <React.Fragment key={cfg.name}>
-                {renderField(
-                  form as any,
-                  cfg,
-                  mode as any,
-                  { ...job, ...form.getValues() },
-                  {
-                    openCustomerModal,
-                    customerOptions,
-                  }
-                )}
-              </React.Fragment>
+              <RenderField
+                key={cfg.name}
+                form={form as any}
+                field={cfg}
+                mode={mode as any}
+                // record={{ ...job, ...form.getValues() }}
+                ctx={{ openCustomerModal }}
+              />
             ))}
           </Stack>
         </Card>
@@ -58,22 +69,24 @@ export function JobDetailForm({ mode, form, job, openCustomerModal }: JobDetailF
           <SimpleGrid cols={2} spacing="md">
             <Stack gap={8}>
               {(jobDetailCfg as any).jobDateStatusLeft?.map((cfg: any) => (
-                <React.Fragment key={cfg.name}>
-                  {renderField(form as any, cfg, mode as any, {
-                    ...job,
-                    ...form.getValues(),
-                  })}
-                </React.Fragment>
+                <RenderField
+                  key={cfg.name}
+                  form={form as any}
+                  field={cfg}
+                  mode={mode as any}
+                  // record={{ ...job, ...form.getValues() }}
+                />
               ))}
             </Stack>
             <Stack gap={8}>
               {(jobDetailCfg as any).jobDateStatusRight?.map((cfg: any) => (
-                <React.Fragment key={cfg.name}>
-                  {renderField(form as any, cfg, mode as any, {
-                    ...job,
-                    ...form.getValues(),
-                  })}
-                </React.Fragment>
+                <RenderField
+                  key={cfg.name}
+                  form={form as any}
+                  field={cfg}
+                  mode={mode as any}
+                  // record={{ ...job, ...form.getValues() }}
+                />
               ))}
             </Stack>
           </SimpleGrid>

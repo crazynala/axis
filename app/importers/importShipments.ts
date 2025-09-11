@@ -36,6 +36,26 @@ export async function importShipments(rows: any[]): Promise<ImportResult> {
         (pick(r, ["PackingSlipCode"]) ?? "").toString().trim() || null,
       type: (pick(r, ["Type"]) ?? "").toString().trim() || null,
       status: (pick(r, ["Status"]) ?? "").toString().trim() || null,
+      // New address detail fields (Ship)
+      addressName:
+        (pick(r, ["Address_Name|Ship"]) ?? "").toString().trim() || null,
+      addressCountry:
+        (pick(r, ["Address_Country|Ship"]) ?? "").toString().trim() || null,
+      addressCountyState:
+        (pick(r, ["Address_CountyState|Ship"]) ?? "").toString().trim() || null,
+      addressLine1:
+        (pick(r, ["Address_Line1|Ship"]) ?? "").toString().trim() || null,
+      addressLine2:
+        (pick(r, ["Address_Line2|Ship"]) ?? "").toString().trim() || null,
+      addressLine3:
+        (pick(r, ["Address_Line3|Ship"]) ?? "").toString().trim() || null,
+      addressTownCity:
+        (pick(r, ["Address_TownCity|Ship"]) ?? "").toString().trim() || null,
+      addressZipPostCode:
+        (pick(r, ["Address_ZipPostCode|Ship"]) ?? "").toString().trim() || null,
+      memo: (pick(r, ["Memo"]) ?? "").toString().trim() || null,
+      shippingMethod:
+        (pick(r, ["ShippingMethod"]) ?? "").toString().trim() || null,
     };
     try {
       await prisma.shipment.upsert({

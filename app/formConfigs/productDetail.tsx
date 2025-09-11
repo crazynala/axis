@@ -20,6 +20,8 @@ export const productIdentityFields: FieldConfig[] = [
     label: "Type",
     findOp: "equals",
     findPlaceholder: "equals...",
+    widget: "select",
+    optionsKey: "productType",
   },
 ];
 
@@ -28,10 +30,16 @@ export const productAssocFields: FieldConfig[] = [
   {
     name: "customerId",
     label: "Customer",
-    widget: "categorySelect",
-    hiddenInModes: ["find"],
-  }, // will override widget in route context using CompanySelect
-  { name: "variantSet", label: "Variant Set", editable: false, readOnly: true }, // display only
+    widget: "select",
+    optionsKey: "customer",
+    // hiddenInModes: ["find"],
+  },
+  {
+    name: "variantSet",
+    label: "Variant Set",
+    widget: "select",
+    optionsKey: "variantSet",
+  },
   {
     name: "stockTrackingEnabled",
     label: "Stock Tracking",
@@ -63,19 +71,22 @@ export const productPricingFields: FieldConfig[] = [
   {
     name: "purchaseTaxId",
     label: "Purchase Tax",
-    widget: "taxCodeSelect",
+    widget: "select",
+    optionsKey: "tax",
     findOp: "equals",
   },
   {
     name: "categoryId",
     label: "Category",
-    widget: "categorySelect",
+    widget: "select",
+    optionsKey: "category",
     findOp: "equals",
   },
   {
     name: "supplierId",
     label: "Supplier",
-    widget: "categorySelect",
+    widget: "select",
+    optionsKey: "supplier",
     findOp: "equals",
   },
 ];
@@ -88,7 +99,8 @@ export const productBomFindFields: FieldConfig[] = [
   {
     name: "componentChildSupplierId",
     label: "Child Supplier",
-    widget: "categorySelect",
+    widget: "select",
+    optionsKey: "suppliers",
     findOp: "equals",
   },
 ];

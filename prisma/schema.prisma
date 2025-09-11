@@ -587,32 +587,42 @@ model Expense {
 }
 
 model Shipment {
-    id                Int            @id // a__Serial maps here
-    addressIdShip     Int?
-    companyIdCarrier  Int?
-    companyIdReceiver Int?
-    companyIdSender   Int?
-    locationId        Int?
-    contactIdReceiver Int?
-    date              DateTime?
-    dateReceived      DateTime?
-    packingSlipCode   String?
-    shipmentType      String?
-    status            String?
-    trackingNo        String?
-    type              String? // "In" | "Out"
-    createdBy         String?
-    createdAt         DateTime?      @default(now())
-    modifiedBy        String?
-    updatedAt         DateTime?      @updatedAt
-    location          Location?      @relation(fields: [locationId], references: [id])
-    companyCarrier    Company?       @relation("CarrierCompany", fields: [companyIdCarrier], references: [id])
-    companyReceiver   Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
-    companySender     Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
-    addressShip       Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
-    lines             ShipmentLine[]
+    id                 Int            @id // a__Serial maps here
+    addressIdShip      Int?
+    companyIdCarrier   Int?
+    companyIdReceiver  Int?
+    companyIdSender    Int?
+    locationId         Int?
+    contactIdReceiver  Int?
+    date               DateTime?
+    dateReceived       DateTime?
+    packingSlipCode    String?
+    shipmentType       String?
+    status             String?
+    trackingNo         String?
+    type               String? // "In" | "Out"
+    memo               String?
+    shippingMethod     String?
+    addressName        String?
+    addressCountry     String?
+    addressCountyState String?
+    addressLine1       String?
+    addressLine2       String?
+    addressLine3       String?
+    addressTownCity    String?
+    addressZipPostCode String?
+    createdBy          String?
+    createdAt          DateTime?      @default(now())
+    modifiedBy         String?
+    updatedAt          DateTime?      @updatedAt
+    location           Location?      @relation(fields: [locationId], references: [id])
+    companyCarrier     Company?       @relation("CarrierCompany", fields: [companyIdCarrier], references: [id])
+    companyReceiver    Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
+    companySender      Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
+    addressShip        Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
+    lines              ShipmentLine[]
     // Back-relations
-    expenses          Expense[]
+    expenses           Expense[]
 }
 
 model ShipmentLine {
@@ -646,6 +656,7 @@ model Address {
     id                 Int        @id // a__Serial maps here
     companyId          Int?
     contactId          Int?
+    name               String?
     addressCountry     String?
     addressCountyState String?
     addressLine1       String?
@@ -693,6 +704,7 @@ model PurchaseOrder {
     consigneeCompanyId Int?
     locationId         Int?
     date               DateTime?
+    memo               String?
     createdBy          String?
     createdAt          DateTime?           @default(now())
     modifiedBy         String?

@@ -1,72 +1,69 @@
 import React from "react";
-import type { UseFormReturn } from "react-hook-form";
+import { Controller, type UseFormReturn } from "react-hook-form";
 import { DatePickerInput } from "@mantine/dates";
-import {
-  TextInput,
-  Select,
-  Group,
-  Button,
-  SegmentedControl,
-} from "@mantine/core";
+import { TextInput, Select, Group, SegmentedControl, Indicator } from "@mantine/core";
+import { useOptions } from "../options/OptionsContext";
 
-export type FieldMode = "edit" | "find";
+export type FieldMode = "edit" | "find" | "create";
 
-export type WidgetType =
-  | "text"
-  | "date"
-  | "idStatic"
-  | "customerPicker"
-  | "categorySelect"
-  | "taxCodeSelect"
-  | "triBool" // three-state boolean (true/false/any)
-  | "numberRange"; // renders two inputs: min/max in find mode or single number in edit
-
-export interface FieldConfig {
+export type FieldConfig = {
   name: string;
   label: string;
-  editable?: boolean;
-  type?: "text" | "date" | "number"; // legacy
-  widget?: WidgetType;
+  type?: "date" | "text" | "number";
+  widget?: "text" | "select" | "idStatic" | "triBool" | "numberRange" | "date";
+  findOp?: "contains" | "equals" | "range" | string;
   hiddenInModes?: FieldMode[];
-  findPlaceholder?: string;
-  findOp?: "contains" | "equals" | "range" | "gte" | "lte";
+  editable?: boolean;
   readOnly?: boolean;
-  // For numberRange widget only: underlying field names for min/max in find mode
-  rangeFields?: { min: string; max: string };
-  // Optional: custom render override
+  findPlaceholder?: string;
+  options?: { value: string; label: string }[];
+  optionsKey?: string; // maps to ctx.fieldOptions[key]
+  rangeFields?: { min?: string; max?: string };
+  // Optional predicate to conditionally display this field
+  showIf?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
   render?: (args: {
     form: UseFormReturn<any>;
     mode: FieldMode;
     field: FieldConfig;
-    record: any;
     ctx?: RenderContext;
-  }) => React.ReactElement | null;
-  // Select options provider (could evolve async later)
-  options?: { value: string; label: string }[];
-}
+  }) => React.ReactNode;
+};
 
-export interface RenderContext {
+export type RenderContext = {
+  fieldOptions?: Record<string, { value: string; label: string }[]>;
   openCustomerModal?: () => void;
-  // Future: category lists, tax codes, etc.
-  categoryOptions?: { value: string; label: string }[];
-  taxCodeOptions?: { value: string; label: string }[];
-  customerOptions?: { value: string; label: string }[];
-}
+  [key: string]: any;
+};
 
 export function renderField(
   form: UseFormReturn<any>,
   field: FieldConfig,
   mode: FieldMode,
-  record: any,
   ctx?: RenderContext
 ) {
   if (field.hiddenInModes && field.hiddenInModes.includes(mode)) return null;
-  if (field.render) return field.render({ form, mode, field, record, ctx });
+  if (field.showIf && !field.showIf({ form, mode, field, ctx })) {
+    return null;
+  }
+  if (field.render) return field.render({ form, mode, field, ctx });
   const widget = field.widget || (field.type === "date" ? "date" : "text");
-  const common: any = { label: field.label };
+  const common: any = { label: field.label, mod: "data-autosize" };
+
+  const getSelectOptions = () => {
+    if (field.options && field.options.length) return field.options;
+    if (field.optionsKey && ctx?.fieldOptions?.[field.optionsKey]) {
+      return ctx.fieldOptions[field.optionsKey];
+    }
+    return [] as { value: string; label: string }[];
+  };
 
   switch (widget) {
-    case "idStatic":
+    case "idStatic": {
       if (mode === "find") {
         return (
           <TextInput
@@ -76,108 +73,88 @@ export function renderField(
           />
         );
       }
+      const v =
+        form.watch(field.name as any) ??
+        (form.getValues() as any)?.[field.name];
       return (
-        <TextInput
-          {...common}
-          mod="autoSize"
-          readOnly
-          value={record?.[field.name] != null ? String(record[field.name]) : ""}
-        />
-      );
-    case "customerPicker": {
-      if (mode === "find") {
-        return (
-          <TextInput
-            {...common}
-            mod="autoSize"
-            placeholder={field.findPlaceholder || "contains..."}
-            {...form.register(field.name as any)}
-          />
-        );
-      }
-      // Inline searchable select using provided customer options list if available
-      const options = (ctx as any)?.customerOptions?.length
-        ? (ctx as any).customerOptions
-        : record?.company
-        ? [
-            {
-              value: String(record.company.id),
-              label: record.company.name || String(record.company.id),
-            },
-          ]
-        : [];
-      return (
-        <Select
-          {...common}
-          searchable
-          clearable
-          mod="autoSize"
-          data={options}
-          value={
-            form.watch(field.name as any) ??
-            (record?.company?.id ? String(record.company.id) : null)
-          }
-          onChange={(val) => {
-            // store ID as number when possible
-            const num = val != null && val !== "" ? Number(val) : undefined;
-            form.setValue(field.name as any, num as any, { shouldDirty: true });
-          }}
-          placeholder="Select customer..."
-        />
+        <TextInput {...common} readOnly value={v != null ? String(v) : ""} />
       );
     }
-    case "date":
+    case "date": {
       if (mode === "find") {
         return (
           <TextInput
             {...common}
-            mod="autoSize"
             placeholder={field.findPlaceholder || "yyyy-mm-dd"}
             {...form.register(field.name as any)}
           />
         );
       }
-      const val = record?.[field.name];
+      const val =
+        form.watch(field.name as any) ??
+        (form.getValues() as any)?.[field.name];
+      const isSameDay = (a: Date, b: Date) =>
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+      const dayRenderer = (date: Date) => {
+        const today = new Date();
+        const day = date.getDate();
+        const isToday = isSameDay(date, today);
+        return (
+          <Indicator size={6} color="red" offset={-5} disabled={!isToday}>
+            <div>{day}</div>
+          </Indicator>
+        );
+      };
       return (
         <DatePickerInput
           {...common}
-          mod="autoSize"
           value={val ? new Date(val) : null}
           onChange={(d) => form.setValue(field.name as any, d as any)}
+          renderDay={dayRenderer}
         />
       );
-    case "categorySelect":
-    case "taxCodeSelect": {
-      const opts =
-        field.options ||
-        (widget === "categorySelect"
-          ? ctx?.categoryOptions || []
-          : ctx?.taxCodeOptions || []);
-      if (mode === "find") {
-        return (
-          <Select
-            {...common}
-            searchable
-            clearable
-            data={opts}
-            placeholder={field.findPlaceholder || "any"}
-            {...form.register(field.name as any)}
-          />
-        );
-      }
+    }
+    case "select": {
+      const opts = getSelectOptions();
+      // console.log("Select options:", opts);
       return (
-        <Select
-          {...common}
-          data={opts}
-          searchable
-          clearable
-          value={record?.[field.name] ?? null}
-          onChange={(v) => form.setValue(field.name as any, v)}
+        <Controller
+          control={form.control}
+          name={field.name as any}
+          render={({ field: f }) => {
+            const cur = f.value;
+            const value = cur == null || cur === "" ? null : String(cur);
+            return (
+              <Select
+                {...common}
+                searchable
+                clearable
+                data={opts}
+                placeholder={
+                  mode === "find" ? field.findPlaceholder || "any" : undefined
+                }
+                value={value}
+                onChange={(v) => {
+                  const shouldBeNumber =
+                    typeof cur === "number" || /Id$/.test(field.name);
+                  const out = shouldBeNumber
+                    ? v != null && v !== ""
+                      ? Number(v)
+                      : null
+                    : v ?? null;
+                  f.onChange(out);
+                }}
+                onBlur={f.onBlur}
+                ref={f.ref}
+              />
+            );
+          }}
         />
       );
     }
     case "triBool": {
-      // Represent tri-state with segmented control (Any/Yes/No) in find; toggle in edit
       const value = form.watch(field.name as any);
       if (mode === "find") {
         return (
@@ -214,14 +191,12 @@ export function renderField(
           <Group gap="xs" align="flex-end" style={{ alignItems: "flex-end" }}>
             <TextInput
               label={field.label + " Min"}
-              mod="autoSize"
               placeholder="min"
               {...form.register(minField as any)}
               style={{ flex: 1 }}
             />
             <TextInput
               label={field.label + " Max"}
-              mod="autoSize"
               placeholder="max"
               {...form.register(maxField as any)}
               style={{ flex: 1 }}
@@ -232,9 +207,12 @@ export function renderField(
       return (
         <TextInput
           {...common}
-          mod="autoSize"
           type="number"
-          value={record?.[field.name] ?? ""}
+          value={
+            (form.watch(field.name as any) ??
+              (form.getValues() as any)?.[field.name] ??
+              "") as any
+          }
           onChange={(e) => form.setValue(field.name as any, e.target.value)}
         />
       );
@@ -249,7 +227,6 @@ export function renderField(
                 (field.findOp === "equals" ? "equals..." : "contains...")
               : undefined
           }
-          mod="autoSize"
           {...form.register(field.name as any)}
           readOnly={
             mode === "edit" && (field.editable === false || field.readOnly)
@@ -258,6 +235,76 @@ export function renderField(
       );
     }
   }
+}
+
+// JSX wrapper that pulls options via context and maps to renderField
+export function RenderField({
+  form,
+  field,
+  mode,
+  ctx,
+}: {
+  form: UseFormReturn<any>;
+  field: FieldConfig;
+  mode: FieldMode;
+  ctx?: RenderContext;
+}) {
+  const options = useOptions();
+  const autoCtx: RenderContext | undefined = React.useMemo(() => {
+    if (!options && !ctx) return ctx;
+    const map = (arr?: { value: string; label: string }[]) => arr || [];
+    return {
+      ...ctx,
+      fieldOptions: {
+        ...(ctx?.fieldOptions || {}),
+        category: map(options?.categoryOptions),
+        subcategory: map(options?.subcategoryOptions),
+        tax: map(options?.taxCodeOptions),
+        productType: map(options?.productTypeOptions),
+        variantSet: map(options?.variantSetOptions),
+        customer: map(options?.customerOptions),
+        supplier: map(options?.supplierOptions),
+        carrier: map(options?.carrierOptions),
+        jobType: map(options?.jobTypeOptions),
+        jobStatus: map(options?.jobStatusOptions),
+        location: map(options?.locationOptions),
+      },
+    };
+  }, [options, ctx]);
+
+  return renderField(form, field, mode, autoCtx);
+}
+
+// JSX to render a group of fields with shared props
+export function RenderGroup({
+  form,
+  fields,
+  mode,
+  ctx,
+  gap = 6,
+}: {
+  form: UseFormReturn<any>;
+  fields: FieldConfig[];
+  mode: FieldMode;
+  ctx?: RenderContext;
+  gap?: number;
+}) {
+  // Subscribe to all form changes so conditional fields can react to deps
+  form.watch();
+  const list: FieldConfig[] = Array.isArray(fields) ? fields : [];
+  return (
+    <Group gap={0} style={{ width: "100%" }}>
+      <div style={{ width: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap }}>
+          {list.map((f) => (
+            <React.Fragment key={f.name}>
+              <RenderField form={form} field={f} mode={mode} ctx={ctx} />
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    </Group>
+  );
 }
 
 export function extractFindValues(formData: Record<string, any>) {
