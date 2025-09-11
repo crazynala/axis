@@ -9,11 +9,36 @@ export function PurchaseOrderFindManager() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const { registerFindCallback } = useFind();
-  const [open, setOpen] = useState(false);
-  useEffect(() => registerFindCallback(() => setOpen(true)), [registerFindCallback]);
-  const onSearch = (qs: string) => {
-    setOpen(false);
-    navigate(`/purchase-orders?${qs}`);
+
+  const [opened, setOpened] = useState(false);
+
+  useEffect(
+    () => registerFindCallback(() => setOpened(true)),
+    [registerFindCallback]
+  );
+  const open = () => setOpened(true);
+  const close = () => {
+    setOpened(false);
+    const next = new URLSearchParams(sp);
+    next.delete("findMode");
+    navigate(`?${next.toString()}`);
   };
-  return <PurchaseOrderFindModal opened={open} onClose={() => setOpen(false)} onSearch={onSearch} />;
+  const onSearch = (qs: string) => {
+    const url = new URL(window.location.href);
+    const produced = new URLSearchParams(qs);
+    Array.from(url.searchParams.keys()).forEach((k) => {
+      if (k === "findReqs" || produced.has(k)) url.searchParams.delete(k);
+    });
+    for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
+    url.searchParams.delete("findMode");
+    setOpened(false);
+    navigate(url.pathname + "?" + url.searchParams.toString());
+  };
+  return (
+    <PurchaseOrderFindModal
+      opened={open}
+      onClose={() => setOpen(false)}
+      onSearch={onSearch}
+    />
+  );
 }

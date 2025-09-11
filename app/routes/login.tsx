@@ -72,7 +72,7 @@ export default function Login() {
               required
             />
             <Button type="submit" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
+              {busy ? "Signing in..." : "Sign in"}
             </Button>
           </Stack>
         </Form>

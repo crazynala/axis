@@ -15,7 +15,12 @@ export const productIdentityFields: FieldConfig[] = [
   { name: "sku", label: "SKU", findOp: "contains" },
   { name: "name", label: "Name", findOp: "contains" },
   { name: "description", label: "Description", findOp: "contains" },
-  { name: "type", label: "Type", findOp: "equals", findPlaceholder: "equals…" },
+  {
+    name: "type",
+    label: "Type",
+    findOp: "equals",
+    findPlaceholder: "equals...",
+  },
 ];
 
 // Associations & toggles

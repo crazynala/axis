@@ -1,19 +1,23 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "@remix-run/react";
 import { ActionIcon, Tooltip } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
 import { CompanyFindModal } from "./CompanyFindModal";
+import { useFind } from "../find/FindContext";
 
 export function CompanyFindManagerNew() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const opened = sp.get("findMode") === "1";
-  const open = () => {
-    const next = new URLSearchParams(sp);
-    next.set("findMode", "1");
-    navigate(`?${next.toString()}`);
-  };
+  const { registerFindCallback } = useFind();
+  const [opened, setOpened] = useState(false);
+
+  useEffect(
+    () => registerFindCallback(() => setOpened(true)),
+    [registerFindCallback]
+  );
+  const open = () => setOpened(true);
   const close = () => {
+    setOpened(false);
     const next = new URLSearchParams(sp);
     next.delete("findMode");
     navigate(`?${next.toString()}`);
@@ -26,6 +30,7 @@ export function CompanyFindManagerNew() {
     });
     for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
     url.searchParams.delete("findMode");
+    setOpened(false);
     navigate(url.pathname + "?" + url.searchParams.toString());
   };
   return (

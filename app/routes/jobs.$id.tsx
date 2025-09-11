@@ -219,7 +219,7 @@ export default function JobDetailRoute() {
     submit(fd, { method: "post" });
   };
   useInitGlobalFormContext(jobForm as any, save, () => {
-    jobForm.reset(originalDefaults);
+    jobForm.reset(originalDefaults, { keepDefaultValues: true });
     console.log("[jobs.$id] discard changes -> form reset to original", {
       id: job.id,
     });
@@ -232,7 +232,14 @@ export default function JobDetailRoute() {
     });
     return () => sub.unsubscribe();
   }, [jobForm]);
+
   const dirtyRef = React.useRef(jobForm.formState.isDirty);
+  console.log("!! [jobs.$id] dirty state", {
+    id: job.id,
+    was: dirtyRef.current,
+    now: jobForm.formState.isDirty,
+    changed: Object.keys(jobForm.formState.dirtyFields || {}),
+  });
   useEffect(() => {
     if (jobForm.formState.isDirty !== dirtyRef.current) {
       console.log("[jobs.$id] dirty state", {
@@ -244,6 +251,7 @@ export default function JobDetailRoute() {
       dirtyRef.current = jobForm.formState.isDirty;
     }
   }, [jobForm.formState.isDirty, jobForm.formState.dirtyFields, job.id]);
+
   const [customerSearch, setCustomerSearch] = useState("");
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();

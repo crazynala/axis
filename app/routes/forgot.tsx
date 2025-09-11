@@ -52,7 +52,7 @@ export default function Forgot() {
                 required
               />
               <Button type="submit" disabled={busy}>
-                {busy ? "Sending…" : "Send code"}
+                {busy ? "Sending..." : "Send code"}
               </Button>
             </Stack>
           </Form>

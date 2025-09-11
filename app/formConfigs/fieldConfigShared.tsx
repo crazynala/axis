@@ -71,7 +71,7 @@ export function renderField(
         return (
           <TextInput
             {...common}
-            placeholder={field.findPlaceholder || "equals…"}
+            placeholder={field.findPlaceholder || "equals..."}
             {...form.register(field.name as any)}
           />
         );
@@ -90,7 +90,7 @@ export function renderField(
           <TextInput
             {...common}
             mod="autoSize"
-            placeholder={field.findPlaceholder || "contains…"}
+            placeholder={field.findPlaceholder || "contains..."}
             {...form.register(field.name as any)}
           />
         );
@@ -122,7 +122,7 @@ export function renderField(
             const num = val != null && val !== "" ? Number(val) : undefined;
             form.setValue(field.name as any, num as any, { shouldDirty: true });
           }}
-          placeholder="Select customer…"
+          placeholder="Select customer..."
         />
       );
     }
@@ -246,7 +246,7 @@ export function renderField(
           placeholder={
             mode === "find"
               ? field.findPlaceholder ||
-                (field.findOp === "equals" ? "equals…" : "contains…")
+                (field.findOp === "equals" ? "equals..." : "contains...")
               : undefined
           }
           mod="autoSize"

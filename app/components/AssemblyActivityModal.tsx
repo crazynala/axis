@@ -418,7 +418,7 @@ export function AssemblyActivityModal(props: {
                             </Text>
                             {loadingCosting[cid] && (
                               <Text size="xs" c="dimmed">
-                                Loading…
+                                Loading...
                               </Text>
                             )}
                           </Group>

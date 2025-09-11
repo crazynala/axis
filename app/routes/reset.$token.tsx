@@ -72,7 +72,7 @@ export default function Reset() {
                 required
               />
               <Button type="submit" disabled={busy}>
-                {busy ? "Resetting…" : "Reset password"}
+                {busy ? "Resetting..." : "Reset password"}
               </Button>
             </Stack>
           </Form>

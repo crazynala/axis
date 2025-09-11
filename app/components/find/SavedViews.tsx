@@ -31,7 +31,8 @@ export function SavedViews({ views, activeView }: SavedViewsProps) {
         <Group gap="xs" align="center">
           <TextInput
             name="name"
-            placeholder="Save current filters as…"
+            // Replaced unicode ellipsis with ASCII to avoid SSR/client mismatch
+            placeholder="Save current filters as..."
             w={220}
           />
           <Button type="submit">Save view</Button>

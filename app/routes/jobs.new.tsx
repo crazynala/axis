@@ -1,6 +1,6 @@
 import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
-import { useNavigation, useSubmit } from "@remix-run/react";
+import { useNavigation, Form } from "@remix-run/react";
 import {
   Button,
   Group,
@@ -57,7 +57,6 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function NewJobRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const submit = useSubmit();
   const form = useForm({
     defaultValues: {
       projectCode: "",
@@ -82,38 +81,7 @@ export default function NewJobRoute() {
           ]}
         />
       </Group>
-      <form
-        onSubmit={form.handleSubmit((values) => {
-          const fd = new FormData();
-          if (values.projectCode) fd.set("projectCode", values.projectCode);
-          if (values.name) fd.set("name", values.name);
-          if (values.status) fd.set("status", values.status);
-          if (values.jobType) fd.set("jobType", values.jobType);
-          if (values.endCustomerName)
-            fd.set("endCustomerName", values.endCustomerName);
-          if (values.customerOrderDate)
-            fd.set(
-              "customerOrderDate",
-              new Date(values.customerOrderDate).toISOString().slice(0, 10)
-            );
-          if (values.targetDate)
-            fd.set(
-              "targetDate",
-              new Date(values.targetDate).toISOString().slice(0, 10)
-            );
-          if (values.dropDeadDate)
-            fd.set(
-              "dropDeadDate",
-              new Date(values.dropDeadDate).toISOString().slice(0, 10)
-            );
-          if (values.cutSubmissionDate)
-            fd.set(
-              "cutSubmissionDate",
-              new Date(values.cutSubmissionDate).toISOString().slice(0, 10)
-            );
-          submit(fd, { method: "post" });
-        })}
-      >
+      <Form method="post" onSubmit={form.handleSubmit(() => {})}>
         <SimpleGrid cols={2} spacing="md">
           <Card withBorder padding="md">
             <Card.Section inheritPadding py="xs">
@@ -137,29 +105,49 @@ export default function NewJobRoute() {
               <Stack gap={8}>
                 <DatePickerInput
                   label="Order Date"
-                  value={form.watch("customerOrderDate")}
-                  onChange={(v) => form.setValue("customerOrderDate", v)}
+                  value={form.watch("customerOrderDate") as Date | null}
+                  onChange={(v) =>
+                    form.setValue(
+                      "customerOrderDate",
+                      v ? (v as unknown as Date) : null
+                    )
+                  }
                   valueFormat="YYYY-MM-DD"
                   clearable
                 />
                 <DatePickerInput
                   label="Target Date"
                   value={form.watch("targetDate")}
-                  onChange={(v) => form.setValue("targetDate", v)}
+                  onChange={(v) =>
+                    form.setValue(
+                      "targetDate",
+                      v ? (v as unknown as Date) : null
+                    )
+                  }
                   valueFormat="YYYY-MM-DD"
                   clearable
                 />
                 <DatePickerInput
                   label="Drop Dead"
                   value={form.watch("dropDeadDate")}
-                  onChange={(v) => form.setValue("dropDeadDate", v)}
+                  onChange={(v) =>
+                    form.setValue(
+                      "dropDeadDate",
+                      v ? (v as unknown as Date) : null
+                    )
+                  }
                   valueFormat="YYYY-MM-DD"
                   clearable
                 />
                 <DatePickerInput
                   label="Submitted"
                   value={form.watch("cutSubmissionDate")}
-                  onChange={(v) => form.setValue("cutSubmissionDate", v)}
+                  onChange={(v) =>
+                    form.setValue(
+                      "cutSubmissionDate",
+                      v ? (v as unknown as Date) : null
+                    )
+                  }
                   valueFormat="YYYY-MM-DD"
                   clearable
                 />
@@ -180,7 +168,7 @@ export default function NewJobRoute() {
             {busy ? "Saving..." : "Create Job"}
           </Button>
         </Group>
-      </form>
+      </Form>
     </Stack>
   );
 }

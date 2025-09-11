@@ -9,13 +9,33 @@ export function InvoiceFindManager() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const { registerFindCallback } = useFind();
-  const [open, setOpen] = useState(false);
 
-  useEffect(() => registerFindCallback(() => setOpen(true)), [registerFindCallback]);
+  const [opened, setOpened] = useState(false);
+
+  const close = () => {
+    setOpened(false);
+    const next = new URLSearchParams(sp);
+    next.delete("findMode");
+    navigate(`?${next.toString()}`);
+  };
 
   const onSearch = (qs: string) => {
-    setOpen(false);
-    navigate(`/invoices?${qs}`);
+    const url = new URL(window.location.href);
+    const produced = new URLSearchParams(qs);
+    Array.from(url.searchParams.keys()).forEach((k) => {
+      if (k === "findReqs" || produced.has(k)) url.searchParams.delete(k);
+    });
+    for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
+    url.searchParams.delete("findMode");
+    setOpened(false);
+    navigate(url.pathname + "?" + url.searchParams.toString());
   };
-  return <InvoiceFindModal opened={open} onClose={() => setOpen(false)} onSearch={onSearch} />;
+
+  return (
+    <InvoiceFindModal
+      opened={open}
+      onClose={() => setOpen(false)}
+      onSearch={onSearch}
+    />
+  );
 }

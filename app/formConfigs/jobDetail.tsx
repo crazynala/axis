@@ -10,7 +10,7 @@ export const jobDateStatusLeft: FieldConfig[] = [
     name: "customerOrderNumber",
     label: "Customer PO #",
     findOp: "equals",
-    findPlaceholder: "equals…",
+    findPlaceholder: "equals...",
   },
 ];
 
@@ -33,7 +33,7 @@ export const jobDateStatusRight: FieldConfig[] = [
     label: "Company ID",
     editable: false,
     findOp: "equals",
-    findPlaceholder: "equals…",
+    findPlaceholder: "equals...",
   },
 ];
 
@@ -46,7 +46,7 @@ export const jobOverviewFields: FieldConfig[] = [
     readOnly: true,
     widget: "idStatic",
     findOp: "equals",
-    findPlaceholder: "equals…",
+    findPlaceholder: "equals...",
   },
   { name: "projectCode", label: "Project Code", findOp: "contains" },
   { name: "name", label: "Name", findOp: "contains" },

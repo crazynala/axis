@@ -516,7 +516,7 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
     <Modal opened onClose={onClose} title="Search" centered size="lg">
       <Stack>
         <TextInput
-          placeholder="Search jobs, products… (Cmd+K)"
+          placeholder="Search jobs, products... (Cmd+K)"
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
           autoFocus
@@ -569,7 +569,7 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
               </Paper>
             </>
           ) : null}
-          {!results && <Text c="dimmed">Type to search…</Text>}
+          {!results && <Text c="dimmed">Type to search...</Text>}
           {results && !results.jobs.length && !results.products.length && (
             <Text c="dimmed">No results</Text>
           )}
