@@ -2,7 +2,8 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { MasterTableProvider } from "@aa/timber";
+import { useEffect } from "react";
+import { useRecords } from "../record/RecordContext";
 import { JobFindManager } from "../components/JobFindManager";
 import { jobSearchSchema } from "../find/job.search-schema";
 import { buildWhere } from "../find/buildWhere";
@@ -89,17 +90,38 @@ export async function loader(_args: LoaderFunctionArgs) {
       where = simple;
     }
   }
-  const jobs = await prisma.job.findMany({
+  const ID_CAP = 50000;
+  const idRows = await prisma.job.findMany({
     where,
     orderBy: { id: "asc" },
-    select: {
-      id: true,
-      name: true,
-      projectCode: true,
-      company: { select: { name: true } },
-    },
+    select: { id: true },
+    take: ID_CAP,
   });
-  return json({ jobs, views, activeView: viewName || null });
+  const idList = idRows.map((r) => r.id);
+  const idListComplete = idRows.length < ID_CAP;
+  const INITIAL_COUNT = 100;
+  const initialIds = idList.slice(0, INITIAL_COUNT);
+  let initialRows: any[] = [];
+  if (initialIds.length) {
+    initialRows = await prisma.job.findMany({
+      where: { id: { in: initialIds } },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        name: true,
+        projectCode: true,
+        company: { select: { name: true } },
+      },
+    });
+  }
+  return json({
+    idList,
+    idListComplete,
+    initialRows,
+    total: idList.length,
+    views,
+    activeView: viewName || null,
+  });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -128,20 +150,28 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function JobsLayout() {
-  const data = useLoaderData() as {
-    jobs?: any[];
+  const data = useLoaderData<{
+    idList: number[];
+    idListComplete: boolean;
+    initialRows: any[];
+    total: number;
     views?: any[];
     activeView?: string | null;
-  };
-
+  }>();
+  const { setIdList, addRows } = useRecords();
+  useEffect(() => {
+    setIdList("jobs", data.idList, data.idListComplete);
+    if (data.initialRows?.length)
+      addRows("jobs", data.initialRows, { updateRecordsArray: true });
+  }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
   return (
-    <MasterTableProvider initialRecords={data.jobs}>
+    <>
       <JobFindManager />
       <SavedViews
         views={data.views || []}
         activeView={data.activeView || null}
       />
       <Outlet />
-    </MasterTableProvider>
+    </>
   );
 }

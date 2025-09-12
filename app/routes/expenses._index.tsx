@@ -1,17 +1,26 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/NavDataTable";
-import { idLinkColumn, dateColumn, simpleColumn } from "../components/tableColumns";
-import { formatUSD } from "../utils/format";
-import { buildRowNavHandlers } from "../components/tableRowHandlers";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { ExpenseFindManager } from "../components/ExpenseFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
+import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import { useHybridWindow } from "../record/useHybridWindow";
+import { useRecordContext } from "../record/RecordContext";
+import { Stack, Group, Title, Button } from "@mantine/core";
+import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction = () => [{ title: "Expenses" }];
 
@@ -33,12 +42,15 @@ export async function loader(args: LoaderFunctionArgs) {
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) url.searchParams.set("findReqs", saved.filters.findReqs);
+      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
+        url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
-  const keys = ["category", "details", "date"]; // simple find
+  const keys = ["category", "details", "date"];
   let findWhere: any = null;
-  const hasFindIndicators = keys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const hasFindIndicators =
+    keys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
@@ -46,8 +58,10 @@ export async function loader(args: LoaderFunctionArgs) {
       if (v) values[k] = v;
     }
     const simple: any = {};
-    if (values.category) simple.category = { contains: values.category, mode: "insensitive" };
-    if (values.details) simple.details = { contains: values.details, mode: "insensitive" };
+    if (values.category)
+      simple.category = { contains: values.category, mode: "insensitive" };
+    if (values.details)
+      simple.details = { contains: values.details, mode: "insensitive" };
     if (values.date) simple.date = values.date;
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
@@ -62,7 +76,11 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacy,
+      ...rest
+    } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -70,9 +88,23 @@ export async function loader(args: LoaderFunctionArgs) {
     searchableFields: ["category", "details"],
   });
   if (findWhere) prismaArgs.where = findWhere;
-  const [rows, total] = await Promise.all([
-    prisma.expense.findMany({
-      ...prismaArgs,
+  // Hybrid roster subset
+  const ID_CAP = 50000;
+  const idRows = await prisma.expense.findMany({
+    where: prismaArgs.where,
+    orderBy: prismaArgs.orderBy || { id: "asc" },
+    select: { id: true },
+    take: ID_CAP,
+  });
+  const idList = idRows.map((r) => r.id);
+  const idListComplete = idRows.length < ID_CAP;
+  const INITIAL_COUNT = 100;
+  const initialIds = idList.slice(0, INITIAL_COUNT);
+  let initialRows: any[] = [];
+  if (initialIds.length) {
+    initialRows = await prisma.expense.findMany({
+      where: { id: { in: initialIds } },
+      orderBy: { id: "asc" },
       select: {
         id: true,
         date: true,
@@ -80,14 +112,13 @@ export async function loader(args: LoaderFunctionArgs) {
         details: true,
         priceCost: true,
       },
-    }),
-    prisma.expense.count({ where: prismaArgs.where }),
-  ]);
+    });
+  }
   return json({
-    rows,
-    total,
-    page: baseParams.page,
-    perPage: baseParams.perPage,
+    idList,
+    idListComplete,
+    initialRows,
+    total: idList.length,
     views,
     activeView: viewName || null,
   });
@@ -122,45 +153,59 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ExpensesIndexRoute() {
-  const { rows, total, page, perPage, views, activeView } = useLoaderData<typeof loader>();
-  const [sp] = useSearchParams();
-  const navigate = useNavigate();
-  const onPageChange = (p: number) => {
-    const next = new URLSearchParams(sp);
-    next.set("page", String(p));
-    navigate(`?${next.toString()}`);
-  };
-  const onPerPageChange = (pp: number) => {
-    const next = new URLSearchParams(sp);
-    next.set("perPage", String(pp));
-    next.set("page", "1");
-    navigate(`?${next.toString()}`);
-  };
+  const { idList, idListComplete, initialRows, total, views, activeView } =
+    useLoaderData<typeof loader>();
+  const { records, fetching, requestMore, atEnd } = useHybridWindow({
+    module: "expenses",
+    rowEndpointPath: "/expenses/rows",
+  });
+  const columns = [
+    {
+      accessor: "id",
+      title: "ID",
+      width: 70,
+      render: (r: any) => <Link to={`/expenses/${r.id}`}>{r.id}</Link>,
+    },
+    { accessor: "date", title: "Date" },
+    { accessor: "category", title: "Category" },
+    { accessor: "details", title: "Details" },
+    {
+      accessor: "priceCost",
+      title: "Cost",
+      render: (r: any) => formatUSD(r.priceCost || 0),
+    },
+  ];
   return (
-    <div>
+    <Stack gap="lg">
       <ExpenseFindManager />
-      <BreadcrumbSet breadcrumbs={[{ label: "Expenses", href: "/expenses" }]} />
+      <Group justify="space-between" align="center" mb="sm">
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Expenses", href: "/expenses" }]}
+        />
+        <Button
+          component={Link}
+          to="/expenses/new"
+          variant="filled"
+          color="blue"
+        >
+          New
+        </Button>
+      </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
-      <NavDataTable
-        withRowBorders
-        records={rows as any}
-        totalRecords={total}
-        page={page}
-        onPageChange={(p: number) => onPageChange(p)}
-        recordsPerPage={perPage}
-        onRecordsPerPageChange={(n: number) => onPerPageChange(n)}
-        recordsPerPageOptions={[10, 20, 50, 100]}
-        autoFocusFirstRow
-        keyboardNavigation
-        {...buildRowNavHandlers("expenses", navigate)}
-        columns={[
-          idLinkColumn("expenses"),
-          dateColumn("date", "Date"),
-          simpleColumn("category", "Category"),
-          simpleColumn("details", "Details"),
-          { accessor: "priceCost", title: "Cost", render: (r: any) => formatUSD(r.priceCost) },
-        ]}
+      <Title order={4}>Expenses ({total})</Title>
+      <RefactoredNavDataTable
+        module="expenses"
+        records={records as any}
+        columns={columns as any}
+        fetching={fetching}
+        onActivate={(rec: any) => {
+          if (rec?.id != null) window.location.href = `/expenses/${rec.id}`;
+        }}
+        onReachEnd={() => {
+          if (!atEnd) requestMore();
+        }}
+        height={600}
       />
-    </div>
+    </Stack>
   );
 }

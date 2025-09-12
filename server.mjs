@@ -38,10 +38,22 @@ async function createServer() {
   } catch (e) {
     console.warn('[server.mjs] helmet unavailable, continuing without enhanced security headers');
   }
-  app.use((_, res, next) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); next(); });
+  // Removed blanket Content-Type header setter; Remix sets appropriate Content-Type per response.
   app.use(express.json());
   app.use(compression());
   app.use(express.static(path.join(root, 'public')));
+  // Diagnostic middleware: warn if Content-Type header already array-ified by some previous layer
+  app.use((req, res, next) => {
+    const origSet = res.setHeader.bind(res);
+    res.setHeader = (name, value) => {
+      if (name.toLowerCase() === 'content-type' && Array.isArray(value)) {
+        console.warn('[server.mjs] Attempt to set Content-Type as array', value, 'for', req.method, req.url);
+        value = value[0];
+      }
+      return origSet(name, value);
+    };
+    next();
+  });
 
   // Optional API routes (if present in legacy src directory). Wrap separately to avoid crash in prod image.
   try {

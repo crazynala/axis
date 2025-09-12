@@ -79,7 +79,8 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
   const setIdList = useCallback(
     (module: string, ids: Array<string | number>, complete: boolean) => {
       setState((prev) => {
-        if (prev && prev.module !== module) return prev; // different module active
+        // If switching modules, create a fresh base state instead of ignoring.
+        if (prev && prev.module !== module) prev = null as any;
         const base: RecordState =
           prev ||
           ({

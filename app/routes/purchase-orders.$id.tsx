@@ -1,20 +1,26 @@
-import type { LoaderFunctionArgs, ActionFunctionArgs, MetaFunction } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  ActionFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { BreadcrumbSet, useRecordBrowser, useMasterTable, useRecordBrowserShortcuts, useInitGlobalFormContext, RecordNavButtons } from "@aa/timber";
+import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { Card, Group, Stack, Title, Table, Button } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { NumberInput, Modal } from "@mantine/core";
 import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
 import { ProductSelect, type ProductOption } from "../components/ProductSelect";
-import { useState } from "react";
-import { formatQuantity } from "../utils/format";
+import { useState, useEffect } from "react";
+import { useRecordContext } from "../record/RecordContext";
 import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.purchaseOrder ? `PO ${data.purchaseOrder.id}` : "Purchase Order",
+    title: data?.purchaseOrder
+      ? `PO ${data.purchaseOrder.id}`
+      : "Purchase Order",
   },
 ];
 
@@ -111,23 +117,29 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function PurchaseOrderDetailRoute() {
-  const { purchaseOrder, totals, productOptions } = useLoaderData<typeof loader>();
-  useRecordBrowserShortcuts(purchaseOrder.id);
-  const { records: masterRecords } = useMasterTable();
+  const { purchaseOrder, totals, productOptions } =
+    useLoaderData<typeof loader>();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
   const submit = useSubmit();
-  const form = useForm({
-    defaultValues: purchaseOrder,
-  });
+
+  // Register current id in RecordContext
+  useEffect(() => {
+    setCurrentId(purchaseOrder.id);
+  }, [purchaseOrder.id, setCurrentId]);
+
+  const form = useForm({ defaultValues: purchaseOrder });
   useInitGlobalFormContext(form as any, (values: any) => {
     const fd = new FormData();
     fd.set("_intent", "po.update");
     fd.set("date", values.date || "");
     submit(fd, { method: "post" });
   });
-  const recordBrowser = useRecordBrowser(purchaseOrder.id, masterRecords);
+
+  // Local state for adding a line
   const [addOpen, setAddOpen] = useState(false);
   const [newProductId, setNewProductId] = useState<number | null>(null);
   const [newQtyOrdered, setNewQtyOrdered] = useState<number>(1);
+
   const doAddLine = () => {
     const fd = new FormData();
     fd.set("_intent", "line.add");
@@ -135,12 +147,12 @@ export default function PurchaseOrderDetailRoute() {
     fd.set("quantityOrdered", String(newQtyOrdered || 0));
     submit(fd, { method: "post" });
   };
-  const openPrint = () => {
+
+  const openPrint = () =>
     window.open(`/purchase-orders/${purchaseOrder.id}/print`, "_blank");
-  };
-  const downloadPdf = () => {
+  const downloadPdf = () =>
     window.open(`/purchase-orders/${purchaseOrder.id}/pdf`, "_blank");
-  };
+
   const emailDraft = async () => {
     const resp = await fetch(`/purchase-orders/${purchaseOrder.id}/pdf`);
     const arr = new Uint8Array(await resp.arrayBuffer());
@@ -160,6 +172,29 @@ export default function PurchaseOrderDetailRoute() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Keyboard shortcuts: Cmd/Ctrl + Left/Right to move between records
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(purchaseOrder.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/purchase-orders/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(purchaseOrder.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/purchase-orders/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [purchaseOrder.id, nextId, prevId]);
+
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -182,7 +217,26 @@ export default function PurchaseOrderDetailRoute() {
           <Button size="xs" variant="light" onClick={emailDraft}>
             Email draft (.eml)
           </Button>
-          <RecordNavButtons recordBrowser={recordBrowser} />
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const p = prevId(purchaseOrder.id as any);
+              if (p != null) window.location.href = `/purchase-orders/${p}`;
+            }}
+          >
+            Prev
+          </Button>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const n = nextId(purchaseOrder.id as any);
+              if (n != null) window.location.href = `/purchase-orders/${n}`;
+            }}
+          >
+            Next
+          </Button>
         </Group>
       </Group>
 
@@ -206,10 +260,25 @@ export default function PurchaseOrderDetailRoute() {
             </Button>
           </Group>
         </Card.Section>
-        <Modal opened={addOpen} onClose={() => setAddOpen(false)} title="Add PO Line" centered>
+        <Modal
+          opened={addOpen}
+          onClose={() => setAddOpen(false)}
+          title="Add PO Line"
+          centered
+        >
           <Stack gap="sm">
-            <ProductSelect label="Product" value={newProductId} onChange={setNewProductId} options={productOptions as unknown as ProductOption[]} />
-            <NumberInput label="Qty Ordered" value={newQtyOrdered as any} onChange={(v) => setNewQtyOrdered(Number(v) || 0)} min={0} />
+            <ProductSelect
+              label="Product"
+              value={newProductId}
+              onChange={setNewProductId}
+              options={productOptions as unknown as ProductOption[]}
+            />
+            <NumberInput
+              label="Qty Ordered"
+              value={newQtyOrdered as any}
+              onChange={(v) => setNewQtyOrdered(Number(v) || 0)}
+              min={0}
+            />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAddOpen(false)}>
                 Cancel
@@ -245,7 +314,15 @@ export default function PurchaseOrderDetailRoute() {
                     name={`lines.${idx}.quantityOrdered` as any}
                     control={form.control}
                     defaultValue={l.quantityOrdered ?? 0}
-                    render={({ field }) => <NumberInput {...field} hideControls allowNegative={false} min={0} w="5rem" />}
+                    render={({ field }) => (
+                      <NumberInput
+                        {...field}
+                        hideControls
+                        allowNegative={false}
+                        min={0}
+                        w="5rem"
+                      />
+                    )}
                   />
                 </Table.Td>
                 <Table.Td>
@@ -253,7 +330,15 @@ export default function PurchaseOrderDetailRoute() {
                     name={`lines.${idx}.quantity` as any}
                     control={form.control}
                     defaultValue={l.quantity ?? 0}
-                    render={({ field }) => <NumberInput {...field} hideControls allowNegative={false} min={0} w="5rem" />}
+                    render={({ field }) => (
+                      <NumberInput
+                        {...field}
+                        hideControls
+                        allowNegative={false}
+                        min={0}
+                        w="5rem"
+                      />
+                    )}
                   />
                 </Table.Td>
                 <Table.Td>{l.qtyShipped ?? ""}</Table.Td>

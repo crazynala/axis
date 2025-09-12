@@ -3,7 +3,7 @@ import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
 import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRecords } from "../record/RecordContext";
 import { SavedViews } from "../components/find/SavedViews";
 import { useHybridWindow } from "../record/useHybridWindow";
@@ -12,7 +12,7 @@ import { useHybridWindow } from "../record/useHybridWindow";
 export default function InvoicesIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { state } = useRecords();
+  const { state, currentId } = useRecords();
   const { records, atEnd, loading, fetching, requestMore, missingIds, total } =
     useHybridWindow({
       module: "invoices",
@@ -46,7 +46,29 @@ export default function InvoicesIndexRoute() {
     };
   }, []);
 
-  // windowing handled by hook
+  // Auto-expand window to include currentId when landing on index from detail.
+  const { idList } = state || ({} as any);
+  const ensuredRef = useRef(false);
+  useEffect(() => {
+    if (!currentId) return;
+    if (ensuredRef.current) return;
+    if (!idList || !idList.length) return;
+    const idx = idList.indexOf(currentId as any);
+    if (idx === -1) return;
+    // If currentId is outside visible window, request window expansion until it is (use setVisibleCount via requestMore loop)
+    if (idx >= records.length) {
+      // Increase visible window progressively until we cover idx
+      const needed = idx + 1;
+      // setVisibleCount isn't exposed here, but requestMore increases in fixed increments; loop until enough
+      let safety = 0;
+      while (records.length < needed && safety < 20) {
+        requestMore();
+        safety++;
+      }
+    }
+    // Mark that we've ensured initial inclusion; scrolling handled by table effect when row renders
+    ensuredRef.current = true;
+  }, [currentId, idList, records.length, requestMore]);
 
   return (
     <div>

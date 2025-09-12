@@ -10,13 +10,8 @@ import {
   useNavigation,
   useSubmit,
 } from "@remix-run/react";
-import {
-  useInitGlobalFormContext,
-  useRecordBrowserShortcuts,
-  RecordNavButtons,
-  useRecordBrowser,
-  useMasterTable,
-} from "@aa/timber";
+import { useInitGlobalFormContext } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
 import { Button, Checkbox, Group, Stack, Text, Title } from "@mantine/core";
 import { CompanyDetailForm } from "../components/CompanyDetailForm";
 import { Controller, useForm } from "react-hook-form";
@@ -67,10 +62,33 @@ export default function CompanyDetailRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
-  // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
-  useRecordBrowserShortcuts(company.id);
-  const { records: masterRecords } = useMasterTable();
-  const recordBrowser = useRecordBrowser(company.id, masterRecords);
+  const { setCurrentId, nextId, prevId, getPathForId } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(company.id);
+  }, [company.id, setCurrentId]);
+  const navigateTo = (targetId: number | null | undefined) => {
+    if (targetId == null) return;
+    window.location.href = getPathForId(targetId) || `/companies/${targetId}`;
+  };
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        (e.key === "ArrowLeft" || e.key === "ArrowRight")
+      ) {
+        e.preventDefault();
+        if (e.key === "ArrowLeft") {
+          const t = prevId(company.id);
+          navigateTo(typeof t === "number" ? t : Number(t) || null);
+        } else {
+          const t = nextId(company.id);
+          navigateTo(typeof t === "number" ? t : Number(t) || null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [company.id, nextId, prevId]);
 
   const form = useForm<{
     name: string;
@@ -136,7 +154,28 @@ export default function CompanyDetailRoute() {
       <Group justify="space-between" align="center">
         <Title order={2}>{company.name || `Company #${company.id}`}</Title>
         <Group>
-          <RecordNavButtons recordBrowser={recordBrowser} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                const t = prevId(company.id);
+                navigateTo(typeof t === "number" ? t : Number(t) || null);
+              }}
+              disabled={prevId(company.id) == null}
+            >
+              ◀ Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const t = nextId(company.id);
+                navigateTo(typeof t === "number" ? t : Number(t) || null);
+              }}
+              disabled={nextId(company.id) == null}
+            >
+              Next ▶
+            </button>
+          </div>
           <Link to="/companies">Back</Link>
         </Group>
       </Group>

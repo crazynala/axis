@@ -6,16 +6,12 @@ import type {
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  useMasterTable,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-} from "@aa/timber";
-import { Card, Divider, Group, Stack, Title } from "@mantine/core";
+import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
+import { Card, Divider, Group, Stack, Title, Button } from "@mantine/core";
 import { ExpenseDetailForm } from "../components/ExpenseDetailForm";
 import { useForm } from "react-hook-form";
+import { useEffect } from "react";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   { title: data?.expense ? `Expense ${data.expense.id}` : "Expense" },
@@ -55,9 +51,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function ExpenseDetailRoute() {
   const { expense } = useLoaderData<typeof loader>();
-  useRecordBrowserShortcuts(expense.id);
-  const { records: masterRecords } = useMasterTable();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
   const submit = useSubmit();
+  // Register current id for global prev/next navigation
+  useEffect(() => {
+    setCurrentId(expense.id);
+  }, [expense.id, setCurrentId]);
   const form = useForm({
     defaultValues: {
       id: expense.id,
@@ -82,7 +81,28 @@ export default function ExpenseDetailRoute() {
     fd.set("date", values.date || "");
     submit(fd, { method: "post" });
   });
-  const recordBrowser = useRecordBrowser(expense.id, masterRecords);
+  // Keyboard shortcuts for navigation (Cmd/Ctrl + Arrow)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(expense.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/expenses/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(expense.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/expenses/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [expense.id, nextId, prevId]);
+
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -92,8 +112,29 @@ export default function ExpenseDetailRoute() {
             { label: String(expense.id), href: `/expenses/${expense.id}` },
           ]}
         />
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const p = prevId(expense.id as any);
+              if (p != null) window.location.href = `/expenses/${p}`;
+            }}
+          >
+            Prev
+          </Button>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const n = nextId(expense.id as any);
+              if (n != null) window.location.href = `/expenses/${n}`;
+            }}
+          >
+            Next
+          </Button>
+        </Group>
       </Group>
-
       <ExpenseDetailForm mode="edit" form={form as any} expense={expense} />
     </Stack>
   );

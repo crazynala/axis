@@ -56,6 +56,7 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
   // Track last currentId to detect genuine selection change separate from record batch expansion
   const lastIdRef = useRef<any>(null);
   const initialScrollDoneRef = useRef(false);
+  const pendingScrollRef = useRef(false);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -85,11 +86,19 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     if (row) {
       row.classList.add(activeClassName);
       row.setAttribute("aria-selected", "true");
+      row.setAttribute("tabIndex", "-1");
       const rowRect = row.getBoundingClientRect();
       const parentRect = el.getBoundingClientRect();
       if (rowRect.top < parentRect.top || rowRect.bottom > parentRect.bottom) {
         row.scrollIntoView({ block: "center" });
       }
+      try {
+        row.focus({ preventScroll: true });
+      } catch {}
+      pendingScrollRef.current = false;
+    } else {
+      // Row not yet rendered (maybe window not large enough or hydration pending) -> attempt after next records update
+      pendingScrollRef.current = true;
     }
     const all = el.querySelectorAll<HTMLTableRowElement>(
       "tbody tr[data-row-id]"
@@ -102,6 +111,28 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     });
     initialScrollDoneRef.current = true;
   }, [currentId, activeClassName]);
+
+  // Retry pending scroll once records update if needed
+  useEffect(() => {
+    if (!pendingScrollRef.current || currentId == null) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const row = el.querySelector<HTMLTableRowElement>(
+      `tbody tr[data-row-id="${currentId}"]`
+    );
+    if (row) {
+      row.classList.add(activeClassName);
+      row.setAttribute("aria-selected", "true");
+      row.setAttribute("tabIndex", "-1");
+      try {
+        row.scrollIntoView({ block: "center" });
+      } catch {}
+      try {
+        row.focus({ preventScroll: true });
+      } catch {}
+      pendingScrollRef.current = false;
+    }
+  }, [records, currentId, activeClassName]);
 
   // Keyboard navigation: up/down/home/end sets currentId
   useEffect(() => {

@@ -4,7 +4,7 @@ import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
 import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRecords } from "../record/RecordContext";
 import { useHybridWindow } from "../record/useHybridWindow";
 
@@ -13,7 +13,7 @@ export const meta = () => [{ title: "Products" }];
 export default function ProductsIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { state } = useRecords();
+  const { state, currentId } = useRecords();
   const { records, atEnd, loading, requestMore, missingIds, total } =
     useHybridWindow({
       module: "products",
@@ -35,6 +35,24 @@ export default function ProductsIndexRoute() {
     window.addEventListener("resize", calc);
     return () => window.removeEventListener("resize", calc);
   }, []);
+  // Ensure currentId row included when returning from detail
+  const ensuredRef = useRef(false);
+  useEffect(() => {
+    if (!currentId) return;
+    if (ensuredRef.current) return;
+    const idList = state?.idList || [];
+    const idx = idList.indexOf(currentId as any);
+    if (idx === -1) return;
+    if (idx >= records.length) {
+      let safety = 0;
+      while (records.length <= idx && safety < 20) {
+        requestMore();
+        safety++;
+      }
+    }
+    ensuredRef.current = true;
+  }, [currentId, state?.idList, records.length, requestMore]);
+
   return (
     <Stack gap="lg">
       <ProductFindManager />

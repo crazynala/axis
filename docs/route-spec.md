@@ -35,6 +35,45 @@ Last updated: 2025-09-09
   - Server pino; warn/error beacons to `/log`
   - Admin persists levels via Prisma `SavedView` (module=log, name=levels)
 
+### Hybrid Roster + Windowed Hydration Pattern (Invoices, Products – expanding to others)
+
+- Purpose: Replace classic page/perPage pagination with a high‑performance, stable navigation model that supports:
+  - Fast prev/next (record browser) across very large result sets (tens of thousands) without loading every row
+  - Seamless infinite scroll (virtual style) while preserving a canonical ordering
+  - Stable selection retention when moving between index and detail routes
+  - Cheap re-query of filtered ID roster while reusing previously hydrated row objects
+- Core Data Structures (RecordContext):
+  - `module`: current logical module key (e.g. `invoices`, `products`)
+  - `idList`: ordered array of numeric IDs (capped; current cap ~50k) representing the full result roster for active filters/search/sort
+  - `idIndexMap`: Map<number, index> for O(1) navigation and inclusion checks
+  - `rowsMap`: Sparse cache `{ id -> hydratedRow }` populated on demand via batch hydration endpoint
+  - `currentId`: the active (selected) record id (persisted across navigation)
+- Window Manager (`useHybridWindow`):
+  - Maintains a sliding window (`start`, `endExclusive`) into `idList` sized to cover viewport + overscan
+  - Derives `missingIds` (in-window IDs not yet hydrated) and batches fetches to `/module/rows?ids=...`
+  - Distinguishes `fetching` (network in flight) from `loading` (initial roster not yet ready)
+  - Tracks “orphans” (requested IDs still missing after 2 fetch attempts) to avoid spinner lock
+  - Supports imperative expansion to ensure the selected record is within the active window (selection inclusion loop)
+- Scroll & Selection Behavior:
+  - Auto-scroll only when `currentId` changes (prevents jank when window expands for other reasons)
+  - On index mount, if selection lies outside current window, widen window progressively until included (bounded)
+  - Pending scroll retry: if the target row DOM not yet present (hydration lag) schedule a short retry sequence
+- Batch Hydration Endpoints:
+  - Pattern: `/<module>/rows?ids=1,2,3` returns minimal row objects needed for index table
+  - Server may return a subset (e.g., filtered out or missing) – client tolerates sparsity
+- Roster Refresh (filters/search changes):
+  - Layout loader recomputes ID roster + initialRow slice (first window) and calls `setIdList` (module aware; resets state when module key changes)
+  - Existing cached rows reused if still relevant
+- Record Browser Integration:
+  - Uses `idList` for next/prev instead of visible paginated page
+  - Displays positional index 1-based: `idIndex + 1 / idList.length`
+- Extensibility Guidelines:
+
+  - Provide layout route loader that returns: `{ idList, initialRows, total, ...filterMeta }`
+  - Implement `rows` resource route for batch hydration
+  - Index route uses `useHybridWindow` + `RefactoredNavDataTable`
+  - Detail route sets `currentId` on mount; does NOT clear it on unmount
+
 - Auth screens (no AppShell)
   - The `/login` route renders without the main AppShell/nav. Root checks `location.pathname === "/login"` and renders `<Outlet />` directly.
 
@@ -149,12 +188,12 @@ Last updated: 2025-09-09
 ## Products (`/products`)
 
 - Layout (`app/routes/products.tsx`)
-  - Loader: loads minimal product list [{ id, name, sku }] for master table
-  - Wraps children in `MasterTableProvider initialRecords={products}`
+  - Hybrid loader: returns `{ idList, initialRows, total, filterMeta }` – full ordered ID roster (capped) + first hydrated slice
+  - Registers roster with `RecordContext` (`module = products`); resets prior module state when switching
+  - Recomputes on filter/search/sort changes (deterministic ordering)
 - Index (`app/routes/products._index.tsx`)
-  - Table params: page, perPage, q, sort/dir, filters
-  - Default sort: id asc; default perPage: user preference
-  - Searchable fields: name, sku, type
+  - Hybrid infinite scroll window over `idList` (replaces page/perPage)
+  - Query params still express search (name, sku, type) and filters; roster loader reads them
   - Filters:
     - sku: contains (insensitive)
     - name: contains (insensitive)
@@ -163,11 +202,15 @@ Last updated: 2025-09-09
     - batch: `batchTrackingEnabled` (bool)
     - minCost: `costPrice >=`
     - maxCost: `costPrice <=`
-  - Saved Views: list + active via `?view` param
-  - Columns (minimum): ID, SKU, Name (additional columns may be configured)
+  - Saved Views: persist filters/search + (future) advanced multi-request blob
+  - Batch hydration endpoint `/products/rows?ids=...` supplies sparse rows
+  - Ensures selected product is in-window (expands window before scroll) and auto-scrolls only on selection change
+  - Columns (baseline): ID, SKU, Name (+ extensible extras)
+  - Keyboard nav: ↑ ↓ PageUp PageDown Home End; active row highlighted
   - Actions: navigate to detail; apply filters/sorts/search; choose saved view
-  - Record Browser: navigates across current product result set
+  - Record Browser: traverses full roster (`idList`), not just hydrated slice
 - Detail (`/products/:id`)
+  - Sets `currentId` on mount (persists selection when index remounts)
   - Fields: ID, SKU, Name (others may include type/stock flags/costs)
   - Actions: edit/save (if implemented)
   - Stock by Batch
@@ -231,16 +274,22 @@ Last updated: 2025-09-09
 
 ## Invoices (`/invoices`)
 
-- Layout: provides master list to Record Browser
-- Index
+- Layout
+  - Hybrid loader returns `{ idList, initialRows, total, filterMeta }` and seeds `RecordContext` (`module = invoices`)
+- Index (Hybrid Infinite Scroll)
   - Columns: ID, Code, Date, Company, Amount, Status
-  - Company shows the related company name when present
-  - Amount is computed as sum(priceSell × qty) across lines for each invoice
-  - Pagination and per-page dropdown wired to URL
+  - Company shows related company name when present
+  - Amount = sum(priceSell × qty) across lines per invoice
+  - Infinite window over full ordered `idList` (classic pagination removed)
+  - Batch hydration via `/invoices/rows?ids=...` (sparse; tolerant of omissions)
+  - Auto-expands window to include selected invoice and scrolls only on selection change
+  - Orphan detection prevents spinner lock; separates `fetching` from overall `loading`
+  - Keyboard nav + active row highlight matching Products implementation
 - Detail
-  - Editable: code, date, status, notes, customer (CompanySelect with filter=customer)
+  - Sets `currentId` on mount (stable across navigation)
+  - Editable: code, date, status, notes, customer (CompanySelect filter=customer)
   - Lines table: product, qty, cost, sell; totals row (Qty, Total Cost, Total Sell)
-  - Record Browser: prev/next across current invoice list
+  - Record Browser uses roster ordering (prev/next not limited by hydration)
 
 ## Shipments (`/shipments`)
 

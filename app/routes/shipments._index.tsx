@@ -4,17 +4,11 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useLocation,
-  useNavigate,
-} from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/NavDataTable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
-import { Button, Group } from "@mantine/core";
+import { Button, Group, Stack, Title } from "@mantine/core";
 import { ShipmentFindManager } from "../components/ShipmentFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
@@ -23,6 +17,9 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../find/multiFind";
+import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import { useHybridWindow } from "../record/useHybridWindow";
+import { useRecordContext } from "../record/RecordContext";
 
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
@@ -145,9 +142,23 @@ export async function loader(args: LoaderFunctionArgs) {
     },
   });
   if (findWhere) prismaArgs.where = findWhere;
-  const [rows, total] = await Promise.all([
-    prisma.shipment.findMany({
-      ...prismaArgs,
+  // Hybrid roster subset
+  const ID_CAP = 50000;
+  const idRows = await prisma.shipment.findMany({
+    where: prismaArgs.where,
+    orderBy: prismaArgs.orderBy || { id: "asc" },
+    select: { id: true },
+    take: ID_CAP,
+  });
+  const idList = idRows.map((r) => r.id);
+  const idListComplete = idRows.length < ID_CAP;
+  const INITIAL_COUNT = 100;
+  const initialIds = idList.slice(0, INITIAL_COUNT);
+  let initialRows: any[] = [];
+  if (initialIds.length) {
+    initialRows = await prisma.shipment.findMany({
+      where: { id: { in: initialIds } },
+      orderBy: { id: "asc" },
       select: {
         id: true,
         date: true,
@@ -158,14 +169,13 @@ export async function loader(args: LoaderFunctionArgs) {
         companySender: { select: { name: true } },
         companyReceiver: { select: { name: true } },
       },
-    }),
-    prisma.shipment.count({ where: prismaArgs.where }),
-  ]);
+    });
+  }
   return json({
-    rows,
-    total,
-    page: baseParams.page,
-    perPage: baseParams.perPage,
+    idList,
+    idListComplete,
+    initialRows,
+    total: idList.length,
     views,
     activeView: viewName || null,
   });
@@ -200,28 +210,41 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ShipmentsIndexRoute() {
-  const data = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const onPageChange = (page: number) => {
-    const url = new URL(
-      location.pathname + location.search,
-      window.location.origin
-    );
-    url.searchParams.set("page", String(page));
-    navigate(url.pathname + "?" + url.searchParams.toString());
-  };
-  const onPerPageChange = (pp: number) => {
-    const url = new URL(
-      location.pathname + location.search,
-      window.location.origin
-    );
-    url.searchParams.set("perPage", String(pp));
-    url.searchParams.set("page", "1");
-    navigate(url.pathname + "?" + url.searchParams.toString());
-  };
+  const { idList, idListComplete, initialRows, total, views, activeView } =
+    useLoaderData<typeof loader>();
+  const { records, fetching, requestMore, atEnd } = useHybridWindow({
+    module: "shipments",
+    rowEndpointPath: "/shipments/rows",
+  });
+  const columns = [
+    {
+      accessor: "id",
+      title: "ID",
+      width: 70,
+      render: (r: any) => <Link to={`/shipments/${r.id}`}>{r.id}</Link>,
+    },
+    {
+      accessor: "date",
+      title: "Date",
+      render: (r: any) => (r.date ? new Date(r.date).toLocaleDateString() : ""),
+    },
+    { accessor: "type", title: "Type" },
+    { accessor: "shipmentType", title: "Ship Type" },
+    { accessor: "status", title: "Status" },
+    { accessor: "trackingNo", title: "Tracking" },
+    {
+      accessor: "companySender.name",
+      title: "From",
+      render: (r: any) => r.companySender?.name || "",
+    },
+    {
+      accessor: "companyReceiver.name",
+      title: "To",
+      render: (r: any) => r.companyReceiver?.name || "",
+    },
+  ];
   return (
-    <div>
+    <Stack gap="lg">
       <ShipmentFindManager />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
@@ -236,53 +259,21 @@ export default function ShipmentsIndexRoute() {
           New
         </Button>
       </Group>
-      <SavedViews
-        views={(data as any).views || []}
-        activeView={(data as any).activeView}
-      />
-      <NavDataTable
-        withRowBorders
-        records={data.rows as any}
-        totalRecords={data.total}
-        page={data.page}
-        onPageChange={(p: number) => onPageChange(p)}
-        recordsPerPage={data.perPage}
-        onRecordsPerPageChange={(n: number) => onPerPageChange(n)}
-        recordsPerPageOptions={[10, 20, 50, 100]}
-        autoFocusFirstRow
-        keyboardNavigation
-        onRowActivate={(rec: any) => {
-          if (rec?.id != null) navigate(`/shipments/${rec.id}`);
+      <SavedViews views={views as any} activeView={activeView as any} />
+      <Title order={4}>Shipments ({total})</Title>
+      <RefactoredNavDataTable
+        module="shipments"
+        records={records as any}
+        columns={columns as any}
+        fetching={fetching}
+        onActivate={(rec: any) => {
+          if (rec?.id != null) window.location.href = `/shipments/${rec.id}`;
         }}
-        onRowClick={(rec: any) => {
-          if (rec?.id != null) navigate(`/shipments/${rec.id}`);
+        onReachEnd={() => {
+          if (!atEnd) requestMore();
         }}
-        columns={[
-          {
-            accessor: "id",
-            render: (r: any) => <Link to={`/shipments/${r.id}`}>{r.id}</Link>,
-          },
-          {
-            accessor: "date",
-            render: (r: any) =>
-              r.date ? new Date(r.date).toLocaleDateString() : "",
-          },
-          { accessor: "type" },
-          { accessor: "shipmentType", title: "Ship Type" },
-          { accessor: "status" },
-          { accessor: "trackingNo", title: "Tracking" },
-          {
-            accessor: "companySender.name",
-            title: "From",
-            render: (r: any) => r.companySender?.name ?? "",
-          },
-          {
-            accessor: "companyReceiver.name",
-            title: "To",
-            render: (r: any) => r.companyReceiver?.name ?? "",
-          },
-        ]}
+        height={600}
       />
-    </div>
+    </Stack>
   );
 }

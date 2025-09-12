@@ -1,14 +1,28 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useNavigation, useSearchParams, useNavigate, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  useNavigation,
+  useLoaderData,
+  useSubmit,
+} from "@remix-run/react";
 import { Button, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "../../packages/timber";
-// Replaced raw mantine DataTable with keyboard-enhanced NavDataTable
-import { NavDataTable } from "../components/NavDataTable";
+import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import { useHybridWindow } from "../record/useHybridWindow";
+import { useRecordContext } from "../record/RecordContext";
 import { CompanyFindManagerNew } from "../components/CompanyFindManagerNew";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import { prisma } from "../utils/prisma.server";
 
@@ -32,13 +46,22 @@ export async function loader(args: LoaderFunctionArgs) {
         q: (url.searchParams.get("q") || saved.q || null) as any,
         filters: { ...(saved.filters || {}), ...params.filters },
       };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) url.searchParams.set("findReqs", saved.filters.findReqs);
+      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
+        url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
-  const triKeys = ["isCarrier", "isCustomer", "isSupplier", "isInactive", "isActive"];
+  const triKeys = [
+    "isCarrier",
+    "isCustomer",
+    "isSupplier",
+    "isInactive",
+    "isActive",
+  ];
   const keys = ["name", "notes", ...triKeys];
   let findWhere: any = null;
-  const hasFindIndicators = keys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const hasFindIndicators =
+    keys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
@@ -46,8 +69,10 @@ export async function loader(args: LoaderFunctionArgs) {
       if (v) values[k] = v;
     }
     const simple: any = {};
-    if (values.name) simple.name = { contains: values.name, mode: "insensitive" };
-    if (values.notes) simple.notes = { contains: values.notes, mode: "insensitive" };
+    if (values.name)
+      simple.name = { contains: values.name, mode: "insensitive" };
+    if (values.notes)
+      simple.notes = { contains: values.notes, mode: "insensitive" };
     for (const tk of triKeys) {
       const raw = values[tk];
       if (raw === "true") simple[tk] = true;
@@ -70,7 +95,11 @@ export async function loader(args: LoaderFunctionArgs) {
   }
   let baseParams = findWhere ? { ...effective, page: 1 } : effective;
   if (baseParams.filters) {
-    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacy,
+      ...rest
+    } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
@@ -78,9 +107,22 @@ export async function loader(args: LoaderFunctionArgs) {
     searchableFields: ["name", "notes"],
   });
   if (findWhere) prismaArgs.where = findWhere;
-  const [rows, total] = await Promise.all([
-    prisma.company.findMany({
-      ...prismaArgs,
+  // Hybrid roster loader portion (mirrors companies.tsx logic but includes filtering)
+  const ID_CAP = 50000;
+  const idRows = await prisma.company.findMany({
+    where: prismaArgs.where,
+    orderBy: prismaArgs.orderBy || { id: "asc" },
+    select: { id: true },
+    take: ID_CAP,
+  });
+  const idList = idRows.map((r) => r.id);
+  const idListComplete = idRows.length < ID_CAP;
+  const INITIAL_COUNT = 100;
+  const initialIds = idList.slice(0, INITIAL_COUNT);
+  let initialRows: any[] = [];
+  if (initialIds.length) {
+    initialRows = await prisma.company.findMany({
+      where: { id: { in: initialIds } },
       select: {
         id: true,
         name: true,
@@ -91,14 +133,14 @@ export async function loader(args: LoaderFunctionArgs) {
         isInactive: true,
         isActive: true,
       },
-    }),
-    prisma.company.count({ where: prismaArgs.where }),
-  ]);
+      orderBy: { id: "asc" },
+    });
+  }
   return json({
-    rows,
-    total,
-    page: baseParams.page,
-    perPage: baseParams.perPage,
+    idList,
+    idListComplete,
+    initialRows,
+    total: idList.length,
     sort: baseParams.sort,
     dir: baseParams.dir,
     views,
@@ -135,116 +177,106 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CompaniesIndexRoute() {
-  const { rows, total, page, perPage, sort, dir, views, activeView } = useLoaderData<typeof loader>();
+  const {
+    idList,
+    idListComplete,
+    initialRows,
+    total,
+    views,
+    activeView,
+    sort,
+    dir,
+  } = useLoaderData<typeof loader>();
   const nav = useNavigation();
-  const busy = nav.state !== "idle";
-  const [sp] = useSearchParams();
-  const navigate = useNavigate();
-  const sortAccessor = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sort") : null) || sort || "id";
-  const sortDirection = ((typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("dir") : null) as any) || dir || "asc";
-
-  // New is handled in /companies/new; delete handled via this route's action
-
+  const fetching = nav.state !== "idle"; // only reflects URL changes; row fetches are separate
+  const { state } = useRecordContext();
+  // useHybridWindow handles window sizing + hydration (records = current window)
+  const {
+    records,
+    fetching: rowFetching,
+    requestMore,
+    atEnd,
+  } = useHybridWindow({
+    module: "companies",
+    rowEndpointPath: "/companies/rows",
+  });
+  // Auto ensure currentId inclusion (if selected elsewhere) – simplistic: run once on mount if current exists
+  // (Could be refined similar to invoices/products index implementations.)
+  const columns = [
+    {
+      accessor: "id",
+      title: "ID",
+      width: 70,
+      render: (r: any) => <Link to={`/companies/${r.id}`}>{r.id}</Link>,
+    },
+    {
+      accessor: "name",
+      title: "Name",
+      render: (r: any) => (
+        <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>
+      ),
+    },
+    {
+      accessor: "isCarrier",
+      title: "Carrier",
+      render: (r: any) => (r.isCarrier ? "Yes" : ""),
+    },
+    {
+      accessor: "isCustomer",
+      title: "Customer",
+      render: (r: any) => (r.isCustomer ? "Yes" : ""),
+    },
+    {
+      accessor: "isSupplier",
+      title: "Supplier",
+      render: (r: any) => (r.isSupplier ? "Yes" : ""),
+    },
+    {
+      accessor: "isInactive",
+      title: "Inactive",
+      render: (r: any) => (r.isInactive ? "Yes" : ""),
+    },
+    {
+      accessor: "isActive",
+      title: "Active",
+      render: (r: any) => (r.isActive ? "Yes" : "No"),
+    },
+    { accessor: "notes", title: "Notes" },
+  ];
   return (
     <Stack gap="lg">
       <CompanyFindManagerNew />
-      <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
+      <BreadcrumbSet
+        breadcrumbs={[{ label: "Companies", href: "/companies" }]}
+      />
       <SavedViews views={views as any} activeView={activeView as any} />
       <Title order={2}>Companies</Title>
-
       <section>
-        <Button component="a" href="/companies/new" variant="filled" color="blue">
+        <Button
+          component="a"
+          href="/companies/new"
+          variant="filled"
+          color="blue"
+        >
           New Company
         </Button>
       </section>
-
       <section>
         <Title order={4} mb="sm">
-          All Companies
+          All Companies ({total})
         </Title>
-        <NavDataTable
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          idAccessor="id"
-          records={rows as any}
-          totalRecords={total}
-          page={page}
-          recordsPerPage={perPage}
-          recordsPerPageOptions={[10, 20, 50, 100]}
-          fetching={busy}
-          autoFocusFirstRow
-          keyboardNavigation
-          onRowClick={(_record: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _record;
-            const id = rec?.id;
-            if (id != null) navigate(`/companies/${id}`);
+        <RefactoredNavDataTable
+          module="companies"
+          records={records as any}
+          columns={columns as any}
+          fetching={rowFetching}
+          onActivate={(rec: any) => {
+            if (rec?.id != null) window.location.href = `/companies/${rec.id}`;
           }}
-          onRowActivate={(rec: any) => {
-            if (rec?.id != null) navigate(`/companies/${rec.id}`);
+          onReachEnd={() => {
+            if (!atEnd) requestMore();
           }}
-          onPageChange={(p: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("page", String(p));
-            navigate(`?${next.toString()}`);
-          }}
-          onRecordsPerPageChange={(n: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("perPage", String(n));
-            next.set("page", "1");
-            navigate(`?${next.toString()}`);
-          }}
-          sortStatus={{
-            columnAccessor: sortAccessor,
-            direction: sortDirection as any,
-          }}
-          onSortStatusChange={({ columnAccessor, direction }: { columnAccessor: string; direction: any }) => {
-            const next = new URLSearchParams(sp);
-            next.set("sort", String(columnAccessor));
-            next.set("dir", direction);
-            navigate(`?${next.toString()}`);
-          }}
-          columns={[
-            {
-              accessor: "id",
-              title: "ID",
-              width: 70,
-              sortable: true,
-              render: (r: any) => <Link to={`/companies/${r.id}`}>{r.id}</Link>,
-            },
-            {
-              accessor: "name",
-              title: "Name",
-              sortable: true,
-              render: (r: any) => <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>,
-            },
-            {
-              accessor: "isCarrier",
-              title: "Carrier",
-              render: (r: any) => (r.isCarrier ? "Yes" : ""),
-            },
-            {
-              accessor: "isCustomer",
-              title: "Customer",
-              render: (r: any) => (r.isCustomer ? "Yes" : ""),
-            },
-            {
-              accessor: "isSupplier",
-              title: "Supplier",
-              render: (r: any) => (r.isSupplier ? "Yes" : ""),
-            },
-            {
-              accessor: "isInactive",
-              title: "Inactive",
-              render: (r: any) => (r.isInactive ? "Yes" : ""),
-            },
-            {
-              accessor: "isActive",
-              title: "Active",
-              render: (r: any) => (r.isActive ? "Yes" : "No"),
-            },
-            { accessor: "notes", title: "Notes" },
-          ]}
+          height={600}
         />
       </section>
     </Stack>

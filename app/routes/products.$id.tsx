@@ -59,6 +59,7 @@ import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { prisma } from "../utils/prisma.server";
 import { ProductFindManager } from "../components/ProductFindManager";
+import { useRecordContext } from "../record/RecordContext";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -375,6 +376,12 @@ export default function ProductDetailRoute() {
   const busy = nav.state !== "idle";
   // Register local keyboard shortcuts for navigating records
   useRecordBrowserShortcuts(product.id);
+  // Sync RecordContext currentId for global navigation consistency
+  const { setCurrentId } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(product.id);
+    // Do NOT clear on unmount; preserve selection like invoices module
+  }, [product.id, setCurrentId]);
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
 

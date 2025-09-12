@@ -6,16 +6,19 @@ import type {
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
+import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
 import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  useMasterTable,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-  RecordNavButtons,
-} from "@aa/timber";
-import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
+  Card,
+  Divider,
+  Group,
+  Stack,
+  Title,
+  Table,
+  Button,
+} from "@mantine/core";
 import { useForm } from "react-hook-form";
+import { useEffect } from "react";
 import { ShipmentDetailForm } from "../components/ShipmentDetailForm";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
@@ -96,10 +99,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function ShipmentDetailRoute() {
   const { shipment } = useLoaderData<typeof loader>();
-  console.log("Shipment in component:", shipment);
-  useRecordBrowserShortcuts(shipment.id);
-  const { records: masterRecords } = useMasterTable();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
   const submit = useSubmit();
+  useEffect(() => {
+    setCurrentId(shipment.id);
+  }, [shipment.id, setCurrentId]);
   const form = useForm({
     defaultValues: shipment,
     // id: shipment.id,
@@ -125,7 +129,28 @@ export default function ShipmentDetailRoute() {
     fd.set("dateReceived", values.dateReceived || "");
     submit(fd, { method: "post" });
   });
-  const recordBrowser = useRecordBrowser(shipment.id, masterRecords);
+  // Keyboard shortcuts for navigation
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(shipment.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/shipments/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(shipment.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/shipments/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [shipment.id, nextId, prevId]);
+
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -135,7 +160,28 @@ export default function ShipmentDetailRoute() {
             { label: String(shipment.id), href: `/shipments/${shipment.id}` },
           ]}
         />
-        <RecordNavButtons recordBrowser={recordBrowser} />
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const p = prevId(shipment.id as any);
+              if (p != null) window.location.href = `/shipments/${p}`;
+            }}
+          >
+            Prev
+          </Button>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const n = nextId(shipment.id as any);
+              if (n != null) window.location.href = `/shipments/${n}`;
+            }}
+          >
+            Next
+          </Button>
+        </Group>
       </Group>
 
       <ShipmentDetailForm mode="edit" form={form as any} shipment={shipment} />
