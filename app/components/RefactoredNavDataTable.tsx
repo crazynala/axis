@@ -65,7 +65,9 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     // Only auto-scroll when selection actually changed or first time we establish a currentId
     if (!changed && initialScrollDoneRef.current) {
       // Still update highlighting classes even if not scrolling
-      const all = el.querySelectorAll<HTMLTableRowElement>("tbody tr[data-row-id]");
+      const all = el.querySelectorAll<HTMLTableRowElement>(
+        "tbody tr[data-row-id]"
+      );
       all.forEach((tr) => {
         if (String(tr.getAttribute("data-row-id")) === String(currentId)) {
           tr.classList.add(activeClassName);
@@ -77,7 +79,9 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
       });
       return;
     }
-    const row = el.querySelector<HTMLTableRowElement>(`tbody tr[data-row-id="${currentId}"]`);
+    const row = el.querySelector<HTMLTableRowElement>(
+      `tbody tr[data-row-id="${currentId}"]`
+    );
     if (row) {
       row.classList.add(activeClassName);
       row.setAttribute("aria-selected", "true");
@@ -87,7 +91,9 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
         row.scrollIntoView({ block: "center" });
       }
     }
-    const all = el.querySelectorAll<HTMLTableRowElement>("tbody tr[data-row-id]");
+    const all = el.querySelectorAll<HTMLTableRowElement>(
+      "tbody tr[data-row-id]"
+    );
     all.forEach((tr) => {
       if (String(tr.getAttribute("data-row-id")) !== String(currentId)) {
         tr.classList.remove(activeClassName);
