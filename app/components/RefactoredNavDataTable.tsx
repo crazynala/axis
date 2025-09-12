@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import { DataTable as MantineDataTable } from "mantine-datatable";
 import { useRecordContext } from "../record/RecordContext";
 
@@ -53,15 +53,31 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     module,
   ]);
 
-  // Highlight & scroll active row into view when currentId changes
+  // Track last currentId to detect genuine selection change separate from record batch expansion
+  const lastIdRef = useRef<any>(null);
+  const initialScrollDoneRef = useRef(false);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     if (currentId == null) return;
-    // find row: look for cell containing id or data attribute we add
-    const row = el.querySelector<HTMLTableRowElement>(
-      `tbody tr[data-row-id="${currentId}"]`
-    );
+    const changed = lastIdRef.current !== currentId;
+    lastIdRef.current = currentId;
+    // Only auto-scroll when selection actually changed or first time we establish a currentId
+    if (!changed && initialScrollDoneRef.current) {
+      // Still update highlighting classes even if not scrolling
+      const all = el.querySelectorAll<HTMLTableRowElement>("tbody tr[data-row-id]");
+      all.forEach((tr) => {
+        if (String(tr.getAttribute("data-row-id")) === String(currentId)) {
+          tr.classList.add(activeClassName);
+          tr.setAttribute("aria-selected", "true");
+        } else {
+          tr.classList.remove(activeClassName);
+          tr.removeAttribute("aria-selected");
+        }
+      });
+      return;
+    }
+    const row = el.querySelector<HTMLTableRowElement>(`tbody tr[data-row-id="${currentId}"]`);
     if (row) {
       row.classList.add(activeClassName);
       row.setAttribute("aria-selected", "true");
@@ -71,17 +87,15 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
         row.scrollIntoView({ block: "center" });
       }
     }
-    // Clean up previous classes: remove class from other rows
-    const all = el.querySelectorAll<HTMLTableRowElement>(
-      "tbody tr[data-row-id]"
-    );
+    const all = el.querySelectorAll<HTMLTableRowElement>("tbody tr[data-row-id]");
     all.forEach((tr) => {
       if (String(tr.getAttribute("data-row-id")) !== String(currentId)) {
         tr.classList.remove(activeClassName);
         tr.removeAttribute("aria-selected");
       }
     });
-  }, [currentId, records, activeClassName, containerRef]);
+    initialScrollDoneRef.current = true;
+  }, [currentId, activeClassName]);
 
   // Keyboard navigation: up/down/home/end sets currentId
   useEffect(() => {

@@ -3,7 +3,6 @@ import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
-import helmet from 'helmet';
 import { createRequestHandler } from '@remix-run/express';
 import { broadcastDevReady } from '@remix-run/node';
 
@@ -22,10 +21,23 @@ async function loadDevBuild() {
 async function createServer() {
   const app = express();
   app.use(cors());
-  app.use(helmet.contentSecurityPolicy({
-    useDefaults: true,
-    directives: { upgradeInsecureRequests: null }
-  }));
+  // Optional helmet: dynamically import so build doesn't fail if dependency absent yet.
+  try {
+    const helmetPkg = await import('helmet');
+    const helmet = helmetPkg.default || helmetPkg;
+    // Apply a minimal CSP; relax upgradeInsecureRequests for mixed resource environments.
+    app.use(helmet());
+    if (helmet.contentSecurityPolicy) {
+      app.use(
+        helmet.contentSecurityPolicy({
+          useDefaults: true,
+          directives: { upgradeInsecureRequests: null }
+        })
+      );
+    }
+  } catch (e) {
+    console.warn('[server.mjs] helmet unavailable, continuing without enhanced security headers');
+  }
   app.use((_, res, next) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); next(); });
   app.use(express.json());
   app.use(compression());

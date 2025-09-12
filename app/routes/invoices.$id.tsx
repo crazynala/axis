@@ -176,9 +176,9 @@ export default function InvoiceDetailRoute() {
   const { invoice, totals, detailsById } = useLoaderData<typeof loader>();
   console.log("InvoiceDetailRoute invoice:", invoice);
   const { setCurrentId, state } = useRecordContext();
+  // Preserve currentId when navigating back to index: do not clear on unmount.
   useEffect(() => {
     setCurrentId(invoice.id);
-    return () => setCurrentId(null);
   }, [invoice.id, setCurrentId]);
   const submit = useSubmit();
   const form = useForm({
