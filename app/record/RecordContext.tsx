@@ -303,7 +303,8 @@ export const GlobalRecordBrowser: React.FC = () => {
     useRecordContext();
   const location = useLocation();
   const navigate = useNavigate();
-  if (!state || state.records.length === 0) return null;
+  // Allow rendering even before any hydrated rows if we have an idList (hybrid mode)
+  if (!state || (!state.idList && state.records.length === 0)) return null;
   // derive from path only if not explicitly set
   let derivedId: string | number | null = currentId;
   if (derivedId == null) {
@@ -314,8 +315,16 @@ export const GlobalRecordBrowser: React.FC = () => {
       derivedId = Number.isFinite(num) ? num : idPart;
     }
   }
-  const idx = derivedId != null ? state.indexById.get(derivedId) : undefined;
-  const total = state.records.length;
+  // Prefer identity roster ordering if present
+  let idx: number | undefined;
+  let total: number = 0;
+  if (state.idList && state.idIndexMap) {
+    total = state.idList.length;
+    if (derivedId != null) idx = state.idIndexMap.get(derivedId);
+  } else {
+    total = state.records.length;
+    if (derivedId != null) idx = state.indexById.get(derivedId);
+  }
   const isIndex = location.pathname === `/${state.module}`;
   const doNav = (targetId: string | number | null) => {
     if (targetId == null) return;

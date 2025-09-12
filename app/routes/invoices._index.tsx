@@ -13,29 +13,37 @@ export default function InvoicesIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { state } = useRecords();
-  const { records, atEnd, loading, requestMore, missingIds, total } =
+  const { records, atEnd, loading, fetching, requestMore, missingIds, total } =
     useHybridWindow({
       module: "invoices",
       initialWindow: 100,
       batchIncrement: 100,
     });
   const [tableHeight, setTableHeight] = useState(500);
+  const TABLE_SELECTOR = "[data-invoices-table-container]";
 
-  // Dynamic height calc
+  // Dynamic height calc: measure from table container top instead of header bottom
   useEffect(() => {
     const calc = () => {
-      const headerEl = document.querySelector(
-        "[data-invoices-header]"
+      const tableWrap = document.querySelector(
+        TABLE_SELECTOR
       ) as HTMLElement | null;
-      const top = headerEl ? headerEl.getBoundingClientRect().bottom : 0;
+      if (!tableWrap) return;
+      const top = tableWrap.getBoundingClientRect().top;
       const vh = window.innerHeight;
-      const marginBottom = 16;
+      const marginBottom = 24;
       const h = vh - top - marginBottom;
       if (h > 200) setTableHeight(h);
     };
+    const obs = new ResizeObserver(() => calc());
+    const headerEl = document.querySelector("[data-invoices-header]");
+    if (headerEl) obs.observe(headerEl);
     calc();
     window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
+    return () => {
+      window.removeEventListener("resize", calc);
+      obs.disconnect();
+    };
   }, []);
 
   // windowing handled by hook
@@ -121,33 +129,50 @@ export default function InvoicesIndexRoute() {
         </Group>
       </Group>
       <SavedViews views={[]} activeView={null} />
-      <RefactoredNavDataTable
-        module="invoices"
-        records={records}
-        height={tableHeight}
-        columns={[
-          {
-            accessor: "amount",
-            title: "Amount",
-            render: (r: any) => formatUSD(r.amount),
-          },
-          { accessor: "status" },
-        ]}
-        fetching={loading}
-        onActivate={(rec: any) => {
-          if (rec?.id != null) navigate(`/invoices/${rec.id}`);
-        }}
-        onReachEnd={() => requestMore()}
-        footer={
-          atEnd ? (
-            <span style={{ fontSize: 12 }}>End of results ({total})</span>
-          ) : missingIds.length ? (
-            <span>Loading rows…</span>
-          ) : (
-            <span style={{ fontSize: 11 }}>Scroll to load more…</span>
-          )
-        }
-      />
+      <div data-invoices-table-container>
+        <RefactoredNavDataTable
+          module="invoices"
+          records={records}
+          height={tableHeight}
+          columns={[
+            {
+              accessor: "id",
+              render: (r: any) => <Link to={`/invoices/${r.id}`}>{r.id}</Link>,
+            },
+            { accessor: "invoiceCode", title: "Code" },
+            {
+              accessor: "date",
+              render: (r: any) =>
+                r.date ? new Date(r.date).toLocaleDateString() : "",
+            },
+            {
+              accessor: "company.name",
+              title: "Company",
+              render: (r: any) => r.company?.name ?? "",
+            },
+            {
+              accessor: "amount",
+              title: "Amount",
+              render: (r: any) => formatUSD(r.amount),
+            },
+            { accessor: "status" },
+          ]}
+          fetching={fetching}
+          onActivate={(rec: any) => {
+            if (rec?.id != null) navigate(`/invoices/${rec.id}`);
+          }}
+          onReachEnd={() => requestMore()}
+          footer={
+            atEnd ? (
+              <span style={{ fontSize: 12 }}>End of results ({total})</span>
+            ) : fetching ? (
+              <span>Loading…</span>
+            ) : (
+              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+            )
+          }
+        />
+      </div>
     </div>
   );
 }

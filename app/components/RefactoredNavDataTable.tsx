@@ -156,42 +156,62 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     });
   }, [records, onActivate, setCurrentId]);
 
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el || !onReachEnd) return;
-    // If within 60px of bottom, request more
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
-      onReachEnd();
-    }
-  }, [onReachEnd]);
-
+  // Scroll / infinite load listener attaches to internal Mantine ScrollArea viewport, not the wrapper.
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.addEventListener("scroll", handleScroll);
-    // Auto focus for keyboard navigation when mounted
-    if (!el.contains(document.activeElement)) {
-      setTimeout(() => {
-        try {
-          el.focus();
-        } catch {}
+    const wrapper = containerRef.current;
+    if (!wrapper) return;
+    const findViewport = () =>
+      wrapper.querySelector<HTMLDivElement>(".mantine-ScrollArea-viewport");
+    let viewport = findViewport();
+    if (!viewport) {
+      // DataTable might render async; attempt a short delayed find
+      const t = setTimeout(() => {
+        viewport = findViewport();
+        if (viewport) attach();
       }, 0);
+      return () => clearTimeout(t);
     }
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    const handleScroll = () => {
+      if (!viewport || !onReachEnd) return;
+      if (
+        viewport.scrollTop + viewport.clientHeight >=
+        viewport.scrollHeight - 60
+      ) {
+        onReachEnd();
+      }
+    };
+    function attach() {
+      if (!viewport) return;
+      viewport.addEventListener("scroll", handleScroll);
+      // Focus viewport for keyboard nav if nothing focused inside already
+      if (!viewport.contains(document.activeElement)) {
+        setTimeout(() => {
+          try {
+            viewport?.focus();
+          } catch {}
+        }, 0);
+      }
+    }
+    attach();
+    return () => {
+      viewport?.removeEventListener("scroll", handleScroll);
+    };
+  }, [onReachEnd]);
 
   return (
     <div
       ref={containerRef as any}
-      style={{ position: "relative", height, overflow: "auto" }}
-      tabIndex={0}
+      style={{ position: "relative", height, overflow: "hidden" }}
       data-module={module}
     >
+      {/* Outer wrapper no longer scrolls; Mantine's internal ScrollArea handles scrolling to avoid double scrollbars. */}
       <MantineDataTable
         records={records}
         columns={columns as any}
         fetching={fetching}
         withTableBorder
+        height={height}
+        scrollAreaProps={{ tabIndex: 0 }}
       />
       {footer && (
         <div

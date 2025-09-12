@@ -23,6 +23,8 @@ export function useHybridWindow({
   const { state, addRows } = useRecords();
   const [visibleCount, setVisibleCount] = useState(initialWindow);
   const inflightIdsRef = useRef<Set<string | number>>(new Set());
+  const orphanCountsRef = useRef<Map<string | number, number>>(new Map());
+  const [fetching, setFetching] = useState(false);
   const idList = state?.module === module ? state.idList || [] : [];
   const rowsMap =
     state?.module === module ? state.rowsMap || new Map() : new Map();
@@ -38,10 +40,16 @@ export function useHybridWindow({
   );
 
   useEffect(() => {
-    if (!missingIds.length) return;
+    if (!missingIds.length) {
+      setFetching(false);
+      return;
+    }
     const chunks: Array<Array<string | number>> = [];
     let current: Array<string | number> = [];
     for (const id of missingIds) {
+      // Skip ids we've declared orphaned (failed multiple times)
+      const failCount = orphanCountsRef.current.get(id) || 0;
+      if (failCount >= 2) continue;
       if (inflightIdsRef.current.has(id)) continue;
       inflightIdsRef.current.add(id);
       current.push(id);
@@ -53,6 +61,7 @@ export function useHybridWindow({
     if (current.length) chunks.push(current);
     if (!chunks.length) return;
     let cancelled = false;
+    setFetching(true);
     (async () => {
       for (const chunk of chunks) {
         try {
@@ -65,6 +74,18 @@ export function useHybridWindow({
           const data = await resp.json();
           if (!cancelled && data.rows?.length) {
             addRows(module, data.rows, { updateRecordsArray: true });
+            // Determine which ids did not come back (orphans)
+            const returnedIds = new Set(
+              data.rows.map((r: any) =>
+                typeof r.id === "number" ? r.id : r.id
+              )
+            );
+            for (const reqId of chunk) {
+              if (!returnedIds.has(reqId)) {
+                const prev = orphanCountsRef.current.get(reqId) || 0;
+                orphanCountsRef.current.set(reqId, prev + 1);
+              }
+            }
           }
         } catch (_err) {
           // Silent for now; could plug into toast/logging
@@ -72,6 +93,7 @@ export function useHybridWindow({
           chunk.forEach((id) => inflightIdsRef.current.delete(id));
         }
       }
+      if (!cancelled) setFetching(false);
     })();
     return () => {
       cancelled = true;
@@ -94,7 +116,11 @@ export function useHybridWindow({
   );
 
   const atEnd = visibleCount >= total;
-  const loading = missingIds.length > 0;
+  // loading = there exist unresolved ids that are not orphaned
+  const loading = useMemo(
+    () => missingIds.some((id) => (orphanCountsRef.current.get(id) || 0) < 2),
+    [missingIds]
+  );
   const requestMore = useCallback(() => {
     if (atEnd) return;
     setVisibleCount((c) => Math.min(c + batchIncrement, total));
@@ -105,9 +131,13 @@ export function useHybridWindow({
     total,
     atEnd,
     loading,
+    fetching,
     requestMore,
     visibleCount,
     setVisibleCount,
     missingIds,
+    orphans: Array.from(orphanCountsRef.current.entries())
+      .filter(([, c]) => c >= 2)
+      .map(([id]) => id),
   };
 }

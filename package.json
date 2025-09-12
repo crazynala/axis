@@ -10,7 +10,7 @@
     "build": "remix build",
     "import:sample": "node scripts/import-sample-data.js",
     "seed:admin": "node scripts/seed-admin.js",
-    "debug": "node --inspect-brk server.js",
+  "debug": "node --inspect-brk server.mjs",
     "predev": "prisma generate",
     "dev": "vite",
     "dev:manual": "REMIX_DEV_ORIGIN=http://localhost:8002 sh -c 'remix dev --manual --port 8002 & sleep 1 && node server.cjs'",
