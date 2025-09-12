@@ -55,7 +55,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const pct =
     oldTotal !== 0 ? Math.round((delta / oldTotal) * 10000) / 100 : null;
 
-  return json({
+  const payload = {
     id,
     timings,
     compare: {
@@ -86,7 +86,20 @@ export async function loader({ params }: LoaderFunctionArgs) {
       byLocation: snap?.byLocation?.slice(0, 5),
       byBatch: snap?.byBatch?.slice(0, 5),
     },
-  });
+  };
+
+  const headers = new Headers();
+  headers.set(
+    "Server-Timing",
+    [
+      `old;dur=${timings.old_ms};desc=old_enrichment_ms`,
+      `new;dur=${timings.new_ms};desc=new_snapshot_ms`,
+      `total;dur=${timings.total_ms};desc=total_loader_ms`,
+    ].join(", ")
+  );
+  const reqId = crypto.randomUUID();
+  headers.set("X-Req-Id", reqId);
+  return json(payload, { headers });
 }
 
 export default function DebugProductPage() {

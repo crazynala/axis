@@ -14,8 +14,15 @@ function sumIntArray(arr: number[] | null | undefined): number {
 }
 
 // Create base client (keep global error logging enabled)
+const enableQueryLogging = process.env.PRISMA_QUERY_LOG === "1";
+const enableProfiling = process.env.PRISMA_PROF === "1";
 const base =
-  globalForPrisma.prismaBase || new PrismaClient({ log: ["error", "warn"] });
+  globalForPrisma.prismaBase ||
+  new PrismaClient({
+    log: enableQueryLogging
+      ? ["query", "info", "warn", "error"]
+      : ["warn", "error"],
+  });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prismaBase = base;
 
 // --- Import-time log suppression (scope-based) ---
@@ -28,6 +35,72 @@ base.$on("error", (e: PrismaLogEvent) => {
   }
   // Otherwise let Prisma print as normal (this handler currently no-ops to defer to default stderr output)
 });
+
+// Lightweight profiling store (in-memory, resettable) when PRISMA_PROF=1
+type QuerySample = {
+  id: number;
+  model?: string;
+  action?: string;
+  elapsedMs: number;
+  ts: number;
+} & {
+  target?: string; // raw SQL target when available
+};
+const prof: { samples: QuerySample[]; nextId: number } = {
+  samples: [],
+  nextId: 1,
+};
+if (enableProfiling) {
+  // Use $on('query') only when log includes 'query'; otherwise manual timing wrappers would be required.
+  base.$on("query", (e: any) => {
+    // Prisma provides duration in milliseconds (e.duration). We'll store a slim record.
+    prof.samples.push({
+      id: prof.nextId++,
+      model: e?.target?.split(" ")?.[0],
+      action: e?.model, // not always present
+      elapsedMs: e?.duration ?? 0,
+      ts: Date.now(),
+      target: e?.target,
+    });
+    // Keep only last 500 for memory safety
+    if (prof.samples.length > 500)
+      prof.samples.splice(0, prof.samples.length - 500);
+  });
+}
+
+export function getPrismaProfile() {
+  if (!enableProfiling) return { enabled: false };
+  const total = prof.samples.reduce((a, s) => a + s.elapsedMs, 0);
+  const byModel = new Map<string, { count: number; total: number }>();
+  for (const s of prof.samples) {
+    const key = s.model || "?";
+    const entry = byModel.get(key) || { count: 0, total: 0 };
+    entry.count++;
+    entry.total += s.elapsedMs;
+    byModel.set(key, entry);
+  }
+  const models = Array.from(byModel.entries())
+    .map(([model, v]) => ({
+      model,
+      count: v.count,
+      totalMs: v.total,
+      avgMs: v.total / v.count,
+    }))
+    .sort((a, b) => b.totalMs - a.totalMs);
+  return {
+    enabled: true,
+    totalQueries: prof.samples.length,
+    totalMs: total,
+    avgMs: prof.samples.length ? total / prof.samples.length : 0,
+    models,
+    recent: prof.samples.slice(-20),
+  };
+}
+
+export function resetPrismaProfile() {
+  prof.samples.length = 0;
+  prof.nextId = 1;
+}
 
 export async function runImporter<T>(
   label: string,
