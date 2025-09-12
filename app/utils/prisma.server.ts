@@ -676,6 +676,145 @@ async function attachProductAggregates<T extends { id?: number } | null>(
   return product;
 }
 
+// ---------------------------------------------------------------------------
+// New unified stock snapshot (materialized view backed)
+// ---------------------------------------------------------------------------
+
+export type ProductStockSnapshot = {
+  productId: number;
+  totalQty: number; // overall stock qty (movement-based fallback to batches when no movements)
+  byLocation: Array<{
+    locationId: number | null;
+    locationName: string;
+    qty: number;
+  }>;
+  byBatch: Array<{
+    batchId: number;
+    codeMill: string;
+    codeSartor: string;
+    batchName: string;
+    receivedAt: Date | null;
+    locationId: number | null;
+    locationName: string;
+    qty: number;
+  }>;
+};
+
+/**
+ * Fetch stock snapshot(s) for one or more products using the materialized view.
+ * Accepts a single id or list. Falls back to empty arrays when no rows present (unknown product).
+ */
+export async function getProductStockSnapshots(
+  productIds: number | number[]
+): Promise<ProductStockSnapshot[] | ProductStockSnapshot | null> {
+  const ids = Array.isArray(productIds) ? productIds : [productIds];
+  if (ids.length === 0) return Array.isArray(productIds) ? [] : null;
+  const rows = (await base.$queryRawUnsafe(
+    `
+    SELECT * FROM product_stock_snapshot
+    WHERE product_id IN (${ids.map((_, i) => `$${i + 1}`).join(",")})
+    ORDER BY product_id
+    `,
+    ...ids
+  )) as Array<{
+    product_id: number;
+    total_qty: any;
+    location_id: number | null;
+    location_name: string;
+    location_qty: any;
+    batch_id: number | null;
+    code_mill: string;
+    code_sartor: string;
+    batch_name: string;
+    received_at: Date | null;
+    batch_location_id: number | null;
+    batch_location_name: string;
+    batch_qty: any;
+  }>;
+  const map = new Map<number, ProductStockSnapshot>();
+  for (const r of rows) {
+    let snap = map.get(r.product_id);
+    if (!snap) {
+      snap = {
+        productId: r.product_id,
+        totalQty: Math.round(Number(r.total_qty || 0) * 100) / 100,
+        byLocation: [],
+        byBatch: [],
+      };
+      map.set(r.product_id, snap);
+    }
+    // Location aggregate: only push when location_id present AND first occurrence for that location id+product.
+    if (r.location_id != null) {
+      const already = snap.byLocation.find(
+        (l) => l.locationId === r.location_id
+      );
+      if (!already) {
+        // sum all rows for this product/location (since rowset is denormalized by batch join)
+        const locTotal = rows
+          .filter(
+            (x) =>
+              x.product_id === r.product_id && x.location_id === r.location_id
+          )
+          .reduce((acc, x) => acc + Number(x.location_qty || 0), 0);
+        snap.byLocation.push({
+          locationId: r.location_id,
+          locationName: r.location_name || "",
+          qty: Math.round(locTotal * 100) / 100,
+        });
+      }
+    }
+    // Batch row (batch_id may be null when there are no batches; skip those)
+    if (r.batch_id != null) {
+      snap.byBatch.push({
+        batchId: r.batch_id,
+        codeMill: r.code_mill || "",
+        codeSartor: r.code_sartor || "",
+        batchName: r.batch_name || "",
+        receivedAt: r.received_at,
+        locationId: r.batch_location_id,
+        locationName: r.batch_location_name || "",
+        qty: Math.round(Number(r.batch_qty || 0) * 100) / 100,
+      });
+    }
+  }
+  const result = ids.map(
+    (id) =>
+      map.get(id) || {
+        productId: id,
+        totalQty: 0,
+        byLocation: [],
+        byBatch: [],
+      }
+  );
+  return Array.isArray(productIds) ? result : result[0] ?? null;
+}
+
+/**
+ * Refresh the materialized view. Consider calling this from a cron, after bulk imports,
+ * or via an admin-only endpoint. Not run automatically to avoid unpredictable load.
+ */
+export async function refreshProductStockSnapshot(concurrent = false) {
+  const stmt = concurrent
+    ? "REFRESH MATERIALIZED VIEW CONCURRENTLY product_stock_snapshot"
+    : "REFRESH MATERIALIZED VIEW product_stock_snapshot";
+  // Note: CONCURRENTLY requires a unique index on the MV (not yet defined). Use non-concurrent for now.
+  await base.$executeRawUnsafe(stmt);
+}
+
+// Deprecated: existing per-product enrichment helpers retained for validation / rollback.
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { computeProductStockQty as deprecated_computeProductStockQty };
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { attachStockQty as deprecated_attachStockQty };
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { attachStockQtyMany as deprecated_attachStockQtyMany };
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { computeProductByLocation as deprecated_computeProductByLocation };
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { computeProductByBatch as deprecated_computeProductByBatch };
+/** @deprecated Replaced by materialized view + getProductStockSnapshots */
+export { attachProductAggregates as deprecated_attachProductAggregates };
+
 // ---- SKU uniqueness helper ----
 async function getUniqueSku(
   desired: string | null,
