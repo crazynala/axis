@@ -40,8 +40,6 @@ import { useProductFindify } from "../find/productFindify";
 import { useCallback, useMemo, useState, useEffect } from "react";
 import { Controller } from "react-hook-form";
 import { useInitGlobalFormContext, BreadcrumbSet } from "@aa/timber";
-
-// Replaced custom widgets with config-driven system
 import {
   productIdentityFields,
   productAssocFields,
@@ -68,13 +66,98 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (!idStr || Number.isNaN(id)) {
     throw new Response("Invalid product id", { status: 400 });
   }
-
-  // Lightweight performance instrumentation (server logs only)
   const t0 = Date.now();
   const marks: Array<{ label: string; ms: number }> = [];
   const mark = (label: string) => marks.push({ label, ms: Date.now() - t0 });
 
-  // Execute related queries inside a single interactive transaction (single connection).
+  // Parallel queries (non-transaction) to avoid interactive transaction timeout.
+  const productPromise = prisma.product.findUnique({
+    where: { id },
+    include: {
+      supplier: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true } },
+      purchaseTax: { select: { id: true, label: true } },
+      category: { select: { id: true, label: true } },
+      variantSet: { select: { id: true, name: true, variants: true } },
+      productLines: {
+        include: {
+          child: {
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              type: true,
+              supplier: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const taxCodesPromise = prisma.valueList.findMany({
+    where: { type: "Tax" },
+    orderBy: { label: "asc" },
+    select: { id: true, label: true },
+  });
+  const categoriesPromise = prisma.valueList.findMany({
+    where: { type: "Category" },
+    orderBy: { label: "asc" },
+    select: { id: true, label: true },
+  });
+  const companiesPromise = prisma.company.findMany({
+    select: {
+      id: true,
+      name: true,
+      isCustomer: true,
+      isSupplier: true,
+      isCarrier: true,
+    },
+    orderBy: { name: "asc" },
+    take: 1000,
+  });
+  const productChoicesPromise = prisma.product.findMany({
+    select: {
+      id: true,
+      sku: true,
+      name: true,
+      _count: { select: { productLines: true } },
+    },
+    orderBy: { id: "asc" },
+    take: 1000,
+  });
+  const movementLinesPromise = prisma.productMovementLine.findMany({
+    where: { productId: id },
+    include: {
+      movement: {
+        select: {
+          id: true,
+          movementType: true,
+          date: true,
+          locationId: true,
+          locationInId: true,
+          locationOutId: true,
+          location: { select: { id: true, name: true } },
+        },
+      },
+      batch: { select: { id: true, codeMill: true, codeSartor: true } },
+    },
+    orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
+    take: 500,
+  });
+  const movementHeadersPromise = prisma.productMovement.findMany({
+    where: { productId: id },
+    select: {
+      id: true,
+      movementType: true,
+      date: true,
+      locationInId: true,
+      locationOutId: true,
+      quantity: true,
+      notes: true,
+    },
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+    take: 500,
+  });
   const [
     product,
     taxCodes,
@@ -83,149 +166,36 @@ export async function loader({ params }: LoaderFunctionArgs) {
     productChoices,
     movements,
     movementHeaders,
-  ] = await prisma.$transaction(async (tx) => {
-    const productP = tx.product
-      .findUnique({
-        where: { id },
-        include: {
-          supplier: { select: { id: true, name: true } },
-          customer: { select: { id: true, name: true } },
-          purchaseTax: { select: { id: true, label: true } },
-          category: { select: { id: true, label: true } },
-          variantSet: { select: { id: true, name: true, variants: true } },
-          productLines: {
-            include: {
-              child: {
-                select: {
-                  id: true,
-                  sku: true,
-                  name: true,
-                  type: true,
-                  supplier: { select: { id: true, name: true } },
-                },
-              },
-            },
-          },
-        },
-      })
-      .then((r) => {
-        mark("product");
-        return r;
-      });
-    const taxCodesP = tx.valueList
-      .findMany({
-        where: { type: "Tax" },
-        orderBy: { label: "asc" },
-        select: { id: true, label: true },
-      })
-      .then((r) => {
-        mark("taxCodes");
-        return r;
-      });
-    const categoriesP = tx.valueList
-      .findMany({
-        where: { type: "Category" },
-        orderBy: { label: "asc" },
-        select: { id: true, label: true },
-      })
-      .then((r) => {
-        mark("categories");
-        return r;
-      });
-    const companiesP = tx.company
-      .findMany({
-        select: {
-          id: true,
-          name: true,
-          isCustomer: true,
-          isSupplier: true,
-          isCarrier: true,
-        },
-        orderBy: { name: "asc" },
-        take: 1000,
-      })
-      .then((r) => {
-        mark("companies");
-        return r;
-      });
-    const productChoicesP = tx.product
-      .findMany({
-        select: {
-          id: true,
-          sku: true,
-          name: true,
-          _count: { select: { productLines: true } },
-        },
-        orderBy: { id: "asc" },
-        take: 1000,
-      })
-      .then((r) => {
-        mark("productChoices");
-        return r;
-      });
-    const movementLinesP = tx.productMovementLine
-      .findMany({
-        where: { productId: id },
-        include: {
-          movement: {
-            select: {
-              id: true,
-              movementType: true,
-              date: true,
-              locationId: true,
-              locationInId: true,
-              locationOutId: true,
-              location: { select: { id: true, name: true } },
-            },
-          },
-          batch: { select: { id: true, codeMill: true, codeSartor: true } },
-        },
-        orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
-        take: 500,
-      })
-      .then((r) => {
-        mark("movementLines");
-        return r;
-      });
-    const movementHeadersP = tx.productMovement
-      .findMany({
-        where: { productId: id },
-        select: {
-          id: true,
-          movementType: true,
-          date: true,
-          locationInId: true,
-          locationOutId: true,
-          quantity: true,
-          notes: true,
-        },
-        orderBy: [{ date: "desc" }, { id: "desc" }],
-        take: 500,
-      })
-      .then((r) => {
-        mark("movementHeaders");
-        return r;
-      });
-    const results = await Promise.all([
-      productP,
-      taxCodesP,
-      categoriesP,
-      companiesP,
-      productChoicesP,
-      movementLinesP,
-      movementHeadersP,
-    ]);
-    return results as [
-      (typeof results)[0],
-      (typeof results)[1],
-      (typeof results)[2],
-      (typeof results)[3],
-      (typeof results)[4],
-      (typeof results)[5],
-      (typeof results)[6]
-    ];
-  });
-
+  ] = await Promise.all([
+    productPromise.then((r) => {
+      mark("product");
+      return r;
+    }),
+    taxCodesPromise.then((r) => {
+      mark("taxCodes");
+      return r;
+    }),
+    categoriesPromise.then((r) => {
+      mark("categories");
+      return r;
+    }),
+    companiesPromise.then((r) => {
+      mark("companies");
+      return r;
+    }),
+    productChoicesPromise.then((r) => {
+      mark("productChoices");
+      return r;
+    }),
+    movementLinesPromise.then((r) => {
+      mark("movementLines");
+      return r;
+    }),
+    movementHeadersPromise.then((r) => {
+      mark("movementHeaders");
+      return r;
+    }),
+  ]);
   if (!product) throw new Response("Not found", { status: 404 });
 
   // Resolve location names for in/out in one query (lines + headers)
@@ -253,7 +223,6 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const locationNameById = Object.fromEntries(
     locs.map((l) => [l.id, l.name ?? String(l.id)])
   );
-  // Log timings if env flag set (avoid noisy logs by default)
   if (process.env.LOG_PERF?.includes("products")) {
     console.log("[perf] products.$id loader timings", { id, marks });
   }

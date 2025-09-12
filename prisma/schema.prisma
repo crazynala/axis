@@ -321,6 +321,10 @@ model ProductMovement {
     modifiedBy          String?
     createdAt           DateTime?             @default(now())
     updatedAt           DateTime?             @updatedAt
+
+    @@index([productId], map: "idx_product_movement_product_id")
+    // Composite index to support ordered scans/filtering by product then date
+    @@index([productId, date, id], map: "idx_product_movement_product_date_id")
 }
 
 model ProductMovementLine {
