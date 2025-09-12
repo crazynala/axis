@@ -68,15 +68,22 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (!idStr || Number.isNaN(id)) {
     throw new Response("Invalid product id", { status: 400 });
   }
-  const product = await prisma.product.findUnique({
+
+  // Lightweight performance instrumentation (server logs only)
+  const t0 = Date.now();
+  const marks: Array<{ label: string; ms: number }> = [];
+  const mark = (label: string) => marks.push({ label, ms: Date.now() - t0 });
+
+  // Kick off independent queries in parallel to reduce wall time.
+  const productPromise = prisma.product.findUnique({
     where: { id },
+    // NOTE: intentionally excluding batches to avoid per-batch stock qty N+1 computations in extension middleware.
     include: {
       supplier: { select: { id: true, name: true } },
       customer: { select: { id: true, name: true } },
       purchaseTax: { select: { id: true, label: true } },
       category: { select: { id: true, label: true } },
       variantSet: { select: { id: true, name: true, variants: true } },
-      batches: true,
       productLines: {
         include: {
           child: {
@@ -92,18 +99,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
       },
     },
   });
-  if (!product) throw new Response("Not found", { status: 404 });
-  const taxCodes = await prisma.valueList.findMany({
+  const taxCodesPromise = prisma.valueList.findMany({
     where: { type: "Tax" },
     orderBy: { label: "asc" },
     select: { id: true, label: true },
   });
-  const categories = await prisma.valueList.findMany({
+  const categoriesPromise = prisma.valueList.findMany({
     where: { type: "Category" },
     orderBy: { label: "asc" },
     select: { id: true, label: true },
   });
-  const companies = await prisma.company.findMany({
+  const companiesPromise = prisma.company.findMany({
     select: {
       id: true,
       name: true,
@@ -114,7 +120,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { name: "asc" },
     take: 1000,
   });
-  const productChoices = await prisma.product.findMany({
+  const productChoicesPromise = prisma.product.findMany({
     select: {
       id: true,
       sku: true,
@@ -124,7 +130,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
     take: 1000,
   });
-  const movements = await prisma.productMovementLine.findMany({
+  const movementLinesPromise = prisma.productMovementLine.findMany({
     where: { productId: id },
     include: {
       movement: {
@@ -145,7 +151,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
     take: 500,
   });
-  const movementHeaders = await prisma.productMovement.findMany({
+  const movementHeadersPromise = prisma.productMovement.findMany({
     where: { productId: id },
     select: {
       id: true,
@@ -159,6 +165,48 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: [{ date: "desc" }, { id: "desc" }],
     take: 500,
   });
+
+  const [
+    product,
+    taxCodes,
+    categories,
+    companies,
+    productChoices,
+    movements,
+    movementHeaders,
+  ] = await Promise.all([
+    productPromise.then((r) => {
+      mark("product");
+      return r;
+    }),
+    taxCodesPromise.then((r) => {
+      mark("taxCodes");
+      return r;
+    }),
+    categoriesPromise.then((r) => {
+      mark("categories");
+      return r;
+    }),
+    companiesPromise.then((r) => {
+      mark("companies");
+      return r;
+    }),
+    productChoicesPromise.then((r) => {
+      mark("productChoices");
+      return r;
+    }),
+    movementLinesPromise.then((r) => {
+      mark("movementLines");
+      return r;
+    }),
+    movementHeadersPromise.then((r) => {
+      mark("movementHeaders");
+      return r;
+    }),
+  ]);
+
+  if (!product) throw new Response("Not found", { status: 404 });
+
   // Resolve location names for in/out in one query (lines + headers)
   const locIdSet = new Set<number>();
   for (const ml of movements as any[]) {
@@ -180,9 +228,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
         select: { id: true, name: true },
       })
     : [];
+  mark("locations");
   const locationNameById = Object.fromEntries(
     locs.map((l) => [l.id, l.name ?? String(l.id)])
   );
+  // Log timings if env flag set (avoid noisy logs by default)
+  if (process.env.LOG_PERF?.includes("products")) {
+    console.log("[perf] products.$id loader timings", { id, marks });
+  }
   return json({
     product,
     stockByLocation: (product as any).c_byLocation,

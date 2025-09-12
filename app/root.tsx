@@ -90,12 +90,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ colorScheme, desktopNavOpened, logLevels, options });
 }
 // export const links: LinksFunction = () => {
-//   // If Remix CSS bundling is enabled, we could also include cssBundleHref here.
-//   // Using explicit stylesheet links to ensure production server serves CSS.
-//   return [
-//     { rel: "stylesheet", href: mantineStylesHref as string },
-//     { rel: "stylesheet", href: appStylesHref as string },
-//   ];
+// If Remix CSS bundling is enabled, we could also include cssBundleHref here.
+// Using explicit stylesheet links to ensure production server serves CSS.
+// return [
+//   { rel: "stylesheet", href: mantineStylesHref as string },
+//   { rel: "stylesheet", href: appStylesHref as string },
+// ];
 // };
 
 export function meta() {
