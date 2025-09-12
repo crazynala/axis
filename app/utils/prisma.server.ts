@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { AsyncLocalStorage } from "async_hooks";
 
 // Prevent creating too many Prisma Client instances during dev hot reloads
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,6 +17,17 @@ function sumIntArray(arr: number[] | null | undefined): number {
 // Create base client (keep global error logging enabled)
 const enableQueryLogging = process.env.PRISMA_QUERY_LOG === "1";
 const enableProfiling = process.env.PRISMA_PROF === "1";
+const enableActivityLog = process.env.DB_ACTIVITY_LOG === "1";
+const stockSnapshotOnly = process.env.STOCK_SNAPSHOT_ONLY === "1"; // when true, skip legacy per-product stock enrichment in extension
+
+// Async-local activity tagging so we can attribute queries to high-level loaders / helpers
+const dbActivityContext = new AsyncLocalStorage<{ activity?: string }>();
+export async function runWithDbActivity<T>(
+  activity: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  return await dbActivityContext.run({ activity }, fn);
+}
 const base =
   globalForPrisma.prismaBase ||
   new PrismaClient({
@@ -45,6 +57,7 @@ type QuerySample = {
   ts: number;
 } & {
   target?: string; // raw SQL target when available
+  activity?: string; // activity label from ALS
 };
 const prof: { samples: QuerySample[]; nextId: number } = {
   samples: [],
@@ -53,6 +66,7 @@ const prof: { samples: QuerySample[]; nextId: number } = {
 if (enableProfiling) {
   // Use $on('query') only when log includes 'query'; otherwise manual timing wrappers would be required.
   base.$on("query", (e: any) => {
+    const activity = dbActivityContext.getStore()?.activity;
     // Prisma provides duration in milliseconds (e.duration). We'll store a slim record.
     prof.samples.push({
       id: prof.nextId++,
@@ -61,7 +75,16 @@ if (enableProfiling) {
       elapsedMs: e?.duration ?? 0,
       ts: Date.now(),
       target: e?.target,
+      activity,
     });
+    if (enableActivityLog) {
+      // Compact one-line activity log (avoid dumping full SQL again; Prisma already prints query text when log level includes 'query')
+      console.log(
+        `[db-activity] act=${activity || "-"} dur=${e?.duration}ms target=${
+          e?.model || e?.target?.split(" ")?.[0] || "?"
+        }`
+      );
+    }
     // Keep only last 500 for memory safety
     if (prof.samples.length > 500)
       prof.samples.splice(0, prof.samples.length - 500);
@@ -79,9 +102,25 @@ export function getPrismaProfile() {
     entry.total += s.elapsedMs;
     byModel.set(key, entry);
   }
+  const byActivity = new Map<string, { count: number; total: number }>();
+  for (const s of prof.samples) {
+    const key = s.activity || "?";
+    const entry = byActivity.get(key) || { count: 0, total: 0 };
+    entry.count++;
+    entry.total += s.elapsedMs;
+    byActivity.set(key, entry);
+  }
   const models = Array.from(byModel.entries())
     .map(([model, v]) => ({
       model,
+      count: v.count,
+      totalMs: v.total,
+      avgMs: v.total / v.count,
+    }))
+    .sort((a, b) => b.totalMs - a.totalMs);
+  const activities = Array.from(byActivity.entries())
+    .map(([activity, v]) => ({
+      activity,
       count: v.count,
       totalMs: v.total,
       avgMs: v.total / v.count,
@@ -93,6 +132,7 @@ export function getPrismaProfile() {
     totalMs: total,
     avgMs: prof.samples.length ? total / prof.samples.length : 0,
     models,
+    activities,
     recent: prof.samples.slice(-20),
   };
 }
@@ -267,6 +307,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         query: (args: any) => Promise<any>;
       }) {
         const result = await query(args);
+        if (stockSnapshotOnly) return result;
         const withQty = await attachStockQty(result);
         return await attachProductAggregates(withQty);
       },
@@ -278,6 +319,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         query: (args: any) => Promise<any>;
       }) {
         const result = await query(args);
+        if (stockSnapshotOnly) return result;
         const withQty = await attachStockQty(result);
         return await attachProductAggregates(withQty);
       },
@@ -289,6 +331,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         query: (args: any) => Promise<any>;
       }) {
         const results = await query(args);
+        if (stockSnapshotOnly) return results;
         return await attachStockQtyMany(results);
       },
       async create({
@@ -306,6 +349,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         }
         try {
           const result = await query(args);
+          if (stockSnapshotOnly) return result;
           const withQty = await attachStockQty(result);
           return await attachProductAggregates(withQty);
         } catch (err: any) {
@@ -321,6 +365,7 @@ export const prisma: PrismaClient = (base as any).$extends({
               args.data.sku = await getUniqueSku(desired, idHint ?? null);
             }
             const result = await query(args);
+            if (stockSnapshotOnly) return result;
             const withQty = await attachStockQty(result);
             return await attachProductAggregates(withQty);
           }
@@ -341,6 +386,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         }
         try {
           const result = await query(args);
+          if (stockSnapshotOnly) return result;
           const withQty = await attachStockQty(result);
           return await attachProductAggregates(withQty);
         } catch (err: any) {
@@ -355,6 +401,7 @@ export const prisma: PrismaClient = (base as any).$extends({
               args.data.sku = await getUniqueSku(desired, idHint ?? null);
             }
             const result = await query(args);
+            if (stockSnapshotOnly) return result;
             const withQty = await attachStockQty(result);
             return await attachProductAggregates(withQty);
           }
@@ -380,6 +427,7 @@ export const prisma: PrismaClient = (base as any).$extends({
         }
         try {
           const result = await query(args);
+          if (stockSnapshotOnly) return result;
           const withQty = await attachStockQty(result);
           return await attachProductAggregates(withQty);
         } catch (err: any) {
@@ -399,6 +447,7 @@ export const prisma: PrismaClient = (base as any).$extends({
               args.create.sku = await getUniqueSku(desired, idHint ?? null);
             }
             const result = await query(args);
+            if (stockSnapshotOnly) return result;
             const withQty = await attachStockQty(result);
             return await attachProductAggregates(withQty);
           }

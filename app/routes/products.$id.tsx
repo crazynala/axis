@@ -48,7 +48,11 @@ import {
 } from "../formConfigs/productDetail";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
-import { prismaBase, getProductStockSnapshots } from "../utils/prisma.server";
+import {
+  prismaBase,
+  getProductStockSnapshots,
+  runWithDbActivity,
+} from "../utils/prisma.server";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { useRecordContext } from "../record/RecordContext";
 
@@ -61,209 +65,211 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 ];
 
 export async function loader({ params }: LoaderFunctionArgs) {
-  const idStr = params.id;
-  const id = Number(idStr);
-  if (!idStr || Number.isNaN(id)) {
-    throw new Response("Invalid product id", { status: 400 });
-  }
-  const t0 = Date.now();
-  const marks: Array<{ label: string; ms: number }> = [];
-  const mark = (label: string) => marks.push({ label, ms: Date.now() - t0 });
+  return runWithDbActivity("products.detail", async () => {
+    const idStr = params.id;
+    const id = Number(idStr);
+    if (!idStr || Number.isNaN(id)) {
+      throw new Response("Invalid product id", { status: 400 });
+    }
+    const t0 = Date.now();
+    const marks: Array<{ label: string; ms: number }> = [];
+    const mark = (label: string) => marks.push({ label, ms: Date.now() - t0 });
 
-  // Parallel queries (non-transaction) to avoid interactive transaction timeout.
-  const productPromise = prismaBase.product.findUnique({
-    where: { id },
-    include: {
-      supplier: { select: { id: true, name: true } },
-      customer: { select: { id: true, name: true } },
-      purchaseTax: { select: { id: true, label: true } },
-      category: { select: { id: true, label: true } },
-      variantSet: { select: { id: true, name: true, variants: true } },
-      productLines: {
-        include: {
-          child: {
-            select: {
-              id: true,
-              sku: true,
-              name: true,
-              type: true,
-              supplier: { select: { id: true, name: true } },
+    // Parallel queries (non-transaction) to avoid interactive transaction timeout.
+    const productPromise = prismaBase.product.findUnique({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true } },
+        purchaseTax: { select: { id: true, label: true } },
+        category: { select: { id: true, label: true } },
+        variantSet: { select: { id: true, name: true, variants: true } },
+        productLines: {
+          include: {
+            child: {
+              select: {
+                id: true,
+                sku: true,
+                name: true,
+                type: true,
+                supplier: { select: { id: true, name: true } },
+              },
             },
           },
         },
       },
-    },
-  });
-  const taxCodesPromise = prismaBase.valueList.findMany({
-    where: { type: "Tax" },
-    orderBy: { label: "asc" },
-    select: { id: true, label: true },
-  });
-  const categoriesPromise = prismaBase.valueList.findMany({
-    where: { type: "Category" },
-    orderBy: { label: "asc" },
-    select: { id: true, label: true },
-  });
-  const companiesPromise = prismaBase.company.findMany({
-    select: {
-      id: true,
-      name: true,
-      isCustomer: true,
-      isSupplier: true,
-      isCarrier: true,
-    },
-    orderBy: { name: "asc" },
-    take: 1000,
-  });
-  const productChoicesPromise = prismaBase.product.findMany({
-    select: {
-      id: true,
-      sku: true,
-      name: true,
-      _count: { select: { productLines: true } },
-    },
-    orderBy: { id: "asc" },
-    take: 1000,
-  });
-  const movementLinesPromise = prismaBase.productMovementLine.findMany({
-    where: { productId: id },
-    include: {
-      movement: {
-        select: {
-          id: true,
-          movementType: true,
-          date: true,
-          locationId: true,
-          locationInId: true,
-          locationOutId: true,
-          location: { select: { id: true, name: true } },
-        },
+    });
+    const taxCodesPromise = prismaBase.valueList.findMany({
+      where: { type: "Tax" },
+      orderBy: { label: "asc" },
+      select: { id: true, label: true },
+    });
+    const categoriesPromise = prismaBase.valueList.findMany({
+      where: { type: "Category" },
+      orderBy: { label: "asc" },
+      select: { id: true, label: true },
+    });
+    const companiesPromise = prismaBase.company.findMany({
+      select: {
+        id: true,
+        name: true,
+        isCustomer: true,
+        isSupplier: true,
+        isCarrier: true,
       },
-      batch: { select: { id: true, codeMill: true, codeSartor: true } },
-    },
-    orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
-    take: 500,
-  });
-  const movementHeadersPromise = prismaBase.productMovement.findMany({
-    where: { productId: id },
-    select: {
-      id: true,
-      movementType: true,
-      date: true,
-      locationInId: true,
-      locationOutId: true,
-      quantity: true,
-      notes: true,
-    },
-    orderBy: [{ date: "desc" }, { id: "desc" }],
-    take: 500,
-  });
-  const [
-    product,
-    taxCodes,
-    categories,
-    companies,
-    productChoices,
-    movements,
-    movementHeaders,
-  ] = await Promise.all([
-    productPromise.then((r) => {
-      mark("product");
-      return r;
-    }),
-    taxCodesPromise.then((r) => {
-      mark("taxCodes");
-      return r;
-    }),
-    categoriesPromise.then((r) => {
-      mark("categories");
-      return r;
-    }),
-    companiesPromise.then((r) => {
-      mark("companies");
-      return r;
-    }),
-    productChoicesPromise.then((r) => {
-      mark("productChoices");
-      return r;
-    }),
-    movementLinesPromise.then((r) => {
-      mark("movementLines");
-      return r;
-    }),
-    movementHeadersPromise.then((r) => {
-      mark("movementHeaders");
-      return r;
-    }),
-  ]);
-  if (!product) throw new Response("Not found", { status: 404 });
+      orderBy: { name: "asc" },
+      take: 1000,
+    });
+    const productChoicesPromise = prismaBase.product.findMany({
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        _count: { select: { productLines: true } },
+      },
+      orderBy: { id: "asc" },
+      take: 1000,
+    });
+    const movementLinesPromise = prismaBase.productMovementLine.findMany({
+      where: { productId: id },
+      include: {
+        movement: {
+          select: {
+            id: true,
+            movementType: true,
+            date: true,
+            locationId: true,
+            locationInId: true,
+            locationOutId: true,
+            location: { select: { id: true, name: true } },
+          },
+        },
+        batch: { select: { id: true, codeMill: true, codeSartor: true } },
+      },
+      orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
+      take: 500,
+    });
+    const movementHeadersPromise = prismaBase.productMovement.findMany({
+      where: { productId: id },
+      select: {
+        id: true,
+        movementType: true,
+        date: true,
+        locationInId: true,
+        locationOutId: true,
+        quantity: true,
+        notes: true,
+      },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+      take: 500,
+    });
+    const [
+      product,
+      taxCodes,
+      categories,
+      companies,
+      productChoices,
+      movements,
+      movementHeaders,
+    ] = await Promise.all([
+      productPromise.then((r) => {
+        mark("product");
+        return r;
+      }),
+      taxCodesPromise.then((r) => {
+        mark("taxCodes");
+        return r;
+      }),
+      categoriesPromise.then((r) => {
+        mark("categories");
+        return r;
+      }),
+      companiesPromise.then((r) => {
+        mark("companies");
+        return r;
+      }),
+      productChoicesPromise.then((r) => {
+        mark("productChoices");
+        return r;
+      }),
+      movementLinesPromise.then((r) => {
+        mark("movementLines");
+        return r;
+      }),
+      movementHeadersPromise.then((r) => {
+        mark("movementHeaders");
+        return r;
+      }),
+    ]);
+    if (!product) throw new Response("Not found", { status: 404 });
 
-  // Resolve location names for in/out in one query (lines + headers)
-  const locIdSet = new Set<number>();
-  for (const ml of movements as any[]) {
-    const li = (ml?.movement?.locationInId ?? null) as number | null;
-    const lo = (ml?.movement?.locationOutId ?? null) as number | null;
-    if (typeof li === "number" && Number.isFinite(li)) locIdSet.add(li);
-    if (typeof lo === "number" && Number.isFinite(lo)) locIdSet.add(lo);
-  }
-  for (const mh of movementHeaders as any[]) {
-    const li = (mh?.locationInId ?? null) as number | null;
-    const lo = (mh?.locationOutId ?? null) as number | null;
-    if (typeof li === "number" && Number.isFinite(li)) locIdSet.add(li);
-    if (typeof lo === "number" && Number.isFinite(lo)) locIdSet.add(lo);
-  }
-  const locIds = Array.from(locIdSet);
-  const locs = locIds.length
-    ? await prismaBase.location.findMany({
-        where: { id: { in: locIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  mark("locations");
-  const locationNameById = Object.fromEntries(
-    locs.map((l) => [l.id, l.name ?? String(l.id)])
-  );
-  if (process.env.LOG_PERF?.includes("products")) {
-    console.log("[perf] products.$id loader timings", { id, marks });
-  }
-  // Fetch stock snapshot from materialized view (single pre-aggregated source)
-  const snapshot = await getProductStockSnapshots(id);
-  return json({
-    product,
-    stockByLocation: (snapshot as any)?.byLocation || [],
-    stockByBatch: (snapshot as any)?.byBatch || [],
-    productChoices,
-    movements,
-    movementHeaders,
-    locationNameById,
-    taxCodeOptions: (
-      taxCodes as Array<{ id: number; label: string | null }>
-    ).map((t) => ({
-      value: t.id,
-      label: t.label || String(t.id),
-    })),
-    categoryOptions: (
-      categories as Array<{ id: number; label: string | null }>
-    ).map((c) => ({
-      value: c.id,
-      label: c.label || String(c.id),
-    })),
-    companyOptions: (
-      companies as Array<{
-        id: number;
-        name: string | null;
-        isCustomer: boolean | null;
-        isSupplier: boolean | null;
-        isCarrier: boolean | null;
-      }>
-    ).map((c) => ({
-      value: c.id,
-      label: c.name || String(c.id),
-      isCustomer: !!c.isCustomer,
-      isSupplier: !!c.isSupplier,
-      isCarrier: !!c.isCarrier,
-    })),
-  });
+    // Resolve location names for in/out in one query (lines + headers)
+    const locIdSet = new Set<number>();
+    for (const ml of movements as any[]) {
+      const li = (ml?.movement?.locationInId ?? null) as number | null;
+      const lo = (ml?.movement?.locationOutId ?? null) as number | null;
+      if (typeof li === "number" && Number.isFinite(li)) locIdSet.add(li);
+      if (typeof lo === "number" && Number.isFinite(lo)) locIdSet.add(lo);
+    }
+    for (const mh of movementHeaders as any[]) {
+      const li = (mh?.locationInId ?? null) as number | null;
+      const lo = (mh?.locationOutId ?? null) as number | null;
+      if (typeof li === "number" && Number.isFinite(li)) locIdSet.add(li);
+      if (typeof lo === "number" && Number.isFinite(lo)) locIdSet.add(lo);
+    }
+    const locIds = Array.from(locIdSet);
+    const locs = locIds.length
+      ? await prismaBase.location.findMany({
+          where: { id: { in: locIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    mark("locations");
+    const locationNameById = Object.fromEntries(
+      locs.map((l) => [l.id, l.name ?? String(l.id)])
+    );
+    if (process.env.LOG_PERF?.includes("products")) {
+      console.log("[perf] products.$id loader timings", { id, marks });
+    }
+    // Fetch stock snapshot from materialized view (single pre-aggregated source)
+    const snapshot = await getProductStockSnapshots(id);
+    return json({
+      product,
+      stockByLocation: (snapshot as any)?.byLocation || [],
+      stockByBatch: (snapshot as any)?.byBatch || [],
+      productChoices,
+      movements,
+      movementHeaders,
+      locationNameById,
+      taxCodeOptions: (
+        taxCodes as Array<{ id: number; label: string | null }>
+      ).map((t) => ({
+        value: t.id,
+        label: t.label || String(t.id),
+      })),
+      categoryOptions: (
+        categories as Array<{ id: number; label: string | null }>
+      ).map((c) => ({
+        value: c.id,
+        label: c.label || String(c.id),
+      })),
+      companyOptions: (
+        companies as Array<{
+          id: number;
+          name: string | null;
+          isCustomer: boolean | null;
+          isSupplier: boolean | null;
+          isCarrier: boolean | null;
+        }>
+      ).map((c) => ({
+        value: c.id,
+        label: c.name || String(c.id),
+        isCustomer: !!c.isCustomer,
+        isSupplier: !!c.isSupplier,
+        isCarrier: !!c.isCarrier,
+      })),
+    });
+  }); // end runWithDbActivity wrapper
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
