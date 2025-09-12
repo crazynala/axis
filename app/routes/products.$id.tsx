@@ -39,14 +39,7 @@ import {
 import { useProductFindify } from "../find/productFindify";
 import { useCallback, useMemo, useState, useEffect } from "react";
 import { Controller } from "react-hook-form";
-import {
-  useInitGlobalFormContext,
-  useMasterTable,
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-} from "@aa/timber";
+import { useInitGlobalFormContext, BreadcrumbSet } from "@aa/timber";
 
 // Replaced custom widgets with config-driven system
 import {
@@ -374,15 +367,33 @@ export default function ProductDetailRoute() {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  // Register local keyboard shortcuts for navigating records
-  useRecordBrowserShortcuts(product.id);
   // Sync RecordContext currentId for global navigation consistency
-  const { setCurrentId } = useRecordContext();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
   useEffect(() => {
     setCurrentId(product.id);
     // Do NOT clear on unmount; preserve selection like invoices module
   }, [product.id, setCurrentId]);
-  const { records: masterRecords } = useMasterTable();
+  // Keyboard shortcuts (Cmd/Ctrl + ArrowLeft/Right) for navigation
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(product.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/products/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(product.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/products/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [product.id, nextId, prevId]);
   const submit = useSubmit();
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
@@ -469,10 +480,27 @@ export default function ProductDetailRoute() {
             { label: String(product.id), href: `/products/${product.id}` },
           ]}
         />
-        <Group>
-          <RecordNavButtons
-            recordBrowser={useRecordBrowser(product.id, masterRecords)}
-          />
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const p = prevId(product.id as any);
+              if (p != null) window.location.href = `/products/${p}`;
+            }}
+          >
+            Prev
+          </Button>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const n = nextId(product.id as any);
+              if (n != null) window.location.href = `/products/${n}`;
+            }}
+          >
+            Next
+          </Button>
         </Group>
       </Group>
       <ProductFindManager />

@@ -2,40 +2,31 @@
 
 Purpose: Record what each route shows and can do so we can spot regressions quickly during refactors.
 
-Last updated: 2025-09-09
+Last updated: 2025-09-12
 
 ## Global UI and Behavior
 
 - AppShell header
   - Save/Cancel header (unsaved-changes UX)
-  - Record Browser widget: first/prev/next/last + index/total
-    - Builds target by replacing the last path segment with the new id
-    - Expects canonical detail routes ending in an `:id` segment
+  - Record navigation (Prev / Next + index/total) powered by `RecordContext` hybrid roster (legacy RecordBrowser widget removed)
+    - Prev/Next computed from ordered `idList`; navigation swaps only the last `:id` segment
   - Global search (Cmd/Ctrl+K): searches Jobs and Products; navigates on click
 - Providers
   - `GlobalFormProvider` at root
-  - `RecordBrowserProvider` at root; routes push their lists on mount
-  - Optional priority gating to avoid list flip-flop when multiple routes update
+  - `RecordContext` (module roster + sparse row cache) replaces removed `RecordBrowserProvider`
   - Form field convention
-    - Use Mantine input `label` prop (no separate `<Text>` labels/wrappers unless layout demands it)
-    - Add `mod="data-autoSize"` to inputs so labels align and inputs expand to full width in our compact cards
-    - Pair with RHF `register` or controlled `value/onChange`
-    - Example
-      - Text: `<TextInput label="Name" mod="data-autoSize" {...form.register('name')} />`
-      - Number: `<NumberInput label="Unit Cost" mod="data-autoSize" value={v} onChange={setV} />`
-    - Note: The CSS that implements `data-autoSize` relies on Mantine's DOM structure: wrapper > label + input. Keep Mantine at v8 and avoid overriding that structure in custom components.
-  - RecordNavButtons usage:
-    - Always derive `recordBrowser` like:
-      - `const { records: masterRecords } = useMasterTable()`
-      - `const recordBrowser = useRecordBrowser(currentId, masterRecords)`
-    - Do not call `useRecordBrowser(currentId)` without the `masterRecords` list; the list comes from the surrounding layout route that provides the master table
+    - Use Mantine input `label` prop; add `mod="data-autoSize"` for compact layout
+    - Bind via RHF `register` or controlled props
+    - Example: `<TextInput label="Name" mod="data-autoSize" {...form.register('name')} />`
+    - CSS for `data-autoSize` tied to Mantine v8 DOM structure
+- Decommissioned (2025‑09‑12): RecordBrowserProvider / useRecordBrowser / useMasterTable / RecordNavButtons / pagination-based hydration endpoints (e.g. `invoices.more`)
 - Logging
 
   - Client logger with module levels from `window.__LOG_LEVELS__`
   - Server pino; warn/error beacons to `/log`
   - Admin persists levels via Prisma `SavedView` (module=log, name=levels)
 
-### Hybrid Roster + Windowed Hydration Pattern (Invoices, Products – expanding to others)
+### Hybrid Roster + Windowed Hydration Pattern (Implemented Across Major Modules)
 
 - Purpose: Replace classic page/perPage pagination with a high‑performance, stable navigation model that supports:
   - Fast prev/next (record browser) across very large result sets (tens of thousands) without loading every row
@@ -64,9 +55,11 @@ Last updated: 2025-09-09
 - Roster Refresh (filters/search changes):
   - Layout loader recomputes ID roster + initialRow slice (first window) and calls `setIdList` (module aware; resets state when module key changes)
   - Existing cached rows reused if still relevant
-- Record Browser Integration:
-  - Uses `idList` for next/prev instead of visible paginated page
-  - Displays positional index 1-based: `idIndex + 1 / idList.length`
+- Record Navigation Integration:
+  - Detail routes set `currentId` on mount (persist selection across index/detail transitions)
+  - Prev/Next + keyboard shortcuts (Cmd/Ctrl + ← / →) derived from `idList` & `idIndexMap`
+  - Position shows `currentIndex + 1 / idList.length`
+  - Window expands (if needed) before scroll to hydrate selected record
 - Extensibility Guidelines:
 
   - Provide layout route loader that returns: `{ idList, initialRows, total, ...filterMeta }`
@@ -488,11 +481,13 @@ Last updated: 2025-09-09
 
 ---
 
-## Record Browser – Route Expectations
+## Record Navigation – Route Expectations (Hybrid Roster)
 
-- Detail routes end in an ID segment so header nav can swap the last path segment
-- Routes push their record lists to the provider on mount (and when data changes)
-- Priority may be used by nested routes to hold control of the list while mounted
+- Detail routes end in an ID segment so navigation swaps only the last path segment
+- Layout loader returns `{ idList, initialRows, total }` and seeds `RecordContext` (module change resets prior module state)
+- Detail routes call `setCurrentId(id)` (effect) and do not clear on unmount
+- Keyboard shortcuts (Cmd/Ctrl + ← / →) implemented per detail route for prev/next
+- Batch hydration endpoint (`/module/rows`) supplies sparse rows for window expansion
 
 ---
 
@@ -501,7 +496,7 @@ Last updated: 2025-09-09
 - [ ] Renders content within AppShell and shows on navigation
 - [ ] List/index implements search, sort, pagination (if relevant)
 - [ ] Filters wired per route’s mapping
-- [ ] RecordBrowser list updates on mount and on data changes
+- [ ] Hybrid roster `idList` updates on filter/search/sort changes; navigation reflects new ordering
 - [ ] Detail pages render expected fields
 - [ ] Actions (create/update/delete) post the correct intents
 - [ ] Saved Views (if supported) work end-to-end

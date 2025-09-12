@@ -25,14 +25,8 @@ import {
 } from "@mantine/core";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { prisma, prismaBase } from "../utils/prisma.server";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  getLogger,
-  useMasterTable,
-} from "@aa/timber";
+import { BreadcrumbSet, getLogger } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
 import { AssemblyActivityModal } from "../components/AssemblyActivityModal";
 import { ExternalLink } from "../components/ExternalLink";
 import { createCutActivity } from "../utils/activity.server";
@@ -285,7 +279,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       data: {
         qtyBreakdown: qtyArr as any,
         quantity: qtyArr.reduce((t, n) => t + (Number(n) || 0), 0),
-        endTime: activityDate,
         activityDate,
       },
     });
@@ -399,15 +392,30 @@ export default function JobAssemblyRoute() {
   log.debug({ assemblyId: assembly.id, jobId: job.id }, "Rendering assembly");
 
   const nav = useNavigation();
-  const { records: masterRecords } = useMasterTable();
-  log.debug({ masterRecords }, "useMasterTable");
-  const recordBrowser = useRecordBrowser(assembly.id, masterRecords);
-  log.debug(
-    { assemblyId: assembly.id, masterRecords },
-    "Registered record browser"
-  );
-
-  useRecordBrowserShortcuts(assembly.id);
+  const { setCurrentId, nextId, prevId } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(assembly.id);
+  }, [assembly.id, setCurrentId]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(assembly.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/jobs/${job.id}/assembly/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(assembly.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/jobs/${job.id}/assembly/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [assembly.id, job.id, nextId, prevId]);
   // Path building now automatic (replace last path segment with id); no custom builder needed.
   const [cutOpen, setCutOpen] = useState(false);
   const [editActivity, setEditActivity] = useState<null | any>(null);
@@ -424,7 +432,30 @@ export default function JobAssemblyRoute() {
             },
           ]}
         />
-        {recordBrowser && <RecordNavButtons recordBrowser={recordBrowser} />}
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const p = prevId(assembly.id as any);
+              if (p != null)
+                window.location.href = `/jobs/${job.id}/assembly/${p}`;
+            }}
+          >
+            Prev
+          </Button>
+          <Button
+            size="xs"
+            variant="default"
+            onClick={() => {
+              const n = nextId(assembly.id as any);
+              if (n != null)
+                window.location.href = `/jobs/${job.id}/assembly/${n}`;
+            }}
+          >
+            Next
+          </Button>
+        </Group>
       </Group>
       <Grid>
         <Grid.Col span={5}>

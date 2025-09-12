@@ -66,3 +66,64 @@ Unified, FileMaker‑style find system:
 - Saved Views (extension) store both simple params and `findReqs`.
 
 See `docs/find-pattern.md` for complete details.
+
+## 2025-09 Hybrid Roster & Navigation Migration
+
+The legacy RecordBrowserProvider + pagination model has been replaced with a unified hybrid roster + windowed hydration pattern powered by `RecordContext` and `useHybridWindow`.
+
+Key changes:
+
+- Layout routes now return `{ idList, initialRows, total }` and seed `RecordContext` (module scoped)
+- Index pages render an infinite (windowed) list over the full ordered `idList`, hydrating only the visible window via a `/module/rows?ids=...` batch endpoint
+- Detail routes call `setCurrentId(id)` on mount; Prev/Next (and Cmd/Ctrl + ←/→) use `idList` for O(1) navigation
+- Selection persists while switching between index and detail; window expands on demand to hydrate the active record row
+- Removed: `RecordBrowserProvider`, `useRecordBrowser`, `useMasterTable`, `RecordNavButtons`, pagination endpoints like `invoices.more`
+
+Benefits:
+
+- Stable, fast navigation across very large result sets (tens of thousands of IDs) without loading every row
+- Smooth infinite scroll with deterministic ordering
+- Reuse of previously hydrated rows when filters/search change
+- Simplified mental model (one roster + sparse cache) vs per-page slices
+
+### Adding a New Module (Checklist)
+
+1. Create layout route `app/routes/<module>.tsx` with loader:
+
+- Compute ordered `idList` (cap if necessary)
+- Hydrate initial slice (first window) as `initialRows`
+- Return `{ idList, initialRows, total }`
+- In component, call `recordContextApi.resetForModule('<module>', { idList, initialRows })`
+
+2. Implement batch hydration route `app/routes/<module>.rows.tsx` accepting `ids` query param; return minimal row objects keyed by id
+3. Index route (`<module>._index.tsx`):
+
+- Use `useHybridWindow({ idList, initialRows, fetchRows })`
+- Render table/virtual list with rows from `windowRows`
+- On row click navigate to `/<module>/:id`
+
+4. Detail route (`<module>.$id.tsx`):
+
+- Loader fetches full record
+- Component: `useEffect(() => setCurrentId(id), [id])`
+- Implement Prev/Next via `getPrevId(id)` / `getNextId(id)` from context and keyboard shortcuts
+
+5. (Optional) Integrate Find pattern if module supports advanced querying (see `docs/find-pattern.md`)
+6. Update docs (`docs/route-spec.md`) with fields / behaviors
+
+### Navigation Utilities
+
+`RecordContext` exposes:
+
+- `idList`, `idIndexMap`, `rowsMap`
+- `currentId`, `setCurrentId`
+- `getPrevId(id)`, `getNextId(id)` (null when at ends)
+- `mergeRows(newRows)` to add/refresh hydrated rows
+
+### Minimal Batch Rows Contract
+
+Request: `GET /<module>/rows?ids=1,2,3`
+
+Response JSON: `{ rows: Array<RowSubset> }` where each row contains the columns required for the index list (avoid large relational graphs).
+
+Missing IDs (filtered out, deleted) can simply be omitted; client tolerates sparsity.

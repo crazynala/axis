@@ -20,6 +20,57 @@ async function loadDevBuild() {
 
 async function createServer() {
   const app = express();
+  // EARLY defensive patch: normalize any multiple Content-Type attempts before other middleware.
+  app.use((req, res, next) => {
+    const seen = new Set();
+    function normalizeHeaderName(name) { return typeof name === 'string' ? name.toLowerCase() : name; }
+    const origSetHeader = res.setHeader.bind(res);
+    const origAppend = res.append ? res.append.bind(res) : null;
+    const origSet = res.set ? res.set.bind(res) : null;
+    function coalesce(name, value) {
+      if (normalizeHeaderName(name) === 'content-type') {
+        if (Array.isArray(value)) {
+          console.warn('[server.mjs][ct-guard] array content-type collapse', value, req.method, req.url);
+          value = value[0];
+        }
+        if (typeof value === 'string') {
+          // If already set to an equivalent value, ignore silently; if different, keep first.
+          const existing = res.getHeader('Content-Type');
+            if (existing) {
+              if (Array.isArray(existing)) {
+                // Unexpected: collapse and keep first
+                origSetHeader('Content-Type', existing[0]);
+              } else if (existing !== value) {
+                console.warn('[server.mjs][ct-guard] multiple Content-Type values detected; preserving first', existing, 'dropping', value);
+                return; // skip conflicting change
+              }
+            }
+        }
+      }
+      return origSetHeader(name, value);
+    }
+    res.setHeader = coalesce;
+    if (origAppend) {
+      res.append = function(name, value) {
+        if (normalizeHeaderName(name) === 'content-type') {
+          // Express append would create array; redirect to setHeader logic instead
+          return coalesce(name, value);
+        }
+        return origAppend(name, value);
+      };
+    }
+    if (origSet) {
+      res.set = function(field, val) {
+        if (typeof field === 'string') return coalesce(field, val);
+        if (field && typeof field === 'object') {
+          for (const k of Object.keys(field)) coalesce(k, field[k]);
+          return res;
+        }
+        return res;
+      };
+    }
+    next();
+  });
   app.use(cors());
   // Optional helmet: dynamically import so build doesn't fail if dependency absent yet.
   try {
@@ -55,17 +106,7 @@ async function createServer() {
     next();
   });
 
-  // Optional API routes (if present in legacy src directory). Wrap separately to avoid crash in prod image.
-  try {
-    const productsRouter = (await import('./src/routes/products.js')).default || (await import('./src/routes/products.js'));
-    const importRouter = (await import('./src/routes/import.js')).default || (await import('./src/routes/import.js'));
-    const importAllRouter = (await import('./src/routes/importAll.js')).default || (await import('./src/routes/importAll.js'));
-    app.use('/api/products', productsRouter);
-    app.use('/api/import', importRouter);
-    app.use('/api/import', importAllRouter);
-  } catch (e) {
-    console.warn('[server.mjs] API routes not loaded (ok):', e?.message || e);
-  }
+  // Removed legacy optional API route imports (./src/routes/*.js) – files no longer exist.
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, env: process.env.NODE_ENV || 'development', mark: BOOT_VERSION_MARK });

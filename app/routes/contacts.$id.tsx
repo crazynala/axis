@@ -1,13 +1,9 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  useMasterTable,
-} from "@aa/timber";
+import { BreadcrumbSet } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
+import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
@@ -24,9 +20,30 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
 export default function ContactDetailPlaceholderRoute() {
   const { company } = useLoaderData<typeof loader>();
-  // Use company.id as the current record id for navigation
-  useRecordBrowserShortcuts(company.id);
-  const { records: masterRecords } = useMasterTable();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(company.id);
+  }, [company.id, setCurrentId]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(company.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/contacts/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(company.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/contacts/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [company.id, nextId, prevId]);
   return (
     <div>
       <BreadcrumbSet
@@ -38,9 +55,26 @@ export default function ContactDetailPlaceholderRoute() {
           },
         ]}
       />
-      <RecordNavButtons
-        recordBrowser={useRecordBrowser(company.id, masterRecords)}
-      />
+      <div style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+        <button
+          onClick={() => {
+            const p = prevId(company.id as any);
+            if (p != null) window.location.href = `/contacts/${p}`;
+          }}
+          disabled={!prevId(company.id as any)}
+        >
+          Prev
+        </button>
+        <button
+          onClick={() => {
+            const n = nextId(company.id as any);
+            if (n != null) window.location.href = `/contacts/${n}`;
+          }}
+          disabled={!nextId(company.id as any)}
+        >
+          Next
+        </button>
+      </div>
       <h1>Contact</h1>
       <p>
         This is a placeholder detail page using Company data until Contact

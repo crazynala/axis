@@ -15,13 +15,9 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  RecordNavButtons,
-  useRecordBrowserShortcuts,
-  useMasterTable,
-} from "@aa/timber";
+import { BreadcrumbSet } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
+import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
@@ -81,8 +77,30 @@ export default function AssemblyActivityDetailRoute() {
   const { activity, assemblies, jobs } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  useRecordBrowserShortcuts(activity.id);
-  const { records: masterRecords } = useMasterTable();
+  const { setCurrentId, nextId, prevId } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(activity.id);
+  }, [activity.id, setCurrentId]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "ArrowLeft") {
+        const p = prevId(activity.id as any);
+        if (p != null) {
+          e.preventDefault();
+          window.location.href = `/assembly-activities/${p}`;
+        }
+      } else if (e.key === "ArrowRight") {
+        const n = nextId(activity.id as any);
+        if (n != null) {
+          e.preventDefault();
+          window.location.href = `/assembly-activities/${n}`;
+        }
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [activity.id, nextId, prevId]);
 
   return (
     <Stack gap="md">
@@ -98,9 +116,28 @@ export default function AssemblyActivityDetailRoute() {
           ]}
         />
       </Group>
-      <RecordNavButtons
-        recordBrowser={useRecordBrowser(activity.id, masterRecords)}
-      />
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant="default"
+          onClick={() => {
+            const p = prevId(activity.id as any);
+            if (p != null) window.location.href = `/assembly-activities/${p}`;
+          }}
+        >
+          Prev
+        </Button>
+        <Button
+          size="xs"
+          variant="default"
+          onClick={() => {
+            const n = nextId(activity.id as any);
+            if (n != null) window.location.href = `/assembly-activities/${n}`;
+          }}
+        >
+          Next
+        </Button>
+      </Group>
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />
@@ -149,8 +186,10 @@ export default function AssemblyActivityDetailRoute() {
             type="datetime-local"
             w={200}
             defaultValue={
-              activity.startTime
-                ? new Date(activity.startTime).toISOString().slice(0, 16)
+              (activity as any).startTime
+                ? new Date((activity as any).startTime)
+                    .toISOString()
+                    .slice(0, 16)
                 : ""
             }
           />
@@ -160,8 +199,8 @@ export default function AssemblyActivityDetailRoute() {
             type="datetime-local"
             w={200}
             defaultValue={
-              activity.endTime
-                ? new Date(activity.endTime).toISOString().slice(0, 16)
+              (activity as any).endTime
+                ? new Date((activity as any).endTime).toISOString().slice(0, 16)
                 : ""
             }
           />
@@ -169,7 +208,7 @@ export default function AssemblyActivityDetailRoute() {
             name="status"
             label="Status"
             w={140}
-            defaultValue={activity.status || ""}
+            defaultValue={(activity as any).status || ""}
           />
           <Textarea
             name="notes"
