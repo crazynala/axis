@@ -17,7 +17,7 @@ import {
 } from "../find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import { prisma } from "../utils/prisma.server";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
 import { formatUSD } from "../utils/format";
@@ -223,7 +223,7 @@ export default function PurchaseOrdersIndexRoute() {
       </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
       <Title order={4}>Purchase Orders ({total})</Title>
-      <RefactoredNavDataTable
+      <NavDataTable
         module="purchase-orders"
         records={records as any}
         columns={columns as any}
@@ -235,7 +235,6 @@ export default function PurchaseOrdersIndexRoute() {
         onReachEnd={() => {
           if (!atEnd) requestMore();
         }}
-        height={600}
       />
     </Stack>
   );

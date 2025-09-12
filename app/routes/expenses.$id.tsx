@@ -81,27 +81,7 @@ export default function ExpenseDetailRoute() {
     fd.set("date", values.date || "");
     submit(fd, { method: "post" });
   });
-  // Keyboard shortcuts for navigation (Cmd/Ctrl + Arrow)
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(expense.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/expenses/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(expense.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/expenses/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [expense.id, nextId, prevId]);
+  // Prev/Next hotkeys handled globally in RecordProvider
 
   return (
     <Stack>

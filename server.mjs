@@ -76,15 +76,24 @@ async function createServer() {
   try {
     const helmetPkg = await import('helmet');
     const helmet = helmetPkg.default || helmetPkg;
-    // Apply a minimal CSP; relax upgradeInsecureRequests for mixed resource environments.
-    app.use(helmet());
+    app.use(helmet.hidePoweredBy());
+    // Custom CSP: allow inline scripts temporarily so Remix bootstrap (inline) + Mantine ColorSchemeScript + window.__LOG_LEVELS__ can execute.
+    // NOTE: For stronger security, migrate to nonces: generate per-request nonce, add to script tags, and remove 'unsafe-inline'.
+    const cspDirectives = {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      // Allow inline styles (Mantine emotion-like injected styles) + self-hosted CSS
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:'],
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: ["'self'", ...(isProduction ? [] : ['ws:', 'http://localhost:*'])],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'self'"],
+      upgradeInsecureRequests: null,
+    };
     if (helmet.contentSecurityPolicy) {
-      app.use(
-        helmet.contentSecurityPolicy({
-          useDefaults: true,
-          directives: { upgradeInsecureRequests: null }
-        })
-      );
+      app.use(helmet.contentSecurityPolicy({ useDefaults: false, directives: cspDirectives }));
     }
   } catch (e) {
     console.warn('[server.mjs] helmet unavailable, continuing without enhanced security headers');

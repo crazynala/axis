@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useCallback, useState } from "react";
 import { DataTable as MantineDataTable } from "mantine-datatable";
 import { useRecordContext } from "../record/RecordContext";
 
-interface RefNavTableProps<T extends Record<string, any>> {
+interface NavTableProps<T extends Record<string, any>> {
   module: string;
   records: T[];
   columns: any[];
@@ -14,14 +14,21 @@ interface RefNavTableProps<T extends Record<string, any>> {
   autoSelectFirst?: boolean;
   /** Class applied to active row */
   activeClassName?: string;
+  /** Optional fixed height. If omitted, table will auto-fill available vertical space (viewport minus bounding top + bottom margin). */
   height?: number | string;
+  /** Additional pixels to subtract from computed auto height (e.g. for external padding) */
+  autoHeightOffset?: number;
   fetching?: boolean;
   scrollViewportRef?: React.RefObject<HTMLDivElement>;
   /** Optional footer (e.g. loading / end-of-results indicator) rendered inside scroll container */
   footer?: React.ReactNode;
+  /** Callback receiving the computed auto height (after offset) */
+  onAutoHeightComputed?: (h: number) => void;
 }
 
-export function RefactoredNavDataTable<T extends Record<string, any>>({
+// NOTE: This component was previously named RefactoredNavDataTable. It has been renamed to NavDataTable.
+// Internal Arrow/Home/End navigation has been removed to avoid double-handling with the global RecordContext keyboard handler.
+export function NavDataTable<T extends Record<string, any>>({
   module,
   records,
   columns,
@@ -29,11 +36,13 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
   onReachEnd,
   autoSelectFirst = true,
   activeClassName = "nav-data-table-row-focused",
-  height = 500,
+  height,
+  autoHeightOffset = 0,
   fetching,
   scrollViewportRef,
   footer,
-}: RefNavTableProps<T>) {
+  onAutoHeightComputed,
+}: NavTableProps<T>) {
   const { state, currentId, setCurrentId, nextId, prevId, getPathForId } =
     useRecordContext();
   const containerRef = scrollViewportRef || useRef<HTMLDivElement>(null);
@@ -134,63 +143,8 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     }
   }, [records, currentId, activeClassName]);
 
-  // Keyboard navigation: up/down/home/end sets currentId
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const handler = (e: KeyboardEvent) => {
-      if (module !== state?.module) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const tag = (e.target as HTMLElement).tagName;
-      if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        if (currentId == null) {
-          if (records.length) setCurrentId((records as any)[0].id);
-        } else {
-          const nxt = nextId(currentId);
-          if (nxt != null) setCurrentId(nxt);
-        }
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        if (currentId == null) {
-          if (records.length)
-            setCurrentId((records as any)[records.length - 1].id);
-        } else {
-          const prv = prevId(currentId);
-          if (prv != null) setCurrentId(prv);
-        }
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        if (records.length) setCurrentId((records as any)[0].id);
-      } else if (e.key === "End") {
-        e.preventDefault();
-        if (records.length)
-          setCurrentId((records as any)[records.length - 1].id);
-      } else if (e.key === "Enter" || e.key === " ") {
-        if (currentId != null) {
-          const idx = records.findIndex(
-            (r: any) => String(r.id) === String(currentId)
-          );
-          if (idx >= 0) {
-            e.preventDefault();
-            onActivate?.(records[idx]);
-          }
-        }
-      }
-    };
-    el.addEventListener("keydown", handler);
-    return () => el.removeEventListener("keydown", handler);
-  }, [
-    currentId,
-    nextId,
-    prevId,
-    records,
-    setCurrentId,
-    onActivate,
-    state?.module,
-    module,
-  ]);
+  // Component-level keyboard navigation removed; global RecordProvider now owns Arrow/Home/End navigation to avoid double stepping.
+  // We still support activation (Enter/Space) by listening on rows themselves below.
 
   // Decorate rows with data-row-id after mount/update
   useEffect(() => {
@@ -204,6 +158,15 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
         if (rec) onActivate?.(rec);
       });
       tr.addEventListener("click", () => setCurrentId(rec?.id));
+      const keyHandler = (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          if (rec) {
+            e.preventDefault();
+            onActivate?.(rec);
+          }
+        }
+      };
+      tr.addEventListener("keydown", keyHandler);
     });
   }, [records, onActivate, setCurrentId]);
 
@@ -249,10 +212,43 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
     };
   }, [onReachEnd]);
 
+  // Auto-height calculation: if no explicit height prop, compute available viewport space.
+  const [autoHeight, setAutoHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (height != null) return; // explicit height provided, skip auto sizing
+    const el = containerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const rect = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      // distance from top of element to bottom of viewport
+      let available = Math.max(100, vh - rect.top - 8); // 8px breathing room
+      if (autoHeightOffset) available -= autoHeightOffset;
+      // Ensure we don't go negative
+      if (available < 100) available = 100;
+      setAutoHeight(available);
+      onAutoHeightComputed?.(available);
+    };
+    compute();
+    const ro = new ResizeObserver(() => compute());
+    ro.observe(document.body);
+    window.addEventListener("resize", compute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, [height, autoHeightOffset, onAutoHeightComputed]);
+
+  const effectiveHeight = height != null ? height : autoHeight ?? 300;
+
   return (
     <div
       ref={containerRef as any}
-      style={{ position: "relative", height, overflow: "hidden" }}
+      style={{
+        position: "relative",
+        height: effectiveHeight,
+        overflow: "hidden",
+      }}
       data-module={module}
     >
       {/* Outer wrapper no longer scrolls; Mantine's internal ScrollArea handles scrolling to avoid double scrollbars. */}
@@ -261,7 +257,7 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
         columns={columns as any}
         fetching={fetching}
         withTableBorder
-        height={height}
+        height={effectiveHeight}
         scrollAreaProps={{ tabIndex: 0 }}
       />
       {footer && (
@@ -288,4 +284,4 @@ export function RefactoredNavDataTable<T extends Record<string, any>>({
   );
 }
 
-export default RefactoredNavDataTable;
+export default NavDataTable;

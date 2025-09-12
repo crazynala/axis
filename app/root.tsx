@@ -48,11 +48,7 @@ import "mantine-datatable/styles.layer.css";
 import "./styles/app.css";
 import { getUser, getUserId } from "./utils/auth.server";
 import { FindProvider } from "./find/FindContext";
-import {
-  RecordProvider,
-  GlobalRecordBrowser,
-  GlobalRecordBrowserHotkeys,
-} from "./record/RecordContext";
+import { RecordProvider, GlobalRecordBrowser } from "./record/RecordContext";
 import { loadOptions } from "./utils/options.server";
 import { setGlobalOptions, type OptionsData } from "./options/OptionsClient";
 import { OptionsProvider } from "./options/OptionsContext";
@@ -318,7 +314,7 @@ function AppShellLayout({
             {/* w={desktopNavOpened ? 110 : 220} */}
             <GlobalFindTrigger />
             <GlobalRecordBrowser />
-            <GlobalRecordBrowserHotkeys />
+            {/* Hotkeys now centralized in RecordProvider */}
           </Group>
         </Group>
       </AppShell.Header>

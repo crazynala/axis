@@ -396,26 +396,7 @@ export default function JobAssemblyRoute() {
   useEffect(() => {
     setCurrentId(assembly.id);
   }, [assembly.id, setCurrentId]);
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(assembly.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/jobs/${job.id}/assembly/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(assembly.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/jobs/${job.id}/assembly/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [assembly.id, job.id, nextId, prevId]);
+  // Prev/Next hotkeys handled globally in RecordProvider
   // Path building now automatic (replace last path segment with id); no custom builder needed.
   const [cutOpen, setCutOpen] = useState(false);
   const [editActivity, setEditActivity] = useState<null | any>(null);

@@ -1,12 +1,28 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit, useNavigate, useSearchParams, Form } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  useNavigate,
+  useSearchParams,
+  Form,
+} from "@remix-run/react";
 import { Button, TextInput, Group, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/NavDataTable";
-import { idLinkColumn, nameOrFallbackColumn, simpleColumn } from "../components/tableColumns";
+import { NavDataTable } from "../components/RefactoredNavDataTable";
+import {
+  idLinkColumn,
+  nameOrFallbackColumn,
+  simpleColumn,
+} from "../components/tableColumns";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 
 export const meta: MetaFunction = () => [{ title: "Assembly" }];
@@ -17,7 +33,10 @@ export async function loader(args: LoaderFunctionArgs) {
     defaultSort: { field: "id", dir: "asc" },
     searchableFields: ["name", "status", "notes"],
   });
-  const [rows, total] = await Promise.all([prisma.assembly.findMany({ ...prismaArgs }), prisma.assembly.count({ where: prismaArgs.where })]);
+  const [rows, total] = await Promise.all([
+    prisma.assembly.findMany({ ...prismaArgs }),
+    prisma.assembly.count({ where: prismaArgs.where }),
+  ]);
   return json({
     rows,
     total,
@@ -52,7 +71,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function AssemblyIndexRoute() {
-  const { rows, total, page, perPage, q, filters } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
@@ -67,10 +87,17 @@ export default function AssemblyIndexRoute() {
     <Stack gap="lg">
       <Group justify="space-between" align="center">
         <Title order={2}>Assembly</Title>
-        <BreadcrumbSet breadcrumbs={[{ label: "Assembly", href: "/assembly" }]} />
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Assembly", href: "/assembly" }]}
+        />
       </Group>
       <Group>
-        <Button component="a" href="/assembly/new" variant="filled" color="blue">
+        <Button
+          component="a"
+          href="/assembly/new"
+          variant="filled"
+          color="blue"
+        >
           New Assembly
         </Button>
       </Group>
@@ -81,43 +108,30 @@ export default function AssemblyIndexRoute() {
         </Title>
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="q" label="Search" placeholder="Name, status, notes" defaultValue={q || ""} w={240} />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Name, status, notes"
+              defaultValue={q || ""}
+              w={240}
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
           </Group>
         </Form>
         <NavDataTable
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          idAccessor="id"
+          module="assembly"
           records={rows as any}
-          totalRecords={total}
-          page={page}
-          recordsPerPage={perPage}
-          recordsPerPageOptions={[10, 20, 50, 100]}
-          autoFocusFirstRow
-          keyboardNavigation
-          onRowClick={(_rec: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
+          columns={[
+            idLinkColumn("assembly"),
+            nameOrFallbackColumn("name", "assembly"),
+            simpleColumn("status", "Status"),
+            simpleColumn("qtyOrdered", "# Ordered"),
+          ]}
+          onActivate={(rec: any) => {
             if (rec?.id != null) navigate(`/assembly/${rec.id}`);
           }}
-          onRowActivate={(rec: any) => {
-            if (rec?.id != null) navigate(`/assembly/${rec.id}`);
-          }}
-          onPageChange={(p: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("page", String(p));
-            navigate(`?${next.toString()}`);
-          }}
-          onRecordsPerPageChange={(n: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("perPage", String(n));
-            next.set("page", "1");
-            navigate(`?${next.toString()}`);
-          }}
-          columns={[idLinkColumn("assembly"), nameOrFallbackColumn("name", "assembly"), simpleColumn("status", "Status"), simpleColumn("qtyOrdered", "# Ordered")]}
         />
       </section>
     </Stack>

@@ -129,27 +129,7 @@ export default function ShipmentDetailRoute() {
     fd.set("dateReceived", values.dateReceived || "");
     submit(fd, { method: "post" });
   });
-  // Keyboard shortcuts for navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(shipment.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/shipments/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(shipment.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/shipments/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [shipment.id, nextId, prevId]);
+  // Prev/Next hotkeys handled globally in RecordProvider
 
   return (
     <Stack>

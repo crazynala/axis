@@ -3,7 +3,7 @@ import { Button, Group, Stack, Title } from "@mantine/core";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { useEffect, useState, useRef } from "react";
 import { useRecords } from "../record/RecordContext";
 import { useHybridWindow } from "../record/useHybridWindow";
@@ -20,21 +20,7 @@ export default function ProductsIndexRoute() {
       initialWindow: 100,
       batchIncrement: 100,
     });
-  const [tableHeight, setTableHeight] = useState(500);
-  useEffect(() => {
-    const calc = () => {
-      const headerEl = document.querySelector(
-        "[data-products-header]"
-      ) as HTMLElement | null;
-      const top = headerEl ? headerEl.getBoundingClientRect().bottom : 0;
-      const vh = window.innerHeight;
-      const h = vh - top - 16;
-      if (h > 200) setTableHeight(h);
-    };
-    calc();
-    window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
-  }, []);
+  // Removed per-route height calculation; table now auto-sizes within viewport
   // Ensure currentId row included when returning from detail
   const ensuredRef = useRef(false);
   useEffect(() => {
@@ -74,10 +60,9 @@ export default function ProductsIndexRoute() {
       </Group>
       <section>
         <SavedViews views={[]} activeView={null} />
-        <RefactoredNavDataTable
+        <NavDataTable
           module="products"
           records={records}
-          height={tableHeight}
           columns={[
             {
               accessor: "id",

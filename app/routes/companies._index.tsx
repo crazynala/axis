@@ -12,7 +12,7 @@ import {
 } from "@remix-run/react";
 import { Button, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "../../packages/timber";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
 import { CompanyFindManagerNew } from "../components/CompanyFindManagerNew";
@@ -265,7 +265,7 @@ export default function CompaniesIndexRoute() {
         <Title order={4} mb="sm">
           All Companies ({total})
         </Title>
-        <RefactoredNavDataTable
+        <NavDataTable
           module="companies"
           records={records as any}
           columns={columns as any}
@@ -276,7 +276,6 @@ export default function CompaniesIndexRoute() {
           onReachEnd={() => {
             if (!atEnd) requestMore();
           }}
-          height={600}
         />
       </section>
     </Stack>

@@ -173,27 +173,7 @@ export default function PurchaseOrderDetailRoute() {
     URL.revokeObjectURL(url);
   };
 
-  // Keyboard shortcuts: Cmd/Ctrl + Left/Right to move between records
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(purchaseOrder.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/purchase-orders/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(purchaseOrder.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/purchase-orders/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [purchaseOrder.id, nextId, prevId]);
+  // Prev/Next hotkeys now handled globally in RecordProvider
 
   return (
     <Stack>

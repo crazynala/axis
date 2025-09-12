@@ -12,7 +12,7 @@ import { prisma } from "../utils/prisma.server";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import * as jobDetail from "../formConfigs/jobDetail";
 import { JobFindModal } from "../components/JobFindModal";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
@@ -176,7 +176,7 @@ function JobsHybridTable({
     { accessor: "status", title: "Status" },
   ];
   return (
-    <RefactoredNavDataTable
+    <NavDataTable
       module="jobs"
       records={records as any}
       columns={columns as any}
@@ -187,7 +187,6 @@ function JobsHybridTable({
       onActivate={(rec: any) => {
         if (rec?.id) window.location.href = `/jobs/${rec.id}`;
       }}
-      height={600}
     />
   );
 }

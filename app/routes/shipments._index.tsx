@@ -17,7 +17,7 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../find/multiFind";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
 
@@ -261,7 +261,7 @@ export default function ShipmentsIndexRoute() {
       </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
       <Title order={4}>Shipments ({total})</Title>
-      <RefactoredNavDataTable
+      <NavDataTable
         module="shipments"
         records={records as any}
         columns={columns as any}
@@ -272,7 +272,6 @@ export default function ShipmentsIndexRoute() {
         onReachEnd={() => {
           if (!atEnd) requestMore();
         }}
-        height={600}
       />
     </Stack>
   );

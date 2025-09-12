@@ -24,26 +24,7 @@ export default function ContactDetailPlaceholderRoute() {
   useEffect(() => {
     setCurrentId(company.id);
   }, [company.id, setCurrentId]);
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(company.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/contacts/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(company.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/contacts/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [company.id, nextId, prevId]);
+  // Prev/Next keyboard navigation handled globally in RecordProvider
   return (
     <div>
       <BreadcrumbSet

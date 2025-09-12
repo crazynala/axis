@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@remix-run/react";
-import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
+import NavDataTable from "../components/RefactoredNavDataTable";
 import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
@@ -152,7 +152,7 @@ export default function InvoicesIndexRoute() {
       </Group>
       <SavedViews views={[]} activeView={null} />
       <div data-invoices-table-container>
-        <RefactoredNavDataTable
+        <NavDataTable
           module="invoices"
           records={records}
           height={tableHeight}

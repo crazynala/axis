@@ -120,6 +120,13 @@ Benefits:
 - `getPrevId(id)`, `getNextId(id)` (null when at ends)
 - `mergeRows(newRows)` to add/refresh hydrated rows
 
+### 2025-09 UI Consolidation
+
+- `RefactoredNavDataTable` renamed to `NavDataTable`; arrow/home/end key handling removed from the component (now owned globally by `RecordContext`).
+- Global record navigation toolbar uses Mantine `ActionIcon` buttons: First, Previous, Position, Next, Last.
+- Position display uses tabular numerals and fixed width (e.g., `12 / 4,582`) and no longer shows the module label to reduce horizontal space.
+- Enter/Space (or double click) still activate the selected row within the table.
+
 ### Minimal Batch Rows Contract
 
 Request: `GET /<module>/rows?ids=1,2,3`

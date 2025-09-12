@@ -1,11 +1,28 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit, useSearchParams, useNavigate, Form } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  useSearchParams,
+  useNavigate,
+  Form,
+} from "@remix-run/react";
 import { Button, Group, Stack, Title, TextInput, Select } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/NavDataTable";
-import { idLinkColumn, nameOrFallbackColumn, simpleColumn, dateColumn } from "../components/tableColumns";
+import { NavDataTable } from "../components/RefactoredNavDataTable";
+import {
+  idLinkColumn,
+  nameOrFallbackColumn,
+  simpleColumn,
+  dateColumn,
+} from "../components/tableColumns";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 
@@ -52,10 +69,16 @@ export async function action({ request }: ActionFunctionArgs) {
     const data = {
       name: (form.get("name") as string) || null,
       description: (form.get("description") as string) || null,
-      assemblyId: form.get("assemblyId") ? Number(form.get("assemblyId")) : null,
+      assemblyId: form.get("assemblyId")
+        ? Number(form.get("assemblyId"))
+        : null,
       jobId: form.get("jobId") ? Number(form.get("jobId")) : null,
-      startTime: form.get("startTime") ? new Date(form.get("startTime") as string) : null,
-      endTime: form.get("endTime") ? new Date(form.get("endTime") as string) : null,
+      startTime: form.get("startTime")
+        ? new Date(form.get("startTime") as string)
+        : null,
+      endTime: form.get("endTime")
+        ? new Date(form.get("endTime") as string)
+        : null,
       status: (form.get("status") as string) || null,
       notes: (form.get("notes") as string) || null,
     };
@@ -73,7 +96,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function AssemblyActivitiesIndexRoute() {
-  const { rows, total, page, perPage, q, filters, assemblies, jobs } = useLoaderData<typeof loader>();
+  const { rows, total, page, perPage, q, filters, assemblies, jobs } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
@@ -107,8 +131,17 @@ export default function AssemblyActivitiesIndexRoute() {
       <Title order={2}>Assembly Activities</Title>
 
       <Group justify="space-between" align="center">
-        <BreadcrumbSet breadcrumbs={[{ label: "Assembly Activities", href: "/assembly-activities" }]} />
-        <Button component="a" href="/assembly-activities/new" variant="filled" color="blue">
+        <BreadcrumbSet
+          breadcrumbs={[
+            { label: "Assembly Activities", href: "/assembly-activities" },
+          ]}
+        />
+        <Button
+          component="a"
+          href="/assembly-activities/new"
+          variant="filled"
+          color="blue"
+        >
           New Assembly Activity
         </Button>
       </Group>
@@ -119,55 +152,55 @@ export default function AssemblyActivitiesIndexRoute() {
         </Title>
         <Form method="get">
           <Group wrap="wrap" align="flex-end" mb="sm">
-            <TextInput name="q" label="Search" placeholder="Name, description, notes" defaultValue={q || ""} w={240} />
-            <TextInput name="assemblyId" label="Assembly ID" defaultValue={filters?.assemblyId || ""} w={140} />
-            <TextInput name="jobId" label="Job ID" defaultValue={filters?.jobId || ""} w={140} />
+            <TextInput
+              name="q"
+              label="Search"
+              placeholder="Name, description, notes"
+              defaultValue={q || ""}
+              w={240}
+            />
+            <TextInput
+              name="assemblyId"
+              label="Assembly ID"
+              defaultValue={filters?.assemblyId || ""}
+              w={140}
+            />
+            <TextInput
+              name="jobId"
+              label="Job ID"
+              defaultValue={filters?.jobId || ""}
+              w={140}
+            />
             <Button type="submit" variant="default">
               Apply
             </Button>
           </Group>
         </Form>
         <NavDataTable
-          withTableBorder
-          withColumnBorders
-          highlightOnHover
-          idAccessor="id"
+          module="assembly-activities"
           records={rows as any}
-          totalRecords={total}
-          page={page}
-          recordsPerPage={perPage}
-          recordsPerPageOptions={[10, 20, 50, 100]}
-          autoFocusFirstRow
-          keyboardNavigation
-          onRowClick={(_rec: any, rowIndex?: number) => {
-            const rec = typeof rowIndex === "number" ? (rows as any[])[rowIndex] : _rec;
-            if (rec?.id != null) navigate(`/assembly-activities/${rec.id}`);
-          }}
-          onRowActivate={(rec: any) => {
-            if (rec?.id != null) navigate(`/assembly-activities/${rec.id}`);
-          }}
-          onPageChange={(p: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("page", String(p));
-            navigate(`?${next.toString()}`);
-          }}
-          onRecordsPerPageChange={(n: number) => {
-            const next = new URLSearchParams(sp);
-            next.set("perPage", String(n));
-            next.set("page", "1");
-            navigate(`?${next.toString()}`);
-          }}
           columns={[
             idLinkColumn("assembly-activities"),
             nameOrFallbackColumn("name", "activity"),
             simpleColumn("description", "Description"),
-            { accessor: "assemblyId", title: "Assembly", render: (r: any) => r.assembly?.name || r.assemblyId },
-            { accessor: "jobId", title: "Job", render: (r: any) => r.job?.name || r.jobId },
+            {
+              accessor: "assemblyId",
+              title: "Assembly",
+              render: (r: any) => r.assembly?.name || r.assemblyId,
+            },
+            {
+              accessor: "jobId",
+              title: "Job",
+              render: (r: any) => r.job?.name || r.jobId,
+            },
             dateColumn("startTime", "Start", { withTime: true }),
             dateColumn("endTime", "End", { withTime: true }),
             simpleColumn("status", "Status"),
             simpleColumn("notes", "Notes"),
           ]}
+          onActivate={(rec: any) => {
+            if (rec?.id != null) navigate(`/assembly-activities/${rec.id}`);
+          }}
         />
       </section>
     </Stack>

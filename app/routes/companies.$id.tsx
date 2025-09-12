@@ -70,25 +70,7 @@ export default function CompanyDetailRoute() {
     if (targetId == null) return;
     window.location.href = getPathForId(targetId) || `/companies/${targetId}`;
   };
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        (e.key === "ArrowLeft" || e.key === "ArrowRight")
-      ) {
-        e.preventDefault();
-        if (e.key === "ArrowLeft") {
-          const t = prevId(company.id);
-          navigateTo(typeof t === "number" ? t : Number(t) || null);
-        } else {
-          const t = nextId(company.id);
-          navigateTo(typeof t === "number" ? t : Number(t) || null);
-        }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [company.id, nextId, prevId]);
+  // Keyboard prev/next handled centrally in RecordProvider now
 
   const form = useForm<{
     name: string;

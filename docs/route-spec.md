@@ -64,7 +64,7 @@ Last updated: 2025-09-12
 
   - Provide layout route loader that returns: `{ idList, initialRows, total, ...filterMeta }`
   - Implement `rows` resource route for batch hydration
-  - Index route uses `useHybridWindow` + `RefactoredNavDataTable`
+  - Index route uses `useHybridWindow` + `NavDataTable` (formerly `RefactoredNavDataTable`)
   - Detail route sets `currentId` on mount; does NOT clear it on unmount
 
 - Auth screens (no AppShell)

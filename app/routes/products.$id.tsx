@@ -373,27 +373,7 @@ export default function ProductDetailRoute() {
     setCurrentId(product.id);
     // Do NOT clear on unmount; preserve selection like invoices module
   }, [product.id, setCurrentId]);
-  // Keyboard shortcuts (Cmd/Ctrl + ArrowLeft/Right) for navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(product.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/products/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(product.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/products/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [product.id, nextId, prevId]);
+  // Prev/Next hotkeys handled globally in RecordProvider
   const submit = useSubmit();
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit

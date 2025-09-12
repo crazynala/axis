@@ -353,28 +353,7 @@ export default function JobDetailRoute() {
     setOrderedArr(initial);
   }, [qtyAsm]);
 
-  // Keyboard shortcuts (Cmd/Ctrl + ArrowLeft/ArrowRight) for record navigation
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey) {
-        if (e.key === "ArrowLeft") {
-          const p = prevId(job.id as any);
-          if (p != null) {
-            e.preventDefault();
-            window.location.href = `/jobs/${p}`;
-          }
-        } else if (e.key === "ArrowRight") {
-          const n = nextId(job.id as any);
-          if (n != null) {
-            e.preventDefault();
-            window.location.href = `/jobs/${n}`;
-          }
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [job.id, nextId, prevId]);
+  // Prev/Next keyboard hotkeys handled globally in RecordProvider
 
   // Find modal handled via JobFindManager now
 

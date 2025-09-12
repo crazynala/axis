@@ -81,26 +81,7 @@ export default function AssemblyActivityDetailRoute() {
   useEffect(() => {
     setCurrentId(activity.id);
   }, [activity.id, setCurrentId]);
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "ArrowLeft") {
-        const p = prevId(activity.id as any);
-        if (p != null) {
-          e.preventDefault();
-          window.location.href = `/assembly-activities/${p}`;
-        }
-      } else if (e.key === "ArrowRight") {
-        const n = nextId(activity.id as any);
-        if (n != null) {
-          e.preventDefault();
-          window.location.href = `/assembly-activities/${n}`;
-        }
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [activity.id, nextId, prevId]);
+  // Prev/Next hotkeys handled globally in RecordProvider
 
   return (
     <Stack gap="md">
