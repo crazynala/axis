@@ -48,7 +48,7 @@ import {
 } from "../formConfigs/productDetail";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase, getProductStockSnapshots } from "../utils/prisma.server";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { useRecordContext } from "../record/RecordContext";
 
@@ -71,7 +71,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const mark = (label: string) => marks.push({ label, ms: Date.now() - t0 });
 
   // Parallel queries (non-transaction) to avoid interactive transaction timeout.
-  const productPromise = prisma.product.findUnique({
+  const productPromise = prismaBase.product.findUnique({
     where: { id },
     include: {
       supplier: { select: { id: true, name: true } },
@@ -94,17 +94,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
       },
     },
   });
-  const taxCodesPromise = prisma.valueList.findMany({
+  const taxCodesPromise = prismaBase.valueList.findMany({
     where: { type: "Tax" },
     orderBy: { label: "asc" },
     select: { id: true, label: true },
   });
-  const categoriesPromise = prisma.valueList.findMany({
+  const categoriesPromise = prismaBase.valueList.findMany({
     where: { type: "Category" },
     orderBy: { label: "asc" },
     select: { id: true, label: true },
   });
-  const companiesPromise = prisma.company.findMany({
+  const companiesPromise = prismaBase.company.findMany({
     select: {
       id: true,
       name: true,
@@ -115,7 +115,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { name: "asc" },
     take: 1000,
   });
-  const productChoicesPromise = prisma.product.findMany({
+  const productChoicesPromise = prismaBase.product.findMany({
     select: {
       id: true,
       sku: true,
@@ -125,7 +125,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
     take: 1000,
   });
-  const movementLinesPromise = prisma.productMovementLine.findMany({
+  const movementLinesPromise = prismaBase.productMovementLine.findMany({
     where: { productId: id },
     include: {
       movement: {
@@ -144,7 +144,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: [{ movement: { date: "desc" } }, { id: "desc" }],
     take: 500,
   });
-  const movementHeadersPromise = prisma.productMovement.findMany({
+  const movementHeadersPromise = prismaBase.productMovement.findMany({
     where: { productId: id },
     select: {
       id: true,
@@ -214,7 +214,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   }
   const locIds = Array.from(locIdSet);
   const locs = locIds.length
-    ? await prisma.location.findMany({
+    ? await prismaBase.location.findMany({
         where: { id: { in: locIds } },
         select: { id: true, name: true },
       })
@@ -226,10 +226,12 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (process.env.LOG_PERF?.includes("products")) {
     console.log("[perf] products.$id loader timings", { id, marks });
   }
+  // Fetch stock snapshot from materialized view (single pre-aggregated source)
+  const snapshot = await getProductStockSnapshots(id);
   return json({
     product,
-    stockByLocation: (product as any).c_byLocation,
-    stockByBatch: (product as any).c_byBatch,
+    stockByLocation: (snapshot as any)?.byLocation || [],
+    stockByBatch: (snapshot as any)?.byBatch || [],
     productChoices,
     movements,
     movementHeaders,
@@ -309,7 +311,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   };
   // Creation path: accept either explicit _intent or posting to /products/new
   if (isNew || intent === "create") {
-    const created = await prisma.product.create({
+    const created = await prismaBase.product.create({
       data: buildProductData(form),
     });
     return redirect(`/products/${created.id}`);
@@ -328,7 +330,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       ...productPricingFields,
       ...productBomFindFields,
     ]);
-    const first = await prisma.product.findFirst({
+    const first = await prismaBase.product.findFirst({
       where,
       select: { id: true },
       orderBy: { id: "asc" },
@@ -383,7 +385,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
     const data = buildProductData(form);
-    await prisma.product.update({ where: { id }, data });
+  await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
   if (intent === "product.addComponent") {
@@ -391,7 +393,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ error: "Invalid product id" }, { status: 400 });
     const childId = Number(form.get("childId"));
     if (Number.isFinite(childId)) {
-      await prisma.productLine.create({
+      await prismaBase.productLine.create({
         data: { parentId: id, childId, quantity: 1 },
       });
     }
@@ -400,7 +402,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "delete") {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
-    await prisma.product.delete({ where: { id } });
+  await prismaBase.product.delete({ where: { id } });
     return redirect("/products");
   }
   return redirect(`/products/${id}`);

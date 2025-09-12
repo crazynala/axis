@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 
 // Batch hydration for products: sparse detail fields for table listing
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -15,7 +15,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     .map((v) => (v.match(/^\d+$/) ? Number(v) : v))
     .filter((v) => typeof v === "number") as number[];
   if (!ids.length) return json({ rows: [] });
-  const rows = await prisma.product.findMany({
+  const rows = await prismaBase.product.findMany({
     where: { id: { in: ids } },
     orderBy: { id: "asc" },
     select: {
