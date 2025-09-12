@@ -1,0 +1,220 @@
+import React, { useEffect, useRef, useCallback } from "react";
+import { DataTable as MantineDataTable } from "mantine-datatable";
+import { useRecordContext } from "../record/RecordContext";
+
+interface RefNavTableProps<T extends Record<string, any>> {
+  module: string;
+  records: T[];
+  columns: any[];
+  /** Called when user activates current row (Enter/Space or double click) */
+  onActivate?: (record: T) => void;
+  /** Request more data when bottom reached */
+  onReachEnd?: () => void;
+  /** Auto select first record if no currentId set */
+  autoSelectFirst?: boolean;
+  /** Class applied to active row */
+  activeClassName?: string;
+  height?: number | string;
+  fetching?: boolean;
+  scrollViewportRef?: React.RefObject<HTMLDivElement>;
+  /** Optional footer (e.g. loading / end-of-results indicator) rendered inside scroll container */
+  footer?: React.ReactNode;
+}
+
+export function RefactoredNavDataTable<T extends Record<string, any>>({
+  module,
+  records,
+  columns,
+  onActivate,
+  onReachEnd,
+  autoSelectFirst = true,
+  activeClassName = "nav-data-table-row-focused",
+  height = 500,
+  fetching,
+  scrollViewportRef,
+  footer,
+}: RefNavTableProps<T>) {
+  const { state, currentId, setCurrentId, nextId, prevId, getPathForId } =
+    useRecordContext();
+  const containerRef = scrollViewportRef || useRef<HTMLDivElement>(null);
+
+  // Ensure selection exists
+  useEffect(() => {
+    if (module !== state?.module) return; // ignore if different module
+    if (currentId == null && autoSelectFirst && records.length) {
+      setCurrentId((records as any)[0].id);
+    }
+  }, [
+    currentId,
+    autoSelectFirst,
+    records,
+    setCurrentId,
+    state?.module,
+    module,
+  ]);
+
+  // Highlight & scroll active row into view when currentId changes
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (currentId == null) return;
+    // find row: look for cell containing id or data attribute we add
+    const row = el.querySelector<HTMLTableRowElement>(
+      `tbody tr[data-row-id="${currentId}"]`
+    );
+    if (row) {
+      row.classList.add(activeClassName);
+      row.setAttribute("aria-selected", "true");
+      const rowRect = row.getBoundingClientRect();
+      const parentRect = el.getBoundingClientRect();
+      if (rowRect.top < parentRect.top || rowRect.bottom > parentRect.bottom) {
+        row.scrollIntoView({ block: "center" });
+      }
+    }
+    // Clean up previous classes: remove class from other rows
+    const all = el.querySelectorAll<HTMLTableRowElement>(
+      "tbody tr[data-row-id]"
+    );
+    all.forEach((tr) => {
+      if (String(tr.getAttribute("data-row-id")) !== String(currentId)) {
+        tr.classList.remove(activeClassName);
+        tr.removeAttribute("aria-selected");
+      }
+    });
+  }, [currentId, records, activeClassName, containerRef]);
+
+  // Keyboard navigation: up/down/home/end sets currentId
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: KeyboardEvent) => {
+      if (module !== state?.module) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (currentId == null) {
+          if (records.length) setCurrentId((records as any)[0].id);
+        } else {
+          const nxt = nextId(currentId);
+          if (nxt != null) setCurrentId(nxt);
+        }
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (currentId == null) {
+          if (records.length)
+            setCurrentId((records as any)[records.length - 1].id);
+        } else {
+          const prv = prevId(currentId);
+          if (prv != null) setCurrentId(prv);
+        }
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        if (records.length) setCurrentId((records as any)[0].id);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        if (records.length)
+          setCurrentId((records as any)[records.length - 1].id);
+      } else if (e.key === "Enter" || e.key === " ") {
+        if (currentId != null) {
+          const idx = records.findIndex(
+            (r: any) => String(r.id) === String(currentId)
+          );
+          if (idx >= 0) {
+            e.preventDefault();
+            onActivate?.(records[idx]);
+          }
+        }
+      }
+    };
+    el.addEventListener("keydown", handler);
+    return () => el.removeEventListener("keydown", handler);
+  }, [
+    currentId,
+    nextId,
+    prevId,
+    records,
+    setCurrentId,
+    onActivate,
+    state?.module,
+    module,
+  ]);
+
+  // Decorate rows with data-row-id after mount/update
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rows = el.querySelectorAll<HTMLTableRowElement>("tbody tr");
+    rows.forEach((tr, i) => {
+      const rec = (records as any)[i];
+      if (rec && rec.id != null) tr.setAttribute("data-row-id", String(rec.id));
+      tr.addEventListener("dblclick", () => {
+        if (rec) onActivate?.(rec);
+      });
+      tr.addEventListener("click", () => setCurrentId(rec?.id));
+    });
+  }, [records, onActivate, setCurrentId]);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || !onReachEnd) return;
+    // If within 60px of bottom, request more
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
+      onReachEnd();
+    }
+  }, [onReachEnd]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", handleScroll);
+    // Auto focus for keyboard navigation when mounted
+    if (!el.contains(document.activeElement)) {
+      setTimeout(() => {
+        try {
+          el.focus();
+        } catch {}
+      }, 0);
+    }
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [handleScroll]);
+
+  return (
+    <div
+      ref={containerRef as any}
+      style={{ position: "relative", height, overflow: "auto" }}
+      tabIndex={0}
+      data-module={module}
+    >
+      <MantineDataTable
+        records={records}
+        columns={columns as any}
+        fetching={fetching}
+        withTableBorder
+      />
+      {footer && (
+        <div
+          style={{
+            padding: 8,
+            fontSize: 12,
+            opacity: 0.75,
+            textAlign: "center",
+          }}
+        >
+          {footer}
+        </div>
+      )}
+      <style>
+        {`
+        .${activeClassName} {
+          background-color: var(--mantine-color-blue-light, #e7f5ff) !important;
+          box-shadow: 0 0 0 2px var(--mantine-color-blue-filled, #228be6) inset;
+        }
+      `}
+      </style>
+    </div>
+  );
+}
+
+export default RefactoredNavDataTable;

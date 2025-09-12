@@ -1,10 +1,16 @@
-import type { LoaderFunctionArgs, ActionFunctionArgs, MetaFunction } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  ActionFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { BreadcrumbSet, useRecordBrowser, useMasterTable, useRecordBrowserShortcuts, useInitGlobalFormContext, RecordNavButtons } from "@aa/timber";
+import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
+import { useRecordContext } from "../record/RecordContext";
 import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
 import { InvoiceDetailForm } from "../components/InvoiceDetailForm";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { buildInvoiceLineDetails } from "../utils/invoiceLineDetails";
 import { formatQuantity } from "../utils/format";
@@ -12,7 +18,9 @@ import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.invoice ? `Invoice ${data.invoice.invoiceCode ?? data.invoice.id}` : "Invoice",
+    title: data?.invoice
+      ? `Invoice ${data.invoice.invoiceCode ?? data.invoice.id}`
+      : "Invoice",
   },
 ];
 
@@ -53,8 +61,20 @@ export async function loader({ params }: LoaderFunctionArgs) {
     { qty: 0, cost: 0, sell: 0 }
   );
   // Build details strings for each line using related data
-  const poLineIds = Array.from(new Set((invoice.lines || []).map((l: any) => l.purchaseOrderLineId).filter((v: any) => v != null))) as number[];
-  const shipIds = Array.from(new Set((invoice.lines || []).flatMap((l: any) => [l.shippingIdActual, l.shippingIdDuty]).filter((v: any) => v != null))) as number[];
+  const poLineIds = Array.from(
+    new Set(
+      (invoice.lines || [])
+        .map((l: any) => l.purchaseOrderLineId)
+        .filter((v: any) => v != null)
+    )
+  ) as number[];
+  const shipIds = Array.from(
+    new Set(
+      (invoice.lines || [])
+        .flatMap((l: any) => [l.shippingIdActual, l.shippingIdDuty])
+        .filter((v: any) => v != null)
+    )
+  ) as number[];
 
   const [poLines, shipments] = await Promise.all([
     poLineIds.length
@@ -81,7 +101,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const detailsById: Record<number, string> = {};
   for (const l of invoice.lines || []) {
     const po = l.purchaseOrderLineId ? poMap.get(l.purchaseOrderLineId) : null;
-    const shipActual = l.shippingIdActual ? shipMap.get(l.shippingIdActual) : null;
+    const shipActual = l.shippingIdActual
+      ? shipMap.get(l.shippingIdActual)
+      : null;
     const shipDuty = l.shippingIdDuty ? shipMap.get(l.shippingIdDuty) : null;
     const poBrief = po
       ? {
@@ -153,8 +175,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
 export default function InvoiceDetailRoute() {
   const { invoice, totals, detailsById } = useLoaderData<typeof loader>();
   console.log("InvoiceDetailRoute invoice:", invoice);
-  useRecordBrowserShortcuts(invoice.id);
-  const { records: masterRecords } = useMasterTable();
+  const { setCurrentId, state } = useRecordContext();
+  useEffect(() => {
+    setCurrentId(invoice.id);
+    return () => setCurrentId(null);
+  }, [invoice.id, setCurrentId]);
   const submit = useSubmit();
   const form = useForm({
     defaultValues: invoice,
@@ -169,7 +194,6 @@ export default function InvoiceDetailRoute() {
     if (values.companyId != null) fd.set("companyId", String(values.companyId));
     submit(fd, { method: "post" });
   });
-  const recordBrowser = useRecordBrowser(invoice.id, masterRecords);
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -179,7 +203,7 @@ export default function InvoiceDetailRoute() {
             { label: String(invoice.id), href: `/invoices/${invoice.id}` },
           ]}
         />
-        <RecordNavButtons recordBrowser={recordBrowser} />
+        {/* Navigation buttons could use GlobalRecordBrowser elsewhere; omit here for now */}
       </Group>
 
       <InvoiceDetailForm mode="edit" form={form as any} />
