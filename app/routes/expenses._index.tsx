@@ -4,6 +4,7 @@ import { Link, useLoaderData, useNavigate, useSearchParams } from "@remix-run/re
 import { prisma } from "../utils/prisma.server";
 import { NavDataTable } from "../components/NavDataTable";
 import { idLinkColumn, dateColumn, simpleColumn } from "../components/tableColumns";
+import { formatUSD } from "../utils/format";
 import { buildRowNavHandlers } from "../components/tableRowHandlers";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
@@ -152,7 +153,13 @@ export default function ExpensesIndexRoute() {
         autoFocusFirstRow
         keyboardNavigation
         {...buildRowNavHandlers("expenses", navigate)}
-        columns={[idLinkColumn("expenses"), dateColumn("date", "Date"), simpleColumn("category", "Category"), simpleColumn("details", "Details"), { accessor: "priceCost", title: "Cost" }]}
+        columns={[
+          idLinkColumn("expenses"),
+          dateColumn("date", "Date"),
+          simpleColumn("category", "Category"),
+          simpleColumn("details", "Details"),
+          { accessor: "priceCost", title: "Cost", render: (r: any) => formatUSD(r.priceCost) },
+        ]}
       />
     </div>
   );

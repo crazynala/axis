@@ -6,6 +6,7 @@ import { Controller, useForm } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 import { NavDataTable } from "../components/NavDataTable";
+import { formatUSD, formatQuantity } from "../utils/format";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { idLinkColumn, simpleColumn } from "../components/tableColumns";
 
@@ -95,18 +96,18 @@ export default function CostingsIndexRoute() {
 
   const form = useForm<{
     assemblyId: number | null;
-    componentId: number | null;
+    productId: number | null;
     quantityPerUnit: number | null;
     unitCost: number | null;
-    usageType: string | null;
+    activityUsed: string | null;
     notes: string | null;
   }>({
     defaultValues: {
       assemblyId: null,
-      componentId: null,
+      productId: null,
       quantityPerUnit: null,
       unitCost: null,
-      usageType: null,
+      activityUsed: null,
       notes: "",
     },
   });
@@ -175,13 +176,13 @@ export default function CostingsIndexRoute() {
               render: (r: any) => r.assembly?.name || r.assemblyId,
             },
             {
-              accessor: "componentId",
-              title: "Component",
-              render: (r: any) => r.component?.name || r.component?.sku || r.componentId,
+              accessor: "productId",
+              title: "Product",
+              render: (r: any) => r.product?.name || r.product?.sku || r.productId,
             },
-            { accessor: "usageType", title: "Usage" },
-            { accessor: "quantityPerUnit", title: "Qty/Unit" },
-            { accessor: "unitCost", title: "Unit Cost" },
+            { accessor: "activityUsed", title: "Activity" },
+            { accessor: "quantityPerUnit", title: "Qty/Unit", render: (r: any) => formatQuantity(r.quantityPerUnit) },
+            { accessor: "unitCost", title: "Unit Cost", render: (r: any) => formatUSD(r.unitCost) },
           ]}
         />
       </section>

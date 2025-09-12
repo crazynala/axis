@@ -1,38 +1,20 @@
-import type {
-  LoaderFunctionArgs,
-  ActionFunctionArgs,
-  MetaFunction,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, ActionFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  useMasterTable,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-  RecordNavButtons,
-} from "@aa/timber";
-import {
-  Card,
-  Group,
-  Stack,
-  Title,
-  Table,
-  Button,
-} from "@mantine/core";
+import { BreadcrumbSet, useRecordBrowser, useMasterTable, useRecordBrowserShortcuts, useInitGlobalFormContext, RecordNavButtons } from "@aa/timber";
+import { Card, Group, Stack, Title, Table, Button } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { NumberInput, Modal } from "@mantine/core";
 import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
 import { ProductSelect, type ProductOption } from "../components/ProductSelect";
 import { useState } from "react";
+import { formatQuantity } from "../utils/format";
+import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.purchaseOrder
-      ? `PO ${data.purchaseOrder.id}`
-      : "Purchase Order",
+    title: data?.purchaseOrder ? `PO ${data.purchaseOrder.id}` : "Purchase Order",
   },
 ];
 
@@ -129,8 +111,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function PurchaseOrderDetailRoute() {
-  const { purchaseOrder, totals, productOptions } =
-    useLoaderData<typeof loader>();
+  const { purchaseOrder, totals, productOptions } = useLoaderData<typeof loader>();
   useRecordBrowserShortcuts(purchaseOrder.id);
   const { records: masterRecords } = useMasterTable();
   const submit = useSubmit();
@@ -225,25 +206,10 @@ export default function PurchaseOrderDetailRoute() {
             </Button>
           </Group>
         </Card.Section>
-        <Modal
-          opened={addOpen}
-          onClose={() => setAddOpen(false)}
-          title="Add PO Line"
-          centered
-        >
+        <Modal opened={addOpen} onClose={() => setAddOpen(false)} title="Add PO Line" centered>
           <Stack gap="sm">
-            <ProductSelect
-              label="Product"
-              value={newProductId}
-              onChange={setNewProductId}
-              options={productOptions as unknown as ProductOption[]}
-            />
-            <NumberInput
-              label="Qty Ordered"
-              value={newQtyOrdered as any}
-              onChange={(v) => setNewQtyOrdered(Number(v) || 0)}
-              min={0}
-            />
+            <ProductSelect label="Product" value={newProductId} onChange={setNewProductId} options={productOptions as unknown as ProductOption[]} />
+            <NumberInput label="Qty Ordered" value={newQtyOrdered as any} onChange={(v) => setNewQtyOrdered(Number(v) || 0)} min={0} />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAddOpen(false)}>
                 Cancel
@@ -279,15 +245,7 @@ export default function PurchaseOrderDetailRoute() {
                     name={`lines.${idx}.quantityOrdered` as any}
                     control={form.control}
                     defaultValue={l.quantityOrdered ?? 0}
-                    render={({ field }) => (
-                      <NumberInput
-                        {...field}
-                        hideControls
-                        allowNegative={false}
-                        min={0}
-                        w="5rem"
-                      />
-                    )}
+                    render={({ field }) => <NumberInput {...field} hideControls allowNegative={false} min={0} w="5rem" />}
                   />
                 </Table.Td>
                 <Table.Td>
@@ -295,21 +253,13 @@ export default function PurchaseOrderDetailRoute() {
                     name={`lines.${idx}.quantity` as any}
                     control={form.control}
                     defaultValue={l.quantity ?? 0}
-                    render={({ field }) => (
-                      <NumberInput
-                        {...field}
-                        hideControls
-                        allowNegative={false}
-                        min={0}
-                        w="5rem"
-                      />
-                    )}
+                    render={({ field }) => <NumberInput {...field} hideControls allowNegative={false} min={0} w="5rem" />}
                   />
                 </Table.Td>
                 <Table.Td>{l.qtyShipped ?? ""}</Table.Td>
                 <Table.Td>{l.qtyReceived ?? ""}</Table.Td>
-                <Table.Td>{l.priceCost ?? ""}</Table.Td>
-                <Table.Td>{l.priceSell ?? ""}</Table.Td>
+                <Table.Td>{formatUSD(l.priceCost)}</Table.Td>
+                <Table.Td>{formatUSD(l.priceSell)}</Table.Td>
               </Table.Tr>
             ))}
             <Table.Tr>
@@ -325,10 +275,10 @@ export default function PurchaseOrderDetailRoute() {
               <Table.Td></Table.Td>
               <Table.Td></Table.Td>
               <Table.Td>
-                <strong>{totals.cost.toFixed(2)}</strong>
+                <strong>{formatUSD(totals.cost)}</strong>
               </Table.Td>
               <Table.Td>
-                <strong>{totals.sell.toFixed(2)}</strong>
+                <strong>{formatUSD(totals.sell)}</strong>
               </Table.Td>
             </Table.Tr>
           </Table.Tbody>

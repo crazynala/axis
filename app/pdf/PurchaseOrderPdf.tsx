@@ -1,3 +1,4 @@
+import { formatMoney, formatQuantity } from "../utils/format";
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 
@@ -46,28 +47,17 @@ const styles = StyleSheet.create({
   footerRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 8 },
 });
 
-export function PurchaseOrderPdf({
-  po,
-  subtotal,
-}: {
-  po: any;
-  subtotal: number;
-}) {
+export function PurchaseOrderPdf({ po, subtotal }: { po: any; subtotal: number }) {
   const lines = Array.isArray(po?.lines) ? po.lines : [];
   return (
     <Document title={`PO ${po?.id || ""}`}>
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
-          <Text style={styles.brand}>
-            {po?.company?.name || "Purchase Order"}
-          </Text>
+          <Text style={styles.brand}>{po?.company?.name || "Purchase Order"}</Text>
           <View style={styles.meta}>
             <Text>Purchase Order</Text>
             <Text>PO #: {po?.id ?? ""}</Text>
-            <Text>
-              Date:{" "}
-              {po?.date ? new Date(po.date).toISOString().slice(0, 10) : ""}
-            </Text>
+            <Text>Date: {po?.date ? new Date(po.date).toISOString().slice(0, 10) : ""}</Text>
           </View>
         </View>
 
@@ -76,14 +66,7 @@ export function PurchaseOrderPdf({
             <Text style={styles.small}>Vendor</Text>
             <Text>{po?.company?.name ?? ""}</Text>
             {po?.company?.address ? <Text>{po.company.address}</Text> : null}
-            {po?.company &&
-            (po.company.city || po.company.state || po.company.zip) ? (
-              <Text>
-                {[po.company.city, po.company.state, po.company.zip]
-                  .filter(Boolean)
-                  .join(", ")}
-              </Text>
-            ) : null}
+            {po?.company && (po.company.city || po.company.state || po.company.zip) ? <Text>{[po.company.city, po.company.state, po.company.zip].filter(Boolean).join(", ")}</Text> : null}
             {po?.company?.country ? <Text>{po.company.country}</Text> : null}
             {po?.company?.email ? <Text>Email: {po.company.email}</Text> : null}
           </View>
@@ -127,13 +110,13 @@ export function PurchaseOrderPdf({
                   <Text>{ln.product?.name ?? ln.productNameCopy ?? ""}</Text>
                 </View>
                 <View style={[styles.tableCol, { width: "12%" }]}>
-                  <Text>{String(qty)}</Text>
+                  <Text>{formatQuantity(qty)}</Text>
                 </View>
                 <View style={[styles.tableCol, { width: "14%" }]}>
-                  <Text>{unit ? unit.toFixed(2) : ""}</Text>
+                  <Text>{unit ? formatMoney(unit) : ""}</Text>
                 </View>
                 <View style={[styles.tableCol, { width: "14%" }]}>
-                  <Text>{line ? line.toFixed(2) : ""}</Text>
+                  <Text>{line ? formatMoney(line) : ""}</Text>
                 </View>
               </View>
             );
@@ -141,7 +124,7 @@ export function PurchaseOrderPdf({
         </View>
 
         <View style={styles.footerRow}>
-          <Text>Subtotal: {subtotal.toFixed(2)}</Text>
+          <Text>Subtotal: {formatMoney(subtotal)}</Text>
         </View>
 
         {po?.notes ? (

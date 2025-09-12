@@ -1,11 +1,10 @@
+import { formatMoney, formatQuantity } from "../utils/format";
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [
-  { title: data ? `PO ${data.purchaseOrder.id} · Print` : "PO · Print" },
-];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data ? `PO ${data.purchaseOrder.id} · Print` : "PO · Print" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -61,10 +60,7 @@ export default function POPrintPage() {
               <strong>Purchase Order</strong>
             </div>
             <div>PO #: {po.id}</div>
-            <div>
-              Date:{" "}
-              {po.date ? new Date(po.date).toISOString().slice(0, 10) : ""}
-            </div>
+            <div>Date: {po.date ? new Date(po.date).toISOString().slice(0, 10) : ""}</div>
           </div>
         </header>
         <div className="grid">
@@ -74,17 +70,9 @@ export default function POPrintPage() {
               <strong>{po.company?.name ?? ""}</strong>
             </div>
             {po.company?.address && <div>{po.company.address}</div>}
-            {(po.company?.city || po.company?.state || po.company?.zip) && (
-              <div>
-                {[po.company.city, po.company.state, po.company.zip]
-                  .filter(Boolean)
-                  .join(", ")}
-              </div>
-            )}
+            {(po.company?.city || po.company?.state || po.company?.zip) && <div>{[po.company.city, po.company.state, po.company.zip].filter(Boolean).join(", ")}</div>}
             {po.company?.country && <div>{po.company.country}</div>}
-            {po.company?.email && (
-              <div className="small">Email: {po.company.email}</div>
-            )}
+            {po.company?.email && <div className="small">Email: {po.company.email}</div>}
           </div>
           <div className="box">
             <div className="small">Ship To</div>
@@ -114,9 +102,9 @@ export default function POPrintPage() {
                 <tr key={ln.id}>
                   <td>{ln.product?.sku ?? ln.productSkuCopy ?? ""}</td>
                   <td>{ln.product?.name ?? ln.productNameCopy ?? ""}</td>
-                  <td>{qty}</td>
-                  <td>{unit ? unit.toFixed(2) : ""}</td>
-                  <td>{line ? line.toFixed(2) : ""}</td>
+                  <td>{formatQuantity(qty)}</td>
+                  <td>{unit ? formatMoney(unit) : ""}</td>
+                  <td>{line ? formatMoney(line) : ""}</td>
                 </tr>
               );
             })}
@@ -125,7 +113,7 @@ export default function POPrintPage() {
             <tr>
               <td colSpan={3}></td>
               <td>Subtotal</td>
-              <td>{subtotal.toFixed(2)}</td>
+              <td>{formatMoney(subtotal)}</td>
             </tr>
           </tfoot>
         </table>

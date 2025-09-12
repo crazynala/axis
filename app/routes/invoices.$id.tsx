@@ -1,29 +1,18 @@
-import type {
-  LoaderFunctionArgs,
-  ActionFunctionArgs,
-  MetaFunction,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, ActionFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import {
-  BreadcrumbSet,
-  useRecordBrowser,
-  useMasterTable,
-  useRecordBrowserShortcuts,
-  useInitGlobalFormContext,
-  RecordNavButtons,
-} from "@aa/timber";
+import { BreadcrumbSet, useRecordBrowser, useMasterTable, useRecordBrowserShortcuts, useInitGlobalFormContext, RecordNavButtons } from "@aa/timber";
 import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
 import { InvoiceDetailForm } from "../components/InvoiceDetailForm";
 import { useForm } from "react-hook-form";
 import { buildInvoiceLineDetails } from "../utils/invoiceLineDetails";
+import { formatQuantity } from "../utils/format";
+import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.invoice
-      ? `Invoice ${data.invoice.invoiceCode ?? data.invoice.id}`
-      : "Invoice",
+    title: data?.invoice ? `Invoice ${data.invoice.invoiceCode ?? data.invoice.id}` : "Invoice",
   },
 ];
 
@@ -64,20 +53,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
     { qty: 0, cost: 0, sell: 0 }
   );
   // Build details strings for each line using related data
-  const poLineIds = Array.from(
-    new Set(
-      (invoice.lines || [])
-        .map((l: any) => l.purchaseOrderLineId)
-        .filter((v: any) => v != null)
-    )
-  ) as number[];
-  const shipIds = Array.from(
-    new Set(
-      (invoice.lines || [])
-        .flatMap((l: any) => [l.shippingIdActual, l.shippingIdDuty])
-        .filter((v: any) => v != null)
-    )
-  ) as number[];
+  const poLineIds = Array.from(new Set((invoice.lines || []).map((l: any) => l.purchaseOrderLineId).filter((v: any) => v != null))) as number[];
+  const shipIds = Array.from(new Set((invoice.lines || []).flatMap((l: any) => [l.shippingIdActual, l.shippingIdDuty]).filter((v: any) => v != null))) as number[];
 
   const [poLines, shipments] = await Promise.all([
     poLineIds.length
@@ -104,9 +81,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const detailsById: Record<number, string> = {};
   for (const l of invoice.lines || []) {
     const po = l.purchaseOrderLineId ? poMap.get(l.purchaseOrderLineId) : null;
-    const shipActual = l.shippingIdActual
-      ? shipMap.get(l.shippingIdActual)
-      : null;
+    const shipActual = l.shippingIdActual ? shipMap.get(l.shippingIdActual) : null;
     const shipDuty = l.shippingIdDuty ? shipMap.get(l.shippingIdDuty) : null;
     const poBrief = po
       ? {
@@ -231,9 +206,9 @@ export default function InvoiceDetailRoute() {
                   <Table.Td>{l.id}</Table.Td>
                   <Table.Td>{l.job?.projectCode ?? ""}</Table.Td>
                   <Table.Td>{detailsById?.[l.id] ?? ""}</Table.Td>
-                  <Table.Td>{l.quantity ?? ""}</Table.Td>
-                  <Table.Td>{l.priceCost ?? ""}</Table.Td>
-                  <Table.Td>{l.priceSell ?? ""}</Table.Td>
+                  <Table.Td>{formatQuantity(l.quantity)}</Table.Td>
+                  <Table.Td>{formatUSD(l.priceCost)}</Table.Td>
+                  <Table.Td>{formatUSD(l.priceSell)}</Table.Td>
                 </Table.Tr>
               ))}
               <Table.Tr>
@@ -244,10 +219,10 @@ export default function InvoiceDetailRoute() {
                   <strong>{totals.qty}</strong>
                 </Table.Td>
                 <Table.Td>
-                  <strong>{totals.cost.toFixed(2)}</strong>
+                  <strong>{formatUSD(totals.cost)}</strong>
                 </Table.Td>
                 <Table.Td>
-                  <strong>{totals.sell.toFixed(2)}</strong>
+                  <strong>{formatUSD(totals.sell)}</strong>
                 </Table.Td>
               </Table.Tr>
             </Table.Tbody>
