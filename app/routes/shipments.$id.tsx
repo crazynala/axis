@@ -99,7 +99,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function ShipmentDetailRoute() {
   const { shipment } = useLoaderData<typeof loader>();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   useEffect(() => {
     setCurrentId(shipment.id);
@@ -140,28 +140,7 @@ export default function ShipmentDetailRoute() {
             { label: String(shipment.id), href: `/shipments/${shipment.id}` },
           ]}
         />
-        <Group gap="xs">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(shipment.id as any);
-              if (p != null) window.location.href = `/shipments/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(shipment.id as any);
-              if (n != null) window.location.href = `/shipments/${n}`;
-            }}
-          >
-            Next
-          </Button>
-        </Group>
+        <Group gap="xs"></Group>
       </Group>
 
       <ShipmentDetailForm mode="edit" form={form as any} shipment={shipment} />

@@ -20,7 +20,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
 export default function ContactDetailPlaceholderRoute() {
   const { company } = useLoaderData<typeof loader>();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(company.id);
   }, [company.id, setCurrentId]);
@@ -36,26 +36,7 @@ export default function ContactDetailPlaceholderRoute() {
           },
         ]}
       />
-      <div style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-        <button
-          onClick={() => {
-            const p = prevId(company.id as any);
-            if (p != null) window.location.href = `/contacts/${p}`;
-          }}
-          disabled={!prevId(company.id as any)}
-        >
-          Prev
-        </button>
-        <button
-          onClick={() => {
-            const n = nextId(company.id as any);
-            if (n != null) window.location.href = `/contacts/${n}`;
-          }}
-          disabled={!nextId(company.id as any)}
-        >
-          Next
-        </button>
-      </div>
+      <div style={{ height: 0 }} />
       <h1>Contact</h1>
       <p>
         This is a placeholder detail page using Company data until Contact
@@ -64,9 +45,7 @@ export default function ContactDetailPlaceholderRoute() {
       <p>
         <strong>Name:</strong> {company.name}
       </p>
-      <p>
-        <Link to="/contacts">Back</Link>
-      </p>
+      <p></p>
     </div>
   );
 }

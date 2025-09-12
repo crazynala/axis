@@ -86,7 +86,7 @@ export default function CostingDetailRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(costing.id);
   }, [costing.id, setCurrentId]);
@@ -102,36 +102,7 @@ export default function CostingDetailRoute() {
           ]}
         />
       </Group>
-      <Group justify="space-between" align="center">
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "Costings", href: "/costings" },
-            { label: String(costing.id), href: `/costings/${costing.id}` },
-          ]}
-        />
-        <Group gap="xs">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(costing.id as any);
-              if (p != null) window.location.href = `/costings/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(costing.id as any);
-              if (n != null) window.location.href = `/costings/${n}`;
-            }}
-          >
-            Next
-          </Button>
-        </Group>
-      </Group>
+      {/* Local prev/next removed (global header handles navigation) */}
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />

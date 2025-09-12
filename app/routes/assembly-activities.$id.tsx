@@ -77,7 +77,7 @@ export default function AssemblyActivityDetailRoute() {
   const { activity, assemblies, jobs } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(activity.id);
   }, [activity.id, setCurrentId]);
@@ -97,28 +97,7 @@ export default function AssemblyActivityDetailRoute() {
           ]}
         />
       </Group>
-      <Group gap="xs">
-        <Button
-          size="xs"
-          variant="default"
-          onClick={() => {
-            const p = prevId(activity.id as any);
-            if (p != null) window.location.href = `/assembly-activities/${p}`;
-          }}
-        >
-          Prev
-        </Button>
-        <Button
-          size="xs"
-          variant="default"
-          onClick={() => {
-            const n = nextId(activity.id as any);
-            if (n != null) window.location.href = `/assembly-activities/${n}`;
-          }}
-        >
-          Next
-        </Button>
-      </Group>
+      <Group gap="xs"></Group>
 
       <Form method="post">
         <input type="hidden" name="_intent" value="update" />

@@ -32,7 +32,7 @@ import { importCostings } from "../importers/importCostings";
 import { importProductLocations } from "../importers/importProductLocations";
 import { runImporter } from "../utils/prisma.server";
 
-export async function action({ request }: ActionFunctionArgs) {
+export async function adminImportAction({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_composeUploadHandlers(
     unstable_createMemoryUploadHandler({ maxPartSize: 15_000_000 })
   );
@@ -41,7 +41,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent !== "uploadExcel")
     return json({ error: "Invalid intent" }, { status: 400 });
 
-  // Helpers
   const normalizeKey = (s: string) =>
     String(s || "")
       .toLowerCase()
@@ -342,7 +341,6 @@ export async function action({ request }: ActionFunctionArgs) {
       continue;
     }
 
-    // Fallback
     batchResults.push({
       file: file.name,
       target: finalMode,

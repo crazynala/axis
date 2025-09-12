@@ -1,9 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import {
-  prismaBase as prisma,
-  getBatchesWithComputedQty,
-} from "../utils/prisma.server";
+import { getBatchesWithComputedQty } from "../utils/prisma.server";
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const pid = Number(params.productId);

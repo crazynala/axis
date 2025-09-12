@@ -42,6 +42,7 @@ import {
   RecordBrowserWidget,
 } from "@aa/timber";
 import { Notifications } from "@mantine/notifications";
+
 import "@mantine/core/styles.css";
 import "@mantine/dates/styles.css";
 import "mantine-datatable/styles.layer.css";
@@ -88,6 +89,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // console.log("Root loaded options: ", options);
   return json({ colorScheme, desktopNavOpened, logLevels, options });
 }
+// export const links: LinksFunction = () => {
+//   // If Remix CSS bundling is enabled, we could also include cssBundleHref here.
+//   // Using explicit stylesheet links to ensure production server serves CSS.
+//   return [
+//     { rel: "stylesheet", href: mantineStylesHref as string },
+//     { rel: "stylesheet", href: appStylesHref as string },
+//   ];
+// };
+
 export function meta() {
   return [
     { title: "ERP Remix" },

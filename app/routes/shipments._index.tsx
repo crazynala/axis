@@ -5,7 +5,7 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title } from "@mantine/core";
@@ -144,7 +144,7 @@ export async function loader(args: LoaderFunctionArgs) {
   if (findWhere) prismaArgs.where = findWhere;
   // Hybrid roster subset
   const ID_CAP = 50000;
-  const idRows = await prisma.shipment.findMany({
+  const idRows = await prismaBase.shipment.findMany({
     where: prismaArgs.where,
     orderBy: prismaArgs.orderBy || { id: "asc" },
     select: { id: true },
@@ -156,7 +156,7 @@ export async function loader(args: LoaderFunctionArgs) {
   const initialIds = idList.slice(0, INITIAL_COUNT);
   let initialRows: any[] = [];
   if (initialIds.length) {
-    initialRows = await prisma.shipment.findMany({
+    initialRows = await prismaBase.shipment.findMany({
       where: { id: { in: initialIds } },
       orderBy: { id: "asc" },
       select: {

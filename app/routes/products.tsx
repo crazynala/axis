@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
 import {
@@ -131,7 +131,7 @@ export async function loader(args: LoaderFunctionArgs) {
     (where as any).AND = [...((where as any).AND || []), findWhere];
 
   const ID_CAP = 50000;
-  const idRows = await prisma.product.findMany({
+  const idRows = await prismaBase.product.findMany({
     where,
     orderBy,
     select: { id: true },
@@ -143,7 +143,7 @@ export async function loader(args: LoaderFunctionArgs) {
   const initialIds = idList.slice(0, INITIAL_COUNT);
   let initialRows: any[] = [];
   if (initialIds.length) {
-    initialRows = await prisma.product.findMany({
+    initialRows = await prismaBase.product.findMany({
       where: { id: { in: initialIds } },
       orderBy: { id: "asc" },
       select: {

@@ -2,10 +2,10 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 
 export async function loader(_args: LoaderFunctionArgs) {
-  const costings = await prisma.costing.findMany({
+  const costings = await prismaBase.costing.findMany({
     orderBy: { id: "asc" },
     select: { id: true, notes: true },
   });

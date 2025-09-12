@@ -10,6 +10,7 @@ export default defineConfig({
     port: 3000,
     fs: { allow: ["..", "./packages"] },
   },
+  plugins: [remix()],
   resolve: {
     alias: {
       "packages/timber": r("packages/timber/src/index.ts"),
@@ -24,5 +25,5 @@ export default defineConfig({
   ssr: {
     noExternal: ["packages/timber", "@aa/timber"],
   },
-  plugins: [remix()],
+  
 });

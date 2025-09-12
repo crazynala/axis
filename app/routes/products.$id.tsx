@@ -368,7 +368,7 @@ export default function ProductDetailRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   // Sync RecordContext currentId for global navigation consistency
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(product.id);
     // Do NOT clear on unmount; preserve selection like invoices module
@@ -460,28 +460,7 @@ export default function ProductDetailRoute() {
             { label: String(product.id), href: `/products/${product.id}` },
           ]}
         />
-        <Group gap="xs">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(product.id as any);
-              if (p != null) window.location.href = `/products/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(product.id as any);
-              if (n != null) window.location.href = `/products/${n}`;
-            }}
-          >
-            Next
-          </Button>
-        </Group>
+        <Group gap="xs"></Group>
       </Group>
       <ProductFindManager />
       <Form id="product-form" method="post">

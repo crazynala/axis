@@ -62,15 +62,11 @@ export default function CompanyDetailRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
-  const { setCurrentId, nextId, prevId, getPathForId } = useRecordContext();
+  const { setCurrentId, getPathForId } = useRecordContext();
   useEffect(() => {
     setCurrentId(company.id);
   }, [company.id, setCurrentId]);
-  const navigateTo = (targetId: number | null | undefined) => {
-    if (targetId == null) return;
-    window.location.href = getPathForId(targetId) || `/companies/${targetId}`;
-  };
-  // Keyboard prev/next handled centrally in RecordProvider now
+  // Keyboard prev/next handled centrally in RecordProvider now; local buttons removed
 
   const form = useForm<{
     name: string;
@@ -135,31 +131,7 @@ export default function CompanyDetailRoute() {
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Title order={2}>{company.name || `Company #${company.id}`}</Title>
-        <Group>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => {
-                const t = prevId(company.id);
-                navigateTo(typeof t === "number" ? t : Number(t) || null);
-              }}
-              disabled={prevId(company.id) == null}
-            >
-              ◀ Prev
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const t = nextId(company.id);
-                navigateTo(typeof t === "number" ? t : Number(t) || null);
-              }}
-              disabled={nextId(company.id) == null}
-            >
-              Next ▶
-            </button>
-          </div>
-          <Link to="/companies">Back</Link>
-        </Group>
+        <Group></Group>
       </Group>
 
       <CompanyDetailForm mode="edit" form={form as any} company={company} />

@@ -222,7 +222,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 export default function JobDetailRoute() {
   const { job, productsById, customers, productChoices } =
     useLoaderData<typeof loader>();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(job.id);
   }, [job.id, setCurrentId]);
@@ -367,28 +367,7 @@ export default function JobDetailRoute() {
             { label: String(job.id), href: `/jobs/${job.id}` },
           ]}
         />
-        <Group gap="xs">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(job.id as any);
-              if (p != null) window.location.href = `/jobs/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(job.id as any);
-              if (n != null) window.location.href = `/jobs/${n}`;
-            }}
-          >
-            Next
-          </Button>
-        </Group>
+        <Group gap="xs"></Group>
       </Group>
 
       <div>

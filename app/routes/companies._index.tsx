@@ -24,7 +24,7 @@ import {
   mergeSimpleAndMulti,
 } from "../find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
@@ -109,7 +109,7 @@ export async function loader(args: LoaderFunctionArgs) {
   if (findWhere) prismaArgs.where = findWhere;
   // Hybrid roster loader portion (mirrors companies.tsx logic but includes filtering)
   const ID_CAP = 50000;
-  const idRows = await prisma.company.findMany({
+  const idRows = await prismaBase.company.findMany({
     where: prismaArgs.where,
     orderBy: prismaArgs.orderBy || { id: "asc" },
     select: { id: true },
@@ -121,7 +121,7 @@ export async function loader(args: LoaderFunctionArgs) {
   const initialIds = idList.slice(0, INITIAL_COUNT);
   let initialRows: any[] = [];
   if (initialIds.length) {
-    initialRows = await prisma.company.findMany({
+    initialRows = await prismaBase.company.findMany({
       where: { id: { in: initialIds } },
       select: {
         id: true,

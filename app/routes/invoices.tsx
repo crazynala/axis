@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { prisma } from "../utils/prisma.server";
+import { prismaBase } from "../utils/prisma.server";
 import { InvoiceFindManager } from "../components/InvoiceFindManager";
 import { useEffect } from "react";
 import { useRecords } from "../record/RecordContext";
@@ -11,7 +11,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   // Cap of 50k
   const ID_CAP = 50000;
   // Fetch all ids up to cap
-  const ids = await prisma.invoice.findMany({
+  const ids = await prismaBase.invoice.findMany({
     orderBy: { id: "asc" },
     select: { id: true },
     take: ID_CAP,
@@ -23,7 +23,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   const initialIds = idList.slice(0, INITIAL_COUNT);
   let initialRows: any[] = [];
   if (initialIds.length) {
-    const rows = await prisma.invoice.findMany({
+    const rows = await prismaBase.invoice.findMany({
       where: { id: { in: initialIds } },
       orderBy: { id: "asc" },
       select: {
@@ -35,7 +35,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       },
     });
     // Compute amounts for these
-    const lines = await prisma.invoiceLine.findMany({
+    const lines = await prismaBase.invoiceLine.findMany({
       where: { invoiceId: { in: initialIds } },
       select: { invoiceId: true, priceSell: true, quantity: true },
     });

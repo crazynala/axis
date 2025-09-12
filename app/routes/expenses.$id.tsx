@@ -51,7 +51,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function ExpenseDetailRoute() {
   const { expense } = useLoaderData<typeof loader>();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   // Register current id for global prev/next navigation
   useEffect(() => {
@@ -92,28 +92,7 @@ export default function ExpenseDetailRoute() {
             { label: String(expense.id), href: `/expenses/${expense.id}` },
           ]}
         />
-        <Group gap="xs">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(expense.id as any);
-              if (p != null) window.location.href = `/expenses/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(expense.id as any);
-              if (n != null) window.location.href = `/expenses/${n}`;
-            }}
-          >
-            Next
-          </Button>
-        </Group>
+        <Group gap="xs"></Group>
       </Group>
       <ExpenseDetailForm mode="edit" form={form as any} expense={expense} />
     </Stack>

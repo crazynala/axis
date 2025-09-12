@@ -119,7 +119,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 export default function PurchaseOrderDetailRoute() {
   const { purchaseOrder, totals, productOptions } =
     useLoaderData<typeof loader>();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
 
   // Register current id in RecordContext
@@ -197,26 +197,7 @@ export default function PurchaseOrderDetailRoute() {
           <Button size="xs" variant="light" onClick={emailDraft}>
             Email draft (.eml)
           </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(purchaseOrder.id as any);
-              if (p != null) window.location.href = `/purchase-orders/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(purchaseOrder.id as any);
-              if (n != null) window.location.href = `/purchase-orders/${n}`;
-            }}
-          >
-            Next
-          </Button>
+          {/* Per-page prev/next removed (global header handles navigation) */}
         </Group>
       </Group>
 

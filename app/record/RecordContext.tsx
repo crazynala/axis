@@ -270,6 +270,14 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
           e.preventDefault();
           nav(t);
         }
+      } else if (e.key === "Escape" && isDetail) {
+        // Esc: return to index view for current module, preserving selection
+        // If we have an activeId ensure it's registered so row highlights when returning
+        if (activeId != null) {
+          setCurrentId(activeId);
+        }
+        e.preventDefault();
+        navigate(`/${state.module}`);
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
