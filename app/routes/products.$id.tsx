@@ -385,7 +385,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
     const data = buildProductData(form);
-  await prismaBase.product.update({ where: { id }, data });
+    await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
   if (intent === "product.addComponent") {
@@ -402,7 +402,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "delete") {
     if (!Number.isFinite(id))
       return json({ error: "Invalid product id" }, { status: 400 });
-  await prismaBase.product.delete({ where: { id } });
+    await prismaBase.product.delete({ where: { id } });
     return redirect("/products");
   }
   return redirect(`/products/${id}`);
