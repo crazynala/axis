@@ -1,22 +1,25 @@
-import { Link, useLocation, useNavigate, useFetcher } from "@remix-run/react";
+import { Link, useLocation, useNavigate } from "@remix-run/react";
 import RefactoredNavDataTable from "../components/RefactoredNavDataTable";
 import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRecords } from "../record/RecordContext";
 import { SavedViews } from "../components/find/SavedViews";
+import { useHybridWindow } from "../record/useHybridWindow";
 
 // Hybrid index: no loader; relies on layout providing idList + initialRows. We join idList with sparse rowsMap.
 export default function InvoicesIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
-  const fetcher = useFetcher();
-  const { state, addRows } = useRecords();
-  const [visibleCount, setVisibleCount] = useState(100); // initial window size matches layout initialRows
+  const { state } = useRecords();
+  const { records, atEnd, loading, requestMore, missingIds, total } =
+    useHybridWindow({
+      module: "invoices",
+      initialWindow: 100,
+      batchIncrement: 100,
+    });
   const [tableHeight, setTableHeight] = useState(500);
-  const inflightIdsRef = useRef<Set<number>>(new Set());
-  const BATCH_INCREMENT = 100;
 
   // Dynamic height calc
   useEffect(() => {
@@ -35,84 +38,7 @@ export default function InvoicesIndexRoute() {
     return () => window.removeEventListener("resize", calc);
   }, []);
 
-  // Derive idList & rowsMap
-  const idList = state?.module === "invoices" ? state.idList || [] : [];
-  const rowsMap =
-    state?.module === "invoices" ? state.rowsMap || new Map() : new Map();
-  const total = idList.length;
-  const windowIds = idList.slice(0, visibleCount);
-
-  // Determine which ids in window are missing rows and fetch them
-  const missingIds = useMemo(
-    () => windowIds.filter((id) => !rowsMap.has(id)),
-    [windowIds, rowsMap]
-  );
-
-  useEffect(() => {
-    if (!missingIds.length) return;
-    // Partition into chunks of up to 100 ids to avoid URL length/bulk
-    const chunks: number[][] = [];
-    let current: number[] = [];
-    for (const id of missingIds) {
-      if (typeof id !== "number") continue; // ids are numeric here
-      if (inflightIdsRef.current.has(id)) continue;
-      inflightIdsRef.current.add(id);
-      current.push(id);
-      if (current.length >= 100) {
-        chunks.push(current);
-        current = [];
-      }
-    }
-    if (current.length) chunks.push(current);
-    if (!chunks.length) return;
-    let cancelled = false;
-    (async () => {
-      for (const chunk of chunks) {
-        try {
-          const resp = await fetch(`/invoices/rows?ids=${chunk.join(",")}`);
-          const data = await resp.json();
-          if (!cancelled && data.rows?.length) {
-            addRows("invoices", data.rows, { updateRecordsArray: true });
-          }
-        } catch (err) {
-          // Swallow errors for individual chunk; could add toast later
-        } finally {
-          chunk.forEach((id) => inflightIdsRef.current.delete(id));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [missingIds, addRows]);
-
-  // Build records array from window ids (fallback placeholders if still missing)
-  const records = useMemo(
-    () =>
-      windowIds.map((id) => {
-        const row = rowsMap.get(id);
-        return (
-          row || {
-            id,
-            invoiceCode: "…",
-            date: null,
-            status: "",
-            company: { name: "" },
-            amount: 0,
-            __loading: true,
-          }
-        );
-      }),
-    [windowIds, rowsMap]
-  );
-
-  const atEnd = visibleCount >= total;
-  const loadingWindowExpansion = fetcher.state !== "idle"; // not used yet but reserved
-
-  const requestMore = () => {
-    if (atEnd) return;
-    setVisibleCount((c) => Math.min(c + BATCH_INCREMENT, total));
-  };
+  // windowing handled by hook
 
   return (
     <div>
@@ -207,7 +133,7 @@ export default function InvoicesIndexRoute() {
           },
           { accessor: "status" },
         ]}
-        fetching={missingIds.length > 0}
+        fetching={loading}
         onActivate={(rec: any) => {
           if (rec?.id != null) navigate(`/invoices/${rec.id}`);
         }}

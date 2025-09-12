@@ -1,11 +1,11 @@
-require("dotenv").config();
-const path = require("path");
-const express = require("express");
-const cors = require("cors");
-const compression = require("compression");
-const { createRequestHandler } = require("@remix-run/express");
-const { broadcastDevReady } = require("@remix-run/node");
-const helmet = require("helmet");
+import 'dotenv/config';
+import path from 'node:path';
+import express from 'express';
+import cors from 'cors';
+import compression from 'compression';
+import helmet from 'helmet';
+import { createRequestHandler } from '@remix-run/express';
+import { broadcastDevReady } from '@remix-run/node';
 
 const isProduction = process.env.NODE_ENV === "production";
 const root = process.cwd();
@@ -14,14 +14,12 @@ const root = process.cwd();
 async function loadDevBuild() {
   // Try Vite virtual module first (when using the Vite plugin)
   try {
-    return await import("virtual:remix/server-build");
-  } catch (_) {
-    // Then try Remix CLI export without extension
+    return await import('virtual:remix/server-build');
+  } catch {
     try {
-      return await import("@remix-run/dev/server-build");
-    } catch (_) {
-      // Node ESM in newer versions may require explicit .js
-      return await import("@remix-run/dev/server-build.js");
+      return await import('@remix-run/dev/server-build');
+    } catch {
+      return await import('@remix-run/dev/server-build.js');
     }
   }
 }
@@ -49,14 +47,14 @@ async function createServer() {
 
   // API routes (Prisma-backed)
   try {
-    const productsRouter = require("./src/routes/products.js");
-    const importRouter = require("./src/routes/import.js");
-    const importAllRouter = require("./src/routes/importAll.js");
-    app.use("/api/products", productsRouter);
-    app.use("/api/import", importRouter);
-    app.use("/api/import", importAllRouter);
+    const productsRouter = (await import('./src/routes/products.js')).default || (await import('./src/routes/products.js'));
+    const importRouter = (await import('./src/routes/import.js')).default || (await import('./src/routes/import.js'));
+    const importAllRouter = (await import('./src/routes/importAll.js')).default || (await import('./src/routes/importAll.js'));
+    app.use('/api/products', productsRouter);
+    app.use('/api/import', importRouter);
+    app.use('/api/import', importAllRouter);
   } catch (e) {
-    console.warn("API routes not loaded:", e?.message || e);
+    console.warn('API routes not loaded:', e?.message || e);
   }
 
   // Health check
@@ -67,18 +65,19 @@ async function createServer() {
   // Remix request handler (dev and prod)
   if (!isProduction) {
     app.all(
-      "*",
+      '*',
       createRequestHandler({
-  build: () => loadDevBuild(),
-        mode: "development",
+        build: () => loadDevBuild(),
+        mode: 'development'
       })
     );
   } else {
+    const build = await import('./build/index.js');
     app.all(
-      "*",
+      '*',
       createRequestHandler({
-        build: require("./build"),
-        mode: "production",
+        build,
+        mode: 'production'
       })
     );
   }
@@ -87,43 +86,41 @@ async function createServer() {
 }
 
 let server;
-createServer().then((app) => {
+(async () => {
+  const app = await createServer();
   const basePort = Number(process.env.PORT || 3000);
-  function listen(port) {
+  const listen = (port) => {
     server = app
       .listen(port, () => {
         console.log(`HTTP server is running at http://localhost:${port}`);
-  if (!isProduction && process.env.REMIX_DEV_ORIGIN) {
+        if (!isProduction && process.env.REMIX_DEV_ORIGIN) {
           (async () => {
             try {
               const build = await loadDevBuild();
               broadcastDevReady(build);
-            } catch (e) {
-              // ignore if build cannot be imported (non-manual mode)
+            } catch {
+              /* ignore */
             }
           })();
         }
       })
-      .on("error", (err) => {
-        if (err && err.code === "EADDRINUSE") {
+      .on('error', (err) => {
+        if (err && err.code === 'EADDRINUSE') {
           const next = port + 1;
-          console.warn(`Port ${port} in use; trying ${next}...`);
+            console.warn(`Port ${port} in use; trying ${next}...`);
           listen(next);
         } else {
           throw err;
         }
       });
-  }
+  };
   listen(basePort);
-});
+})();
 
 function shutdown() {
   if (server) {
     server.close(() => process.exit(0));
-  } else {
-    process.exit(0);
-  }
+  } else process.exit(0);
 }
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

@@ -1,15 +1,11 @@
-// Production entrypoint used by npm start. Previously empty -> caused early exit on Render.
-// Delegates to ESM-aware server.js (Express + Remix) or falls back to @remix-run/serve.
+// Bridge loader: loads ESM server.js under a CommonJS invocation (Render `node server.cjs`).
+// Avoids requiring dev-only @remix-run/serve in production container.
 
-try {
-	require('./server.js');
-} catch (err) {
-	console.error('[server.cjs] Failed to load custom server.js. Falling back to @remix-run/serve. Error:', err);
-	try {
-		// Fallback: run the built remix app directly
-		require('@remix-run/serve');
-	} catch (serveErr) {
-		console.error('[server.cjs] Fallback @remix-run/serve also failed:', serveErr);
-		process.exit(1);
-	}
-}
+(async () => {
+  try {
+    await import('./server.js');
+  } catch (err) {
+    console.error('[server.cjs] Failed to load ESM server.js', err);
+    process.exit(1);
+  }
+})();
