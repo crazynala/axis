@@ -4,11 +4,7 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase, runWithDbActivity } from "../utils/prisma.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { listViews } from "../utils/views.server";
 import { useEffect } from "react";
@@ -27,9 +23,7 @@ export async function loader(args: LoaderFunctionArgs) {
         const saved = v.params as any;
         effective = {
           page: Number(url.searchParams.get("page") || saved.page || 1),
-          perPage: Number(
-            url.searchParams.get("perPage") || saved.perPage || 20
-          ),
+          perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
           sort: (url.searchParams.get("sort") || saved.sort || null) as any,
           dir: (url.searchParams.get("dir") || saved.dir || null) as any,
           q: (url.searchParams.get("q") || saved.q || null) as any,
@@ -61,9 +55,7 @@ export async function loader(args: LoaderFunctionArgs) {
       "componentChildSupplierId",
       "componentChildType",
     ];
-    const hasFindIndicators =
-      findKeys.some((k) => url.searchParams.has(k)) ||
-      url.searchParams.has("findReqs");
+    const hasFindIndicators = findKeys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
     let findWhere: any = null;
     if (hasFindIndicators) {
       const values: Record<string, any> = {};
@@ -80,6 +72,7 @@ export async function loader(args: LoaderFunctionArgs) {
           description: (v) => ({
             description: { contains: v, mode: "insensitive" },
           }),
+          // 'type' enum: use equals semantics
           type: (v) => ({ type: v }),
           costPriceMin: (v) => ({ costPrice: { gte: Number(v) } }),
           costPriceMax: (v) => ({ costPrice: { lte: Number(v) } }),
@@ -108,6 +101,7 @@ export async function loader(args: LoaderFunctionArgs) {
           componentChildSupplierId: (v) => ({
             productLines: { some: { child: { supplierId: Number(v) } } },
           }),
+          // child.type is enum; equals semantics
           componentChildType: (v) => ({
             productLines: { some: { child: { type: v } } },
           }),
@@ -118,20 +112,16 @@ export async function loader(args: LoaderFunctionArgs) {
     }
     let baseParams = findWhere ? { ...effective, page: 1 } : effective;
     if (baseParams.filters) {
-      const {
-        findReqs: _omitFindReqs,
-        find: _legacy,
-        ...rest
-      } = baseParams.filters;
+      const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
       baseParams = { ...baseParams, filters: rest };
     }
     const { where, orderBy } = buildPrismaArgs(baseParams, {
-      searchableFields: ["name", "sku", "type"],
+      // 'type' is an enum in Prisma schema; do not include in fuzzy search.
+      searchableFields: ["name", "sku", "description"],
       filterMappers: {},
       defaultSort: { field: "id", dir: "asc" },
     });
-    if (findWhere)
-      (where as any).AND = [...((where as any).AND || []), findWhere];
+    if (findWhere) (where as any).AND = [...((where as any).AND || []), findWhere];
 
     const ID_CAP = 50000;
     const idRows = await prismaBase.product.findMany({

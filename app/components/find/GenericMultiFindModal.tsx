@@ -1,48 +1,17 @@
 import React, { useEffect, useState, useRef } from "react";
-import {
-  Modal,
-  Group,
-  Button,
-  ActionIcon,
-  Tooltip,
-  Stack,
-  ScrollArea,
-  Divider,
-  Text,
-} from "@mantine/core";
+import { Modal, Group, Button, ActionIcon, Tooltip, Stack, ScrollArea, Divider, Text } from "@mantine/core";
+import { HotkeyAwareModal } from "../../hotkeys/HotkeyAwareModal";
 import { useForm, type FieldValues } from "react-hook-form";
-import {
-  IconPlus,
-  IconCopy,
-  IconTrash,
-  IconBan,
-  IconSwitchHorizontal,
-} from "@tabler/icons-react";
-import {
-  encodeRequests,
-  type MultiFindState,
-  type MultiFindRequest,
-} from "../../find/multiFind";
-import type {
-  GenericFindModalProps,
-  MultiRequestAdapter,
-  FindFieldConfig,
-} from "./GenericFindTypes";
+import { IconPlus, IconCopy, IconTrash, IconBan, IconSwitchHorizontal } from "@tabler/icons-react";
+import { encodeRequests, type MultiFindState, type MultiFindRequest } from "../../find/multiFind";
+import type { GenericFindModalProps, MultiRequestAdapter, FindFieldConfig } from "./GenericFindTypes";
 
-export interface GenericMultiFindModalProps<TValues extends FieldValues>
-  extends GenericFindModalProps<TValues> {
+export interface GenericMultiFindModalProps<TValues extends FieldValues> extends GenericFindModalProps<TValues> {
   adapter: MultiRequestAdapter<TValues>;
   FormComponent: React.ComponentType<any>; // expects props { mode, form }
 }
 
-export function GenericMultiFindModal<TValues extends FieldValues>({
-  opened,
-  onClose,
-  onSearch,
-  initialValues,
-  adapter,
-  FormComponent,
-}: GenericMultiFindModalProps<TValues>) {
+export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onClose, onSearch, initialValues, adapter, FormComponent }: GenericMultiFindModalProps<TValues>) {
   const { buildDefaults, allFields, title } = adapter;
   const [mode, setMode] = useState<"simple" | "advanced">("simple");
   const form = useForm<TValues>({
@@ -69,9 +38,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   }, [opened]);
 
   // Focus handling: robust multi-frame retry until root + first focusable field appear (handles Mantine portal timing & StrictMode double commit)
-  const DEBUG_FOCUS =
-    (typeof window !== "undefined" && (window as any).__FIND_FOCUS_DEBUG__) ||
-    false;
+  const DEBUG_FOCUS = (typeof window !== "undefined" && (window as any).__FIND_FOCUS_DEBUG__) || false;
   useEffect(() => {
     if (!opened) return;
     let cancelled = false;
@@ -83,10 +50,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
 
     const markInteraction = () => {
       userInteracted = true;
-      if (DEBUG_FOCUS)
-        console.log(
-          "[FindModal] user interaction detected; stopping forced focus"
-        );
+      if (DEBUG_FOCUS) console.log("[FindModal] user interaction detected; stopping forced focus");
     };
     // Guard: if user clicks or types we stop retaking focus
     const rootEl = focusWrapRef.current;
@@ -94,11 +58,8 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
     window.addEventListener("keydown", markInteraction, { once: true });
 
     const pickTarget = (root: HTMLElement): HTMLElement | null => {
-      const selector =
-        '[data-autofocus], input:not([type="hidden"]):not([disabled]):not([aria-hidden="true"]), select:not([disabled]), textarea:not([disabled])';
-      const candidates = Array.from(
-        root.querySelectorAll(selector)
-      ) as HTMLElement[];
+      const selector = '[data-autofocus], input:not([type="hidden"]):not([disabled]):not([aria-hidden="true"]), select:not([disabled]), textarea:not([disabled])';
+      const candidates = Array.from(root.querySelectorAll(selector)) as HTMLElement[];
       if (DEBUG_FOCUS && attempt === 1)
         console.log(
           "[FindModal] focus candidates (first scan)",
@@ -126,10 +87,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
         stableFrames = 0; // lost focus; will try again
       }
       if (attempt < MAX_ATTEMPTS) requestAnimationFrame(tryFocus);
-      else if (DEBUG_FOCUS)
-        console.log(
-          "[FindModal] giving up after max attempts (stability phase)"
-        );
+      else if (DEBUG_FOCUS) console.log("[FindModal] giving up after max attempts (stability phase)");
     };
 
     const tryFocus = () => {
@@ -137,8 +95,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
       attempt += 1;
       const root = focusWrapRef.current;
       if (!root) {
-        if (DEBUG_FOCUS && attempt === 1)
-          console.log("[FindModal] focus: root not mounted yet");
+        if (DEBUG_FOCUS && attempt === 1) console.log("[FindModal] focus: root not mounted yet");
       } else {
         const target = pickTarget(root);
         if (target) {
@@ -149,12 +106,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
           }
           try {
             target.focus({ preventScroll: true });
-            if (DEBUG_FOCUS)
-              console.log(
-                `[FindModal] focused attempt ${attempt}`,
-                target.tagName,
-                (target as any).name || target.id
-              );
+            if (DEBUG_FOCUS) console.log(`[FindModal] focused attempt ${attempt}`, target.tagName, (target as any).name || target.id);
           } catch (e) {
             if (DEBUG_FOCUS) console.warn("[FindModal] focus error", e);
           }
@@ -162,14 +114,11 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
           requestAnimationFrame(() => verifyAndMaybeRetry(target));
           return;
         } else if (DEBUG_FOCUS && (attempt === 1 || attempt === MAX_ATTEMPTS)) {
-          console.log(
-            `[FindModal] no focusable element yet (attempt ${attempt})`
-          );
+          console.log(`[FindModal] no focusable element yet (attempt ${attempt})`);
         }
       }
       if (attempt < MAX_ATTEMPTS) requestAnimationFrame(tryFocus);
-      else if (DEBUG_FOCUS)
-        console.log("[FindModal] giving up (no target) after max attempts");
+      else if (DEBUG_FOCUS) console.log("[FindModal] giving up (no target) after max attempts");
     };
 
     // Start after one frame to let Mantine portal & focus trap initialize
@@ -198,15 +147,12 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
               const maxName = f.rangeFields?.max || `${f.name}Max`;
               const minVal = vals[minName];
               const maxVal = vals[maxName];
-              if (minVal !== undefined && minVal !== null && minVal !== "")
-                crit[minName] = minVal;
-              if (maxVal !== undefined && maxVal !== null && maxVal !== "")
-                crit[maxName] = maxVal;
+              if (minVal !== undefined && minVal !== null && minVal !== "") crit[minName] = minVal;
+              if (maxVal !== undefined && maxVal !== null && maxVal !== "") crit[maxName] = maxVal;
               continue;
             }
             const v = vals[f.name];
-            if (v !== undefined && v !== null && v !== "" && v !== "any")
-              crit[f.name] = v;
+            if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
           }
           first.criteria = crit;
           const next = [...m.requests];
@@ -230,9 +176,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
     if (mode !== "advanced") return;
     const vals: any = form.getValues();
     setMulti((m) => {
-      const idx = m.requests.findIndex(
-        (r) => r.id === (activeReqId || m.requests[0].id)
-      );
+      const idx = m.requests.findIndex((r) => r.id === (activeReqId || m.requests[0].id));
       if (idx === -1) return m;
       const req = { ...m.requests[idx] };
       const crit: Record<string, any> = {};
@@ -243,15 +187,12 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
           const maxName = f.rangeFields?.max || `${f.name}Max`;
           const minVal = vals[minName];
           const maxVal = vals[maxName];
-          if (minVal !== undefined && minVal !== "" && minVal !== null)
-            crit[minName] = minVal;
-          if (maxVal !== undefined && maxVal !== "" && maxVal !== null)
-            crit[maxName] = maxVal;
+          if (minVal !== undefined && minVal !== "" && minVal !== null) crit[minName] = minVal;
+          if (maxVal !== undefined && maxVal !== "" && maxVal !== null) crit[maxName] = maxVal;
           continue;
         }
         const v = (vals as any)[f.name];
-        if (v !== undefined && v !== null && v !== "" && v !== "any")
-          crit[f.name] = v;
+        if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
       }
       req.criteria = crit;
       const next = [...m.requests];
@@ -269,15 +210,12 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
         const maxName = f.rangeFields?.max || `${f.name}Max`;
         const minVal = vals[minName];
         const maxVal = vals[maxName];
-        if (minVal !== undefined && minVal !== null && minVal !== "")
-          params.set(minName, String(minVal));
-        if (maxVal !== undefined && maxVal !== null && maxVal !== "")
-          params.set(maxName, String(maxVal));
+        if (minVal !== undefined && minVal !== null && minVal !== "") params.set(minName, String(minVal));
+        if (maxVal !== undefined && maxVal !== null && maxVal !== "") params.set(maxName, String(maxVal));
         continue;
       }
       const val = vals[f.name];
-      if (val === undefined || val === null || val === "" || val === "any")
-        continue;
+      if (val === undefined || val === null || val === "" || val === "any") continue;
       params.set(f.name, String(val));
     }
     return params;
@@ -292,9 +230,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   const submitAdvanced = () => {
     const values = form.getValues();
     setMulti((m) => {
-      const idx = m.requests.findIndex(
-        (r) => r.id === (activeReqId || m.requests[0].id)
-      );
+      const idx = m.requests.findIndex((r) => r.id === (activeReqId || m.requests[0].id));
       if (idx >= 0) {
         const req = { ...m.requests[idx] };
         const vals: any = values;
@@ -306,15 +242,12 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
             const maxName = f.rangeFields?.max || `${f.name}Max`;
             const minVal = vals[minName];
             const maxVal = vals[maxName];
-            if (minVal !== undefined && minVal !== null && minVal !== "")
-              crit[minName] = minVal;
-            if (maxVal !== undefined && maxVal !== null && maxVal !== "")
-              crit[maxName] = maxVal;
+            if (minVal !== undefined && minVal !== null && minVal !== "") crit[minName] = minVal;
+            if (maxVal !== undefined && maxVal !== null && maxVal !== "") crit[maxName] = maxVal;
             continue;
           }
           const v = vals[f.name];
-          if (v !== undefined && v !== null && v !== "" && v !== "any")
-            crit[f.name] = v;
+          if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
         }
         req.criteria = crit;
         const next = [...m.requests];
@@ -348,11 +281,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
         omit: m.requests[idx].omit,
         criteria: { ...m.requests[idx].criteria },
       };
-      const next = [
-        ...m.requests.slice(0, idx + 1),
-        copy,
-        ...m.requests.slice(idx + 1),
-      ];
+      const next = [...m.requests.slice(0, idx + 1), copy, ...m.requests.slice(idx + 1)];
       setActiveReqId(copy.id);
       return { requests: next };
     });
@@ -367,14 +296,11 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   };
   const toggleOmit = (id: string) => {
     setMulti((m) => ({
-      requests: m.requests.map((r) =>
-        r.id === id ? { ...r, omit: !r.omit } : r
-      ),
+      requests: m.requests.map((r) => (r.id === id ? { ...r, omit: !r.omit } : r)),
     }));
   };
 
-  const activeReq =
-    multi.requests.find((r) => r.id === activeReqId) || multi.requests[0];
+  const activeReq = multi.requests.find((r) => r.id === activeReqId) || multi.requests[0];
 
   const summarizeCriteria = (crit: Record<string, any>) => {
     const entries = Object.entries(crit);
@@ -400,20 +326,13 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
               key={r.id}
               gap={4}
               style={{
-                border:
-                  r.id === activeReq.id
-                    ? "1px solid var(--mantine-color-blue-5)"
-                    : "1px solid var(--mantine-color-gray-4)",
+                border: r.id === activeReq.id ? "1px solid var(--mantine-color-blue-5)" : "1px solid var(--mantine-color-gray-4)",
                 borderRadius: 4,
                 padding: "2px 6px",
                 background: "#1a1b1e",
               }}
             >
-              <Button
-                size="xs"
-                variant="subtle"
-                onClick={() => setActiveReqId(r.id)}
-              >
+              <Button size="xs" variant="subtle" onClick={() => setActiveReqId(r.id)}>
                 {i + 1}
               </Button>
               {r.omit && (
@@ -424,30 +343,13 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
               <Text fz={10} c="dimmed">
                 {summarizeCriteria(r.criteria)}
               </Text>
-              <ActionIcon
-                size="xs"
-                variant="subtle"
-                onClick={() => duplicateRequest(r.id)}
-                aria-label="Duplicate"
-              >
+              <ActionIcon size="xs" variant="subtle" onClick={() => duplicateRequest(r.id)} aria-label="Duplicate">
                 <IconCopy size={14} />
               </ActionIcon>
-              <ActionIcon
-                size="xs"
-                variant={r.omit ? "filled" : "subtle"}
-                color={r.omit ? "red" : undefined}
-                onClick={() => toggleOmit(r.id)}
-                aria-label="Toggle omit"
-              >
+              <ActionIcon size="xs" variant={r.omit ? "filled" : "subtle"} color={r.omit ? "red" : undefined} onClick={() => toggleOmit(r.id)} aria-label="Toggle omit">
                 <IconBan size={14} />
               </ActionIcon>
-              <ActionIcon
-                size="xs"
-                variant="subtle"
-                color="red"
-                onClick={() => removeRequest(r.id)}
-                aria-label="Remove"
-              >
+              <ActionIcon size="xs" variant="subtle" color="red" onClick={() => removeRequest(r.id)} aria-label="Remove">
                 <IconTrash size={14} />
               </ActionIcon>
             </Group>
@@ -474,13 +376,8 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title={title} size="xl" centered>
-      <form
-        ref={focusWrapRef as any}
-        data-focus-scope
-        onSubmit={onSubmit}
-        noValidate
-      >
+    <HotkeyAwareModal opened={opened} onClose={onClose} title={title} size="xl" centered>
+      <form ref={focusWrapRef as any} data-focus-scope onSubmit={onSubmit} noValidate>
         {mode === "simple" ? (
           <div onBlur={syncActive}>
             <div style={{ width: "100%" }}>
@@ -491,15 +388,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
           renderAdvancedTabs()
         )}
         <Group justify="space-between" mt="md" align="flex-start">
-          <Button
-            size="xs"
-            variant="subtle"
-            leftSection={<IconSwitchHorizontal size={14} />}
-            onClick={() =>
-              setMode((m) => (m === "simple" ? "advanced" : "simple"))
-            }
-            type="button"
-          >
+          <Button size="xs" variant="subtle" leftSection={<IconSwitchHorizontal size={14} />} onClick={() => setMode((m) => (m === "simple" ? "advanced" : "simple"))} type="button">
             {mode === "simple" ? "Advanced" : "Simple"}
           </Button>
           <Group justify="flex-end">
@@ -510,6 +399,6 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
           </Group>
         </Group>
       </form>
-    </Modal>
+    </HotkeyAwareModal>
   );
 }

@@ -28,10 +28,7 @@ export type ProductFindValues = {
   componentChildType?: string;
 };
 
-export const productSearchSchema: SearchSchema<
-  ProductFindValues,
-  Prisma.ProductWhereInput
-> = {
+export const productSearchSchema: SearchSchema<ProductFindValues, Prisma.ProductWhereInput> = {
   fields: {
     sku: { kind: "text", path: "sku", op: "contains", mode: "insensitive" },
     name: { kind: "text", path: "name", op: "contains", mode: "insensitive" },
@@ -41,7 +38,8 @@ export const productSearchSchema: SearchSchema<
       op: "contains",
       mode: "insensitive",
     },
-    type: { kind: "text", path: "type", op: "contains", mode: "insensitive" },
+    // 'type' is an enum; use equals (not contains)
+    type: { kind: "text", path: "type", op: "equals" },
 
     costPriceMin: { kind: "number-min", path: "costPrice" },
     costPriceMax: { kind: "number-max", path: "costPrice" },
@@ -74,11 +72,11 @@ export const productSearchSchema: SearchSchema<
           mode: "insensitive",
         },
         componentChildSupplierId: { kind: "id", path: "child.supplierId" },
+        // child.type is also an enum; use equals
         componentChildType: {
           kind: "text",
           path: "child.type",
-          op: "contains",
-          mode: "insensitive",
+          op: "equals",
         },
       },
     },

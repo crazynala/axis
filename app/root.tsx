@@ -1,46 +1,14 @@
-import {
-  Links,
-  Meta,
-  Outlet,
-  Scripts,
-  ScrollRestoration,
-  Form,
-  useLoaderData,
-  useLocation,
-  useNavigate,
-  NavLink as RemixNavLink,
-} from "@remix-run/react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, Form, useLoaderData, useLocation, useNavigate, NavLink as RemixNavLink } from "@remix-run/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { loadLogLevels } from "~/utils/log-config.server";
 // LinksFunction imported above
-import {
-  AppShell,
-  Anchor,
-  Stack,
-  Title,
-  Group,
-  Button,
-  Burger,
-  Kbd,
-  ColorSchemeScript,
-  NavLink,
-  ActionIcon,
-  Divider,
-  Modal,
-  TextInput,
-  Text,
-  Paper,
-} from "@mantine/core";
+import { AppShell, Anchor, Stack, Title, Group, Button, Burger, Kbd, ColorSchemeScript, NavLink, ActionIcon, Divider, Modal, TextInput, Text, Paper } from "@mantine/core";
 import { MantineProvider, createTheme, Input, rem, em } from "@mantine/core";
+import { HotkeyAwareModal } from "./hotkeys/HotkeyAwareModal";
 import { useDisclosure } from "@mantine/hooks";
-import {
-  GlobalFormProvider,
-  SaveCancelHeader,
-  useGlobalSaveShortcut,
-  RecordBrowserWidget,
-} from "@aa/timber";
+import { GlobalFormProvider, SaveCancelHeader, useGlobalSaveShortcut, RecordBrowserWidget } from "@aa/timber";
 import { Notifications } from "@mantine/notifications";
 
 import "@mantine/core/styles.css";
@@ -50,6 +18,7 @@ import "./styles/app.css";
 import { getUser, getUserId } from "./utils/auth.server";
 import { FindProvider } from "./find/FindContext";
 import { RecordProvider, GlobalRecordBrowser } from "./record/RecordContext";
+import { HotkeyProvider } from "./hotkeys/HotkeyContext";
 import { loadOptions } from "./utils/options.server";
 import { setGlobalOptions, type OptionsData } from "./options/OptionsClient";
 import { OptionsProvider } from "./options/OptionsContext";
@@ -72,9 +41,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const path = url.pathname;
   const publicPaths = ["/login", "/forgot", "/reset"]; // reset uses /reset/:token
-  const isPublic = publicPaths.some(
-    (p) => path === p || path.startsWith("/reset")
-  );
+  const isPublic = publicPaths.some((p) => path === p || path.startsWith("/reset"));
   const logLevels = await loadLogLevels();
   if (isPublic) return json({ colorScheme: "light" as const, logLevels });
   const uid = await getUserId(request);
@@ -99,10 +66,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // };
 
 export function meta() {
-  return [
-    { title: "ERP Remix" },
-    { name: "viewport", content: "width=device-width, initial-scale=1" },
-  ];
+  return [{ title: "ERP Remix" }, { name: "viewport", content: "width=device-width, initial-scale=1" }];
 }
 
 const theme = createTheme({
@@ -213,11 +177,7 @@ export default function App() {
   ];
 
   return (
-    <html
-      lang="en"
-      data-mantine-color-scheme={colorScheme}
-      suppressHydrationWarning
-    >
+    <html lang="en" data-mantine-color-scheme={colorScheme} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <Meta />
@@ -238,19 +198,17 @@ export default function App() {
             <Outlet />
           ) : (
             <FindProvider>
-              <RecordProvider>
-                <GlobalFormProvider>
-                  <OptionsProvider value={options ?? null}>
-                    {options ? (setGlobalOptions(options), null) : null}
-                    <GlobalHotkeys />
-                    <AppShellLayout
-                      desktopNavOpenedInitial={desktopNavPref}
-                      navTopItems={navTopItems}
-                      navBottomItems={navBottomItems}
-                    />
-                  </OptionsProvider>
-                </GlobalFormProvider>
-              </RecordProvider>
+              <HotkeyProvider>
+                <RecordProvider>
+                  <GlobalFormProvider>
+                    <OptionsProvider value={options ?? null}>
+                      {options ? (setGlobalOptions(options), null) : null}
+                      <GlobalHotkeys />
+                      <AppShellLayout desktopNavOpenedInitial={desktopNavPref} navTopItems={navTopItems} navBottomItems={navBottomItems} />
+                    </OptionsProvider>
+                  </GlobalFormProvider>
+                </RecordProvider>
+              </HotkeyProvider>
             </FindProvider>
           )}
           <ScrollRestoration />
@@ -271,9 +229,7 @@ function AppShellLayout({
   navBottomItems: { to: string; label: string; icon?: ReactNode }[];
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
-  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(
-    desktopNavOpenedInitial
-  );
+  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(desktopNavOpenedInitial);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -305,18 +261,8 @@ function AppShellLayout({
       <AppShell.Header>
         <Group justify="space-between" p="xs" align="center">
           <Group w={desktopNavOpened ? 330 : 220} align="center">
-            <Burger
-              opened={mobileNavOpened}
-              onClick={toggleNavMobile}
-              hiddenFrom="sm"
-              size="sm"
-            />
-            <Burger
-              opened={desktopNavOpened}
-              onClick={toggleNavDesktop}
-              visibleFrom="sm"
-              size="sm"
-            />
+            <Burger opened={mobileNavOpened} onClick={toggleNavMobile} hiddenFrom="sm" size="sm" />
+            <Burger opened={desktopNavOpened} onClick={toggleNavDesktop} visibleFrom="sm" size="sm" />
             <Title order={3}>Axis</Title>
           </Group>
           <SaveCancelHeader></SaveCancelHeader>
@@ -333,49 +279,18 @@ function AppShellLayout({
           <Stack gap="xs">
             {navTopItems.map((item) => {
               if (desktopNavOpened) {
-                return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.label}
-                    to={item.to}
-                    leftSection={item.icon}
-                    key={item.to}
-                  />
-                );
+                return <NavLink component={RemixNavLink} label={item.label} to={item.to} leftSection={item.icon} key={item.to} />;
               } else {
-                return (
-                  <NavLink
-                    px="xs"
-                    component={RemixNavLink}
-                    label={item.icon}
-                    to={item.to}
-                    key={item.to}
-                  />
-                );
+                return <NavLink px="xs" component={RemixNavLink} label={item.icon} to={item.to} key={item.to} />;
               }
             })}
           </Stack>
           <Stack gap="xs">
             {navBottomItems.map((item) => {
               if (desktopNavOpened) {
-                return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.label}
-                    to={item.to}
-                    leftSection={item.icon}
-                    key={item.to}
-                  />
-                );
+                return <NavLink component={RemixNavLink} label={item.label} to={item.to} leftSection={item.icon} key={item.to} />;
               } else {
-                return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.icon}
-                    to={item.to}
-                    key={item.to}
-                  />
-                );
+                return <NavLink component={RemixNavLink} label={item.icon} to={item.to} key={item.to} />;
               }
             })}
             <Divider />
@@ -419,11 +334,7 @@ function GlobalHotkeys() {
         const target = e.target as HTMLElement | null;
         if (target) {
           const tag = target.tagName;
-          if (
-            tag === "INPUT" ||
-            tag === "TEXTAREA" ||
-            target.isContentEditable
-          ) {
+          if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
             return;
           }
         }
@@ -443,8 +354,7 @@ function GlobalHotkeys() {
 function isFindCapablePath(pathname: string): boolean {
   // Modules with registered FindManagers
   if (pathname.startsWith("/jobs")) return true;
-  if (pathname === "/products" || pathname.startsWith("/products/"))
-    return true;
+  if (pathname === "/products" || pathname.startsWith("/products/")) return true;
   if (pathname.startsWith("/companies")) return true;
   if (pathname.startsWith("/purchase-orders")) return true;
   if (pathname.startsWith("/invoices")) return true;
@@ -459,12 +369,7 @@ function GlobalFindTrigger() {
   const { triggerFind } = useFind();
   if (!isFindCapablePath(location.pathname)) return null;
   return (
-    <Button
-      variant="default"
-      size="xs"
-      leftSection={<IconSearch size={14} stroke={1.5} />}
-      onClick={() => triggerFind()}
-    >
+    <Button variant="default" size="xs" leftSection={<IconSearch size={14} stroke={1.5} />} onClick={() => triggerFind()}>
       ⌘F
     </Button>
   );
@@ -486,12 +391,7 @@ function GlobalSearchTrigger() {
   }, []);
   return (
     <>
-      <ActionIcon
-        variant="default"
-        aria-label="Search (Cmd+K)"
-        onClick={() => setOpen(true)}
-        title="Search (Cmd+K)"
-      >
+      <ActionIcon variant="default" aria-label="Search (Cmd+K)" onClick={() => setOpen(true)} title="Search (Cmd+K)">
         <IconSearch size={18} stroke={1.8} />
       </ActionIcon>
       {open && <GlobalSearchModal onClose={() => setOpen(false)} />}
@@ -528,14 +428,9 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
     fetchResults(q);
   }, [q, fetchResults]);
   return (
-    <Modal opened onClose={onClose} title="Search" centered size="lg">
+    <HotkeyAwareModal opened onClose={onClose} title="Search" centered size="lg">
       <Stack>
-        <TextInput
-          placeholder="Search jobs, products... (Cmd+K)"
-          value={q}
-          onChange={(e) => setQ(e.currentTarget.value)}
-          autoFocus
-        />
+        <TextInput placeholder="Search jobs, products... (Cmd+K)" value={q} onChange={(e) => setQ(e.currentTarget.value)} autoFocus />
         <Stack gap={6}>
           {results?.jobs?.length ? (
             <>
@@ -544,12 +439,7 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
               </Text>
               <Paper withBorder p="xs">
                 {results.jobs.map((j) => (
-                  <RemixNavLink
-                    key={`job-${j.id}`}
-                    to={`/jobs/${j.id}`}
-                    onClick={onClose}
-                    prefetch="intent"
-                  >
+                  <RemixNavLink key={`job-${j.id}`} to={`/jobs/${j.id}`} onClick={onClose} prefetch="intent">
                     {({ isActive }: { isActive: boolean }) => (
                       <Anchor component="span" fw={isActive ? 700 : 500}>
                         {j.id} {j.projectCode ? `(${j.projectCode})` : ""}
@@ -568,12 +458,7 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
               </Text>
               <Paper withBorder p="xs">
                 {results.products.map((p: any) => (
-                  <RemixNavLink
-                    key={`prod-${p.id}`}
-                    to={`/products/${p.id}`}
-                    onClick={onClose}
-                    prefetch="intent"
-                  >
+                  <RemixNavLink key={`prod-${p.id}`} to={`/products/${p.id}`} onClick={onClose} prefetch="intent">
                     {({ isActive }: { isActive: boolean }) => (
                       <Anchor component="span" fw={isActive ? 700 : 500}>
                         {p.id} {p.sku || ""} {p.name || ""}
@@ -585,12 +470,10 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
             </>
           ) : null}
           {!results && <Text c="dimmed">Type to search...</Text>}
-          {results && !results.jobs.length && !results.products.length && (
-            <Text c="dimmed">No results</Text>
-          )}
+          {results && !results.jobs.length && !results.products.length && <Text c="dimmed">No results</Text>}
         </Stack>
       </Stack>
-    </Modal>
+    </HotkeyAwareModal>
   );
 }
 

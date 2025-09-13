@@ -95,7 +95,7 @@ export const productPricingFields: FieldConfig[] = [
 export const productBomFindFields: FieldConfig[] = [
   { name: "componentChildSku", label: "Child SKU", findOp: "contains" },
   { name: "componentChildName", label: "Child Name", findOp: "contains" },
-  { name: "componentChildType", label: "Child Type", findOp: "contains" },
+  { name: "componentChildType", label: "Child Type", findOp: "equals" },
   {
     name: "componentChildSupplierId",
     label: "Child Supplier",
@@ -108,10 +108,5 @@ export const productBomFindFields: FieldConfig[] = [
 // Future: spec validation hook similar to jobs.
 
 export function allProductFindFields() {
-  return [
-    ...productIdentityFields,
-    ...productAssocFields,
-    ...productPricingFields,
-    ...productBomFindFields,
-  ];
+  return [...productIdentityFields, ...productAssocFields, ...productPricingFields, ...productBomFindFields];
 }
