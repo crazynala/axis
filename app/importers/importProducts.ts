@@ -9,6 +9,9 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     skuRenamed = 0,
     missingVariantSet = 0,
     linkedVariantSet = 0,
+    // new: track supplier and customer separately
+    linkedSupplier = 0,
+    missingSupplier = 0,
     linkedCustomer = 0,
     missingCustomer = 0;
   const errors: any[] = [];
@@ -146,7 +149,9 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
       } else missingVariantSet++;
     }
     // Resolve supplier id from numeric a_CompanyID or Supplier name
-    const supplierIdRaw = asNum(pick(r, ["a_CompanyID"])) as number | null;
+    const supplierIdRaw = asNum(pick(r, ["a_CompanyID|Supplier"])) as
+      | number
+      | null;
     const supplierName = fixMojibake(
       (pick(r, ["Supplier"]) ?? "").toString().trim()
     );
@@ -157,16 +162,50 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
       });
       if (s) {
         resolvedSupplierId = s.id;
-        linkedCustomer++; // reuse counter for linkage success
-      } else missingCustomer++;
+        linkedSupplier++;
+      } else {
+        missingSupplier++;
+      }
     } else if (supplierName) {
       const s = await prisma.company.findFirst({
         where: { name: supplierName },
       });
       if (s) {
         resolvedSupplierId = s.id;
+        linkedSupplier++;
+      } else {
+        missingSupplier++;
+      }
+    }
+
+    // new: Resolve customer id from numeric a_CompanyID|Customer or Customer name
+    const customerIdRaw = asNum(pick(r, ["a_CompanyID|Customer"])) as
+      | number
+      | null;
+    const customerName = fixMojibake(
+      (pick(r, ["Customer"]) ?? "").toString().trim()
+    );
+    let resolvedCustomerId: number | null = null;
+    if (customerIdRaw != null) {
+      const c = await prisma.company.findUnique({
+        where: { id: customerIdRaw },
+      });
+      if (c) {
+        resolvedCustomerId = c.id;
         linkedCustomer++;
-      } else missingCustomer++;
+      } else {
+        missingCustomer++;
+      }
+    } else if (customerName) {
+      const c = await prisma.company.findFirst({
+        where: { name: customerName },
+      });
+      if (c) {
+        resolvedCustomerId = c.id;
+        linkedCustomer++;
+      } else {
+        missingCustomer++;
+      }
     }
 
     // Resolve purchase tax from string code or id-like value
@@ -245,6 +284,10 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
         ...(resolvedSupplierId != null
           ? { supplierId: resolvedSupplierId }
           : {}),
+        // new: persist customerId separately
+        ...(resolvedCustomerId != null
+          ? { customerId: resolvedCustomerId }
+          : {}),
         ...(resolvedPurchaseTaxId != null
           ? { purchaseTaxId: resolvedPurchaseTaxId }
           : {}),
@@ -279,7 +322,7 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     }
   }
   console.log(
-    `[import] products complete total=${rows.length} created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} missingVariantSet=${missingVariantSet} linkedVariantSet=${linkedVariantSet} supplierLinked=${linkedCustomer} supplierMissing=${missingCustomer} errors=${errors.length}`
+    `[import] products complete total=${rows.length} created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} missingVariantSet=${missingVariantSet} linkedVariantSet=${linkedVariantSet} supplierLinked=${linkedSupplier} supplierMissing=${missingSupplier} customerLinked=${linkedCustomer} customerMissing=${missingCustomer} errors=${errors.length}`
   );
   if (errors.length) {
     const grouped: Record<

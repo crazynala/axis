@@ -78,6 +78,32 @@ export function decodeRequests(b64: string | null): MultiFindState | null {
 export type CriterionInterpreter = (value: any) => any | null;
 export type InterpreterMap = Record<string, CriterionInterpreter>;
 
+function normalizeField(field: string) {
+  if (field === "namne") return "name";
+  return field;
+}
+
+// In the part that converts a single field/value/op into Prisma where clause:
+function buildClause(field: string, op: string | undefined, value: any) {
+  const f = normalizeField(field);
+
+  // Prefer partial/insensitive for name/SKU unless a more specific op is requested
+  if (
+    (f === "name" || f === "sku") &&
+    (!op || op === "eq" || op === "contains")
+  ) {
+    return { [f]: { contains: String(value), mode: "insensitive" } };
+  }
+
+  // ...existing op handling (eq, in, lt, gt, startsWith, etc.)...
+}
+
+// Wherever fields are iterated to build combined where:
+// fields.forEach(({ field, op, value }) => {
+//   const clause = buildClause(field, op, value);
+//   // ...existing code to merge clause...
+// });
+
 export function buildWhereFromRequests(
   state: MultiFindState | null,
   interpreters: InterpreterMap

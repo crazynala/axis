@@ -1,10 +1,14 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { prismaBase, runWithDbActivity } from "../utils/prisma.server";
+import { prismaBase, runWithDbActivity, prisma } from "../utils/prisma.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../find/multiFind";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { listViews } from "../utils/views.server";
 import { useEffect } from "react";
@@ -13,23 +17,24 @@ import { useRecords } from "../record/RecordContext";
 export async function loader(args: LoaderFunctionArgs) {
   return runWithDbActivity("products.index", async () => {
     const url = new URL(args.request.url);
+    const q = url.searchParams;
     const params = parseTableParams(args.request.url);
     const views = await listViews("products");
-    const viewName = url.searchParams.get("view");
+    const viewName = q.get("view");
     let effective = params;
     if (viewName) {
       const v = views.find((x: any) => x.name === viewName);
       if (v) {
         const saved = v.params as any;
         effective = {
-          page: Number(url.searchParams.get("page") || saved.page || 1),
-          perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
-          sort: (url.searchParams.get("sort") || saved.sort || null) as any,
-          dir: (url.searchParams.get("dir") || saved.dir || null) as any,
-          q: (url.searchParams.get("q") || saved.q || null) as any,
+          page: Number(q.get("page") || saved.page || 1),
+          perPage: Number(q.get("perPage") || saved.perPage || 20),
+          sort: (q.get("sort") || saved.sort || null) as any,
+          dir: (q.get("dir") || saved.dir || null) as any,
+          q: (q.get("q") || saved.q || null) as any,
           filters: { ...(saved.filters || {}), ...params.filters },
         };
-        if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) {
+        if (saved.filters?.findReqs && !q.get("findReqs")) {
           url.searchParams.set("findReqs", saved.filters.findReqs);
         }
       }
@@ -55,16 +60,42 @@ export async function loader(args: LoaderFunctionArgs) {
       "componentChildSupplierId",
       "componentChildType",
     ];
-    const hasFindIndicators = findKeys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+    const hasFindIndicators =
+      findKeys.some((k) => q.has(k)) || q.has("findReqs");
     let findWhere: any = null;
     if (hasFindIndicators) {
       const values: Record<string, any> = {};
       for (const k of findKeys) {
-        const v = url.searchParams.get(k);
+        const v = q.get(k);
         if (v !== null && v !== "") values[k] = v;
       }
-      const simple = buildWhere(values, productSearchSchema);
-      const multi = decodeRequests(url.searchParams.get("findReqs"));
+
+      // Build simple where: exclude name/sku from schema-driven builder, then add partial/insensitive clauses for them
+      const valuesForSchema = { ...values };
+      delete valuesForSchema.name;
+      delete valuesForSchema.sku;
+      const simpleBase = buildWhere(valuesForSchema, productSearchSchema);
+
+      const simpleClauses: any[] = [];
+      if (simpleBase && Object.keys(simpleBase).length > 0)
+        simpleClauses.push(simpleBase);
+      if (values.name)
+        simpleClauses.push({
+          name: { contains: values.name, mode: "insensitive" },
+        });
+      if (values.sku)
+        simpleClauses.push({
+          sku: { contains: values.sku, mode: "insensitive" },
+        });
+
+      const simple =
+        simpleClauses.length === 0
+          ? null
+          : simpleClauses.length === 1
+          ? simpleClauses[0]
+          : { AND: simpleClauses };
+
+      const multi = decodeRequests(q.get("findReqs"));
       if (multi) {
         const interpreters: Record<string, (val: any) => any> = {
           sku: (v) => ({ sku: { contains: v, mode: "insensitive" } }),
@@ -108,11 +139,17 @@ export async function loader(args: LoaderFunctionArgs) {
         };
         const multiWhere = buildWhereFromRequests(multi, interpreters);
         findWhere = mergeSimpleAndMulti(simple, multiWhere);
-      } else findWhere = simple;
+      } else {
+        findWhere = simple;
+      }
     }
     let baseParams = findWhere ? { ...effective, page: 1 } : effective;
     if (baseParams.filters) {
-      const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
+      const {
+        findReqs: _omitFindReqs,
+        find: _legacy,
+        ...rest
+      } = baseParams.filters;
       baseParams = { ...baseParams, filters: rest };
     }
     const { where, orderBy } = buildPrismaArgs(baseParams, {
@@ -121,7 +158,8 @@ export async function loader(args: LoaderFunctionArgs) {
       filterMappers: {},
       defaultSort: { field: "id", dir: "asc" },
     });
-    if (findWhere) (where as any).AND = [...((where as any).AND || []), findWhere];
+    if (findWhere)
+      (where as any).AND = [...((where as any).AND || []), findWhere];
 
     const ID_CAP = 50000;
     const idRows = await prismaBase.product.findMany({
@@ -192,13 +230,16 @@ export async function action({ request }: ActionFunctionArgs) {
       // noop
     }
   }
-  if (intent !== "product.batchCreate") return json({ ok: false, error: "Unknown intent" }, { status: 400 });
+  if (intent !== "product.batchCreate")
+    return json({ ok: false, error: "Unknown intent" }, { status: 400 });
   const rows = Array.isArray(body?.rows) ? body.rows : [];
   const errors: Array<{ index: number; message: string }> = [];
   let created = 0;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i] || {};
-    const blank = !r || Object.values(r).every((v) => v === null || v === undefined || v === "");
+    const blank =
+      !r ||
+      Object.values(r).every((v) => v === null || v === undefined || v === "");
     if (blank) continue;
     try {
       const data: any = {};

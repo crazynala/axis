@@ -27,6 +27,44 @@
     border-color: var(--mantine-color-dark-4) !important;
   }
 
+  /* Dark mode overrides for DataSheetGrid */
+  [data-mantine-color-scheme='dark'] .bom-sheet-wrapper {
+    border-color: var(--mantine-color-dark-4) !important;
+  }
+
+  [data-mantine-color-scheme='dark'] .dsg-container,
+  [data-mantine-color-scheme='dark'] .dsg-row,
+  [data-mantine-color-scheme='dark'] .dsg-cell,
+  [data-mantine-color-scheme='dark'] .dsg-cell-header,
+  [data-mantine-color-scheme='dark'] .dsg-add-row,
+  [data-mantine-color-scheme='dark'] .dsg-add-row-btn,
+  [data-mantine-color-scheme='dark'] .dsg-add-row-input {
+    color: var(--mantine-color-text);
+  }
+
+  [data-mantine-color-scheme='dark'] .dsg-row-header,
+  [data-mantine-color-scheme='dark'] .dsg-cell-header .dsg-cell-header-container {
+    background-color: var(--mantine-color-dark-6);
+    color: var(--mantine-color-text);
+  }
+
+  [data-mantine-color-scheme='dark'] .dsg-cell-gutter {
+    background-color: var(--mantine-color-dark-7);
+    color: var(--mantine-color-text);
+  }
+
+  [data-mantine-color-scheme='dark'] .dsg-cell,
+  [data-mantine-color-scheme='dark'] .dsg-cell-header,
+  [data-mantine-color-scheme='dark'] .dsg-row {
+    border-color: var(--mantine-color-dark-4);
+  }
+
+  /* Optional: lighten header/border in light mode to match wrapper */
+  [data-mantine-color-scheme='light'] .dsg-row-header,
+  [data-mantine-color-scheme='light'] .dsg-cell-header .dsg-cell-header-container {
+    background-color: var(--mantine-color-gray-0);
+  }
+
   /* Inline labels from md+ */
   @media (min-width: 62em) {
     .mantine-InputWrapper-root[data-autosize] {
