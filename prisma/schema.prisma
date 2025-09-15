@@ -2,14 +2,50 @@ generator client {
     provider = "prisma-client-js"
 }
 
+model JobTag {
+    id    Int           @id @default(autoincrement())
+    jobId Int
+    tagId Int
+
+    job Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+    tag TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([jobId, tagId])
+    @@index([tagId])
+}
+
 datasource db {
     provider = "postgresql"
     url      = env("DATABASE_URL")
 }
 
+model AssemblyTag {
+    id         Int           @id @default(autoincrement())
+    assemblyId Int
+    tagId      Int
+
+    assembly Assembly        @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+    tag      TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([assemblyId, tagId])
+    @@index([tagId])
+}
+
 enum ColorScheme {
     light
     dark
+}
+
+model CostingTag {
+    id        Int           @id @default(autoincrement())
+    costingId Int
+    tagId     Int
+
+    costing Costing         @relation(fields: [costingId], references: [id], onDelete: Cascade)
+    tag     TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([costingId, tagId])
+    @@index([tagId])
 }
 
 enum ProductType {
@@ -20,15 +56,67 @@ enum ProductType {
     Service
 }
 
+model ShipmentTag {
+    id         Int           @id @default(autoincrement())
+    shipmentId Int
+    tagId      Int
+
+    shipment Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+    tag      TagDefinition  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([shipmentId, tagId])
+    @@index([tagId])
+}
+
 enum CompanyType {
     vendor
     customer
     other
 }
 
+model PurchaseOrderTag {
+    id              Int           @id @default(autoincrement())
+    purchaseOrderId Int
+    tagId           Int
+
+    purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+    tag           TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([purchaseOrderId, tagId])
+    @@index([tagId])
+}
+
 enum UsageType {
     cut
     make
+}
+
+// --- Tagging ---
+enum TagScope {
+    GLOBAL
+    USER
+}
+
+model TagDefinition {
+    id        Int       @id @default(autoincrement())
+    name      String
+    scope     TagScope
+    ownerId   Int?
+    color     String?
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+
+    owner     User?     @relation(fields: [ownerId], references: [id])
+
+    // joins
+    productTags       ProductTag[]
+    jobTags           JobTag[]
+    assemblyTags      AssemblyTag[]
+    costingTags       CostingTag[]
+    shipmentTags      ShipmentTag[]
+    purchaseOrderTags PurchaseOrderTag[]
+
+    @@unique([name, scope, ownerId])
 }
 
 model Product {
@@ -71,6 +159,8 @@ model Product {
     expenses             Expense[]
     // Back-relations: Purchase Orders
     purchaseOrderLines   PurchaseOrderLine[]
+    // Back-relations: Tags
+    productTags          ProductTag[]
     // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
     // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
@@ -79,6 +169,20 @@ model Product {
     modifiedBy           String?
     createdAt            DateTime?             @default(now())
     updatedAt            DateTime?             @updatedAt
+}
+
+// Join tables for tags
+model ProductTag {
+    id        Int           @id @default(autoincrement())
+    productId Int
+    tagId     Int
+    createdAt DateTime      @default(now())
+
+    product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+    tag       TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([productId, tagId])
+    @@index([tagId])
 }
 
 model Company {
@@ -192,6 +296,8 @@ model Assembly {
     shipmentLines       ShipmentLine[]
     // Back-relations: Purchase Order Lines referencing this assembly
     purchaseOrderLines  PurchaseOrderLine[]
+    // Back-relations: Tags
+    assemblyTags        AssemblyTag[]
     // Metadata
     createdBy           String?
     modifiedBy          String?
@@ -225,6 +331,8 @@ model Costing {
     updatedAt                     DateTime?     @updatedAt
     // Back-relations
     invoiceLines                  InvoiceLine[]
+    // Back-relations: Tags
+    costingTags                   CostingTag[]
 }
 
 model ProductLine {
@@ -386,6 +494,8 @@ model Job {
     expenses                Expense[]
     // Back-relations: Purchase Orders
     purchaseOrderLines      PurchaseOrderLine[]
+    // Back-relations: Tags
+    jobTags                 JobTag[]
     // Metadata
     createdBy               String?
     modifiedBy              String?
@@ -446,6 +556,8 @@ model User {
     createdAt        DateTime        @default(now())
     updatedAt        DateTime        @updatedAt
     resets           PasswordReset[]
+    // Back-relations: Tag owner
+    tagDefinitions   TagDefinition[]
 }
 
 model PasswordReset {
@@ -627,6 +739,8 @@ model Shipment {
     lines              ShipmentLine[]
     // Back-relations
     expenses           Expense[]
+    // Back-relations: Tags
+    shipmentTags       ShipmentTag[]
 }
 
 model ShipmentLine {
@@ -717,6 +831,8 @@ model PurchaseOrder {
     consignee          Company?            @relation("POConsignee", fields: [consigneeCompanyId], references: [id])
     location           Location?           @relation(fields: [locationId], references: [id])
     lines              PurchaseOrderLine[]
+    // Back-relations: Tags
+    purchaseOrderTags  PurchaseOrderTag[]
 }
 
 model PurchaseOrderLine {

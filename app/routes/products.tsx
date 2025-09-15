@@ -1,4 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase, runWithDbActivity } from "../utils/prisma.server";
@@ -178,4 +178,64 @@ export default function ProductsLayout() {
     }
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
   return <Outlet />;
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const ct = request.headers.get("content-type") || "";
+  let intent = "";
+  let body: any = null;
+  if (ct.includes("application/json")) {
+    try {
+      body = await request.json();
+      intent = String(body?._intent || "");
+    } catch {
+      // noop
+    }
+  }
+  if (intent !== "product.batchCreate") return json({ ok: false, error: "Unknown intent" }, { status: 400 });
+  const rows = Array.isArray(body?.rows) ? body.rows : [];
+  const errors: Array<{ index: number; message: string }> = [];
+  let created = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const blank = !r || Object.values(r).every((v) => v === null || v === undefined || v === "");
+    if (blank) continue;
+    try {
+      const data: any = {};
+      const str = (k: string) => {
+        const v = r[k];
+        if (v === undefined || v === null || v === "") return;
+        data[k] = String(v).trim();
+      };
+      const num = (k: string) => {
+        const v = r[k];
+        if (v === undefined || v === null || v === "") return;
+        const n = Number(v);
+        if (!Number.isFinite(n)) throw new Error(`Invalid number for ${k}`);
+        data[k] = n;
+      };
+      const bool = (k: string) => {
+        const v = r[k];
+        if (v === undefined || v === null || v === "") return;
+        const s = String(v).toLowerCase();
+        data[k] = s === "true" || s === "1" || s === "yes";
+      };
+      str("sku");
+      str("name");
+      str("type");
+      num("supplierId");
+      num("categoryId");
+      num("purchaseTaxId");
+      num("costPrice");
+      num("manualSalePrice");
+      bool("stockTrackingEnabled");
+      bool("batchTrackingEnabled");
+      await prismaBase.product.create({ data });
+      created++;
+    } catch (e: any) {
+      const msg = e?.message || "Create failed";
+      errors.push({ index: i, message: msg });
+    }
+  }
+  return json({ ok: true, created, errors });
 }

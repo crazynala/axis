@@ -24,6 +24,9 @@ import { productIdentityFields, productAssocFields, productPricingFields, produc
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { prismaBase, getProductStockSnapshots, runWithDbActivity } from "../utils/prisma.server";
+import { requireUserId } from "../utils/auth.server";
+import { replaceProductTags } from "../utils/tags.server";
+import { TagPicker } from "../components/TagPicker";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { useRecordContext } from "../record/RecordContext";
 
@@ -66,6 +69,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
             },
           },
         },
+        productTags: { include: { tag: true } },
       },
     });
     const taxCodesPromise = prismaBase.valueList.findMany({
@@ -346,6 +350,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
     await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
+  if (intent === "product.tags.replace") {
+    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
+    const userId = await requireUserId(request);
+    const names: string[] = Array.isArray(jsonBody?.names)
+      ? jsonBody.names.map((n: any) => String(n))
+      : Array.isArray((await request.formData()).getAll("names"))
+      ? ((await request.formData()).getAll("names")).map((n) => String(n))
+      : [];
+    await replaceProductTags(id, names, userId);
+    return json({ ok: true });
+  }
   if (intent === "product.addComponent") {
     if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
@@ -613,6 +628,16 @@ export default function ProductDetailRoute() {
   const [assemblyItemOnly, setAssemblyItemOnly] = useState(false);
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
   const [movementView, setMovementView] = useState<"header" | "line">("line");
+  // Tags state
+  const initialTagNames = useMemo(
+    () => (product.productTags || []).map((pt: any) => pt?.tag?.name).filter(Boolean) as string[],
+    [product.productTags]
+  );
+  const [tagNames, setTagNames] = useState<string[]>(initialTagNames);
+  useEffect(() => {
+    setTagNames(initialTagNames);
+  }, [initialTagNames]);
+  const [newTag, setNewTag] = useState("");
   // Batch filters
   const [batchScope, setBatchScope] = useState<"all" | "current">("current");
   const [batchLocation, setBatchLocation] = useState<string>("all");
@@ -674,6 +699,71 @@ export default function ProductDetailRoute() {
           }))}
         />
       </Form>
+      {/* Tags */}
+      <Card withBorder padding="md">
+        <Card.Section inheritPadding py="xs">
+          <Group justify="space-between" align="center">
+            <Title order={4}>Tags</Title>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="light"
+                onClick={async () => {
+                  // Save current edited tags
+                  const resp = await fetch(`/products/${product.id}?indexAction=1`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ _intent: "product.tags.replace", names: tagNames }),
+                  });
+                  if (resp.ok) window.location.reload();
+                }}
+              >
+                Save Tags
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => setTagNames(initialTagNames)}
+              >
+                Reset
+              </Button>
+            </Group>
+          </Group>
+        </Card.Section>
+        <Stack gap="xs">
+          <Group align="flex-end">
+            <div style={{ flex: 1 }}>
+              <TagPicker value={tagNames} onChange={setTagNames} />
+            </div>
+            <Form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const n = newTag.trim();
+                if (!n) return;
+                if (!tagNames.includes(n)) setTagNames((prev) => [...prev, n]);
+                setNewTag("");
+              }}
+            >
+              <Group gap="xs">
+                <TextInput placeholder="New tag" value={newTag} onChange={(e) => setNewTag(e.currentTarget.value)} />
+                <Button type="submit" variant="light" size="xs">
+                  Add
+                </Button>
+              </Group>
+            </Form>
+          </Group>
+          <Group>
+            {(product.productTags || []).map((pt: any) => (
+              <Badge key={pt.id} variant="light">
+                {pt.tag?.name}
+              </Badge>
+            ))}
+            {(!product.productTags || product.productTags.length === 0) && (
+              <Text c="dimmed">No tags</Text>
+            )}
+          </Group>
+        </Stack>
+      </Card>
       {/* Bill of Materials */}
       <Card withBorder padding="md">
         <Card.Section inheritPadding py="xs">
