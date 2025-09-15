@@ -106,6 +106,30 @@ export default function JobsIndexRoute() {
         >
           {findOpen ? "Close Find" : "Find"}
         </Button>
+        {Array.from(sp.keys()).some(
+          (k) => !["page", "perPage", "sort", "dir", "view", "find"].includes(k)
+        ) && (
+          <Tooltip label="Clear all filters">
+            <Button
+              variant="default"
+              onClick={() => {
+                const next = new URLSearchParams(sp);
+                for (const k of Array.from(next.keys())) {
+                  if (
+                    ["page", "perPage", "sort", "dir", "view", "find"].includes(
+                      k
+                    )
+                  )
+                    continue;
+                  next.delete(k);
+                }
+                navigate(`?${next.toString()}`);
+              }}
+            >
+              Clear Filters
+            </Button>
+          </Tooltip>
+        )}
       </Group>
 
       <section>
@@ -140,6 +164,8 @@ function JobsHybridTable({
   initialRows: any[];
   idList: number[];
 }) {
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "jobs",
     rowEndpointPath: "/jobs/rows",
@@ -158,9 +184,9 @@ function JobsHybridTable({
       title: "Customer",
       render: (r: any) => r.company?.name || "",
     },
-    { accessor: "projectCode", title: "Project Code" },
-    { accessor: "name", title: "Name" },
-    { accessor: "jobType", title: "Type" },
+    { accessor: "projectCode", title: "Project Code", sortable: true },
+    { accessor: "name", title: "Name", sortable: true },
+    { accessor: "jobType", title: "Type", sortable: true },
     {
       accessor: "startDate",
       title: "Start",
@@ -173,7 +199,7 @@ function JobsHybridTable({
       render: (r: any) =>
         r.endDate ? new Date(r.endDate).toLocaleDateString() : "",
     },
-    { accessor: "status", title: "Status" },
+    { accessor: "status", title: "Status", sortable: true },
   ];
   return (
     <NavDataTable
@@ -181,6 +207,21 @@ function JobsHybridTable({
       records={records as any}
       columns={columns as any}
       fetching={fetching}
+      sortStatus={
+        {
+          columnAccessor: sp.get("sort") || "id",
+          direction: (sp.get("dir") as any) || "asc",
+        } as any
+      }
+      onSortStatusChange={(s: {
+        columnAccessor: string;
+        direction: "asc" | "desc";
+      }) => {
+        const next = new URLSearchParams(sp);
+        next.set("sort", s.columnAccessor);
+        next.set("dir", s.direction);
+        navigate(`?${next.toString()}`);
+      }}
       onReachEnd={() => {
         if (!atEnd) requestMore();
       }}

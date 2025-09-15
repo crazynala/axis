@@ -4,11 +4,17 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigate,
+  useSearchParams,
+} from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
-import { Button, Group, Stack, Title } from "@mantine/core";
+import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
+import { useEffect } from "react";
 import { ShipmentFindManager } from "../components/ShipmentFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
@@ -212,6 +218,14 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function ShipmentsIndexRoute() {
   const { idList, idListComplete, initialRows, total, views, activeView } =
     useLoaderData<typeof loader>();
+  const { setIdList, addRows } = useRecordContext();
+  useEffect(() => {
+    setIdList("shipments", idList, idListComplete);
+    if (initialRows?.length)
+      addRows("shipments", initialRows, { updateRecordsArray: true });
+  }, [idList, idListComplete, initialRows, setIdList, addRows]);
+  const navigate = useNavigate();
+  const [sp] = useSearchParams();
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "shipments",
     rowEndpointPath: "/shipments/rows",
@@ -228,10 +242,10 @@ export default function ShipmentsIndexRoute() {
       title: "Date",
       render: (r: any) => (r.date ? new Date(r.date).toLocaleDateString() : ""),
     },
-    { accessor: "type", title: "Type" },
-    { accessor: "shipmentType", title: "Ship Type" },
-    { accessor: "status", title: "Status" },
-    { accessor: "trackingNo", title: "Tracking" },
+    { accessor: "type", title: "Type", sortable: true },
+    { accessor: "shipmentType", title: "Ship Type", sortable: true },
+    { accessor: "status", title: "Status", sortable: true },
+    { accessor: "trackingNo", title: "Tracking", sortable: true },
     {
       accessor: "companySender.name",
       title: "From",
@@ -260,12 +274,49 @@ export default function ShipmentsIndexRoute() {
         </Button>
       </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
-      <Title order={4}>Shipments ({total})</Title>
+      <Group justify="space-between" align="center" mb="xs">
+        <Title order={4}>Shipments ({total})</Title>
+        {Array.from(sp.keys()).some(
+          (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
+        ) && (
+          <Tooltip label="Clear all filters">
+            <Button
+              variant="default"
+              onClick={() => {
+                const next = new URLSearchParams(sp);
+                for (const k of Array.from(next.keys())) {
+                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
+                    continue;
+                  next.delete(k);
+                }
+                navigate(`?${next.toString()}`);
+              }}
+            >
+              Clear Filters
+            </Button>
+          </Tooltip>
+        )}
+      </Group>
       <NavDataTable
         module="shipments"
         records={records as any}
         columns={columns as any}
         fetching={fetching}
+        sortStatus={
+          {
+            columnAccessor: sp.get("sort") || "id",
+            direction: (sp.get("dir") as any) || "asc",
+          } as any
+        }
+        onSortStatusChange={(s: {
+          columnAccessor: string;
+          direction: "asc" | "desc";
+        }) => {
+          const next = new URLSearchParams(sp);
+          next.set("sort", s.columnAccessor);
+          next.set("dir", s.direction);
+          navigate(`?${next.toString()}`);
+        }}
         onActivate={(rec: any) => {
           if (rec?.id != null) window.location.href = `/shipments/${rec.id}`;
         }}

@@ -44,10 +44,12 @@ export default function DHLRecordsIndexRoute() {
         breadcrumbs={[{ label: "DHL Records", href: "/admin/dhl-records" }]}
       />
       <DataTable
+        withTableBorder
         withRowBorders
         records={data.rows as any}
         totalRecords={data.total}
         page={data.page}
+        onPageChange={() => {}}
         recordsPerPage={data.perPage}
         columns={[
           {

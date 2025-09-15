@@ -4,7 +4,12 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigate,
+  useSearchParams,
+} from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
@@ -19,7 +24,8 @@ import {
 import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
-import { Stack, Group, Title, Button } from "@mantine/core";
+import { Stack, Group, Title, Button, Tooltip } from "@mantine/core";
+import { useEffect } from "react";
 import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction = () => [{ title: "Expenses" }];
@@ -155,6 +161,14 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function ExpensesIndexRoute() {
   const { idList, idListComplete, initialRows, total, views, activeView } =
     useLoaderData<typeof loader>();
+  const { setIdList, addRows } = useRecordContext();
+  useEffect(() => {
+    setIdList("expenses", idList, idListComplete);
+    if (initialRows?.length)
+      addRows("expenses", initialRows, { updateRecordsArray: true });
+  }, [idList, idListComplete, initialRows, setIdList, addRows]);
+  const navigate = useNavigate();
+  const [sp] = useSearchParams();
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "expenses",
     rowEndpointPath: "/expenses/rows",
@@ -166,9 +180,9 @@ export default function ExpensesIndexRoute() {
       width: 70,
       render: (r: any) => <Link to={`/expenses/${r.id}`}>{r.id}</Link>,
     },
-    { accessor: "date", title: "Date" },
-    { accessor: "category", title: "Category" },
-    { accessor: "details", title: "Details" },
+    { accessor: "date", title: "Date", sortable: true },
+    { accessor: "category", title: "Category", sortable: true },
+    { accessor: "details", title: "Details", sortable: true },
     {
       accessor: "priceCost",
       title: "Cost",
@@ -192,12 +206,49 @@ export default function ExpensesIndexRoute() {
         </Button>
       </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
-      <Title order={4}>Expenses ({total})</Title>
+      <Group justify="space-between" align="center" mb="xs">
+        <Title order={4}>Expenses ({total})</Title>
+        {Array.from(sp.keys()).some(
+          (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
+        ) && (
+          <Tooltip label="Clear all filters">
+            <Button
+              variant="default"
+              onClick={() => {
+                const next = new URLSearchParams(sp);
+                for (const k of Array.from(next.keys())) {
+                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
+                    continue;
+                  next.delete(k);
+                }
+                navigate(`?${next.toString()}`);
+              }}
+            >
+              Clear Filters
+            </Button>
+          </Tooltip>
+        )}
+      </Group>
       <NavDataTable
         module="expenses"
         records={records as any}
         columns={columns as any}
         fetching={fetching}
+        sortStatus={
+          {
+            columnAccessor: sp.get("sort") || "id",
+            direction: (sp.get("dir") as any) || "asc",
+          } as any
+        }
+        onSortStatusChange={(s: {
+          columnAccessor: string;
+          direction: "asc" | "desc";
+        }) => {
+          const next = new URLSearchParams(sp);
+          next.set("sort", s.columnAccessor);
+          next.set("dir", s.direction);
+          navigate(`?${next.toString()}`);
+        }}
         onActivate={(rec: any) => {
           if (rec?.id != null) window.location.href = `/expenses/${rec.id}`;
         }}

@@ -221,6 +221,15 @@ async function importProductMovementLines() {
   console.log("ProductMovementLines ->", lines);
   const bat = await importBatches();
   console.log("Batches ->", bat);
+  // Refresh MV so snapshots reflect imported data
+  try {
+    await prisma.$executeRawUnsafe(
+      "REFRESH MATERIALIZED VIEW product_stock_snapshot"
+    );
+    console.log("Refreshed product_stock_snapshot");
+  } catch (e) {
+    console.warn("Failed to refresh product_stock_snapshot", e?.message || e);
+  }
   await prisma.$disconnect();
 })().catch(async (e) => {
   console.error(e);

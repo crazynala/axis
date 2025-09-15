@@ -69,7 +69,7 @@ import {
   IconCalendarDollar,
 } from "@tabler/icons-react";
 import { useFind } from "./find/FindContext";
-import { prisma } from "./utils/prisma.server";
+// import { prisma } from "./utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -79,37 +79,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     (p) => path === p || path.startsWith("/reset")
   );
   const logLevels = await loadLogLevels();
-  let colorScheme: "light" | "dark" = "light";
-
-  try {
-    // Use your existing session accessor; fall back gracefully if unauthenticated
-    const userId =
-      // await requireUserId(request)
-      //   .catch(() => null);
-      // If you have a getUserId that does not throw, prefer it:
-      // await getUserId(request);
-      null; // ...replace with your actual session user id retrieval...
-
-    if (userId) {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { theme: true },
-      });
-      if (user?.theme === "dark" || user?.theme === "light") {
-        colorScheme = user.theme;
-      }
-    }
-  } catch {
-    // ignore and keep default
-  }
-
-  if (isPublic) return json({ colorScheme: "light" as const, logLevels });
+  if (isPublic)
+    return json({
+      colorScheme: "light" as const,
+      logLevels,
+      options: null,
+      desktopNavOpened: true,
+    });
   const uid = await getUserId(request);
   if (!uid) {
     const redirectTo = encodeURIComponent(path);
     throw redirect(`/login?redirectTo=${redirectTo}`);
   }
   const me = await getUser(request);
+  const colorScheme: "light" | "dark" =
+    (me?.colorScheme as "light" | "dark" | undefined) || "light";
   const desktopNavOpened = me?.desktopNavOpened ?? true;
   const options = await loadOptions();
   // console.log("Root loaded options: ", options);
@@ -203,10 +187,11 @@ const theme = createTheme({
 });
 
 export default function App() {
-  const { colorScheme } = useLoaderData<typeof loader>();
-  const logLevels = (colorScheme as any).logLevels;
-  const desktopNavPref = (colorScheme as any).desktopNavOpened ?? true;
-  const options: OptionsData | undefined = colorScheme.options;
+  const data = useLoaderData<typeof loader>();
+  const colorScheme = data.colorScheme;
+  const logLevels = data.logLevels;
+  const desktopNavPref = data.desktopNavOpened ?? true;
+  const options: OptionsData | undefined = data.options ?? undefined;
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");

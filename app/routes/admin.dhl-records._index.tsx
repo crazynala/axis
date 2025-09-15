@@ -42,10 +42,12 @@ export default function AdminDHLRecordsIndexRoute() {
         ]}
       />
       <DataTable
+        withTableBorder
         withRowBorders
         records={data.rows as any}
         totalRecords={data.total}
         page={data.page}
+        onPageChange={() => {}}
         recordsPerPage={data.perPage}
         columns={[
           {

@@ -1,5 +1,5 @@
 {
-  "name": "--no-git",
+  "name": "axis",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -71,7 +71,6 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.2",
     "dotenv-cli": "^10.0.0",
-    "playwright": "^1.47.2",
     "postcss": "^8.5.6",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",

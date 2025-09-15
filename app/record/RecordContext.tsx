@@ -1,7 +1,19 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import { useLocation, useNavigate } from "@remix-run/react";
 import { ActionIcon, Group, Text, Tooltip } from "@mantine/core";
-import { IconChevronsLeft, IconChevronLeft, IconChevronRight, IconChevronsRight } from "@tabler/icons-react";
+import {
+  IconChevronsLeft,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronsRight,
+} from "@tabler/icons-react";
 import { useHotkeyScope } from "../hotkeys/HotkeyContext";
 
 // ---------------------------
@@ -32,8 +44,16 @@ export interface RecordContextValue {
   register: (reg: RecordRegistration) => void;
   clear: (module?: string) => void;
   appendRecords: (module: string, newRecords: any[]) => void;
-  setIdList: (module: string, ids: Array<string | number>, complete: boolean) => void;
-  addRows: (module: string, rows: any[], opts?: { getId?: (r: any) => any; updateRecordsArray?: boolean }) => void;
+  setIdList: (
+    module: string,
+    ids: Array<string | number>,
+    complete: boolean
+  ) => void;
+  addRows: (
+    module: string,
+    rows: any[],
+    opts?: { getId?: (r: any) => any; updateRecordsArray?: boolean }
+  ) => void;
   currentId: string | number | null;
   setCurrentId: (id: string | number | null) => void;
   nextId: (currentId: string | number | null) => string | number | null;
@@ -46,7 +66,9 @@ const RecordContext = createContext<RecordContextValue | null>(null);
 // ---------------------------
 // Provider
 // ---------------------------
-export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+export const RecordProvider: React.FC<React.PropsWithChildren> = ({
+  children,
+}) => {
   const [state, setState] = useState<RecordState | null>(null);
   const [currentId, setCurrentId] = useState<string | number | null>(null);
   const location = useLocation();
@@ -68,54 +90,75 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, []);
 
-  const setIdList = useCallback((module: string, ids: Array<string | number>, complete: boolean) => {
-    setState((prev) => {
-      if (prev && prev.module !== module) prev = null as any;
-      const base: RecordState =
-        prev ||
-        ({
-          module,
-          records: [],
-          getId: (r: any) => r.id,
-          getPath: (r: any) => `/${module}/${(r as any)?.id}`,
-          indexById: new Map(),
-          registeredAt: Date.now(),
-          rowsMap: new Map(),
-        } as RecordState);
-      const idIndexMap = new Map<string | number, number>();
-      ids.forEach((id, i) => idIndexMap.set(id, i));
-      return { ...base, idList: ids, idListComplete: complete, idIndexMap };
-    });
-  }, []);
+  // If the active module's idList narrows to a single id and currentId differs, auto-select it for better UX after precise finds
+  useEffect(() => {
+    if (!state) return;
+    if (state.idList && state.idList.length === 1) {
+      const only = state.idList[0];
+      if (only != null && currentId !== only) setCurrentId(only);
+    }
+  }, [state?.idList, currentId]);
 
-  const addRows = useCallback((module: string, rows: any[], opts?: { getId?: (r: any) => any; updateRecordsArray?: boolean }) => {
-    if (!rows.length) return;
-    setState((prev) => {
-      if (!prev || prev.module !== module) return prev;
-      const getId = opts?.getId || prev.getId;
-      const rowsMap = new Map(prev.rowsMap || []);
-      rows.forEach((r) => rowsMap.set(getId(r), r));
-      let records = prev.records;
-      let indexById = prev.indexById;
-      if (opts?.updateRecordsArray) {
-        const existingIds = new Set(records.map((r) => getId(r)));
-        const additions = rows.filter((r) => !existingIds.has(getId(r)));
-        if (additions.length) {
-          records = [...records, ...additions];
-          indexById = new Map<string | number, number>();
-          records.forEach((r, i) => indexById.set(getId(r), i));
+  const setIdList = useCallback(
+    (module: string, ids: Array<string | number>, complete: boolean) => {
+      setState((prev) => {
+        if (prev && prev.module !== module) prev = null as any;
+        const base: RecordState =
+          prev ||
+          ({
+            module,
+            records: [],
+            getId: (r: any) => r.id,
+            getPath: (r: any) => `/${module}/${(r as any)?.id}`,
+            indexById: new Map(),
+            registeredAt: Date.now(),
+            rowsMap: new Map(),
+          } as RecordState);
+        const idIndexMap = new Map<string | number, number>();
+        ids.forEach((id, i) => idIndexMap.set(id, i));
+        return { ...base, idList: ids, idListComplete: complete, idIndexMap };
+      });
+    },
+    []
+  );
+
+  const addRows = useCallback(
+    (
+      module: string,
+      rows: any[],
+      opts?: { getId?: (r: any) => any; updateRecordsArray?: boolean }
+    ) => {
+      if (!rows.length) return;
+      setState((prev) => {
+        if (!prev || prev.module !== module) return prev;
+        const getId = opts?.getId || prev.getId;
+        const rowsMap = new Map(prev.rowsMap || []);
+        rows.forEach((r) => rowsMap.set(getId(r), r));
+        let records = prev.records;
+        let indexById = prev.indexById;
+        if (opts?.updateRecordsArray) {
+          const existingIds = new Set(records.map((r) => getId(r)));
+          const additions = rows.filter((r) => !existingIds.has(getId(r)));
+          if (additions.length) {
+            records = [...records, ...additions];
+            indexById = new Map<string | number, number>();
+            records.forEach((r, i) => indexById.set(getId(r), i));
+          }
         }
-      }
-      return { ...prev, rowsMap, records, indexById };
-    });
-  }, []);
+        return { ...prev, rowsMap, records, indexById };
+      });
+    },
+    []
+  );
 
   const appendRecords = useCallback((module: string, newRecords: any[]) => {
     setState((prev) => {
       if (!prev || prev.module !== module) return prev;
       if (!newRecords.length) return prev;
       const existingIds = new Set(prev.records.map((r) => prev.getId(r)));
-      const additions = newRecords.filter((r) => !existingIds.has(prev.getId(r)));
+      const additions = newRecords.filter(
+        (r) => !existingIds.has(prev.getId(r))
+      );
       if (!additions.length) return prev;
       const merged = [...prev.records, ...additions];
       const indexById = new Map<string | number, number>();
@@ -180,9 +223,14 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       ? (e) => {
           // If key event originated inside a sheet/grid editor, ignore
           const t = e.target as HTMLElement | null;
-          if (t && t.closest && t.closest("[data-rdg-root], .dsg-container")) return false;
+          if (t && t.closest && t.closest("[data-rdg-root], .dsg-container"))
+            return false;
           const el = document.activeElement as HTMLElement | null;
-          if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) {
+          if (
+            el &&
+            (el.isContentEditable ||
+              ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))
+          ) {
             if (!(e.metaKey || e.ctrlKey)) return false;
           }
           const parts = location.pathname.split("/").filter(Boolean);
@@ -217,14 +265,22 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               nav(t);
               return true;
             }
-          } else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowLeft" && isDetail) {
+          } else if (
+            (e.metaKey || e.ctrlKey) &&
+            e.key === "ArrowLeft" &&
+            isDetail
+          ) {
             const t = prevId(activeId);
             if (t != null) {
               e.preventDefault();
               nav(t);
               return true;
             }
-          } else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowRight" && isDetail) {
+          } else if (
+            (e.metaKey || e.ctrlKey) &&
+            e.key === "ArrowRight" &&
+            isDetail
+          ) {
             const t = nextId(activeId);
             if (t != null) {
               e.preventDefault();
@@ -240,7 +296,15 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           return false;
         }
       : null,
-    [state, location.pathname, currentId, nextId, prevId, getPathForId, navigate]
+    [
+      state,
+      location.pathname,
+      currentId,
+      nextId,
+      prevId,
+      getPathForId,
+      navigate,
+    ]
   );
 
   return (
@@ -269,11 +333,15 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({ children }) 
 // ---------------------------
 export function useRecordContext() {
   const ctx = useContext(RecordContext);
-  if (!ctx) throw new Error("useRecordContext must be used within RecordProvider");
+  if (!ctx)
+    throw new Error("useRecordContext must be used within RecordProvider");
   return ctx;
 }
 
-export function useRegisterRecordBrowser(reg: RecordRegistration, auto: boolean = true) {
+export function useRegisterRecordBrowser(
+  reg: RecordRegistration,
+  auto: boolean = true
+) {
   const { register, clear } = useRecordContext();
   const regRef = useRef(reg);
   useEffect(() => {
@@ -285,21 +353,41 @@ export function useRegisterRecordBrowser(reg: RecordRegistration, auto: boolean 
   }, [reg.module, reg.records, reg.getId, reg.getPath, auto, register, clear]);
 }
 
-export const RegisterRecordBrowser: React.FC<RecordRegistration & { auto?: boolean }> = ({ auto = true, ...reg }) => {
+export const RegisterRecordBrowser: React.FC<
+  RecordRegistration & { auto?: boolean }
+> = ({ auto = true, ...reg }) => {
   useRegisterRecordBrowser(reg, auto);
   return null;
 };
 
 export function useRecords() {
-  const { register, appendRecords, setCurrentId, currentId, state, setIdList, addRows } = useRecordContext();
+  const {
+    register,
+    appendRecords,
+    setCurrentId,
+    currentId,
+    state,
+    setIdList,
+    addRows,
+  } = useRecordContext();
   const setRecordSet = useCallback(
-    (module: string, records: any[], opts?: { getId?: (r: any) => any; getPath?: (r: any) => string }) => {
+    (
+      module: string,
+      records: any[],
+      opts?: { getId?: (r: any) => any; getPath?: (r: any) => string }
+    ) => {
       register({ module, records, getId: opts?.getId, getPath: opts?.getPath });
     },
     [register]
   );
-  const appendRecordBatch = useCallback((module: string, more: any[]) => appendRecords(module, more), [appendRecords]);
-  const setCurrentRecord = useCallback((id: string | number | null) => setCurrentId(id), [setCurrentId]);
+  const appendRecordBatch = useCallback(
+    (module: string, more: any[]) => appendRecords(module, more),
+    [appendRecords]
+  );
+  const setCurrentRecord = useCallback(
+    (id: string | number | null) => setCurrentId(id),
+    [setCurrentId]
+  );
   return {
     state,
     setRecordSet,
@@ -316,7 +404,8 @@ export function useRecords() {
 // UI Component (lightweight)
 // ---------------------------
 export const GlobalRecordBrowser: React.FC = () => {
-  const { state, nextId, prevId, getPathForId, currentId, setCurrentId } = useRecordContext();
+  const { state, nextId, prevId, getPathForId, currentId, setCurrentId } =
+    useRecordContext();
   const location = useLocation();
   const navigate = useNavigate();
   if (!state || (!state.idList && state.records.length === 0)) return null;
@@ -356,24 +445,40 @@ export const GlobalRecordBrowser: React.FC = () => {
   };
   const lastId = () => {
     if (!state) return null;
-    if (state.idList && state.idList.length) return state.idList[state.idList.length - 1];
-    if (state.records.length) return state.getId(state.records[state.records.length - 1]);
+    if (state.idList && state.idList.length)
+      return state.idList[state.idList.length - 1];
+    if (state.records.length)
+      return state.getId(state.records[state.records.length - 1]);
     return null;
   };
   const canPrev = prevId(derivedId) != null;
   const canNext = nextId(derivedId) != null;
-  const canFirst = derivedId != null && firstId() != null && derivedId !== firstId();
-  const canLast = derivedId != null && lastId() != null && derivedId !== lastId();
+  const canFirst =
+    derivedId != null && firstId() != null && derivedId !== firstId();
+  const canLast =
+    derivedId != null && lastId() != null && derivedId !== lastId();
   const posLabel = `${idx != null ? idx + 1 : "-"} / ${total}`;
   return (
     <Group gap={4} align="center" wrap="nowrap">
       <Tooltip label="First" withArrow disabled={!canFirst}>
-        <ActionIcon variant="subtle" size="sm" aria-label="First record" disabled={!canFirst} onClick={() => doNav(firstId())}>
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          aria-label="First record"
+          disabled={!canFirst}
+          onClick={() => doNav(firstId())}
+        >
           <IconChevronsLeft size={16} />
         </ActionIcon>
       </Tooltip>
       <Tooltip label="Previous" withArrow disabled={!canPrev}>
-        <ActionIcon variant="subtle" size="sm" aria-label="Previous record" disabled={!canPrev} onClick={() => doNav(prevId(derivedId))}>
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          aria-label="Previous record"
+          disabled={!canPrev}
+          onClick={() => doNav(prevId(derivedId))}
+        >
           <IconChevronLeft size={16} />
         </ActionIcon>
       </Tooltip>
@@ -391,12 +496,24 @@ export const GlobalRecordBrowser: React.FC = () => {
         {posLabel}
       </Text>
       <Tooltip label="Next" withArrow disabled={!canNext}>
-        <ActionIcon variant="subtle" size="sm" aria-label="Next record" disabled={!canNext} onClick={() => doNav(nextId(derivedId))}>
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          aria-label="Next record"
+          disabled={!canNext}
+          onClick={() => doNav(nextId(derivedId))}
+        >
           <IconChevronRight size={16} />
         </ActionIcon>
       </Tooltip>
       <Tooltip label="Last" withArrow disabled={!canLast}>
-        <ActionIcon variant="subtle" size="sm" aria-label="Last record" disabled={!canLast} onClick={() => doNav(lastId())}>
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          aria-label="Last record"
+          disabled={!canLast}
+          onClick={() => doNav(lastId())}
+        >
           <IconChevronsRight size={16} />
         </ActionIcon>
       </Tooltip>

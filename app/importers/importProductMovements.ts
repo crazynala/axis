@@ -1,4 +1,4 @@
-import { prisma } from "../utils/prisma.server";
+import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asDate, asNum, pick } from "./utils";
 
@@ -42,6 +42,13 @@ export async function importProductMovements(
     const shippingType =
       (pick(r, ["ShippingType"]) ?? "").toString().trim() || null;
     const qty = asNum(pick(r, ["Quantity", "Qty", "quantity"])) as
+      | number
+      | null;
+    // Optional header-level linkage fields
+    const purchaseOrderLineId = asNum(pick(r, ["a_PurchaseOrderLineID"])) as
+      | number
+      | null;
+    const shippingLineId = asNum(pick(r, ["a_ShippingLineID"])) as
       | number
       | null;
     const assemblyActivityIdFM = asNum(pick(r, ["a_AssemblyActivityID"])) as
@@ -92,6 +99,8 @@ export async function importProductMovements(
         assemblyActivityId: assemblyActivityIdFM ?? undefined,
         assemblyId: assemblyIdFM ?? undefined,
         costingId: costingIdFM ?? undefined,
+        purchaseOrderLineId: purchaseOrderLineId ?? undefined,
+        shippingLineId: shippingLineId ?? undefined,
       };
       if (id != null) {
         const existing = await prisma.productMovement.findUnique({
@@ -124,6 +133,11 @@ export async function importProductMovements(
   console.log(
     `[import] product_movements complete total=${rows.length} created=${created} updated=${updated} skipped=${skipped} errors=${errors.length}`
   );
+  try {
+    await refreshProductStockSnapshot(false);
+  } catch (e) {
+    console.warn("[import] product_movements: MV refresh failed", e);
+  }
   if (errors.length) {
     const grouped: Record<
       string,

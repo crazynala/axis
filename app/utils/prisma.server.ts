@@ -916,11 +916,13 @@ export async function getProductStockSnapshots(
  * or via an admin-only endpoint. Not run automatically to avoid unpredictable load.
  */
 export async function refreshProductStockSnapshot(concurrent = false) {
+  console.log("Refreshing product_stock_snapshot materialized view...");
   const stmt = concurrent
     ? "REFRESH MATERIALIZED VIEW CONCURRENTLY product_stock_snapshot"
     : "REFRESH MATERIALIZED VIEW product_stock_snapshot";
   // Note: CONCURRENTLY requires a unique index on the MV (not yet defined). Use non-concurrent for now.
   await base.$executeRawUnsafe(stmt);
+  console.log("... finished refresh of product_stock_snapshot.");
 }
 
 // Deprecated: existing per-product enrichment helpers retained for validation / rollback.

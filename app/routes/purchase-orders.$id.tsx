@@ -5,7 +5,7 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
-import { prisma } from "../utils/prisma.server";
+import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { Card, Group, Stack, Title, Table, Button } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
@@ -15,6 +15,7 @@ import { ProductSelect, type ProductOption } from "../components/ProductSelect";
 import { useState, useEffect } from "react";
 import { useRecordContext } from "../record/RecordContext";
 import { formatUSD } from "../utils/format";
+import { POReceiveModal } from "../components/POReceiveModal";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -38,7 +39,44 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   if (!purchaseOrder) throw new Response("Not found", { status: 404 });
 
-  const totals = (purchaseOrder.lines || []).reduce(
+  // Derive shipped/received from Product Movements to make PMs the source of truth
+  const lineIds = (purchaseOrder.lines || []).map((l: any) => l.id);
+  let receivedByLine = new Map<number, number>();
+  let shippedByLine = new Map<number, number>();
+  if (lineIds.length) {
+    const mls = await prisma.productMovementLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: lineIds },
+      },
+      select: {
+        purchaseOrderLineId: true,
+        quantity: true,
+        movement: { select: { movementType: true } },
+      },
+    });
+    for (const ml of mls) {
+      const lid = ml.purchaseOrderLineId as number;
+      const qty = Number(ml.quantity || 0);
+      const t = (ml.movement?.movementType || "").toLowerCase();
+      if (t === "po (receive)") {
+        receivedByLine.set(lid, (receivedByLine.get(lid) || 0) + qty);
+      } else if (t === "po (ship)") {
+        shippedByLine.set(lid, (shippedByLine.get(lid) || 0) + qty);
+      }
+    }
+  }
+  const linesWithComputed = (purchaseOrder.lines || []).map((l: any) => ({
+    ...l,
+    qtyReceived: receivedByLine.get(l.id) || 0,
+    qtyShipped: shippedByLine.get(l.id) || 0,
+  }));
+
+  const poWithComputed = {
+    ...purchaseOrder,
+    lines: linesWithComputed,
+  } as typeof purchaseOrder;
+
+  const totals = (poWithComputed.lines || []).reduce(
     (acc: any, l: any) => {
       const qty = Number(l.quantity ?? 0);
       const qtyOrd = Number(l.quantityOrdered ?? 0);
@@ -66,7 +104,48 @@ export async function loader({ params }: LoaderFunctionArgs) {
     name: p.name,
   }));
 
-  return json({ purchaseOrder, totals, productOptions });
+  // Fetch related Product Movements (headers + lines) tied to this PO's lines
+  let poMovements: Array<any> = [];
+  if (lineIds.length) {
+    poMovements = await prisma.productMovement.findMany({
+      where: {
+        purchaseOrderLineId: { in: lineIds },
+      },
+      select: {
+        id: true,
+        date: true,
+        movementType: true,
+        purchaseOrderLineId: true,
+        quantity: true,
+        notes: true,
+        // locationId relation isn't used for PO receive; we enforce PO.locationId via locationInId scalar
+        lines: {
+          select: {
+            id: true,
+            quantity: true,
+            purchaseOrderLineId: true,
+            product: { select: { sku: true, name: true } },
+            batch: {
+              select: {
+                id: true,
+                codeMill: true,
+                codeSartor: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+    });
+  }
+
+  return json({
+    purchaseOrder: poWithComputed,
+    totals,
+    productOptions,
+    poMovements,
+  });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -113,11 +192,135 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/purchase-orders/${id}`);
   }
+  if (intent === "po.receive") {
+    // Reuse the already-read form data; do not read request.formData() again
+    const f = form;
+    const poId = Number(f.get("poId"));
+    if (!Number.isFinite(poId))
+      return json({ error: "Invalid PO id" }, { status: 400 });
+    const dateStr = String(f.get("date") || "");
+    const date = dateStr ? new Date(dateStr) : new Date();
+    // Derive PO location from DB to enforce it server-side
+    const po = await prisma.purchaseOrder.findUnique({
+      where: { id: poId },
+      select: { id: true, locationId: true },
+    });
+    if (!po) return json({ error: "PO not found" }, { status: 404 });
+    const enforcedLocationId = po.locationId ?? null;
+
+    let payload: Array<{
+      lineId: number;
+      productId: number;
+      total?: number; // ignored, we recompute from batches
+      batches: Array<{
+        name?: string | null;
+        codeMill?: string | null;
+        codeSartor?: string | null;
+        qty: number;
+      }>;
+    }> = [];
+    try {
+      const s = String(f.get("payload") || "[]");
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) payload = parsed;
+    } catch {}
+
+    try {
+      // Execute the receive as a transaction
+      await prisma.$transaction(async (tx) => {
+        for (const row of payload) {
+          // Validate line belongs to PO and product matches
+          const line = await tx.purchaseOrderLine.findUnique({
+            where: { id: row.lineId },
+            select: {
+              id: true,
+              purchaseOrderId: true,
+              productId: true,
+              quantityOrdered: true,
+              qtyReceived: true,
+            },
+          });
+          if (!line || line.purchaseOrderId !== poId)
+            throw new Error("PO_RECEIVE: Invalid PO line");
+          if (Number(line.productId) !== Number(row.productId))
+            throw new Error("PO_RECEIVE: Product mismatch for PO line");
+
+          const batches = Array.isArray(row.batches) ? row.batches : [];
+          const sum = batches.reduce((t, b) => t + (Number(b.qty) || 0), 0);
+          if (sum <= 0) continue; // nothing to do for this row
+
+          const qtyOrdered = Number(line.quantityOrdered || 0);
+          const alreadyReceived = Number(line.qtyReceived || 0);
+          const remaining = Math.max(0, qtyOrdered - alreadyReceived);
+          if (sum > remaining)
+            throw new Error("PO_RECEIVE: Receive exceeds remaining quantity");
+
+          // Create header per line
+          const hdr = await tx.productMovement.create({
+            data: {
+              movementType: "PO (Receive)",
+              date,
+              productId: row.productId,
+              purchaseOrderLineId: row.lineId,
+              locationInId: enforcedLocationId ?? undefined,
+              quantity: Math.abs(sum),
+              notes: `PO ${poId} receive`,
+            },
+          });
+
+          for (const b of batches) {
+            const qty = Math.abs(Number(b.qty) || 0);
+            if (qty <= 0) continue;
+            const created = await tx.batch.create({
+              data: {
+                productId: row.productId,
+                name: b.name || null,
+                codeMill: b.codeMill || null,
+                codeSartor: b.codeSartor || null,
+                locationId: enforcedLocationId ?? undefined,
+                receivedAt: date,
+                quantity: qty, // seed fallback
+              },
+            });
+            await tx.productMovementLine.create({
+              data: {
+                movementId: hdr.id,
+                productMovementId: hdr.id,
+                productId: row.productId,
+                batchId: created.id,
+                quantity: qty,
+                notes: null,
+                purchaseOrderLineId: row.lineId,
+              },
+            });
+          }
+
+          // Do not update line fields; received/shipped are derived from movements
+        }
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.startsWith("PO_RECEIVE:")) {
+        return json(
+          { error: msg.replace(/^PO_RECEIVE:\s*/, "") },
+          { status: 400 }
+        );
+      }
+      throw e; // unexpected
+    }
+
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (po.receive)", e);
+    }
+    return redirect(`/purchase-orders/${poId}`);
+  }
   return redirect(`/purchase-orders/${id}`);
 }
 
 export default function PurchaseOrderDetailRoute() {
-  const { purchaseOrder, totals, productOptions } =
+  const { purchaseOrder, totals, productOptions, poMovements } =
     useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
@@ -172,6 +375,7 @@ export default function PurchaseOrderDetailRoute() {
     a.click();
     URL.revokeObjectURL(url);
   };
+  const [receiveOpen, setReceiveOpen] = useState(false);
 
   // Prev/Next hotkeys now handled globally in RecordProvider
 
@@ -196,6 +400,9 @@ export default function PurchaseOrderDetailRoute() {
           </Button>
           <Button size="xs" variant="light" onClick={emailDraft}>
             Email draft (.eml)
+          </Button>
+          <Button size="xs" onClick={() => setReceiveOpen(true)}>
+            Receive…
           </Button>
           {/* Per-page prev/next removed (global header handles navigation) */}
         </Group>
@@ -330,6 +537,94 @@ export default function PurchaseOrderDetailRoute() {
           </Table.Tbody>
         </Table>
       </Card>
+      {/* Related movements tied to this PO */}
+      <Card withBorder padding="md">
+        <Card.Section inheritPadding py="xs">
+          <Group justify="space-between" align="center">
+            <Title order={5}>PO Receive Movements</Title>
+          </Group>
+        </Card.Section>
+        <Table withColumnBorders withTableBorder>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Date</Table.Th>
+              <Table.Th>Move ID</Table.Th>
+              <Table.Th>PO Line</Table.Th>
+              <Table.Th>Type</Table.Th>
+              <Table.Th>Product</Table.Th>
+              <Table.Th>Batch</Table.Th>
+              <Table.Th>Qty</Table.Th>
+              <Table.Th>Notes</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {(poMovements || []).flatMap((m: any) => {
+              const dateStr = m.date
+                ? new Date(m.date as any).toLocaleDateString()
+                : "";
+              if (!m.lines?.length) {
+                return [
+                  <Table.Tr key={`m-${m.id}`}>
+                    <Table.Td>{dateStr}</Table.Td>
+                    <Table.Td>{m.id}</Table.Td>
+                    <Table.Td>{m.purchaseOrderLineId ?? ""}</Table.Td>
+                    <Table.Td>{m.movementType}</Table.Td>
+                    <Table.Td></Table.Td>
+                    <Table.Td></Table.Td>
+                    <Table.Td>{m.quantity ?? ""}</Table.Td>
+                    <Table.Td>{m.notes ?? ""}</Table.Td>
+                  </Table.Tr>,
+                ];
+              }
+              return m.lines.map((ln: any) => (
+                <Table.Tr key={`m-${m.id}-l-${ln.id}`}>
+                  <Table.Td>{dateStr}</Table.Td>
+                  <Table.Td>{m.id}</Table.Td>
+                  <Table.Td>
+                    {ln.purchaseOrderLineId ?? m.purchaseOrderLineId ?? ""}
+                  </Table.Td>
+                  <Table.Td>{m.movementType}</Table.Td>
+                  <Table.Td>
+                    {[ln.product?.sku, ln.product?.name]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Table.Td>
+                  <Table.Td>
+                    {ln.batch
+                      ? [ln.batch.codeSartor, ln.batch.codeMill, ln.batch.name]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : ""}
+                  </Table.Td>
+                  <Table.Td>{ln.quantity ?? ""}</Table.Td>
+                  <Table.Td>{m.notes ?? ""}</Table.Td>
+                </Table.Tr>
+              ));
+            })}
+            {(!poMovements || poMovements.length === 0) && (
+              <Table.Tr>
+                <Table.Td colSpan={8}>
+                  <em>No related movements yet.</em>
+                </Table.Td>
+              </Table.Tr>
+            )}
+          </Table.Tbody>
+        </Table>
+      </Card>
+      <POReceiveModal
+        opened={receiveOpen}
+        onClose={() => setReceiveOpen(false)}
+        poId={purchaseOrder.id}
+        poLocationId={purchaseOrder.locationId ?? null}
+        lines={(purchaseOrder.lines || []).map((l: any) => ({
+          id: l.id,
+          productId: l.productId,
+          sku: l.product?.sku,
+          name: l.product?.name,
+          qtyOrdered: l.quantityOrdered,
+          qtyReceived: l.qtyReceived,
+        }))}
+      />
     </Stack>
   );
 }

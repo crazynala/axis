@@ -1,7 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { prismaBase, runWithDbActivity, prisma } from "../utils/prisma.server";
 import { productSearchSchema } from "../find/product.search-schema";
 import { buildWhere } from "../find/buildWhere";
 import {
@@ -9,12 +8,19 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../find/multiFind";
-import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
-import { listViews } from "../utils/views.server";
 import { useEffect } from "react";
 import { useRecords } from "../record/RecordContext";
 
 export async function loader(args: LoaderFunctionArgs) {
+  const [
+    { runWithDbActivity, prismaBase },
+    { buildPrismaArgs, parseTableParams },
+    { listViews },
+  ] = await Promise.all([
+    import("../utils/prisma.server"),
+    import("../utils/table.server"),
+    import("../utils/views.server"),
+  ]);
   return runWithDbActivity("products.index", async () => {
     const url = new URL(args.request.url);
     const q = url.searchParams;
@@ -69,6 +75,8 @@ export async function loader(args: LoaderFunctionArgs) {
         const v = q.get(k);
         if (v !== null && v !== "") values[k] = v;
       }
+      // Guard against stray params accidentally treated as filters
+      delete (values as any).refreshed;
 
       // Build simple where: exclude name/sku from schema-driven builder, then add partial/insensitive clauses for them
       const valuesForSchema = { ...values };
@@ -148,6 +156,7 @@ export async function loader(args: LoaderFunctionArgs) {
       const {
         findReqs: _omitFindReqs,
         find: _legacy,
+        refreshed: _omitRefreshed,
         ...rest
       } = baseParams.filters;
       baseParams = { ...baseParams, filters: rest };
@@ -219,6 +228,7 @@ export default function ProductsLayout() {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { prismaBase } = await import("../utils/prisma.server");
   const ct = request.headers.get("content-type") || "";
   let intent = "";
   let body: any = null;

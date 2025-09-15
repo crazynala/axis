@@ -36,6 +36,7 @@ export default function AdminForexPairRoute() {
         ]}
       />
       <DataTable
+        withTableBorder
         withRowBorders
         records={data.rows as any}
         columns={[

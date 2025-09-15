@@ -21,17 +21,28 @@ export async function loader(_args: LoaderFunctionArgs) {
   const initialIds = idList.slice(0, INITIAL_COUNT);
   let initialRows: any[] = [];
   if (initialIds.length) {
-    initialRows = await prismaBase.purchaseOrder.findMany({
+    const base = await prismaBase.purchaseOrder.findMany({
       where: { id: { in: initialIds } },
       orderBy: { id: "asc" },
       select: {
         id: true,
         date: true,
-        company: true,
-        consignee: true,
-        location: true,
+        company: { select: { id: true, name: true } },
+        consignee: { select: { id: true, name: true } },
+        location: { select: { id: true, name: true } },
+        lines: { select: { priceCost: true, quantity: true } },
       },
     });
+    initialRows = base.map((r: any) => ({
+      ...r,
+      vendorName: r.company?.name || "",
+      consigneeName: r.consignee?.name || "",
+      locationName: r.location?.name || "",
+      totalCost: (r.lines || []).reduce(
+        (sum: number, l: any) => sum + (l.priceCost || 0) * (l.quantity || 0),
+        0
+      ),
+    }));
   }
   log.debug(
     { initialRows: initialRows.length, total: idList.length },

@@ -54,17 +54,18 @@ export function buildWhere<V extends Record<string, any>, W = any>(
     targetAND.push(block);
   };
 
-  for (const [key, def] of Object.entries(schema.fields) as [
-    keyof V & string,
-    FieldDef
-  ][]) {
+  for (const [key, def] of Object.entries(schema.fields) as Array<
+    [keyof V & string, FieldDef]
+  >) {
     pushBlock(def, (values as any)[key], where.AND);
   }
 
   for (const rel of schema.related ?? []) {
     const relAND: any[] = [];
-    for (const [key, def] of Object.entries(rel.fields)) {
-      pushBlock(def, (values as any)[key], relAND);
+    for (const [key, def] of Object.entries(rel.fields) as Array<
+      [string, FieldDef]
+    >) {
+      if (def) pushBlock(def, (values as any)[key], relAND);
     }
     if (relAND.length) {
       where.AND.push({ [rel.path]: { [rel.quantifier]: { AND: relAND } } });

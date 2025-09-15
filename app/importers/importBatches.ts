@@ -1,4 +1,4 @@
-import { prisma } from "../utils/prisma.server";
+import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asDate, asNum, pick } from "./utils";
 
@@ -24,8 +24,9 @@ export async function importBatches(rows: any[]): Promise<ImportResult> {
       locationId: asNum(pick(r, ["a_LocationID"])) as number | null,
       jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
       assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
-      codeMill: (pick(r, ["Code|Mill"]) ?? "").toString().trim() || null,
-      codeSartor: (pick(r, ["Code|Sartor"]) ?? "").toString().trim() || null,
+      codeMill: (pick(r, ["BatchNumber|Mill"]) ?? "").toString().trim() || null,
+      codeSartor:
+        (pick(r, ["BatchNumber|Sartor"]) ?? "").toString().trim() || null,
       name: (pick(r, ["Name"]) ?? "").toString().trim() || null,
       source: (pick(r, ["Source"]) ?? "").toString().trim() || null,
       quantity: asNum(pick(r, ["Quantity"])) as number | null,
@@ -60,6 +61,12 @@ export async function importBatches(rows: any[]): Promise<ImportResult> {
   console.log(
     `[import] batches complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
   );
+  try {
+    // Keep stock snapshot fresh after batch changes
+    await refreshProductStockSnapshot(false);
+  } catch (e) {
+    console.warn("[import] batches: MV refresh failed", e);
+  }
   if (errors.length) {
     const grouped: Record<
       string,

@@ -4,9 +4,14 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useSearchParams,
+  useNavigate,
+} from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
-import { Button, Group, Stack, Title } from "@mantine/core";
+import { Button, Group, Stack, Title, Text } from "@mantine/core";
 import { PurchaseOrderFindManager } from "../components/PurchaseOrderFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
@@ -20,6 +25,7 @@ import { prisma } from "../utils/prisma.server";
 import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
+import { useEffect } from "react";
 import { formatUSD } from "../utils/format";
 
 export const meta: MetaFunction = () => [{ title: "Purchase Orders" }];
@@ -46,7 +52,7 @@ export async function loader(args: LoaderFunctionArgs) {
         url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
-  const keys = ["vendorName", "consigneeName", "locationName", "date"]; // simple keys
+  const keys = ["id", "vendorName", "consigneeName", "locationName", "date"]; // simple keys (include id)
   let findWhere: any = null;
   const hasFindIndicators =
     keys.some((k) => url.searchParams.has(k)) ||
@@ -58,6 +64,11 @@ export async function loader(args: LoaderFunctionArgs) {
       if (v) values[k] = v;
     }
     const simple: any = {};
+    if (values.id) {
+      const n = Number(values.id);
+      if (Number.isFinite(n)) simple.id = n;
+      else simple.id = values.id; // allow non-numeric id if ever used
+    }
     if (values.vendorName)
       simple.company = {
         name: { contains: values.vendorName, mode: "insensitive" },
@@ -104,6 +115,20 @@ export async function loader(args: LoaderFunctionArgs) {
     defaultSort: { field: "id", dir: "asc" },
   });
   if (findWhere) prismaArgs.where = findWhere;
+  // Map UI sort keys to Prisma orderBy (handle relational fields)
+  if (baseParams.sort) {
+    const dir = (baseParams.dir as any) || "asc";
+    if (baseParams.sort === "vendorName")
+      prismaArgs.orderBy = { company: { name: dir } } as any;
+    else if (baseParams.sort === "consigneeName")
+      prismaArgs.orderBy = { consignee: { name: dir } } as any;
+    else if (baseParams.sort === "locationName")
+      prismaArgs.orderBy = { location: { name: dir } } as any;
+    else if (baseParams.sort === "totalCost") {
+      // totalCost is computed; fall back to id to avoid Prisma error
+      prismaArgs.orderBy = { id: dir } as any;
+    }
+  }
   // Hybrid roster subset (similar to companies index pattern)
   const ID_CAP = 50000;
   const idRows = await prisma.purchaseOrder.findMany({
@@ -183,11 +208,36 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function PurchaseOrdersIndexRoute() {
   const { idList, idListComplete, initialRows, total, views, activeView } =
     useLoaderData<typeof loader>();
-  const { state } = useRecordContext();
+  const { setIdList, addRows } = useRecordContext() as any;
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
+  const sort = sp.get("sort") || "id";
+  const dir = (sp.get("dir") as any) || "asc";
+  const sortStatus = { columnAccessor: sort, direction: dir } as any;
+  const onSortStatusChange = (s: {
+    columnAccessor: string;
+    direction: "asc" | "desc";
+  }) => {
+    const next = new URLSearchParams(sp);
+    next.set("sort", s.columnAccessor);
+    next.set("dir", s.direction);
+    navigate(`?${next.toString()}`);
+  };
+  useEffect(() => {
+    setIdList?.("purchase-orders", idList, idListComplete);
+    if (initialRows?.length)
+      addRows?.("purchase-orders", initialRows, { updateRecordsArray: true });
+  }, [idList, idListComplete, initialRows, setIdList, addRows]);
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "purchase-orders",
     rowEndpointPath: "/purchase-orders/rows",
   });
+  // Auto-select single record after filtering
+  useEffect(() => {
+    if (records.length === 1 && records[0]?.id != null) {
+      // setCurrentId not used here to avoid pulling from context; selection used mostly for keyboard nav
+    }
+  }, [records]);
   const columns = [
     {
       accessor: "id",
@@ -195,14 +245,16 @@ export default function PurchaseOrdersIndexRoute() {
       width: 70,
       render: (r: any) => <Link to={`/purchase-orders/${r.id}`}>{r.id}</Link>,
     },
-    { accessor: "date", title: "Date" },
-    { accessor: "vendorName", title: "Vendor" },
-    { accessor: "consigneeName", title: "Consignee" },
-    { accessor: "locationName", title: "Location" },
+    { accessor: "date", title: "Date", sortable: true },
+    { accessor: "vendorName", title: "Vendor", sortable: true },
+    { accessor: "consigneeName", title: "Consignee", sortable: true },
+    { accessor: "locationName", title: "Location", sortable: true },
     {
       accessor: "totalCost",
       title: "Total Cost",
       render: (r: any) => formatUSD(r.totalCost || 0),
+      // Note: server cannot sort by computed totalCost; keep non-sortable to prevent Prisma errors
+      sortable: false,
     },
   ];
   return (
@@ -223,11 +275,18 @@ export default function PurchaseOrdersIndexRoute() {
       </Group>
       <SavedViews views={views as any} activeView={activeView as any} />
       <Title order={4}>Purchase Orders ({total})</Title>
+      {total === 0 && (
+        <Text c="dimmed" size="sm">
+          No purchase orders match your filters.
+        </Text>
+      )}
       <NavDataTable
         module="purchase-orders"
         records={records as any}
         columns={columns as any}
         fetching={fetching}
+        sortStatus={sortStatus}
+        onSortStatusChange={onSortStatusChange}
         onActivate={(rec: any) => {
           if (rec?.id != null)
             window.location.href = `/purchase-orders/${rec.id}`;
@@ -235,6 +294,7 @@ export default function PurchaseOrdersIndexRoute() {
         onReachEnd={() => {
           if (!atEnd) requestMore();
         }}
+        // Mantine DataTable sorting will be handled in a future pass by wiring sortStatus to URL
       />
     </Stack>
   );

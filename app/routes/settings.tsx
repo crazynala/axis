@@ -15,6 +15,7 @@ import {
   Text,
   SegmentedControl,
   Group,
+  useMantineColorScheme,
 } from "@mantine/core";
 import { requireUserId } from "../utils/auth.server";
 import { prisma } from "../utils/prisma.server";
@@ -63,6 +64,24 @@ export default function Settings() {
   const data = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const { setColorScheme } = useMantineColorScheme();
+
+  async function updateTheme(next: "light" | "dark") {
+    try {
+      // Optimistically update UI first
+      setColorScheme(next);
+      // Persist on server
+      const resp = await fetch("/api/color-scheme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ colorScheme: next }),
+      });
+      if (!resp.ok) throw new Error("Failed to save theme");
+    } catch (e) {
+      // On error, we could revert or show a message; keep simple for now
+      console.error(e);
+    }
+  }
   return (
     <Stack align="center" mt={40}>
       <Card withBorder maw={520} w="100%">
@@ -95,7 +114,13 @@ export default function Settings() {
               </Button>
             </Stack>
           </Form>
-          <Form method="post">
+          <Form
+            method="post"
+            onSubmit={(e) => {
+              // Allow server form fallback, but also flip instantly when user clicks the button
+              // Do not prevent default to keep progressive enhancement
+            }}
+          >
             <Stack>
               <Group gap="sm">
                 <SegmentedControl
@@ -105,6 +130,9 @@ export default function Settings() {
                     { label: "Light", value: "light" },
                     { label: "Dark", value: "dark" },
                   ]}
+                  onChange={(val) => {
+                    if (val === "light" || val === "dark") updateTheme(val);
+                  }}
                 />
               </Group>
               <Button

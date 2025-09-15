@@ -9,8 +9,11 @@ import {
   useNavigation,
   useLoaderData,
   useSubmit,
+  useNavigate,
+  useSearchParams,
 } from "@remix-run/react";
-import { Button, Stack, Title } from "@mantine/core";
+import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
+import { useEffect } from "react";
 import { BreadcrumbSet } from "../../packages/timber";
 import NavDataTable from "../components/RefactoredNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
@@ -189,7 +192,15 @@ export default function CompaniesIndexRoute() {
   } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const fetching = nav.state !== "idle"; // only reflects URL changes; row fetches are separate
-  const { state } = useRecordContext();
+  const { state, setIdList, addRows } = useRecordContext();
+  const navigate = useNavigate();
+  const [sp] = useSearchParams();
+  // Seed/override RecordContext with loader-provided idList + initialRows so sorting/filtering take effect
+  useEffect(() => {
+    setIdList("companies", idList, idListComplete);
+    if (initialRows?.length)
+      addRows("companies", initialRows, { updateRecordsArray: true });
+  }, [idList, idListComplete, initialRows, setIdList, addRows]);
   // useHybridWindow handles window sizing + hydration (records = current window)
   const {
     records,
@@ -212,6 +223,7 @@ export default function CompaniesIndexRoute() {
     {
       accessor: "name",
       title: "Name",
+      sortable: true,
       render: (r: any) => (
         <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>
       ),
@@ -241,7 +253,7 @@ export default function CompaniesIndexRoute() {
       title: "Active",
       render: (r: any) => (r.isActive ? "Yes" : "No"),
     },
-    { accessor: "notes", title: "Notes" },
+    { accessor: "notes", title: "Notes", sortable: true },
   ];
   return (
     <Stack gap="lg">
@@ -250,7 +262,29 @@ export default function CompaniesIndexRoute() {
         breadcrumbs={[{ label: "Companies", href: "/companies" }]}
       />
       <SavedViews views={views as any} activeView={activeView as any} />
-      <Title order={2}>Companies</Title>
+      <Group justify="space-between" align="center">
+        <Title order={2}>Companies</Title>
+        {Array.from(sp.keys()).some(
+          (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
+        ) && (
+          <Tooltip label="Clear all filters">
+            <Button
+              variant="default"
+              onClick={() => {
+                const next = new URLSearchParams(sp);
+                for (const k of Array.from(next.keys())) {
+                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
+                    continue;
+                  next.delete(k);
+                }
+                navigate(`?${next.toString()}`);
+              }}
+            >
+              Clear Filters
+            </Button>
+          </Tooltip>
+        )}
+      </Group>
       <section>
         <Button
           component="a"
@@ -270,6 +304,21 @@ export default function CompaniesIndexRoute() {
           records={records as any}
           columns={columns as any}
           fetching={rowFetching}
+          sortStatus={
+            {
+              columnAccessor: sp.get("sort") || "id",
+              direction: (sp.get("dir") as any) || "asc",
+            } as any
+          }
+          onSortStatusChange={(s: {
+            columnAccessor: string;
+            direction: "asc" | "desc";
+          }) => {
+            const next = new URLSearchParams(sp);
+            next.set("sort", s.columnAccessor);
+            next.set("dir", s.direction);
+            navigate(`?${next.toString()}`);
+          }}
           onActivate={(rec: any) => {
             if (rec?.id != null) window.location.href = `/companies/${rec.id}`;
           }}

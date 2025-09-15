@@ -24,6 +24,13 @@ interface NavTableProps<T extends Record<string, any>> {
   footer?: React.ReactNode;
   /** Callback receiving the computed auto height (after offset) */
   onAutoHeightComputed?: (h: number) => void;
+  /** Current sort status for Mantine DataTable (column accessor + direction) */
+  sortStatus?: { columnAccessor: string; direction: "asc" | "desc" };
+  /** Change handler for header click sorting */
+  onSortStatusChange?: (s: {
+    columnAccessor: string;
+    direction: "asc" | "desc";
+  }) => void;
 }
 
 // NOTE: This component was previously named RefactoredNavDataTable. It has been renamed to NavDataTable.
@@ -42,6 +49,8 @@ export function NavDataTable<T extends Record<string, any>>({
   scrollViewportRef,
   footer,
   onAutoHeightComputed,
+  sortStatus,
+  onSortStatusChange,
 }: NavTableProps<T>) {
   const { state, currentId, setCurrentId, nextId, prevId, getPathForId } =
     useRecordContext();
@@ -96,11 +105,10 @@ export function NavDataTable<T extends Record<string, any>>({
       row.classList.add(activeClassName);
       row.setAttribute("aria-selected", "true");
       row.setAttribute("tabIndex", "-1");
-      const rowRect = row.getBoundingClientRect();
-      const parentRect = el.getBoundingClientRect();
-      if (rowRect.top < parentRect.top || rowRect.bottom > parentRect.bottom) {
+      // Always ensure selected row is centered within the scroll viewport
+      try {
         row.scrollIntoView({ block: "center" });
-      }
+      } catch {}
       try {
         row.focus({ preventScroll: true });
       } catch {}
@@ -259,6 +267,8 @@ export function NavDataTable<T extends Record<string, any>>({
         withTableBorder
         height={effectiveHeight}
         scrollAreaProps={{ tabIndex: 0 }}
+        sortStatus={sortStatus as any}
+        onSortStatusChange={onSortStatusChange as any}
       />
       {footer && (
         <div

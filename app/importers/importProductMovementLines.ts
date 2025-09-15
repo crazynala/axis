@@ -1,4 +1,4 @@
-import { prisma } from "../utils/prisma.server";
+import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asDate, asNum, pick } from "./utils";
 
@@ -191,6 +191,11 @@ export async function importProductMovementLines(
   console.log(
     `[import] product_movement_lines complete total=${rows.length} created=${created} updated=${updated} skipped=${skipped} errors=${errors.length}`
   );
+  try {
+    await refreshProductStockSnapshot(false);
+  } catch (e) {
+    console.warn("[import] product_movement_lines: MV refresh failed", e);
+  }
   if (errors.length) {
     const grouped: Record<
       string,

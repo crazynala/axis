@@ -43,10 +43,12 @@ export default function ForexIndexRoute() {
         breadcrumbs={[{ label: "Forex", href: "/admin/forex/USD/TRY" }]}
       />
       <DataTable
+        withTableBorder
         withRowBorders
         records={data.rows as any}
         totalRecords={data.total}
         page={data.page}
+        onPageChange={() => {}}
         recordsPerPage={data.perPage}
         columns={[
           {

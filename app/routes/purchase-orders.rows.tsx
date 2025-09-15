@@ -17,12 +17,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
     select: {
       id: true,
       date: true,
-      company: true,
-      consignee: true,
-      location: true,
+      company: { select: { id: true, name: true } },
+      consignee: { select: { id: true, name: true } },
+      location: { select: { id: true, name: true } },
+      lines: { select: { priceCost: true, quantity: true } },
     },
   });
-  const map = new Map(rows.map((r) => [r.id, r] as const));
+  const enhanced = rows.map((r: any) => ({
+    ...r,
+    vendorName: r.company?.name || "",
+    consigneeName: r.consignee?.name || "",
+    locationName: r.location?.name || "",
+    totalCost: (r.lines || []).reduce(
+      (sum: number, l: any) => sum + (l.priceCost || 0) * (l.quantity || 0),
+      0
+    ),
+  }));
+  const map = new Map(enhanced.map((r) => [r.id, r] as const));
   const ordered = ids.map((id) => map.get(id)).filter(Boolean);
   return json({ rows: ordered });
 }

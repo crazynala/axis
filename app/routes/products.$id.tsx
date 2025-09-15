@@ -1,10 +1,42 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, Link, Form, useNavigation, useSubmit, useActionData } from "@remix-run/react";
-import { Badge, Button, Card, Checkbox, Grid, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import {
+  useLoaderData,
+  Link,
+  Form,
+  useNavigation,
+  useSubmit,
+  useActionData,
+  useFetcher,
+  useRevalidator,
+} from "@remix-run/react";
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Grid,
+  Group,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+  ActionIcon,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { HotkeyAwareModal } from "../hotkeys/HotkeyAwareModal";
 import "react-datasheet-grid/dist/style.css";
-import { DataSheetGrid, keyColumn, textColumn, type Column } from "react-datasheet-grid";
+import {
+  DataSheetGrid,
+  keyColumn,
+  textColumn,
+  type Column,
+} from "react-datasheet-grid";
 
 type BOMRow = {
   id: number | null;
@@ -20,19 +52,41 @@ import { useProductFindify } from "../find/productFindify";
 import { useCallback, useMemo, useState, useEffect } from "react";
 import { Controller } from "react-hook-form";
 import { useInitGlobalFormContext, BreadcrumbSet } from "@aa/timber";
-import { productIdentityFields, productAssocFields, productPricingFields, productBomFindFields } from "../formConfigs/productDetail";
+import {
+  productIdentityFields,
+  productAssocFields,
+  productPricingFields,
+  productBomFindFields,
+} from "../formConfigs/productDetail";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
-import { prismaBase, getProductStockSnapshots, runWithDbActivity } from "../utils/prisma.server";
+import {
+  prismaBase,
+  getProductStockSnapshots,
+  runWithDbActivity,
+  refreshProductStockSnapshot,
+} from "../utils/prisma.server";
 import { requireUserId } from "../utils/auth.server";
 import { replaceProductTags } from "../utils/tags.server";
 import { TagPicker } from "../components/TagPicker";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { useRecordContext } from "../record/RecordContext";
+import {
+  InventoryAmendmentModal,
+  type BatchRowLite,
+} from "../components/InventoryAmendmentModal";
+import {
+  InventoryTransferModal,
+  type BatchOption,
+} from "../components/InventoryTransferModal";
+
+// (Removed RefreshNotice)
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
-    title: data?.product ? `Product ${data.product.name ?? data.product.id}` : "Product",
+    title: data?.product
+      ? `Product ${data.product.name ?? data.product.id}`
+      : "Product",
   },
 ];
 
@@ -138,7 +192,15 @@ export async function loader({ params }: LoaderFunctionArgs) {
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 500,
     });
-    const [product, taxCodes, categories, companies, productChoices, movements, movementHeaders] = await Promise.all([
+    const [
+      product,
+      taxCodes,
+      categories,
+      companies,
+      productChoices,
+      movements,
+      movementHeaders,
+    ] = await Promise.all([
       productPromise.then((r) => {
         mark("product");
         return r;
@@ -192,25 +254,49 @@ export async function loader({ params }: LoaderFunctionArgs) {
         })
       : [];
     mark("locations");
-    const locationNameById = Object.fromEntries(locs.map((l) => [l.id, l.name ?? String(l.id)]));
+    const locationNameById = Object.fromEntries(
+      locs.map((l) => [l.id, l.name ?? String(l.id)])
+    );
     if (process.env.LOG_PERF?.includes("products")) {
       console.log("[perf] products.$id loader timings", { id, marks });
     }
     // Fetch stock snapshot from materialized view (single pre-aggregated source)
     const snapshot = await getProductStockSnapshots(id);
+    // Normalize snapshot to snake_case keys expected by UI
+    const stockByLocation = ((snapshot as any)?.byLocation || []).map(
+      (l: any) => ({
+        location_id: l.locationId ?? null,
+        location_name: l.locationName ?? "",
+        qty: l.qty ?? 0,
+      })
+    );
+    const stockByBatch = ((snapshot as any)?.byBatch || []).map((b: any) => ({
+      batch_id: b.batchId ?? null,
+      code_mill: b.codeMill ?? "",
+      code_sartor: b.codeSartor ?? "",
+      batch_name: b.batchName ?? "",
+      received_at: b.receivedAt ?? null,
+      location_id: b.locationId ?? null,
+      location_name: b.locationName ?? "",
+      qty: b.qty ?? 0,
+    }));
     return json({
       product,
-      stockByLocation: (snapshot as any)?.byLocation || [],
-      stockByBatch: (snapshot as any)?.byBatch || [],
+      stockByLocation,
+      stockByBatch,
       productChoices,
       movements,
       movementHeaders,
       locationNameById,
-      taxCodeOptions: (taxCodes as Array<{ id: number; label: string | null }>).map((t) => ({
+      taxCodeOptions: (
+        taxCodes as Array<{ id: number; label: string | null }>
+      ).map((t) => ({
         value: t.id,
         label: t.label || String(t.id),
       })),
-      categoryOptions: (categories as Array<{ id: number; label: string | null }>).map((c) => ({
+      categoryOptions: (
+        categories as Array<{ id: number; label: string | null }>
+      ).map((c) => ({
         value: c.id,
         label: c.label || String(c.id),
       })),
@@ -236,7 +322,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
 export async function action({ request, params }: ActionFunctionArgs) {
   const idRaw = params.id;
   const isNew = idRaw === "new";
-  const id = !isNew && idRaw && !Number.isNaN(Number(idRaw)) ? Number(idRaw) : NaN;
+  const id =
+    !isNew && idRaw && !Number.isNaN(Number(idRaw)) ? Number(idRaw) : NaN;
   // Support JSON batch actions (spreadsheet) when Content-Type is application/json
   let intent = "";
   let form: FormData | null = null;
@@ -307,7 +394,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
       values[k] = v === "" ? null : v;
     }
     // Build where via config arrays
-    const where = buildWhereFromConfig(values, [...productIdentityFields, ...productAssocFields, ...productPricingFields, ...productBomFindFields]);
+    const where = buildWhereFromConfig(values, [
+      ...productIdentityFields,
+      ...productAssocFields,
+      ...productPricingFields,
+      ...productBomFindFields,
+    ]);
     const first = await prismaBase.product.findFirst({
       where,
       select: { id: true },
@@ -331,10 +423,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
     push("categoryId", values.categoryId);
     push("customerId", values.customerId);
     push("supplierId", values.supplierId);
-    if (values.stockTrackingEnabled === true || values.stockTrackingEnabled === "true") push("stockTrackingEnabled", "true");
-    if (values.stockTrackingEnabled === false || values.stockTrackingEnabled === "false") push("stockTrackingEnabled", "false");
-    if (values.batchTrackingEnabled === true || values.batchTrackingEnabled === "true") push("batchTrackingEnabled", "true");
-    if (values.batchTrackingEnabled === false || values.batchTrackingEnabled === "false") push("batchTrackingEnabled", "false");
+    if (
+      values.stockTrackingEnabled === true ||
+      values.stockTrackingEnabled === "true"
+    )
+      push("stockTrackingEnabled", "true");
+    if (
+      values.stockTrackingEnabled === false ||
+      values.stockTrackingEnabled === "false"
+    )
+      push("stockTrackingEnabled", "false");
+    if (
+      values.batchTrackingEnabled === true ||
+      values.batchTrackingEnabled === "true"
+    )
+      push("batchTrackingEnabled", "true");
+    if (
+      values.batchTrackingEnabled === false ||
+      values.batchTrackingEnabled === "false"
+    )
+      push("batchTrackingEnabled", "false");
     push("componentChildSku", values.componentChildSku);
     push("componentChildName", values.componentChildName);
     push("componentChildSupplierId", values.componentChildSupplierId);
@@ -344,14 +452,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/products?${qs}`);
   }
   if (intent === "update") {
-    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const data = buildProductData(form);
     await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
+  if (intent === "stock.refresh") {
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (manual)", e);
+      return json({ ok: false, error: "refresh_failed" }, { status: 500 });
+    }
+    return json({ ok: true });
+  }
   if (intent === "product.tags.replace") {
-    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
     const userId = await requireUserId(request);
     const names: string[] = Array.isArray(jsonBody?.names)
       ? jsonBody.names.map((n: any) => String(n))
@@ -362,7 +481,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ ok: true });
   }
   if (intent === "product.addComponent") {
-    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const childId = Number(form.get("childId"));
     if (Number.isFinite(childId)) {
@@ -373,21 +493,269 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/products/${id}`);
   }
   if (intent === "delete") {
-    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
     await prismaBase.product.delete({ where: { id } });
     return redirect("/products");
   }
+  if (intent === "inventory.amend.batch") {
+    const productId = Number(
+      (form || (await request.formData())).get("productId")
+    );
+    const batchId = Number((form || (await request.formData())).get("batchId"));
+    const locationIdRaw = (form || (await request.formData())).get(
+      "locationId"
+    ) as string | null;
+    const locationId = locationIdRaw ? Number(locationIdRaw) : null;
+    const dateStr = String(
+      (form || (await request.formData())).get("date") || ""
+    );
+    const delta = Number((form || (await request.formData())).get("delta"));
+    const date = dateStr ? new Date(dateStr) : new Date();
+    // Create adjustment movement header and a single movement line for the batch
+    const movementType = delta >= 0 ? "adjust_in" : "adjust_out";
+    const hdr = await prismaBase.productMovement.create({
+      data: {
+        productId: Number.isFinite(productId) ? productId : undefined,
+        movementType,
+        date,
+        locationId: locationId ?? undefined,
+        quantity: Math.abs(delta),
+        notes: "Inventory amendment",
+      },
+    });
+    await prismaBase.productMovementLine.create({
+      data: {
+        movementId: hdr.id,
+        productMovementId: hdr.id,
+        productId: Number.isFinite(productId) ? productId : undefined,
+        batchId: Number.isFinite(batchId) ? batchId : undefined,
+        quantity: delta, // signed: + increases, - decreases
+        notes: null,
+      },
+    });
+    // Refresh stock snapshot MV so UI reflects changes immediately
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (amend.batch)", e);
+    }
+    return redirect(`/products/${params.id}`);
+  }
+  if (intent === "inventory.amend.product") {
+    const productId = Number(params.id);
+    const dateStr = String(
+      (form || (await request.formData())).get("date") || ""
+    );
+    const date = dateStr ? new Date(dateStr) : new Date();
+    let changes: Array<{
+      batchId: number;
+      locationId: number | null;
+      delta: number;
+    }> = [];
+    let creates: Array<{
+      name?: string | null;
+      codeMill?: string | null;
+      codeSartor?: string | null;
+      locationId: number | null;
+      qty: number;
+    }> = [];
+    try {
+      const cStr = String(
+        (form || (await request.formData())).get("changes") || "[]"
+      );
+      const parsed = JSON.parse(cStr);
+      if (Array.isArray(parsed)) changes = parsed;
+    } catch {}
+    try {
+      const cStr = String(
+        (form || (await request.formData())).get("creates") || "[]"
+      );
+      const parsed = JSON.parse(cStr);
+      if (Array.isArray(parsed)) creates = parsed;
+    } catch {}
+    // Create separate headers by location for clarity
+    // 1) Process existing batch deltas
+    for (const ch of changes) {
+      const d = Number(ch.delta || 0);
+      if (!d) continue;
+      const movementType = "Amendment";
+      const hdr = await prismaBase.productMovement.create({
+        data: {
+          productId: Number.isFinite(productId) ? productId : undefined,
+          movementType,
+          date,
+          locationId: ch.locationId ?? undefined,
+          quantity: Math.abs(d),
+          notes: "Inventory amendment (bulk)",
+        },
+      });
+      await prismaBase.productMovementLine.create({
+        data: {
+          movementId: hdr.id,
+          productMovementId: hdr.id,
+          productId: Number.isFinite(productId) ? productId : undefined,
+          batchId: Number(ch.batchId) || undefined,
+          quantity: d,
+          notes: null,
+        },
+      });
+    }
+    // 2) Create new batches and movement lines as positive adjustments
+    for (const cr of creates) {
+      const createdBatch = await prismaBase.batch.create({
+        data: {
+          productId: Number.isFinite(productId) ? productId : undefined,
+          name: cr.name || null,
+          codeMill: cr.codeMill || null,
+          codeSartor: cr.codeSartor || null,
+          locationId: cr.locationId ?? undefined,
+          quantity: Number(cr.qty) || 0, // seed fallback
+          receivedAt: date,
+        },
+      });
+      const hdr = await prismaBase.productMovement.create({
+        data: {
+          productId: Number.isFinite(productId) ? productId : undefined,
+          movementType: "Amendment",
+          date,
+          locationId: cr.locationId ?? undefined,
+          quantity: Math.abs(Number(cr.qty) || 0),
+          notes: "Inventory amendment (new batch)",
+        },
+      });
+      await prismaBase.productMovementLine.create({
+        data: {
+          movementId: hdr.id,
+          productMovementId: hdr.id,
+          productId: Number.isFinite(productId) ? productId : undefined,
+          batchId: createdBatch.id,
+          quantity: Number(cr.qty) || 0,
+          notes: null,
+        },
+      });
+    }
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (amend.product)", e);
+    }
+    return redirect(`/products/${params.id}`);
+  }
+  if (intent === "inventory.transfer.batch") {
+    const productId = Number(params.id);
+    const f = form || (await request.formData());
+    const sourceBatchId = Number(f.get("sourceBatchId"));
+    const qty = Number(f.get("qty"));
+    const dateStr = String(f.get("date") || "");
+    const date = dateStr ? new Date(dateStr) : new Date();
+    const mode = String(f.get("mode") || "existing");
+    let targetBatchId: number | null = null;
+    let targetLocationId: number | null = null;
+    if (mode === "existing") {
+      targetBatchId = Number(f.get("targetBatchId"));
+      // derive location from batch
+      const target = await prismaBase.batch.findUnique({
+        where: { id: targetBatchId || 0 },
+        select: { locationId: true },
+      });
+      targetLocationId = target?.locationId ?? null;
+    } else {
+      const name = (f.get("targetName") as string) || null;
+      const codeMill = (f.get("targetCodeMill") as string) || null;
+      const codeSartor = (f.get("targetCodeSartor") as string) || null;
+      const locRaw = f.get("targetLocationId") as string | null;
+      const locId = locRaw ? Number(locRaw) : null;
+      const created = await prismaBase.batch.create({
+        data: {
+          productId: Number.isFinite(productId) ? productId : undefined,
+          name,
+          codeMill,
+          codeSartor,
+          locationId: locId ?? undefined,
+          receivedAt: date,
+        },
+      });
+      targetBatchId = created.id;
+      targetLocationId = locId;
+    }
+    // Fetch source location
+    const source = await prismaBase.batch.findUnique({
+      where: { id: sourceBatchId },
+      select: { locationId: true },
+    });
+    const sourceLocId = source?.locationId ?? null;
+    // Create a transfer header with both in/out populated
+    const hdr = await prismaBase.productMovement.create({
+      data: {
+        productId: Number.isFinite(productId) ? productId : undefined,
+        movementType: "Transfer",
+        date,
+        locationOutId: sourceLocId ?? undefined,
+        locationInId: targetLocationId ?? undefined,
+        quantity: Math.abs(qty),
+        notes: "Inventory transfer",
+      },
+    });
+    // Two lines: -qty from source batch, +qty to target batch
+    await prismaBase.productMovementLine.create({
+      data: {
+        movementId: hdr.id,
+        productMovementId: hdr.id,
+        productId: Number.isFinite(productId) ? productId : undefined,
+        batchId: sourceBatchId || undefined,
+        quantity: -Math.abs(qty),
+        notes: null,
+      },
+    });
+    await prismaBase.productMovementLine.create({
+      data: {
+        movementId: hdr.id,
+        productMovementId: hdr.id,
+        productId: Number.isFinite(productId) ? productId : undefined,
+        batchId: targetBatchId || undefined,
+        quantity: Math.abs(qty),
+        notes: null,
+      },
+    });
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (transfer.batch)", e);
+    }
+    return redirect(`/products/${params.id}`);
+  }
   if (intent === "bom.batch") {
-    if (!Number.isFinite(id)) return json({ error: "Invalid product id" }, { status: 400 });
-    if (!jsonBody) return json({ error: "Expected JSON body" }, { status: 400 });
-    const updates: Array<{ id: number; quantity?: number; activityUsed?: string | null }> = Array.isArray(jsonBody.updates) ? jsonBody.updates : [];
-    const creates: Array<{ childSku: string; quantity?: number; activityUsed?: string | null }> = Array.isArray(jsonBody.creates) ? jsonBody.creates : [];
-    const deletes: number[] = Array.isArray(jsonBody.deletes) ? jsonBody.deletes.filter((n: any) => Number.isFinite(Number(n))).map(Number) : [];
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
+    if (!jsonBody)
+      return json({ error: "Expected JSON body" }, { status: 400 });
+    const updates: Array<{
+      id: number;
+      quantity?: number;
+      activityUsed?: string | null;
+    }> = Array.isArray(jsonBody.updates) ? jsonBody.updates : [];
+    const creates: Array<{
+      childSku: string;
+      quantity?: number;
+      activityUsed?: string | null;
+    }> = Array.isArray(jsonBody.creates) ? jsonBody.creates : [];
+    const deletes: number[] = Array.isArray(jsonBody.deletes)
+      ? jsonBody.deletes
+          .filter((n: any) => Number.isFinite(Number(n)))
+          .map(Number)
+      : [];
     const skuSet = new Set<string>();
-    for (const c of creates) if (c.childSku) skuSet.add(String(c.childSku).trim());
+    for (const c of creates)
+      if (c.childSku) skuSet.add(String(c.childSku).trim());
     // Resolve child SKUs to ids
     const skuArr = Array.from(skuSet).filter(Boolean);
-    const children = skuArr.length ? await prismaBase.product.findMany({ where: { sku: { in: skuArr } }, select: { id: true, sku: true } }) : [];
+    const children = skuArr.length
+      ? await prismaBase.product.findMany({
+          where: { sku: { in: skuArr } },
+          select: { id: true, sku: true },
+        })
+      : [];
     const idBySku = new Map(children.map((c) => [c.sku, c.id]));
     const createData: any[] = [];
     const unknownSkus: string[] = [];
@@ -399,15 +767,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
         unknownSkus.push(sku);
         continue; // skip unknown SKUs
       }
-      createData.push({ parentId: id, childId, quantity: Number(c.quantity ?? 0) || 0, activityUsed: c.activityUsed || null });
+      createData.push({
+        parentId: id,
+        childId,
+        quantity: Number(c.quantity ?? 0) || 0,
+        activityUsed: c.activityUsed || null,
+      });
     }
     const updateData = updates
       .filter((u) => Number.isFinite(u.id))
       .map((u) => ({
         where: { id: u.id },
         data: {
-          ...(u.quantity !== undefined ? { quantity: Number(u.quantity) || 0 } : {}),
-          activityUsed: u.activityUsed === undefined ? undefined : u.activityUsed || null,
+          ...(u.quantity !== undefined
+            ? { quantity: Number(u.quantity) || 0 }
+            : {}),
+          activityUsed:
+            u.activityUsed === undefined ? undefined : u.activityUsed || null,
         },
       }));
     // Execute in a transaction for consistency
@@ -427,10 +803,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
       let deletedCount = 0;
       if (deletes.length) {
-        await tx.productLine.deleteMany({ where: { id: { in: deletes }, parentId: id } });
+        await tx.productLine.deleteMany({
+          where: { id: { in: deletes }, parentId: id },
+        });
         deletedCount = deletes.length;
       }
-      return { created: created.length, updated: updatedCount, deleted: deletedCount };
+      return {
+        created: created.length,
+        updated: updatedCount,
+        deleted: deletedCount,
+      };
     });
     return json({ ok: true, ...results, unknownSkus });
   }
@@ -438,7 +820,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function ProductDetailRoute() {
-  const { product, stockByLocation, stockByBatch, productChoices, movements, movementHeaders, locationNameById, taxCodeOptions, categoryOptions, companyOptions } = useLoaderData<typeof loader>();
+  const {
+    product,
+    stockByLocation,
+    stockByBatch,
+    productChoices,
+    movements,
+    movementHeaders,
+    locationNameById,
+    taxCodeOptions,
+    categoryOptions,
+    companyOptions,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -499,9 +892,17 @@ export default function ProductDetailRoute() {
     }
   }, [bomModalOpen, initialSheet]);
   const skuToChildInfo = useMemo(() => {
-    const m = new Map<string, { id: number; name: string; type: string; supplier: string }>();
+    const m = new Map<
+      string,
+      { id: number; name: string; type: string; supplier: string }
+    >();
     (productChoices as any[]).forEach((p: any) => {
-      m.set(p.sku || "", { id: p.id, name: p.name || "", type: (p as any).type || "", supplier: (p as any).supplier?.name || "" });
+      m.set(p.sku || "", {
+        id: p.id,
+        name: p.name || "",
+        type: (p as any).type || "",
+        supplier: (p as any).supplier?.name || "",
+      });
     });
     return m;
   }, [productChoices]);
@@ -514,7 +915,10 @@ export default function ProductDetailRoute() {
       disabled: true,
     } as Column<BOMRow>;
 
-    const skuBase = keyColumn<BOMRow, any>("childSku", textColumn) as Column<BOMRow>;
+    const skuBase = keyColumn<BOMRow, any>(
+      "childSku",
+      textColumn
+    ) as Column<BOMRow>;
     const skuCol: Column<BOMRow> = {
       ...skuBase,
       id: "childSku",
@@ -522,7 +926,12 @@ export default function ProductDetailRoute() {
       component: ({ rowData, setRowData, focus }) => (
         <input
           list="bom-sku-list"
-          style={{ width: "100%", border: "none", outline: "none", background: "transparent" }}
+          style={{
+            width: "100%",
+            border: "none",
+            outline: "none",
+            background: "transparent",
+          }}
           value={rowData.childSku || ""}
           onChange={(e) => {
             const sku = e.target.value;
@@ -567,7 +976,10 @@ export default function ProductDetailRoute() {
       disabled: true,
     } as Column<BOMRow>;
 
-    const qtyBase = keyColumn<BOMRow, any>("quantity", textColumn) as Column<BOMRow>;
+    const qtyBase = keyColumn<BOMRow, any>(
+      "quantity",
+      textColumn
+    ) as Column<BOMRow>;
     const qtyCol: Column<BOMRow> = {
       ...qtyBase,
       id: "quantity",
@@ -575,9 +987,20 @@ export default function ProductDetailRoute() {
       component: ({ rowData, setRowData, focus }) => (
         <input
           type="number"
-          style={{ width: "100%", border: "none", outline: "none", background: "transparent", textAlign: "right" }}
+          style={{
+            width: "100%",
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            textAlign: "right",
+          }}
           value={rowData.quantity ?? ""}
-          onChange={(e) => setRowData({ ...rowData, quantity: e.target.value === "" ? "" : Number(e.target.value) })}
+          onChange={(e) =>
+            setRowData({
+              ...rowData,
+              quantity: e.target.value === "" ? "" : Number(e.target.value),
+            })
+          }
           min={0}
           autoFocus={focus}
         />
@@ -598,18 +1021,37 @@ export default function ProductDetailRoute() {
         if (r.id && existingById.has(r.id)) {
           keptIds.add(r.id);
           const orig = existingById.get(r.id);
-          if (orig.quantity !== r.quantity || (orig.activityUsed || "") !== r.activityUsed) {
-            updates.push({ id: r.id, quantity: r.quantity, activityUsed: r.activityUsed || null });
+          if (
+            orig.quantity !== r.quantity ||
+            (orig.activityUsed || "") !== r.activityUsed
+          ) {
+            updates.push({
+              id: r.id,
+              quantity: r.quantity,
+              activityUsed: r.activityUsed || null,
+            });
           }
         } else if (!r.id && r.childSku) {
-          creates.push({ childSku: r.childSku, quantity: r.quantity || 0, activityUsed: r.activityUsed || null });
+          creates.push({
+            childSku: r.childSku,
+            quantity: r.quantity || 0,
+            activityUsed: r.activityUsed || null,
+          });
         }
       }
-      const deletes = Array.from(existingById.keys()).filter((id) => !keptIds.has(id));
+      const deletes = Array.from(existingById.keys()).filter(
+        (id) => !keptIds.has(id)
+      );
       const resp = await fetch(`/products/${product.id}?indexAction=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ _intent: "bom.batch", productId: product.id, updates, creates, deletes }),
+        body: JSON.stringify({
+          _intent: "bom.batch",
+          productId: product.id,
+          updates,
+          creates,
+          deletes,
+        }),
       });
       if (!resp.ok) throw new Error("Failed to save");
       const data = await resp.json();
@@ -629,45 +1071,97 @@ export default function ProductDetailRoute() {
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
   const [movementView, setMovementView] = useState<"header" | "line">("line");
   // Tags state
-  const initialTagNames = useMemo(() => (product.productTags || []).map((pt: any) => pt?.tag?.name).filter(Boolean) as string[], [product.productTags]);
+  const initialTagNames = useMemo(
+    () =>
+      (product.productTags || [])
+        .map((pt: any) => pt?.tag?.name)
+        .filter(Boolean) as string[],
+    [product.productTags]
+  );
   const [tagNames, setTagNames] = useState<string[]>(initialTagNames);
   useEffect(() => {
     setTagNames(initialTagNames);
   }, [initialTagNames]);
   const [newTag, setNewTag] = useState("");
+  // Fetcher-based refresh for MV
+  const refreshFetcher = useFetcher<{ ok?: boolean; error?: string }>();
+  const { revalidate } = useRevalidator();
+  useEffect(() => {
+    if (refreshFetcher.state === "idle" && refreshFetcher.data) {
+      if (refreshFetcher.data.ok) {
+        notifications.show({
+          color: "teal",
+          title: "Stock refreshed",
+          message: "Materialized view recalculation complete.",
+        });
+        revalidate();
+      } else if (refreshFetcher.data.error) {
+        notifications.show({
+          color: "red",
+          title: "Refresh failed",
+          message: "Could not refresh stock view.",
+        });
+      }
+    }
+  }, [refreshFetcher.state, refreshFetcher.data, revalidate]);
   // Batch filters
   const [batchScope, setBatchScope] = useState<"all" | "current">("current");
   const [batchLocation, setBatchLocation] = useState<string>("all");
   const batchLocationOptions = useMemo(() => {
     const set = new Set<string>();
     (stockByBatch || []).forEach((row: any) => {
-      const name = row.location_name || (row.location_id ? `#${row.location_id}` : "(none)");
+      const name =
+        row.location_name ||
+        (row.location_id ? `#${row.location_id}` : "(none)");
       set.add(name);
     });
     const arr = Array.from(set);
-    return [{ value: "all", label: "All" }, ...arr.map((n) => ({ value: n, label: n }))];
+    return [
+      { value: "all", label: "All" },
+      ...arr.map((n) => ({ value: n, label: n })),
+    ];
   }, [stockByBatch]);
   const filteredBatches = useMemo(() => {
     return (stockByBatch || []).filter((row: any) => {
       const qty = Number(row.qty ?? 0);
-      const name = row.location_name || (row.location_id ? `#${row.location_id}` : "(none)");
+      const name =
+        row.location_name ||
+        (row.location_id ? `#${row.location_id}` : "(none)");
       const scopeOk = batchScope === "all" || qty !== 0;
       const locOk = batchLocation === "all" || name === batchLocation;
       return scopeOk && locOk;
     });
   }, [stockByBatch, batchScope, batchLocation]);
+  // Inventory modal state
+  const [amendBatchOpen, setAmendBatchOpen] = useState(false);
+  const [amendProductOpen, setAmendProductOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [activeBatch, setActiveBatch] = useState<any | null>(null);
   const filtered = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     let arr = productChoices as any[];
-    if (q) arr = arr.filter((p) => ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q));
-    if (assemblyItemOnly) arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
+    if (q)
+      arr = arr.filter((p) =>
+        ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
+      );
+    if (assemblyItemOnly)
+      arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
     return arr;
   }, [productChoices, pickerSearch, assemblyItemOnly]);
 
   // Normalize arrays/records for safe rendering across loader branches
-  const lines = useMemo(() => ((movements as any[]) || []).filter(Boolean), [movements]);
-  const headers = useMemo(() => ((movementHeaders as any[]) || []).filter(Boolean), [movementHeaders]);
-  const locById = useMemo(() => (locationNameById as any as Record<number | string, string>) || {}, [locationNameById]);
+  const lines = useMemo(
+    () => ((movements as any[]) || []).filter(Boolean),
+    [movements]
+  );
+  const headers = useMemo(
+    () => ((movementHeaders as any[]) || []).filter(Boolean),
+    [movementHeaders]
+  );
+  const locById = useMemo(
+    () => (locationNameById as any as Record<number | string, string>) || {},
+    [locationNameById]
+  );
 
   return (
     <Stack gap="lg">
@@ -678,7 +1172,19 @@ export default function ProductDetailRoute() {
             { label: String(product.id), href: `/products/${product.id}` },
           ]}
         />
-        <Group gap="xs"></Group>
+        <Group gap="xs">
+          <refreshFetcher.Form method="post">
+            <input type="hidden" name="_intent" value="stock.refresh" />
+            <Button
+              size="xs"
+              variant="light"
+              type="submit"
+              loading={refreshFetcher.state !== "idle"}
+            >
+              Refresh Stock View
+            </Button>
+          </refreshFetcher.Form>
+        </Group>
       </Group>
       <ProductFindManager />
       <Form id="product-form" method="post">
@@ -707,17 +1213,27 @@ export default function ProductDetailRoute() {
                 variant="light"
                 onClick={async () => {
                   // Save current edited tags
-                  const resp = await fetch(`/products/${product.id}?indexAction=1`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ _intent: "product.tags.replace", names: tagNames }),
-                  });
+                  const resp = await fetch(
+                    `/products/${product.id}?indexAction=1`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        _intent: "product.tags.replace",
+                        names: tagNames,
+                      }),
+                    }
+                  );
                   if (resp.ok) window.location.reload();
                 }}
               >
                 Save Tags
               </Button>
-              <Button size="xs" variant="subtle" onClick={() => setTagNames(initialTagNames)}>
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => setTagNames(initialTagNames)}
+              >
                 Reset
               </Button>
             </Group>
@@ -738,7 +1254,11 @@ export default function ProductDetailRoute() {
               }}
             >
               <Group gap="xs">
-                <TextInput placeholder="New tag" value={newTag} onChange={(e) => setNewTag(e.currentTarget.value)} />
+                <TextInput
+                  placeholder="New tag"
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.currentTarget.value)}
+                />
                 <Button type="submit" variant="light" size="xs">
                   Add
                 </Button>
@@ -751,7 +1271,9 @@ export default function ProductDetailRoute() {
                 {pt.tag?.name}
               </Badge>
             ))}
-            {(!product.productTags || product.productTags.length === 0) && <Text c="dimmed">No tags</Text>}
+            {(!product.productTags || product.productTags.length === 0) && (
+              <Text c="dimmed">No tags</Text>
+            )}
           </Group>
         </Stack>
       </Card>
@@ -761,7 +1283,11 @@ export default function ProductDetailRoute() {
           <Group justify="space-between" align="center">
             <Group gap="sm" align="center">
               <Title order={4}>Bill of Materials</Title>
-              <Button size="xs" variant="light" onClick={() => setBomModalOpen(true)}>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => setBomModalOpen(true)}
+              >
                 Edit in Sheet
               </Button>
             </Group>
@@ -788,7 +1314,15 @@ export default function ProductDetailRoute() {
                 <Table.Tr key={pl.id}>
                   <Table.Td>{pl.id}</Table.Td>
                   <Table.Td>{pl.child?.sku || ""}</Table.Td>
-                  <Table.Td>{pl.child ? <Link to={`/products/${pl.child.id}`}>{pl.child.name || pl.child.id}</Link> : pl.childId}</Table.Td>
+                  <Table.Td>
+                    {pl.child ? (
+                      <Link to={`/products/${pl.child.id}`}>
+                        {pl.child.name || pl.child.id}
+                      </Link>
+                    ) : (
+                      pl.childId
+                    )}
+                  </Table.Td>
                   <Table.Td>{pl.activityUsed || ""}</Table.Td>
                   <Table.Td>{pl.child?.type || ""}</Table.Td>
                   <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
@@ -806,20 +1340,45 @@ export default function ProductDetailRoute() {
           </option>
         ))}
       </datalist>
-      <HotkeyAwareModal opened={bomModalOpen} onClose={() => setBomModalOpen(false)} title="Edit Bill of Materials" size="90vw" centered>
+      <HotkeyAwareModal
+        opened={bomModalOpen}
+        onClose={() => setBomModalOpen(false)}
+        title="Edit Bill of Materials"
+        size="90vw"
+        centered
+      >
         <Stack>
           <Group justify="space-between" align="center">
-            <Text c="dimmed">Type a SKU (autocomplete). Remove a row to delete. Unknown SKUs will be reported.</Text>
+            <Text c="dimmed">
+              Type a SKU (autocomplete). Remove a row to delete. Unknown SKUs
+              will be reported.
+            </Text>
             <Group>
-              <Button variant="default" onClick={() => setBomModalOpen(false)} disabled={savingSheet}>
+              <Button
+                variant="default"
+                onClick={() => setBomModalOpen(false)}
+                disabled={savingSheet}
+              >
                 Cancel
               </Button>
-              <Button color="green" onClick={commitSheetChanges} loading={savingSheet} disabled={!dirtySheet}>
+              <Button
+                color="green"
+                onClick={commitSheetChanges}
+                loading={savingSheet}
+                disabled={!dirtySheet}
+              >
                 Save Changes
               </Button>
             </Group>
           </Group>
-          <div className="bom-sheet-wrapper" style={{ border: "1px solid var(--mantine-color-gray-4)", borderRadius: 4, overflow: "hidden" }}>
+          <div
+            className="bom-sheet-wrapper"
+            style={{
+              border: "1px solid var(--mantine-color-gray-4)",
+              borderRadius: 4,
+              overflow: "hidden",
+            }}
+          >
             <DataSheetGrid
               key={bomModalOpen ? "open" : "closed"}
               className="bom-sheet"
@@ -830,7 +1389,15 @@ export default function ProductDetailRoute() {
               }}
               columns={sheetColumns}
               height={480}
-              createRow={() => ({ id: null, childSku: "", childName: "", activityUsed: "", type: "", supplier: "", quantity: 1 })}
+              createRow={() => ({
+                id: null,
+                childSku: "",
+                childName: "",
+                activityUsed: "",
+                type: "",
+                supplier: "",
+                quantity: 1,
+              })}
             />
           </div>
           <Stack gap={4} mt="sm">
@@ -839,7 +1406,11 @@ export default function ProductDetailRoute() {
             </Text>
             <div style={{ maxHeight: 120, overflow: "auto" }}>
               {sheetRows.map((r, idx) => (
-                <Group key={`${r.id ?? "new"}-${idx}`} justify="space-between" py={2}>
+                <Group
+                  key={`${r.id ?? "new"}-${idx}`}
+                  justify="space-between"
+                  py={2}
+                >
                   <Text size="sm" style={{ flex: 1 }}>
                     {r.childSku || "(new)"} — {r.childName}
                   </Text>
@@ -870,7 +1441,9 @@ export default function ProductDetailRoute() {
               <Card.Section inheritPadding py="xs">
                 <Group justify="space-between" align="center">
                   <Title order={4}>Stock by Location</Title>
-                  <Badge variant="light">Global: {Number((product as any).stockQty ?? 0)}</Badge>
+                  <Badge variant="light">
+                    Global: {Number((product as any).stockQty ?? 0)}
+                  </Badge>
                 </Group>
               </Card.Section>
               <Table striped withTableBorder withColumnBorders highlightOnHover>
@@ -881,9 +1454,12 @@ export default function ProductDetailRoute() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {(stockByLocation || []).map((row: any) => (
-                    <Table.Tr key={row.location_id ?? "none"}>
-                      <Table.Td>{row.location_name || `${row.location_id ?? "(none)"}`}</Table.Td>
+                  {(stockByLocation || []).map((row: any, i: number) => (
+                    // Use composite key with index to avoid collisions when location_id is null/duplicate
+                    <Table.Tr key={`loc-${row.location_id ?? "none"}-${i}`}>
+                      <Table.Td>
+                        {row.location_name || `${row.location_id ?? "(none)"}`}
+                      </Table.Td>
                       <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
                     </Table.Tr>
                   ))}
@@ -895,7 +1471,30 @@ export default function ProductDetailRoute() {
               <Card.Section inheritPadding py="xs">
                 <Group justify="space-between" align="center" px={8} pb={6}>
                   <Title order={5}>Stock by Batch</Title>
-                  <Group gap="sm" wrap="wrap"></Group>
+                  <Group gap="sm" wrap="wrap">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      onClick={() => {
+                        // open product-level amendment using current filtered batch snapshot
+                        const rows: BatchRowLite[] = filteredBatches.map(
+                          (r: any) => ({
+                            batchId: r.batch_id,
+                            locationId: r.location_id,
+                            locationName: r.location_name,
+                            name: r.batch_name,
+                            codeMill: r.code_mill,
+                            codeSartor: r.code_sartor,
+                            qty: Number(r.qty || 0),
+                          })
+                        );
+                        setActiveBatch({ rows });
+                        setAmendProductOpen(true);
+                      }}
+                    >
+                      Amend All…
+                    </Button>
+                  </Group>
                 </Group>
               </Card.Section>
               <Table striped withTableBorder withColumnBorders highlightOnHover>
@@ -906,30 +1505,121 @@ export default function ProductDetailRoute() {
                     <Table.Th>Location</Table.Th>
                     <Table.Th>Received</Table.Th>
                     <Table.Th>Qty</Table.Th>
+                    <Table.Th></Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {filteredBatches.map((row: any) => (
-                    <Table.Tr key={row.batch_id}>
+                    // Batch id alone can repeat across locations; include location in key to ensure uniqueness
+                    <Table.Tr
+                      key={`batch-${row.batch_id}-${row.location_id ?? "none"}`}
+                    >
                       <Table.Td>
                         {row.code_mill || row.code_sartor ? (
                           <>
                             {row.code_mill || ""}
-                            {row.code_sartor ? (row.code_mill ? " | " : "") + row.code_sartor : ""}
+                            {row.code_sartor
+                              ? (row.code_mill ? " | " : "") + row.code_sartor
+                              : ""}
                           </>
                         ) : (
                           `${row.batch_id}`
                         )}
                       </Table.Td>
                       <Table.Td>{row.batch_name || ""}</Table.Td>
-                      <Table.Td>{row.location_name || (row.location_id ? `${row.location_id}` : "")}</Table.Td>
-                      <Table.Td>{row.received_at ? new Date(row.received_at).toLocaleDateString() : ""}</Table.Td>
+                      <Table.Td>
+                        {row.location_name ||
+                          (row.location_id ? `${row.location_id}` : "")}
+                      </Table.Td>
+                      <Table.Td>
+                        {row.received_at
+                          ? new Date(row.received_at).toLocaleDateString()
+                          : ""}
+                      </Table.Td>
                       <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                      <Table.Td>
+                        <Group gap={6}>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setActiveBatch(row);
+                              setAmendBatchOpen(true);
+                            }}
+                          >
+                            Amend
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              setActiveBatch(row);
+                              setTransferOpen(true);
+                            }}
+                          >
+                            Transfer
+                          </Button>
+                        </Group>
+                      </Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
               </Table>
             </Card>
+            {/* Modals */}
+            <InventoryAmendmentModal
+              opened={amendBatchOpen}
+              onClose={() => setAmendBatchOpen(false)}
+              productId={product.id}
+              mode="batch"
+              batch={
+                activeBatch
+                  ? {
+                      batchId: activeBatch.batch_id,
+                      locationId: activeBatch.location_id,
+                      locationName: activeBatch.location_name,
+                      name: activeBatch.batch_name,
+                      codeMill: activeBatch.code_mill,
+                      codeSartor: activeBatch.code_sartor,
+                      qty: Number(activeBatch.qty || 0),
+                    }
+                  : null
+              }
+            />
+            <InventoryAmendmentModal
+              opened={amendProductOpen}
+              onClose={() => setAmendProductOpen(false)}
+              productId={product.id}
+              mode="product"
+              batches={(activeBatch?.rows || []) as any}
+            />
+            <InventoryTransferModal
+              opened={transferOpen}
+              onClose={() => setTransferOpen(false)}
+              productId={product.id}
+              sourceBatchId={activeBatch?.batch_id}
+              sourceLabel={
+                activeBatch
+                  ? activeBatch.code_mill ||
+                    activeBatch.code_sartor ||
+                    String(activeBatch.batch_id)
+                  : ""
+              }
+              sourceQty={Number(activeBatch?.qty || 0)}
+              sourceLocationId={activeBatch?.location_id ?? null}
+              targetOptions={
+                filteredBatches
+                  .filter((r: any) => r.batch_id !== activeBatch?.batch_id)
+                  .map((r: any) => ({
+                    value: String(r.batch_id),
+                    label: (r.code_mill ||
+                      r.code_sartor ||
+                      r.batch_name ||
+                      String(r.batch_id)) as string,
+                    locationId: r.location_id,
+                  })) as BatchOption[]
+              }
+            />
           </Stack>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 7 }}>
@@ -957,13 +1647,31 @@ export default function ProductDetailRoute() {
                 {movementView === "line"
                   ? lines.map((ml: any) => (
                       <Table.Tr key={`line-${ml.id}`}>
-                        <Table.Td>{ml.movement?.date ? new Date(ml.movement.date).toLocaleDateString() : ""}</Table.Td>
+                        <Table.Td>
+                          {ml.movement?.date
+                            ? new Date(ml.movement.date).toLocaleDateString()
+                            : ""}
+                        </Table.Td>
                         <Table.Td>{ml.movement?.movementType || ""}</Table.Td>
-                        <Table.Td>{ml.movement?.locationOutId != null ? locById?.[ml.movement.locationOutId] || ml.movement.locationOutId : ""}</Table.Td>
-                        <Table.Td>{ml.movement?.locationInId != null ? locById?.[ml.movement.locationInId] || ml.movement.locationInId : ""}</Table.Td>
+                        <Table.Td>
+                          {ml.movement?.locationOutId != null
+                            ? locById?.[ml.movement.locationOutId] ||
+                              ml.movement.locationOutId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>
+                          {ml.movement?.locationInId != null
+                            ? locById?.[ml.movement.locationInId] ||
+                              ml.movement.locationInId
+                            : ""}
+                        </Table.Td>
                         <Table.Td>
                           {ml.batch?.codeMill || ml.batch?.codeSartor
-                            ? `${ml.batch?.codeMill || ""}${ml.batch?.codeMill && ml.batch?.codeSartor ? " | " : ""}${ml.batch?.codeSartor || ""}`
+                            ? `${ml.batch?.codeMill || ""}${
+                                ml.batch?.codeMill && ml.batch?.codeSartor
+                                  ? " | "
+                                  : ""
+                              }${ml.batch?.codeSartor || ""}`
                             : ml.batch?.id
                             ? `${ml.batch.id}`
                             : ""}
@@ -974,10 +1682,22 @@ export default function ProductDetailRoute() {
                     ))
                   : headers.map((mh: any) => (
                       <Table.Tr key={`hdr-${mh.id}`}>
-                        <Table.Td>{mh.date ? new Date(mh.date).toLocaleDateString() : ""}</Table.Td>
+                        <Table.Td>
+                          {mh.date
+                            ? new Date(mh.date).toLocaleDateString()
+                            : ""}
+                        </Table.Td>
                         <Table.Td>{mh.movementType || ""}</Table.Td>
-                        <Table.Td>{mh.locationOutId != null ? locById?.[mh.locationOutId] || mh.locationOutId : ""}</Table.Td>
-                        <Table.Td>{mh.locationInId != null ? locById?.[mh.locationInId] || mh.locationInId : ""}</Table.Td>
+                        <Table.Td>
+                          {mh.locationOutId != null
+                            ? locById?.[mh.locationOutId] || mh.locationOutId
+                            : ""}
+                        </Table.Td>
+                        <Table.Td>
+                          {mh.locationInId != null
+                            ? locById?.[mh.locationInId] || mh.locationInId
+                            : ""}
+                        </Table.Td>
                         <Table.Td>{mh.quantity ?? ""}</Table.Td>
                         <Table.Td>{mh.notes || ""}</Table.Td>
                       </Table.Tr>
@@ -988,11 +1708,26 @@ export default function ProductDetailRoute() {
         </Grid.Col>
       </Grid>
       {/* Add Component Picker (single instance near top return) */}
-      <HotkeyAwareModal opened={pickerOpen} onClose={() => setPickerOpen(false)} title="Add Component" size="xl" centered>
+      <HotkeyAwareModal
+        opened={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Add Component"
+        size="xl"
+        centered
+      >
         <Stack>
           <Group justify="space-between" align="flex-end">
-            <TextInput placeholder="Search products..." value={pickerSearch} onChange={(e) => setPickerSearch(e.currentTarget.value)} w={320} />
-            <Checkbox label="Assembly Item" checked={assemblyItemOnly} onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)} />
+            <TextInput
+              placeholder="Search products..."
+              value={pickerSearch}
+              onChange={(e) => setPickerSearch(e.currentTarget.value)}
+              w={320}
+            />
+            <Checkbox
+              label="Assembly Item"
+              checked={assemblyItemOnly}
+              onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
+            />
           </Group>
           <div style={{ maxHeight: 420, overflow: "auto" }}>
             {filtered.map((p: any) => (

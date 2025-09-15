@@ -3,7 +3,8 @@ import type { MultiFindState } from "../../find/multiFind";
 export type FindFieldConfig = {
   name: string;
   widget?: string;
-  rangeFields?: { min: string; max: string };
+  // In find modals we reuse FieldConfig which allows optional min/max; keep this compatible
+  rangeFields?: { min?: string; max?: string };
   findOp?: any; // presence indicates included in find criteria
 };
 
