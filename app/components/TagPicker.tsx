@@ -39,7 +39,9 @@ export function TagPicker({ value, onChange, placeholder = "Add tags", disabled,
   const creatableData = useMemo(() => {
     const names = new Set(options.map((o) => o.value));
     for (const v of value) if (!names.has(v)) names.add(v);
-    return Array.from(names).sort().map((n) => ({ value: n, label: n }));
+    return Array.from(names)
+      .sort()
+      .map((n) => ({ value: n, label: n }));
   }, [options, value]);
 
   return (

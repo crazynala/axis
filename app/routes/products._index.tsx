@@ -96,12 +96,11 @@ export default function ProductsIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { state, currentId } = useRecords();
-  const { records, atEnd, loading, requestMore, missingIds, total } =
-    useHybridWindow({
-      module: "products",
-      initialWindow: 100,
-      batchIncrement: 100,
-    });
+  const { records, atEnd, loading, requestMore, missingIds, total } = useHybridWindow({
+    module: "products",
+    initialWindow: 100,
+    batchIncrement: 100,
+  });
   // Removed per-route height calculation; table now auto-sizes within viewport
   // Ensure currentId row included when returning from detail
   const ensuredRef = useRef(false);
@@ -124,16 +123,9 @@ export default function ProductsIndexRoute() {
   return (
     <Stack gap="lg">
       <ProductFindManager />
-      <Group
-        justify="space-between"
-        mb="xs"
-        align="center"
-        data-products-header
-      >
+      <Group justify="space-between" mb="xs" align="center" data-products-header>
         <Title order={2}>Products</Title>
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Products", href: "/products" }]}
-        />
+        <BreadcrumbSet breadcrumbs={[{ label: "Products", href: "/products" }]} />
       </Group>
       <Group justify="flex-end" mb="xs" gap="xs">
         <Button variant="light" onClick={openSheet}>
@@ -177,15 +169,7 @@ export default function ProductsIndexRoute() {
             if (rec?.id != null) navigate(`/products/${rec.id}`);
           }}
           onReachEnd={() => requestMore()}
-          footer={
-            atEnd ? (
-              <span style={{ fontSize: 12 }}>End of results ({total})</span>
-            ) : missingIds.length ? (
-              <span>Loading rows…</span>
-            ) : (
-              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
-            )
-          }
+          footer={atEnd ? <span style={{ fontSize: 12 }}>End of results ({total})</span> : missingIds.length ? <span>Loading rows…</span> : <span style={{ fontSize: 11 }}>Scroll to load more…</span>}
         />
       </section>
 

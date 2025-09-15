@@ -17,10 +17,7 @@ function normName(name: string): string {
 /** List tags visible to a user (GLOBAL or owned by the user). Optional q filter by name substring. */
 export async function listVisibleTags(userId: number, q?: string): Promise<TagDef[]> {
   const where: any = {
-    OR: [
-      { scope: "GLOBAL" },
-      { scope: "USER", ownerId: userId },
-    ],
+    OR: [{ scope: "GLOBAL" }, { scope: "USER", ownerId: userId }],
   };
   if (q && q.trim()) {
     where.name = { contains: q.trim(), mode: "insensitive" };
@@ -41,10 +38,7 @@ export async function ensureDefinitionsByNames(userId: number, names: string[]):
   const existing = await prismaBase.tagDefinition.findMany({
     where: {
       name: { in: uniqueNames },
-      OR: [
-        { scope: "GLOBAL" },
-        { scope: "USER", ownerId: userId },
-      ],
+      OR: [{ scope: "GLOBAL" }, { scope: "USER", ownerId: userId }],
     },
     select: { id: true, name: true, scope: true, ownerId: true },
   } as any);

@@ -356,7 +356,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const names: string[] = Array.isArray(jsonBody?.names)
       ? jsonBody.names.map((n: any) => String(n))
       : Array.isArray((await request.formData()).getAll("names"))
-      ? ((await request.formData()).getAll("names")).map((n) => String(n))
+      ? (await request.formData()).getAll("names").map((n) => String(n))
       : [];
     await replaceProductTags(id, names, userId);
     return json({ ok: true });
@@ -629,10 +629,7 @@ export default function ProductDetailRoute() {
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
   const [movementView, setMovementView] = useState<"header" | "line">("line");
   // Tags state
-  const initialTagNames = useMemo(
-    () => (product.productTags || []).map((pt: any) => pt?.tag?.name).filter(Boolean) as string[],
-    [product.productTags]
-  );
+  const initialTagNames = useMemo(() => (product.productTags || []).map((pt: any) => pt?.tag?.name).filter(Boolean) as string[], [product.productTags]);
   const [tagNames, setTagNames] = useState<string[]>(initialTagNames);
   useEffect(() => {
     setTagNames(initialTagNames);
@@ -720,11 +717,7 @@ export default function ProductDetailRoute() {
               >
                 Save Tags
               </Button>
-              <Button
-                size="xs"
-                variant="subtle"
-                onClick={() => setTagNames(initialTagNames)}
-              >
+              <Button size="xs" variant="subtle" onClick={() => setTagNames(initialTagNames)}>
                 Reset
               </Button>
             </Group>
@@ -758,9 +751,7 @@ export default function ProductDetailRoute() {
                 {pt.tag?.name}
               </Badge>
             ))}
-            {(!product.productTags || product.productTags.length === 0) && (
-              <Text c="dimmed">No tags</Text>
-            )}
+            {(!product.productTags || product.productTags.length === 0) && <Text c="dimmed">No tags</Text>}
           </Group>
         </Stack>
       </Card>
