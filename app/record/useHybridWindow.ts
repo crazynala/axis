@@ -8,6 +8,8 @@ interface HybridWindowOptions {
   chunkSize?: number; // fetch chunk size
   rowEndpointPath?: string; // override default /{module}/rows
   placeholderFactory?: (id: string | number) => any;
+  /** Maximum number of placeholder rows to show beyond hydrated prefix to avoid large blank blocks */
+  maxPlaceholders?: number;
 }
 
 // Generic hook to power hybrid identity roster + sparse hydration windowed list.
@@ -19,6 +21,7 @@ export function useHybridWindow({
   chunkSize = 100,
   rowEndpointPath,
   placeholderFactory,
+  maxPlaceholders = 20,
 }: HybridWindowOptions) {
   const { state, addRows, currentId } = useRecords();
   const [visibleCount, setVisibleCount] = useState(initialWindow);
@@ -115,20 +118,30 @@ export function useHybridWindow({
     };
   }, [missingIds, module, rowEndpointPath, chunkSize, addRows]);
 
-  const records = useMemo(
-    () =>
-      windowIds.map((id) => {
-        const row = rowsMap.get(id);
-        if (row) return row;
-        return (
-          placeholderFactory?.(id) || {
-            id,
-            __loading: true,
-          }
-        );
-      }),
-    [windowIds, rowsMap, placeholderFactory]
-  );
+  const records = useMemo(() => {
+    if (!windowIds.length) return [] as any[];
+    // Determine how many from the start are hydrated, then cap placeholders shown beyond that
+    let hydratedPrefix = 0;
+    for (let i = 0; i < windowIds.length; i++) {
+      if (rowsMap.has(windowIds[i])) hydratedPrefix++;
+      else break;
+    }
+    const displayCount = Math.min(
+      windowIds.length,
+      hydratedPrefix + Math.max(0, maxPlaceholders)
+    );
+    const slice = windowIds.slice(0, displayCount);
+    return slice.map((id) => {
+      const row = rowsMap.get(id);
+      if (row) return row;
+      return (
+        placeholderFactory?.(id) || {
+          id,
+          __loading: true,
+        }
+      );
+    });
+  }, [windowIds, rowsMap, placeholderFactory, maxPlaceholders]);
 
   const atEnd = visibleCount >= total;
   // loading = there exist unresolved ids that are not orphaned

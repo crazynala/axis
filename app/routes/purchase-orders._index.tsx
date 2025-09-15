@@ -231,6 +231,10 @@ export default function PurchaseOrdersIndexRoute() {
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "purchase-orders",
     rowEndpointPath: "/purchase-orders/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    // Reduce visual blanks beyond hydrated rows
+    maxPlaceholders: 8,
   });
   // Auto-select single record after filtering
   useEffect(() => {

@@ -169,6 +169,9 @@ function JobsHybridTable({
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "jobs",
     rowEndpointPath: "/jobs/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
   });
   // Seed initial rows into context on first render (they should have been added by layout; defensive)
   // Build columns

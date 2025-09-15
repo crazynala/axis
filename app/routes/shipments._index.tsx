@@ -229,6 +229,9 @@ export default function ShipmentsIndexRoute() {
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "shipments",
     rowEndpointPath: "/shipments/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
   });
   const columns = [
     {

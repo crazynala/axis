@@ -133,6 +133,7 @@ export default function ProductsIndexRoute() {
       module: "products",
       initialWindow: 100,
       batchIncrement: 100,
+      maxPlaceholders: 8,
     });
   // Removed per-route height calculation; table now auto-sizes within viewport
   // Ensure currentId row included when returning from detail

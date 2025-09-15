@@ -172,6 +172,9 @@ export default function ExpensesIndexRoute() {
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "expenses",
     rowEndpointPath: "/expenses/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
   });
   const columns = [
     {

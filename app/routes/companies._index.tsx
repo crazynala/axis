@@ -210,6 +210,9 @@ export default function CompaniesIndexRoute() {
   } = useHybridWindow({
     module: "companies",
     rowEndpointPath: "/companies/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
   });
   // Auto ensure currentId inclusion (if selected elsewhere) – simplistic: run once on mount if current exists
   // (Could be refined similar to invoices/products index implementations.)
