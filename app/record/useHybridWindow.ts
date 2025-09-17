@@ -66,7 +66,10 @@ export function useHybridWindow({
 
   // Find missing IDs that need to be fetched
   // Compute the active window we care about hydrating (front slice of id list)
-  const activeIds = useMemo(() => idList.slice(0, windowSize), [idList, windowSize]);
+  const activeIds = useMemo(
+    () => idList.slice(0, windowSize),
+    [idList, windowSize]
+  );
 
   const missingIds = useMemo(() => {
     // Limit scope to activeIds only; don't chase whole universe at once
@@ -83,7 +86,10 @@ export function useHybridWindow({
     if (!idList.length) return;
     // Heuristic: when at least 80% of current window has some row (placeholder or hydrated) AND we have more ids, expand.
     const hydratedOrPlaceholder = activeIds.length;
-    if (hydratedOrPlaceholder >= windowSizeRef.current * 0.8 && windowSizeRef.current < idList.length) {
+    if (
+      hydratedOrPlaceholder >= windowSizeRef.current * 0.8 &&
+      windowSizeRef.current < idList.length
+    ) {
       setWindowSize((prev) => Math.min(idList.length, prev + batchIncrement));
     }
   }, [activeIds.length, idList.length, batchIncrement, activeIds]);
@@ -124,9 +130,15 @@ export function useHybridWindow({
         const query = new URLSearchParams();
         chunk.forEach((id) => query.append("ids", String(id)));
         try {
-          console.debug("[useHybridWindow] fetch", chunk[0], "..", chunk[chunk.length - 1], `(${chunk.length})`);
+          console.debug(
+            "[useHybridWindow] fetch",
+            chunk[0],
+            "..",
+            chunk[chunk.length - 1],
+            `(${chunk.length})`
+          );
           const resp = await fetch(`${endpoint}?${query}`);
-            if (!resp.ok) throw new Error("Bad response");
+          if (!resp.ok) throw new Error("Bad response");
           const data = await resp.json();
           const rows = Array.isArray(data?.rows) ? data.rows : data;
           console.debug("[useHybridWindow] rows received", rows.length);
@@ -149,7 +161,11 @@ export function useHybridWindow({
           const c = queue.shift()!;
           activeFetches++;
           runChunk(c).then(() => {
-            if (!cancelled && (activeFetches === 0 || activeFetches < maxConcurrent) && queue.length === 0) {
+            if (
+              !cancelled &&
+              (activeFetches === 0 || activeFetches < maxConcurrent) &&
+              queue.length === 0
+            ) {
               if (activeFetches === 0) setFetching(false);
             }
             if (!cancelled && queue.length) tick();
@@ -163,7 +179,17 @@ export function useHybridWindow({
       };
     }, debounceMs);
     return () => clearTimeout(handle);
-  }, [missingIds, debounceMs, chunkSize, rowEndpointPath, module, addRows, maxConcurrent, maxRequestIdsPerCycle, idList.length]);
+  }, [
+    missingIds,
+    debounceMs,
+    chunkSize,
+    rowEndpointPath,
+    module,
+    addRows,
+    maxConcurrent,
+    maxRequestIdsPerCycle,
+    idList.length,
+  ]);
 
   const atEnd = windowSize >= idList.length;
   const loading = fetching;

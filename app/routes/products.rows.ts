@@ -23,7 +23,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .filter((v) => typeof v === "number") as number[];
     if (!ids.length) return json({ rows: [] });
     if (process.env.NODE_ENV !== "production") {
-      console.debug("[products.rows] hydrating ids", ids.slice(0, 20), ids.length);
+      console.debug(
+        "[products.rows] hydrating ids",
+        ids.slice(0, 20),
+        ids.length
+      );
     }
     const rows = await prismaBase.product.findMany({
       where: { id: { in: ids } },
