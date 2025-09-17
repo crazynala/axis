@@ -16,7 +16,7 @@ import {
 import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useRecords } from "../record/RecordContext";
 import { useHybridWindow } from "../record/useHybridWindow";
@@ -28,6 +28,7 @@ import {
   type Column,
 } from "react-datasheet-grid";
 import "react-datasheet-grid/dist/style.css";
+import { render } from "@react-pdf/renderer";
 
 export const meta = () => [{ title: "Products" }];
 
@@ -128,13 +129,12 @@ export default function ProductsIndexRoute() {
   const [sp] = useSearchParams();
   const location = useLocation();
   const { state, currentId, setCurrentId } = useRecords();
-  const { records, atEnd, loading, requestMore, missingIds, total } =
-    useHybridWindow({
-      module: "products",
-      initialWindow: 100,
-      batchIncrement: 100,
-      maxPlaceholders: 8,
-    });
+  const { records, atEnd, loading, requestMore, total } = useHybridWindow({
+    module: "products",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
+  });
   // Removed per-route height calculation; table now auto-sizes within viewport
   // Ensure currentId row included when returning from detail
   const ensuredRef = useRef(false);
@@ -211,10 +211,12 @@ export default function ProductsIndexRoute() {
       </Group>
       <section>
         <SavedViews views={[]} activeView={null} />
-        <NavDataTable
-          module="products"
+        <VirtualizedNavDataTable
           records={records}
+          currentId={currentId}
+          height={600}
           columns={[
+            { accessor: "", title: "", render: (r, index) => index },
             {
               accessor: "id",
               title: "ID",
@@ -238,7 +240,6 @@ export default function ProductsIndexRoute() {
               render: (r: any) => (r.batchTrackingEnabled ? "Yes" : "No"),
             },
           ]}
-          fetching={loading}
           sortStatus={
             {
               columnAccessor: sp.get("sort") || "id",
@@ -254,14 +255,17 @@ export default function ProductsIndexRoute() {
             next.set("dir", s.direction);
             navigate(`?${next.toString()}`);
           }}
-          onActivate={(rec: any) => {
+          onRowDoubleClick={(rec: any) => {
             if (rec?.id != null) navigate(`/products/${rec.id}`);
+          }}
+          onRowClick={(rec: any) => {
+            setCurrentId(rec?.id);
           }}
           onReachEnd={() => requestMore()}
           footer={
             atEnd ? (
               <span style={{ fontSize: 12 }}>End of results ({total})</span>
-            ) : missingIds.length ? (
+            ) : loading ? (
               <span>Loading rows…</span>
             ) : (
               <span style={{ fontSize: 11 }}>Scroll to load more…</span>

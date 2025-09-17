@@ -13,7 +13,7 @@ export default function InvoicesIndexRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { state, currentId } = useRecords();
-  const { records, atEnd, loading, fetching, requestMore, missingIds, total } =
+  const { records, atEnd, loading, fetching, requestMore, total } =
     useHybridWindow({
       module: "invoices",
       initialWindow: 100,

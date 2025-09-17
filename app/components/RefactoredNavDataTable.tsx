@@ -98,14 +98,18 @@ export function NavDataTable<T extends Record<string, any>>({
       });
       return;
     }
+
+    // Try to find the specific row first
     const row = el.querySelector<HTMLTableRowElement>(
       `tbody tr[data-row-id="${currentId}"]`
     );
+
     if (row) {
+      // Row exists, scroll to it precisely
       row.classList.add(activeClassName);
       row.setAttribute("aria-selected", "true");
       row.setAttribute("tabIndex", "-1");
-      // Always ensure selected row is centered within the scroll viewport
+      console.log("[NavDataTable] Scrolling to row", currentId);
       try {
         row.scrollIntoView({ block: "center" });
       } catch {}
@@ -114,9 +118,31 @@ export function NavDataTable<T extends Record<string, any>>({
       } catch {}
       pendingScrollRef.current = false;
     } else {
-      // Row not yet rendered (maybe window not large enough or hydration pending) -> attempt after next records update
-      pendingScrollRef.current = true;
+      // Check if we have the record data but it's still loading (placeholder)
+      const record = records.find(
+        (r: any) => String(r.id) === String(currentId)
+      );
+      if (record && record.__loading) {
+        console.log(
+          "[NavDataTable] Row found but still loading, setting pendingScrollRef for",
+          currentId
+        );
+        pendingScrollRef.current = true;
+      } else if (record) {
+        console.log(
+          "[NavDataTable] Row data available but DOM not ready, setting pendingScrollRef for",
+          currentId
+        );
+        pendingScrollRef.current = true;
+      } else {
+        console.log(
+          "[NavDataTable] Row not found, hybrid window may be expanding, setting pendingScrollRef for",
+          currentId
+        );
+        pendingScrollRef.current = true;
+      }
     }
+
     const all = el.querySelectorAll<HTMLTableRowElement>(
       "tbody tr[data-row-id]"
     );
@@ -127,7 +153,7 @@ export function NavDataTable<T extends Record<string, any>>({
       }
     });
     initialScrollDoneRef.current = true;
-  }, [currentId, activeClassName]);
+  }, [currentId, activeClassName]); // Remove records.length and state?.idList from dependency array
 
   // Retry pending scroll once records update if needed
   useEffect(() => {
@@ -137,46 +163,69 @@ export function NavDataTable<T extends Record<string, any>>({
     const row = el.querySelector<HTMLTableRowElement>(
       `tbody tr[data-row-id="${currentId}"]`
     );
+
     if (row) {
-      row.classList.add(activeClassName);
-      row.setAttribute("aria-selected", "true");
-      row.setAttribute("tabIndex", "-1");
-      try {
-        row.scrollIntoView({ block: "center" });
-      } catch {}
-      try {
-        row.focus({ preventScroll: true });
-      } catch {}
-      pendingScrollRef.current = false;
+      // Only scroll if this is not a loading placeholder
+      const record = records.find(
+        (r: any) => String(r.id) === String(currentId)
+      );
+      if (record && !record.__loading) {
+        row.classList.add(activeClassName);
+        row.setAttribute("aria-selected", "true");
+        row.setAttribute("tabIndex", "-1");
+        console.log("[NavDataTable] Retry scroll: scrolling to row", currentId);
+        try {
+          // Don't use smooth scroll here to avoid additional animation
+          row.scrollIntoView({ block: "center" });
+        } catch {}
+        try {
+          row.focus({ preventScroll: true });
+        } catch {}
+        pendingScrollRef.current = false;
+      }
     }
   }, [records, currentId, activeClassName]);
 
   // Component-level keyboard navigation removed; global RecordProvider now owns Arrow/Home/End navigation to avoid double stepping.
   // We still support activation (Enter/Space) by listening on rows themselves below.
 
-  // Decorate rows with data-row-id after mount/update
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rows = el.querySelectorAll<HTMLTableRowElement>("tbody tr");
-    rows.forEach((tr, i) => {
-      const rec = (records as any)[i];
-      if (rec && rec.id != null) tr.setAttribute("data-row-id", String(rec.id));
-      tr.addEventListener("dblclick", () => {
-        if (rec) onActivate?.(rec);
-      });
-      tr.addEventListener("click", () => setCurrentId(rec?.id));
-      const keyHandler = (e: KeyboardEvent) => {
+  const rowClickHandler = useCallback(
+    (record: any) => {
+      setCurrentId(record?.id);
+    },
+    [setCurrentId]
+  );
+
+  const rowDoubleClickHandler = useCallback(
+    (record: any) => {
+      if (record) onActivate?.(record);
+    },
+    [onActivate]
+  );
+
+  const customRowAttributes = useCallback(
+    (record: any) => {
+      const attrs: Record<string, any> = {};
+
+      // Set data-row-id for scroll targeting
+      if (record && record.id != null) {
+        attrs["data-row-id"] = String(record.id);
+      }
+
+      // Add keyboard activation handler
+      attrs.onKeyDown = (e: KeyboardEvent) => {
         if (e.key === "Enter" || e.key === " ") {
-          if (rec) {
+          if (record) {
             e.preventDefault();
-            onActivate?.(rec);
+            onActivate?.(record);
           }
         }
       };
-      tr.addEventListener("keydown", keyHandler);
-    });
-  }, [records, onActivate, setCurrentId]);
+
+      return attrs;
+    },
+    [onActivate]
+  );
 
   // Scroll / infinite load listener attaches to internal Mantine ScrollArea viewport, not the wrapper.
   useEffect(() => {
@@ -199,6 +248,12 @@ export function NavDataTable<T extends Record<string, any>>({
         viewport.scrollTop + viewport.clientHeight >=
         viewport.scrollHeight - 60
       ) {
+        console.log(
+          "[NavDataTable] reached scroll end",
+          viewport.scrollTop,
+          viewport.clientHeight,
+          viewport.scrollHeight
+        );
         onReachEnd();
       }
     };
@@ -230,7 +285,7 @@ export function NavDataTable<T extends Record<string, any>>({
       const rect = el.getBoundingClientRect();
       const vh = window.innerHeight;
       // distance from top of element to bottom of viewport
-      let available = Math.max(100, vh - rect.top - 8); // 8px breathing room
+      let available = Math.max(100, vh - rect.top - 24); // 8px breathing room
       if (autoHeightOffset) available -= autoHeightOffset;
       // Ensure we don't go negative
       if (available < 100) available = 100;
@@ -263,12 +318,15 @@ export function NavDataTable<T extends Record<string, any>>({
       <MantineDataTable
         records={records}
         columns={columns as any}
-        fetching={fetching}
+        // fetching={fetching}
         withTableBorder
         height={effectiveHeight}
         scrollAreaProps={{ tabIndex: 0 }}
         sortStatus={sortStatus as any}
         onSortStatusChange={onSortStatusChange as any}
+        onRowClick={({ record }) => rowClickHandler(record)}
+        onRowDoubleClick={({ record }) => rowDoubleClickHandler(record)}
+        customRowAttributes={customRowAttributes}
       />
       {footer && (
         <div

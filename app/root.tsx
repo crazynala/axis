@@ -76,7 +76,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const path = url.pathname;
   const publicPaths = ["/login", "/forgot", "/reset"]; // reset uses /reset/:token
   const isPublic = publicPaths.some(
-    (p) => path === p || path.startsWith("/reset")
+    (p) => path === p || path.startsWith("/reset") || path.startsWith("/api")
   );
   const logLevels = await loadLogLevels();
   if (isPublic)

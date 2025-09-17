@@ -6,6 +6,25 @@ import {
   getLimitOffset,
 } from "../utils/integrationsAuth.server";
 
+// Canonical ProductType enum values as defined in prisma schema.
+// Keeping an explicit list (instead of importing Prisma enums) avoids pulling prisma client into edge bundles unintentionally
+const PRODUCT_TYPE_VALUES = [
+  "CMT",
+  "Fabric",
+  "Finished",
+  "Trim",
+  "Service",
+] as const;
+type ProductTypeValue = (typeof PRODUCT_TYPE_VALUES)[number];
+
+function normalizeProductType(
+  raw: string | null
+): ProductTypeValue | undefined {
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+  return PRODUCT_TYPE_VALUES.find((v) => v.toLowerCase() === lower);
+}
+
 function norm(s?: string | null) {
   return (s || "").toLocaleLowerCase();
 }
@@ -16,7 +35,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const q = url.searchParams.get("q") || "";
   const vendorName = url.searchParams.get("vendorName") || "";
   const itemNumber = url.searchParams.get("itemNumber") || "";
-  const type = url.searchParams.get("type") || "";
+  const rawTypeParam = url.searchParams.get("type");
   const sort = url.searchParams.get("sort") || "best_match";
   const { limit, offset } = getLimitOffset(url);
 
@@ -38,7 +57,32 @@ export async function loader({ request }: LoaderFunctionArgs) {
       })),
     });
   }
-  if (type) where.AND.push({ type });
+  // --- ProductType normalization ---
+  const typeFilter = normalizeProductType(rawTypeParam);
+  if (rawTypeParam && !typeFilter) {
+    return json(
+      {
+        error: "invalid_type",
+        message: `Invalid product type '${rawTypeParam}'. Valid: ${PRODUCT_TYPE_VALUES.join(
+          ","
+        )}`,
+      },
+      { status: 400 }
+    );
+  }
+  if (typeFilter) {
+    where.AND.push({ type: typeFilter });
+  }
+  if (process.env.NODE_ENV !== "production") {
+    // Debug visibility of normalization & final where snippet
+    const whereType = where.AND.find((clause: any) => clause.type);
+    // Use console.debug so it can be filtered easily
+    console.debug("[products.search] type normalization", {
+      rawTypeParam,
+      typeFilter,
+      whereType,
+    });
+  }
   // We may also bias by supplier name later in scoring
 
   const candidates = await prismaBase.product.findMany({
@@ -106,9 +150,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       score += 12;
       pushHL("sku", iNorm);
     }
-    if (type && p.type && norm(p.type) === norm(type)) {
+    if (typeFilter && p.type && p.type === typeFilter) {
       score += 5;
-      pushHL("type", type);
+      pushHL("type", typeFilter);
     }
     return {
       id: p.id,
@@ -137,6 +181,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ items });
 }
 
-export default function Route() {
-  return null;
-}
+// NOTE: No default export -> this is now a Remix Resource Route.
+// Hitting /api/v1/integrations/plm/products/search will return pure JSON (or other
+// loader Response) instead of an HTML document shell.
