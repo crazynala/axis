@@ -7,16 +7,21 @@ import { prisma } from "../utils/prisma.server";
 // Returns minimal invoice row plus computed amount aggregate.
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
-  const idsParam = url.searchParams.get("ids");
-  if (!idsParam) return json({ rows: [] });
-  const rawIds = idsParam
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  // Normalize to numbers when possible
-  const ids = rawIds
-    .slice(0, 500) // safety cap
-    .map((v) => (v.match(/^\d+$/) ? Number(v) : v));
+  // Support repeated ids=1&ids=2 and comma lists ids=1,2; trim, dedupe, cap
+  const rawIds = url.searchParams.getAll("ids");
+  if (!rawIds.length) return json({ rows: [] });
+  const flattened: string[] = [];
+  for (const part of rawIds) {
+    if (!part) continue;
+    for (const piece of part.split(",")) {
+      const trimmed = piece.trim();
+      if (trimmed) flattened.push(trimmed);
+    }
+  }
+  const ids = Array.from(new Set(flattened))
+    .slice(0, 500)
+    .map((v) => (v.match(/^\d+$/) ? Number(v) : v))
+    .filter((v) => typeof v === "number") as number[];
   if (!ids.length) return json({ rows: [] });
 
   // Fetch core rows
@@ -46,7 +51,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     totals.set(l.invoiceId!, (totals.get(l.invoiceId!) ?? 0) + amt);
   }
   const withTotals = rows.map((r) => ({ ...r, amount: totals.get(r.id) ?? 0 }));
-  return json({ rows: withTotals });
+  // Preserve client-requested order
+  const map = new Map(withTotals.map((r) => [r.id, r] as const));
+  const ordered = ids.map((id) => map.get(id)).filter(Boolean);
+  return json({ rows: ordered });
 }
 
 export const meta = () => [];

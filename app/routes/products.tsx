@@ -10,6 +10,7 @@ import {
 } from "../find/multiFind";
 import { useEffect } from "react";
 import { useRecords } from "../record/RecordContext";
+import { inspect } from "node:util";
 
 export async function loader(args: LoaderFunctionArgs) {
   const [
@@ -27,6 +28,26 @@ export async function loader(args: LoaderFunctionArgs) {
     const params = parseTableParams(args.request.url);
     const views = await listViews("products");
     const viewName = q.get("view");
+    const __debug = process.env.NODE_ENV !== "production";
+    const d = (label: string, obj: any) => {
+      if (!__debug) return;
+      try {
+        // eslint-disable-next-line no-console
+        console.log(
+          label,
+          inspect(obj, {
+            depth: null,
+            colors: false,
+            compact: false,
+            breakLength: 140,
+          })
+        );
+      } catch {
+        // eslint-disable-next-line no-console
+        console.log(label, obj);
+      }
+    };
+    d("[products.index] request params", Object.fromEntries(q));
     let effective = params;
     if (viewName) {
       const v = views.find((x: any) => x.name === viewName);
@@ -103,6 +124,8 @@ export async function loader(args: LoaderFunctionArgs) {
       delete valuesForSchema.name;
       delete valuesForSchema.sku;
       const simpleBase = buildWhere(valuesForSchema, productSearchSchema);
+      d("[products.index] simple values", valuesForSchema);
+      d("[products.index] simpleBase", simpleBase);
 
       const simpleClauses: any[] = [];
       if (simpleBase && Object.keys(simpleBase).length > 0)
@@ -167,8 +190,13 @@ export async function loader(args: LoaderFunctionArgs) {
         };
         const multiWhere = buildWhereFromRequests(multi, interpreters);
         findWhere = mergeSimpleAndMulti(simple, multiWhere);
+        d("[products.index] multiFind decoded", multi);
+        d("[products.index] simpleWhere", simple);
+        d("[products.index] multiWhere", multiWhere);
+        d("[products.index] findWhere (merged)", findWhere);
       } else {
         findWhere = simple;
+        d("[products.index] findWhere (simple)", findWhere);
       }
     }
     let baseParams = findWhere ? { ...effective, page: 1 } : effective;
@@ -213,6 +241,18 @@ export async function loader(args: LoaderFunctionArgs) {
     });
     if (findWhere)
       (where as any).AND = [...((where as any).AND || []), findWhere];
+    d("[products.index] prisma where", where);
+    d("[products.index] prisma orderBy", orderBy);
+    if (__debug) {
+      try {
+        const matchCount = await prismaBase.product.count({ where });
+        // eslint-disable-next-line no-console
+        console.log("[products.index] prisma where count", matchCount);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[products.index] count failed", (e as any)?.message);
+      }
+    }
 
     const ID_CAP = 50000;
     const idRows = await prismaBase.product.findMany({
@@ -223,6 +263,7 @@ export async function loader(args: LoaderFunctionArgs) {
     });
     const idList = idRows.map((r) => r.id);
     const idListComplete = idRows.length < ID_CAP;
+    d("[products.index] idList length", idList.length);
     const INITIAL_COUNT = 100;
     const initialIds = idList.slice(0, INITIAL_COUNT);
     let initialRows: any[] = [];

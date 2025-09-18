@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Table, ScrollArea, Box, Text } from "@mantine/core";
 import type { DataTableColumn, DataTableSortStatus } from "mantine-datatable";
+import { useRecords } from "../record/RecordContext";
 
 interface VirtualizedNavDataTableProps<T = Record<string, any>> {
   records: (T | undefined)[];
@@ -51,6 +52,8 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
 }: VirtualizedNavDataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { currentId: ctxCurrentId, setCurrentId: ctxSetCurrentId } =
+    useRecords();
 
   const count = totalCount ?? records.length;
   const virtualizer = useVirtualizer({
@@ -138,15 +141,26 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
     count,
   ]);
 
+  // Auto-select first loaded row when there is no current selection
+  useEffect(() => {
+    const selected = currentId ?? ctxCurrentId;
+    if (selected != null) return;
+    const first = records.find((r: any) => r && r.id != null) as any;
+    if (first && ctxSetCurrentId) {
+      ctxSetCurrentId(first.id);
+    }
+  }, [records, currentId, ctxCurrentId, ctxSetCurrentId]);
+
   // Scroll to currentId
   useEffect(() => {
-    if (currentId == null) return;
-    const index = records.findIndex((r: any) => r?.id === currentId);
+    const selected = currentId ?? ctxCurrentId;
+    if (selected == null) return;
+    const index = records.findIndex((r: any) => r?.id === selected);
     if (index >= 0) {
-      log("scrollToIndex", { currentId, index });
+      log("scrollToIndex", { currentId: selected, index });
       virtualizer.scrollToIndex(index, { align: "center" });
     }
-  }, [currentId, records, virtualizer]);
+  }, [currentId, ctxCurrentId, records, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
   const paddingTop = virtualItems.length ? virtualItems[0].start : 0;
@@ -227,10 +241,11 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
             {virtualItems.map((virtualRow, localIndex) => {
               const record = records[virtualRow.index] as T | undefined;
               const loaded = !!record;
+              const selectedId = currentId ?? ctxCurrentId;
               const isSelected =
                 loaded &&
-                currentId != null &&
-                (record as any)?.id === currentId;
+                selectedId != null &&
+                (record as any)?.id === selectedId;
               if (debug && localIndex === 0) {
                 log("first row render sample", {
                   virtualIndex: virtualRow.index,
@@ -251,6 +266,7 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
                     cursor: loaded ? "pointer" : "default",
                     opacity: loaded ? 1 : 0.55,
                   }}
+                  aria-selected={isSelected || undefined}
                   onClick={() =>
                     loaded && onRowClick?.(record as T, virtualRow.index)
                   }
@@ -303,14 +319,14 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
         </Table>
       </ScrollArea>
 
-      {footer && (
+      {/* {footer && (
         <Box
           p="xs"
           style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}
         >
           {footer}
         </Box>
-      )}
+      )} */}
     </Box>
   );
 }
