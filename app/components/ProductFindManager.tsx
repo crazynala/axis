@@ -27,11 +27,17 @@ export function ProductFindManager() {
         setOpen(false);
         navigate(`/products?${qs}`);
       }}
-      initialValues={
-        Object.fromEntries(
+      initialValues={(() => {
+        const base = Object.fromEntries(
           Array.from(sp.entries()).filter(([k]) => k !== "find")
-        ) as any
-      }
+        ) as Record<string, any>;
+        // If legacy global 'q' is present and 'name' is not, treat it as a Name contains for prefilling the modal
+        if (base.q && !base.name) {
+          base.name = base.q;
+          delete base.q;
+        }
+        return base as any;
+      })()}
     />
   );
 }

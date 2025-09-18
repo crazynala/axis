@@ -78,6 +78,26 @@ export async function loader(args: LoaderFunctionArgs) {
       // Guard against stray params accidentally treated as filters
       delete (values as any).refreshed;
 
+      // Normalize enum-like params (case-insensitive -> canonical)
+      const TYPE_CANON = [
+        "CMT",
+        "Fabric",
+        "Finished",
+        "Trim",
+        "Service",
+      ] as const;
+      const canonType = (v: any) => {
+        if (v == null || v === "") return v;
+        const s = String(v).toLowerCase();
+        const hit = TYPE_CANON.find((t) => t.toLowerCase() === s);
+        return hit ?? v;
+      };
+      if (values.type) values.type = canonType(values.type);
+      if ((values as any).componentChildType)
+        (values as any).componentChildType = canonType(
+          (values as any).componentChildType
+        );
+
       // Build simple where: exclude name/sku from schema-driven builder, then add partial/insensitive clauses for them
       const valuesForSchema = { ...values };
       delete valuesForSchema.name;
@@ -112,7 +132,7 @@ export async function loader(args: LoaderFunctionArgs) {
             description: { contains: v, mode: "insensitive" },
           }),
           // 'type' enum: use equals semantics
-          type: (v) => ({ type: v }),
+          type: (v) => ({ type: canonType(v) }),
           costPriceMin: (v) => ({ costPrice: { gte: Number(v) } }),
           costPriceMax: (v) => ({ costPrice: { lte: Number(v) } }),
           manualSalePriceMin: (v) => ({ manualSalePrice: { gte: Number(v) } }),
@@ -142,7 +162,7 @@ export async function loader(args: LoaderFunctionArgs) {
           }),
           // child.type is enum; equals semantics
           componentChildType: (v) => ({
-            productLines: { some: { child: { type: v } } },
+            productLines: { some: { child: { type: canonType(v) } } },
           }),
         };
         const multiWhere = buildWhereFromRequests(multi, interpreters);
@@ -152,6 +172,7 @@ export async function loader(args: LoaderFunctionArgs) {
       }
     }
     let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+    // Remove any find-related keys from generic filters to avoid accidental exact-match filtering
     if (baseParams.filters) {
       const {
         findReqs: _omitFindReqs,
@@ -159,6 +180,29 @@ export async function loader(args: LoaderFunctionArgs) {
         refreshed: _omitRefreshed,
         ...rest
       } = baseParams.filters;
+      // Also strip all explicit find keys handled above (name contains, sku contains, ids, enums, ranges, etc.)
+      for (const k of [
+        "sku",
+        "name",
+        "description",
+        "type",
+        "costPriceMin",
+        "costPriceMax",
+        "manualSalePriceMin",
+        "manualSalePriceMax",
+        "purchaseTaxId",
+        "categoryId",
+        "customerId",
+        "supplierId",
+        "stockTrackingEnabled",
+        "batchTrackingEnabled",
+        "componentChildSku",
+        "componentChildName",
+        "componentChildSupplierId",
+        "componentChildType",
+      ]) {
+        if (k in rest) delete (rest as any)[k];
+      }
       baseParams = { ...baseParams, filters: rest };
     }
     const { where, orderBy } = buildPrismaArgs(baseParams, {

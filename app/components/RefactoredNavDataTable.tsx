@@ -320,6 +320,8 @@ export function NavDataTable<T extends Record<string, any>>({
         columns={columns as any}
         // fetching={fetching}
         withTableBorder
+        stickyHeader
+        stickyHeaderOffset={0}
         height={effectiveHeight}
         scrollAreaProps={{ tabIndex: 0 }}
         sortStatus={sortStatus as any}
@@ -345,6 +347,14 @@ export function NavDataTable<T extends Record<string, any>>({
         .${activeClassName} {
           background-color: var(--mantine-color-blue-light, #e7f5ff) !important;
           box-shadow: 0 0 0 2px var(--mantine-color-blue-filled, #228be6) inset;
+        }
+        /* Fallback sticky header in case library prop changes; scoped to this container */
+        [data-module="${module}"] .mantine-Table-table thead th,
+        [data-module="${module}"] .mantine-Table-table thead td {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          background: var(--mantine-color-body, #fff);
         }
       `}
       </style>

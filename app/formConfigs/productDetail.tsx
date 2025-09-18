@@ -32,7 +32,7 @@ export const productAssocFields: FieldConfig[] = [
     label: "Customer",
     widget: "select",
     optionsKey: "customer",
-    // hiddenInModes: ["find"],
+    findOp: "equals",
   },
   {
     name: "variantSet",
@@ -100,7 +100,7 @@ export const productBomFindFields: FieldConfig[] = [
     name: "componentChildSupplierId",
     label: "Child Supplier",
     widget: "select",
-    optionsKey: "suppliers",
+    optionsKey: "supplier",
     findOp: "equals",
   },
 ];
@@ -108,5 +108,10 @@ export const productBomFindFields: FieldConfig[] = [
 // Future: spec validation hook similar to jobs.
 
 export function allProductFindFields() {
-  return [...productIdentityFields, ...productAssocFields, ...productPricingFields, ...productBomFindFields];
+  return [
+    ...productIdentityFields,
+    ...productAssocFields,
+    ...productPricingFields,
+    ...productBomFindFields,
+  ];
 }

@@ -1,9 +1,9 @@
 import { Link, useLocation, useNavigate } from "@remix-run/react";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useRecords } from "../record/RecordContext";
 import { SavedViews } from "../components/find/SavedViews";
 import { useHybridWindow } from "../record/useHybridWindow";
@@ -19,32 +19,7 @@ export default function InvoicesIndexRoute() {
       initialWindow: 100,
       batchIncrement: 100,
     });
-  const [tableHeight, setTableHeight] = useState(500);
-  const TABLE_SELECTOR = "[data-invoices-table-container]";
-
-  // Dynamic height calc: measure from table container top instead of header bottom
-  useEffect(() => {
-    const calc = () => {
-      const tableWrap = document.querySelector(
-        TABLE_SELECTOR
-      ) as HTMLElement | null;
-      if (!tableWrap) return;
-      const top = tableWrap.getBoundingClientRect().top;
-      const vh = window.innerHeight;
-      const marginBottom = 24;
-      const h = vh - top - marginBottom;
-      if (h > 200) setTableHeight(h);
-    };
-    const obs = new ResizeObserver(() => calc());
-    const headerEl = document.querySelector("[data-invoices-header]");
-    if (headerEl) obs.observe(headerEl);
-    calc();
-    window.addEventListener("resize", calc);
-    return () => {
-      window.removeEventListener("resize", calc);
-      obs.disconnect();
-    };
-  }, []);
+  // Table auto-sizes via VirtualizedNavDataTable; no per-route height calc needed
 
   // Auto-expand window to include currentId when landing on index from detail.
   const { idList } = state || ({} as any);
@@ -151,50 +126,52 @@ export default function InvoicesIndexRoute() {
         </Group>
       </Group>
       <SavedViews views={[]} activeView={null} />
-      <div data-invoices-table-container>
-        <NavDataTable
-          module="invoices"
-          records={records}
-          height={tableHeight}
-          columns={[
-            {
-              accessor: "id",
-              render: (r: any) => <Link to={`/invoices/${r.id}`}>{r.id}</Link>,
-            },
-            { accessor: "invoiceCode", title: "Code" },
-            {
-              accessor: "date",
-              render: (r: any) =>
-                r.date ? new Date(r.date).toLocaleDateString() : "",
-            },
-            {
-              accessor: "company.name",
-              title: "Company",
-              render: (r: any) => r.company?.name ?? "",
-            },
-            {
-              accessor: "amount",
-              title: "Amount",
-              render: (r: any) => formatUSD(r.amount),
-            },
-            { accessor: "status" },
-          ]}
-          fetching={fetching}
-          onActivate={(rec: any) => {
-            if (rec?.id != null) navigate(`/invoices/${rec.id}`);
-          }}
-          onReachEnd={() => requestMore()}
-          footer={
-            atEnd ? (
-              <span style={{ fontSize: 12 }}>End of results ({total})</span>
-            ) : fetching ? (
-              <span>Loading…</span>
-            ) : (
-              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
-            )
-          }
-        />
-      </div>
+      <VirtualizedNavDataTable
+        records={records}
+        currentId={currentId as any}
+        columns={[
+          {
+            accessor: "id",
+            title: "ID",
+            render: (r: any) => <Link to={`/invoices/${r.id}`}>{r.id}</Link>,
+            width: 70,
+          },
+          { accessor: "invoiceCode", title: "Code" },
+          {
+            accessor: "date",
+            title: "Date",
+            render: (r: any) =>
+              r.date ? new Date(r.date).toLocaleDateString() : "",
+          },
+          {
+            accessor: "company.name",
+            title: "Company",
+            render: (r: any) => r.company?.name ?? "",
+          },
+          {
+            accessor: "amount",
+            title: "Amount",
+            render: (r: any) => formatUSD(r.amount),
+          },
+          { accessor: "status", title: "Status" },
+        ]}
+        onRowClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/invoices/${rec.id}`);
+        }}
+        onRowDoubleClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/invoices/${rec.id}`);
+        }}
+        onReachEnd={() => requestMore()}
+        footer={
+          atEnd ? (
+            <span style={{ fontSize: 12 }}>End of results ({total})</span>
+          ) : fetching ? (
+            <span>Loading…</span>
+          ) : (
+            <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+          )
+        }
+      />
     </div>
   );
 }

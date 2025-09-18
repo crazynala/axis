@@ -214,7 +214,6 @@ export default function ProductsIndexRoute() {
         <VirtualizedNavDataTable
           records={records}
           currentId={currentId}
-          height={600}
           columns={[
             { accessor: "", title: "", render: (r, index) => index },
             {

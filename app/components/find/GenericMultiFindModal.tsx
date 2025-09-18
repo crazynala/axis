@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Modal, Group, Button, ActionIcon, Tooltip, Stack, ScrollArea, Divider, Text } from "@mantine/core";
 import { HotkeyAwareModal } from "../../hotkeys/HotkeyAwareModal";
 import { useForm, type FieldValues } from "react-hook-form";
@@ -14,8 +14,68 @@ export interface GenericMultiFindModalProps<TValues extends FieldValues> extends
 export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onClose, onSearch, initialValues, adapter, FormComponent }: GenericMultiFindModalProps<TValues>) {
   const { buildDefaults, allFields, title } = adapter;
   const [mode, setMode] = useState<"simple" | "advanced">("simple");
+  // Build field <-> param maps once per render
+  const fields = useMemo(() => allFields(), [allFields]);
+  const fieldToParam = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of fields) {
+      const paramKey = (f as any).paramName || f.name;
+      m.set(f.name, paramKey);
+    }
+    return m;
+  }, [fields]);
+  const paramToField = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of fields) {
+      const paramKey = (f as any).paramName || f.name;
+      m.set(paramKey, f.name);
+    }
+    return m;
+  }, [fields]);
+
+  // Normalize incoming initial values: allow passing server param keys
+  const coerceInitialValues = (vals: any) => {
+    if (!vals) return vals;
+    const out: any = { ...vals };
+    for (const f of fields) {
+      const paramKey = (f as any).paramName;
+      if (paramKey && out[f.name] === undefined && out[paramKey] !== undefined) {
+        out[f.name] = out[paramKey];
+      }
+    }
+    return out;
+  };
+
+  // Robust out-bound serialization for select/multiselect/object values
+  const serializeValue = (v: any): string | null => {
+    if (v === undefined || v === null || v === "" || v === "any") return null;
+    if (Array.isArray(v)) {
+      // Support arrays of primitives or objects with value/id
+      const vals = v
+        .map((it) => {
+          if (it == null) return null;
+          if (typeof it === "object") return (it as any).value ?? (it as any).id ?? null;
+          return it;
+        })
+        .filter((x) => x !== null)
+        .map(String);
+      return vals.length ? vals.join(",") : null;
+    }
+    if (typeof v === "object") {
+      const primitive = (v as any).value ?? (v as any).id;
+      return primitive != null ? String(primitive) : null;
+    }
+    return String(v);
+  };
+
+  // Helper for number range serialization
+  const setIfPresent = (params: URLSearchParams, key: string, v: any) => {
+    const s = serializeValue(v);
+    if (s !== null) params.set(key, s);
+  };
+
   const form = useForm<TValues>({
-    defaultValues: { ...buildDefaults(), ...(initialValues || {}) } as any,
+    defaultValues: { ...buildDefaults(), ...(initialValues ? coerceInitialValues(initialValues) : {}) } as any,
   });
   const focusWrapRef = useRef<HTMLDivElement | null>(null);
   const makeRequest = (): MultiFindRequest => ({
@@ -30,7 +90,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
 
   useEffect(() => {
     if (opened) {
-      form.reset({ ...buildDefaults(), ...(initialValues || {}) } as any);
+      form.reset({ ...buildDefaults(), ...(initialValues ? coerceInitialValues(initialValues) : {}) } as any);
       setMode("simple");
       setMulti({ requests: [makeRequest()] });
       setActiveReqId(null);
@@ -131,28 +191,28 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
     };
   }, [opened, mode]);
 
-  // On entering advanced mode, copy current simple criteria into first request (only once per transition)
+  // On entering advanced mode, copy current simple criteria into first request (use paramName)
   useEffect(() => {
     if (mode === "advanced") {
       setMulti((m) => {
-        // derive from current simple form values
         const vals: any = form.getValues();
         const first = { ...m.requests[0] };
         if (Object.keys(first.criteria).length === 0) {
           const crit: Record<string, any> = {};
-          for (const f of allFields()) {
+          for (const f of fields) {
             if (!f.findOp) continue;
             if (f.widget === "numberRange") {
               const minName = f.rangeFields?.min || `${f.name}Min`;
               const maxName = f.rangeFields?.max || `${f.name}Max`;
-              const minVal = vals[minName];
-              const maxVal = vals[maxName];
-              if (minVal !== undefined && minVal !== null && minVal !== "") crit[minName] = minVal;
-              if (maxVal !== undefined && maxVal !== null && maxVal !== "") crit[maxName] = maxVal;
+              const minKey = fieldToParam.get(minName) || minName;
+              const maxKey = fieldToParam.get(maxName) || maxName;
+              if (vals[minName] !== undefined && vals[minName] !== null && vals[minName] !== "") crit[minKey] = vals[minName];
+              if (vals[maxName] !== undefined && vals[maxName] !== null && vals[maxName] !== "") crit[maxKey] = vals[maxName];
               continue;
             }
-            const v = vals[f.name];
-            if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
+            const key = fieldToParam.get(f.name) || f.name;
+            const s = serializeValue((vals as any)[f.name]);
+            if (s !== null) crit[key] = s;
           }
           first.criteria = crit;
           const next = [...m.requests];
@@ -161,13 +221,14 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
         }
         return m;
       });
-      // load first request into form (active)
+      // load first request into form using param->field mapping
       const first = multi.requests[0];
       const base: any = buildDefaults();
-      for (const [k, v] of Object.entries(first.criteria)) base[k] = v;
+      for (const [k, v] of Object.entries(first.criteria)) {
+        const fieldName = paramToField.get(k) || k;
+        base[fieldName] = v as any;
+      }
       form.reset(base);
-    } else {
-      // switching to simple: collapse active request values into form (already there) and keep them
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -180,19 +241,22 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
       if (idx === -1) return m;
       const req = { ...m.requests[idx] };
       const crit: Record<string, any> = {};
-      for (const f of allFields()) {
+      for (const f of fields) {
         if (!f.findOp) continue;
         if (f.widget === "numberRange") {
           const minName = f.rangeFields?.min || `${f.name}Min`;
           const maxName = f.rangeFields?.max || `${f.name}Max`;
+          const minKey = fieldToParam.get(minName) || minName;
+          const maxKey = fieldToParam.get(maxName) || maxName;
           const minVal = vals[minName];
           const maxVal = vals[maxName];
-          if (minVal !== undefined && minVal !== "" && minVal !== null) crit[minName] = minVal;
-          if (maxVal !== undefined && maxVal !== "" && maxVal !== null) crit[maxName] = maxVal;
+          if (minVal !== undefined && minVal !== "" && minVal !== null) crit[minKey] = minVal;
+          if (maxVal !== undefined && maxVal !== "" && maxVal !== null) crit[maxKey] = maxVal;
           continue;
         }
-        const v = (vals as any)[f.name];
-        if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
+        const key = fieldToParam.get(f.name) || f.name;
+        const s = serializeValue(vals[f.name]);
+        if (s !== null) crit[key] = s;
       }
       req.criteria = crit;
       const next = [...m.requests];
@@ -203,20 +267,20 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
 
   const buildParamsFromValues = (vals: any) => {
     const params = new URLSearchParams();
-    for (const f of allFields()) {
+    for (const f of fields) {
       if (!f.findOp) continue;
       if (f.widget === "numberRange") {
         const minName = f.rangeFields?.min || `${f.name}Min`;
         const maxName = f.rangeFields?.max || `${f.name}Max`;
-        const minVal = vals[minName];
-        const maxVal = vals[maxName];
-        if (minVal !== undefined && minVal !== null && minVal !== "") params.set(minName, String(minVal));
-        if (maxVal !== undefined && maxVal !== null && maxVal !== "") params.set(maxName, String(maxVal));
+        const minKey = fieldToParam.get(minName) || minName;
+        const maxKey = fieldToParam.get(maxName) || maxName;
+        setIfPresent(params, minKey, vals[minName]);
+        setIfPresent(params, maxKey, vals[maxName]);
         continue;
       }
-      const val = vals[f.name];
-      if (val === undefined || val === null || val === "" || val === "any") continue;
-      params.set(f.name, String(val));
+      const key = fieldToParam.get(f.name) || f.name;
+      const s = serializeValue(vals[f.name]);
+      if (s !== null) params.set(key, s);
     }
     return params;
   };
@@ -235,19 +299,20 @@ export function GenericMultiFindModal<TValues extends FieldValues>({ opened, onC
         const req = { ...m.requests[idx] };
         const vals: any = values;
         const crit: Record<string, any> = {};
-        for (const f of allFields()) {
+        for (const f of fields) {
           if (!f.findOp) continue;
           if (f.widget === "numberRange") {
             const minName = f.rangeFields?.min || `${f.name}Min`;
             const maxName = f.rangeFields?.max || `${f.name}Max`;
-            const minVal = vals[minName];
-            const maxVal = vals[maxName];
-            if (minVal !== undefined && minVal !== null && minVal !== "") crit[minName] = minVal;
-            if (maxVal !== undefined && maxVal !== null && maxVal !== "") crit[maxName] = maxVal;
+            const minKey = fieldToParam.get(minName) || minName;
+            const maxKey = fieldToParam.get(maxName) || maxName;
+            if (vals[minName] !== undefined && vals[minName] !== null && vals[minName] !== "") crit[minKey] = vals[minName];
+            if (vals[maxName] !== undefined && vals[maxName] !== null && vals[maxName] !== "") crit[maxKey] = vals[maxName];
             continue;
           }
-          const v = vals[f.name];
-          if (v !== undefined && v !== null && v !== "" && v !== "any") crit[f.name] = v;
+          const key = fieldToParam.get(f.name) || f.name;
+          const s = serializeValue(vals[f.name]);
+          if (s !== null) crit[key] = s;
         }
         req.criteria = crit;
         const next = [...m.requests];
