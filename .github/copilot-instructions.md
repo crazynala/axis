@@ -41,3 +41,9 @@ The codebase uses a unified find system:
 - Saved views will persist both simple params and advanced `findReqs` blob.
 
 See `docs/find-pattern.md` for the authoritative specification and extension guidelines.
+
+## Virtualized Tables Rollout
+
+- All index tables now use `app/components/VirtualizedNavDataTable.tsx` with spacer-row virtualization and staged hydration via `useHybridWindow`.
+- Hydration endpoints accept repeated `ids` and comma-separated lists and always return JSON in the requested order.
+- Legacy table components `NavDataTable` and `RefactoredNavDataTable` were removed to eliminate inline style injection that caused SSR hydration mismatches. If you see missing imports, migrate to `VirtualizedNavDataTable`.

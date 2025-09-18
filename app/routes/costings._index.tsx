@@ -26,7 +26,7 @@ import {
 import { Controller, useForm } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { formatUSD, formatQuantity } from "../utils/format";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { idLinkColumn, simpleColumn } from "../components/tableColumns";
@@ -189,35 +189,39 @@ export default function CostingsIndexRoute() {
             </Button>
           </Group>
         </Form>
-        <NavDataTable
-          module="costings"
+        <VirtualizedNavDataTable
           records={rows as any}
-          columns={[
-            { accessor: "id", title: "ID", width: 70, sortable: true },
-            {
-              accessor: "assemblyId",
-              title: "Assembly",
-              render: (r: any) => r.assembly?.name || r.assemblyId,
-            },
-            {
-              accessor: "productId",
-              title: "Product",
-              render: (r: any) =>
-                r.product?.name || r.product?.sku || r.productId,
-            },
-            { accessor: "activityUsed", title: "Activity" },
-            {
-              accessor: "quantityPerUnit",
-              title: "Qty/Unit",
-              render: (r: any) => formatQuantity(r.quantityPerUnit),
-            },
-            {
-              accessor: "unitCost",
-              title: "Unit Cost",
-              render: (r: any) => formatUSD(r.unitCost),
-            },
-          ]}
-          onActivate={(rec: any) => {
+          columns={
+            [
+              { accessor: "id", title: "ID", width: 70, sortable: true },
+              {
+                accessor: "assemblyId",
+                title: "Assembly",
+                render: (r: any) => r.assembly?.name || r.assemblyId,
+              },
+              {
+                accessor: "productId",
+                title: "Product",
+                render: (r: any) =>
+                  r.product?.name || r.product?.sku || r.productId,
+              },
+              { accessor: "activityUsed", title: "Activity" },
+              {
+                accessor: "quantityPerUnit",
+                title: "Qty/Unit",
+                render: (r: any) => formatQuantity(r.quantityPerUnit),
+              },
+              {
+                accessor: "unitCost",
+                title: "Unit Cost",
+                render: (r: any) => formatUSD(r.unitCost),
+              },
+            ] as any
+          }
+          onRowClick={(rec: any) => {
+            if (rec?.id != null) navigate(`/costings/${rec.id}`);
+          }}
+          onRowDoubleClick={(rec: any) => {
             if (rec?.id != null) navigate(`/costings/${rec.id}`);
           }}
         />

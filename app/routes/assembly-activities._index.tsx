@@ -16,7 +16,7 @@ import {
 import { Button, Group, Stack, Title, TextInput, Select } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import {
   idLinkColumn,
   nameOrFallbackColumn,
@@ -176,29 +176,33 @@ export default function AssemblyActivitiesIndexRoute() {
             </Button>
           </Group>
         </Form>
-        <NavDataTable
-          module="assembly-activities"
+        <VirtualizedNavDataTable
           records={rows as any}
-          columns={[
-            idLinkColumn("assembly-activities"),
-            nameOrFallbackColumn("name", "activity"),
-            simpleColumn("description", "Description"),
-            {
-              accessor: "assemblyId",
-              title: "Assembly",
-              render: (r: any) => r.assembly?.name || r.assemblyId,
-            },
-            {
-              accessor: "jobId",
-              title: "Job",
-              render: (r: any) => r.job?.name || r.jobId,
-            },
-            dateColumn("startTime", "Start", { withTime: true }),
-            dateColumn("endTime", "End", { withTime: true }),
-            simpleColumn("status", "Status"),
-            simpleColumn("notes", "Notes"),
-          ]}
-          onActivate={(rec: any) => {
+          columns={
+            [
+              idLinkColumn("assembly-activities"),
+              nameOrFallbackColumn("name", "activity"),
+              simpleColumn("description", "Description"),
+              {
+                accessor: "assemblyId",
+                title: "Assembly",
+                render: (r: any) => r.assembly?.name || r.assemblyId,
+              },
+              {
+                accessor: "jobId",
+                title: "Job",
+                render: (r: any) => r.job?.name || r.jobId,
+              },
+              dateColumn("startTime", "Start", { withTime: true }),
+              dateColumn("endTime", "End", { withTime: true }),
+              simpleColumn("status", "Status"),
+              simpleColumn("notes", "Notes"),
+            ] as any
+          }
+          onRowClick={(rec: any) => {
+            if (rec?.id != null) navigate(`/assembly-activities/${rec.id}`);
+          }}
+          onRowDoubleClick={(rec: any) => {
             if (rec?.id != null) navigate(`/assembly-activities/${rec.id}`);
           }}
         />

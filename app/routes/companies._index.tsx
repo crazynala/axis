@@ -15,7 +15,7 @@ import {
 import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
 import { BreadcrumbSet } from "../../packages/timber";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
 import { CompanyFindManagerNew } from "../components/CompanyFindManagerNew";
@@ -192,7 +192,7 @@ export default function CompaniesIndexRoute() {
   } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const fetching = nav.state !== "idle"; // only reflects URL changes; row fetches are separate
-  const { state, setIdList, addRows } = useRecordContext();
+  const { state, setIdList, addRows, currentId } = useRecordContext();
   const navigate = useNavigate();
   const [sp] = useSearchParams();
   // Seed/override RecordContext with loader-provided idList + initialRows so sorting/filtering take effect
@@ -302,11 +302,10 @@ export default function CompaniesIndexRoute() {
         <Title order={4} mb="sm">
           All Companies ({total})
         </Title>
-        <NavDataTable
-          module="companies"
+        <VirtualizedNavDataTable
           records={records as any}
+          currentId={currentId as any}
           columns={columns as any}
-          fetching={rowFetching}
           sortStatus={
             {
               columnAccessor: sp.get("sort") || "id",
@@ -322,12 +321,24 @@ export default function CompaniesIndexRoute() {
             next.set("dir", s.direction);
             navigate(`?${next.toString()}`);
           }}
-          onActivate={(rec: any) => {
-            if (rec?.id != null) window.location.href = `/companies/${rec.id}`;
+          onRowClick={(rec: any) => {
+            if (rec?.id != null) navigate(`/companies/${rec.id}`);
+          }}
+          onRowDoubleClick={(rec: any) => {
+            if (rec?.id != null) navigate(`/companies/${rec.id}`);
           }}
           onReachEnd={() => {
             if (!atEnd) requestMore();
           }}
+          footer={
+            atEnd ? (
+              <span style={{ fontSize: 12 }}>End of results ({total})</span>
+            ) : rowFetching ? (
+              <span>Loading…</span>
+            ) : (
+              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+            )
+          }
         />
       </section>
     </Stack>

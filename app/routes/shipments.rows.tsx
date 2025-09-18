@@ -4,12 +4,20 @@ import { prismaBase } from "../utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
-  const idsParam = url.searchParams.get("ids");
-  if (!idsParam) return json({ rows: [] });
-  const ids = idsParam
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n));
+  const rawIds = url.searchParams.getAll("ids");
+  if (!rawIds.length) return json({ rows: [] });
+  const flattened: string[] = [];
+  for (const part of rawIds) {
+    if (!part) continue;
+    for (const piece of part.split(",")) {
+      const trimmed = piece.trim();
+      if (trimmed) flattened.push(trimmed);
+    }
+  }
+  const ids = Array.from(new Set(flattened))
+    .slice(0, 500)
+    .map((v) => (v.match(/^\d+$/) ? Number(v) : v))
+    .filter((v) => typeof v === "number") as number[];
   if (!ids.length) return json({ rows: [] });
   const rows = await prismaBase.shipment.findMany({
     where: { id: { in: ids } },
@@ -28,8 +36,4 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const map = new Map(rows.map((r) => [r.id, r] as const));
   const ordered = ids.map((id) => map.get(id)).filter(Boolean);
   return json({ rows: ordered });
-}
-
-export default function ShipmentsRowsRoute() {
-  return null;
 }

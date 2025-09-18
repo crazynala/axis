@@ -22,7 +22,7 @@ import {
 } from "../find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import { prisma } from "../utils/prisma.server";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
 import { useEffect } from "react";
@@ -284,21 +284,29 @@ export default function PurchaseOrdersIndexRoute() {
           No purchase orders match your filters.
         </Text>
       )}
-      <NavDataTable
-        module="purchase-orders"
+      <VirtualizedNavDataTable
         records={records as any}
         columns={columns as any}
-        fetching={fetching}
         sortStatus={sortStatus}
         onSortStatusChange={onSortStatusChange}
-        onActivate={(rec: any) => {
-          if (rec?.id != null)
-            window.location.href = `/purchase-orders/${rec.id}`;
+        onRowClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/purchase-orders/${rec.id}`);
+        }}
+        onRowDoubleClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/purchase-orders/${rec.id}`);
         }}
         onReachEnd={() => {
           if (!atEnd) requestMore();
         }}
-        // Mantine DataTable sorting will be handled in a future pass by wiring sortStatus to URL
+        footer={
+          atEnd ? (
+            <span style={{ fontSize: 12 }}>End of results ({total})</span>
+          ) : fetching ? (
+            <span>Loading…</span>
+          ) : (
+            <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+          )
+        }
       />
     </Stack>
   );

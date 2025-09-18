@@ -19,6 +19,8 @@ interface HybridWindowOptions {
   debounceMs?: number;
   /** Hard cap on how many missing IDs to request in a single cycle */
   maxRequestIdsPerCycle?: number;
+  /** Visual-only: limits how many placeholder rows may be rendered; ignored by hook (handled by consumer) */
+  maxPlaceholders?: number;
 }
 
 export function useHybridWindow({
@@ -137,8 +139,20 @@ export function useHybridWindow({
             chunk[chunk.length - 1],
             `(${chunk.length})`
           );
-          const resp = await fetch(`${endpoint}?${query}`);
-          if (!resp.ok) throw new Error("Bad response");
+          const resp = await fetch(`${endpoint}?${query}`, {
+            credentials: "same-origin",
+            headers: { Accept: "application/json, */*" },
+          });
+          if (!resp.ok) {
+            throw new Error(`Bad response (${resp.status})`);
+          }
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("application/json")) {
+            const text = await resp.text();
+            throw new SyntaxError(
+              `Non-JSON response (${resp.status}): ${text.slice(0, 120)}`
+            );
+          }
           const data = await resp.json();
           const rows = Array.isArray(data?.rows) ? data.rows : data;
           console.debug("[useHybridWindow] rows received", rows.length);

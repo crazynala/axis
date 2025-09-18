@@ -67,6 +67,7 @@ import {
   IconFileDollar,
   IconTruck,
   IconCalendarDollar,
+  IconChartHistogram,
 } from "@tabler/icons-react";
 import { useFind } from "./find/FindContext";
 // import { prisma } from "./utils/prisma.server";
@@ -208,12 +209,10 @@ export default function App() {
     { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/shipments", icon: <IconTruck />, label: "Shipments" },
     { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
+    { to: "/analytics", icon: <IconChartHistogram />, label: "Analytics" },
     // Admin-only tools have moved under /admin
   ];
   const navBottomItems = [
-    { to: "/assembly", label: "Assembly" },
-    { to: "/assembly-activities", label: "Assembly Activities" },
-    { to: "/costings", label: "Costings" },
     {
       to: "/admin/value-lists/Category",
       icon: <IconSettings />,

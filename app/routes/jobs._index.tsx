@@ -12,7 +12,7 @@ import { prisma } from "../utils/prisma.server";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import * as jobDetail from "../formConfigs/jobDetail";
 import { JobFindModal } from "../components/JobFindModal";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
@@ -205,11 +205,9 @@ function JobsHybridTable({
     { accessor: "status", title: "Status", sortable: true },
   ];
   return (
-    <NavDataTable
-      module="jobs"
+    <VirtualizedNavDataTable
       records={records as any}
       columns={columns as any}
-      fetching={fetching}
       sortStatus={
         {
           columnAccessor: sp.get("sort") || "id",
@@ -228,9 +226,21 @@ function JobsHybridTable({
       onReachEnd={() => {
         if (!atEnd) requestMore();
       }}
-      onActivate={(rec: any) => {
-        if (rec?.id) window.location.href = `/jobs/${rec.id}`;
+      onRowClick={(rec: any) => {
+        if (rec?.id) navigate(`/jobs/${rec.id}`);
       }}
+      onRowDoubleClick={(rec: any) => {
+        if (rec?.id) navigate(`/jobs/${rec.id}`);
+      }}
+      footer={
+        atEnd ? (
+          <span style={{ fontSize: 12 }}>End of results ({idList.length})</span>
+        ) : fetching ? (
+          <span>Loading…</span>
+        ) : (
+          <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+        )
+      }
     />
   );
 }

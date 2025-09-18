@@ -21,9 +21,10 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../find/multiFind";
-import NavDataTable from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../record/useHybridWindow";
 import { useRecordContext } from "../record/RecordContext";
+import { useRecords } from "../record/RecordContext";
 import { Stack, Group, Title, Button, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
 import { formatUSD } from "../utils/format";
@@ -162,6 +163,7 @@ export default function ExpensesIndexRoute() {
   const { idList, idListComplete, initialRows, total, views, activeView } =
     useLoaderData<typeof loader>();
   const { setIdList, addRows } = useRecordContext();
+  const { currentId, setCurrentId } = useRecords();
   useEffect(() => {
     setIdList("expenses", idList, idListComplete);
     if (initialRows?.length)
@@ -232,11 +234,10 @@ export default function ExpensesIndexRoute() {
           </Tooltip>
         )}
       </Group>
-      <NavDataTable
-        module="expenses"
+      <VirtualizedNavDataTable
         records={records as any}
+        currentId={currentId as any}
         columns={columns as any}
-        fetching={fetching}
         sortStatus={
           {
             columnAccessor: sp.get("sort") || "id",
@@ -252,12 +253,22 @@ export default function ExpensesIndexRoute() {
           next.set("dir", s.direction);
           navigate(`?${next.toString()}`);
         }}
-        onActivate={(rec: any) => {
-          if (rec?.id != null) window.location.href = `/expenses/${rec.id}`;
+        onRowDoubleClick={(rec: any) => {
+          if (rec?.id != null) navigate(`/expenses/${rec.id}`);
         }}
+        onRowClick={(rec: any) => setCurrentId(rec?.id)}
         onReachEnd={() => {
           if (!atEnd) requestMore();
         }}
+        footer={
+          atEnd ? (
+            <span style={{ fontSize: 12 }}>End of results ({total})</span>
+          ) : fetching ? (
+            <span>Loading…</span>
+          ) : (
+            <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+          )
+        }
       />
     </Stack>
   );

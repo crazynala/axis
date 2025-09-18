@@ -17,7 +17,7 @@ import { Button, TextInput, Group, Stack, Title } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { useForm } from "react-hook-form";
 import { prisma } from "../utils/prisma.server";
-import { NavDataTable } from "../components/RefactoredNavDataTable";
+import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import {
   idLinkColumn,
   nameOrFallbackColumn,
@@ -120,16 +120,20 @@ export default function AssemblyIndexRoute() {
             </Button>
           </Group>
         </Form>
-        <NavDataTable
-          module="assembly"
+        <VirtualizedNavDataTable
           records={rows as any}
-          columns={[
-            idLinkColumn("assembly"),
-            nameOrFallbackColumn("name", "assembly"),
-            simpleColumn("status", "Status"),
-            simpleColumn("qtyOrdered", "# Ordered"),
-          ]}
-          onActivate={(rec: any) => {
+          columns={
+            [
+              idLinkColumn("assembly"),
+              nameOrFallbackColumn("name", "assembly"),
+              simpleColumn("status", "Status"),
+              simpleColumn("qtyOrdered", "# Ordered"),
+            ] as any
+          }
+          onRowClick={(rec: any) => {
+            if (rec?.id != null) navigate(`/assembly/${rec.id}`);
+          }}
+          onRowDoubleClick={(rec: any) => {
             if (rec?.id != null) navigate(`/assembly/${rec.id}`);
           }}
         />
