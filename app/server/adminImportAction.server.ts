@@ -99,6 +99,7 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     "import:purchase_orders": 140,
     "import:purchase_order_lines": 150,
     "import:expenses": 160,
+    "import:costings": 165,
     "import:invoices": 170,
     "import:invoice_lines": 180,
     "import:product_batches": 190,
@@ -106,7 +107,6 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     "import:product_movements": 210,
     "import:product_movement_lines": 220,
     "import:product_lines": 230,
-    "import:costings": 240,
   };
 
   const inferMode = (filename: string): string | null => {

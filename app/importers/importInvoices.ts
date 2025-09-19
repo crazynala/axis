@@ -54,15 +54,25 @@ export async function importInvoices(rows: any[]): Promise<ImportResult> {
         created += 1;
         break;
       } catch (e: any) {
+        const target = Array.isArray(e?.meta?.target)
+          ? e.meta.target
+          : typeof e?.meta?.target === "string"
+          ? [e.meta.target]
+          : [];
         if (
           e?.code === "P2002" &&
-          Array.isArray(e?.meta?.target) &&
-          e.meta.target.includes("invoiceCode") &&
+          (target.includes("invoiceCode") ||
+            String(e?.meta?.field_name || "").includes("invoiceCode")) &&
           attempt === 0
         ) {
           // Deduplicate invoiceCode by appending -dup or -dupN
           const base = (localData.invoiceCode || "").toString();
           if (base) {
+            console.log(
+              `[import:invoices] row #${
+                i + 1
+              } duplicate invoiceCode base="${base}" — generating unique candidate`
+            );
             let n = 1;
             let candidate = base + "-dup";
             while (
@@ -74,6 +84,11 @@ export async function importInvoices(rows: any[]): Promise<ImportResult> {
               candidate = base + `-dup${n}`;
               if (n > 50) break; // safety
             }
+            console.log(
+              `[import:invoices] row #${
+                i + 1
+              } retry with invoiceCode="${candidate}"`
+            );
             localData = { ...localData, invoiceCode: candidate };
             attempt++;
             continue; // retry once with new code
