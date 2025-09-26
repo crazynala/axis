@@ -69,6 +69,7 @@ export default function CompanyDetailRoute() {
   // Keyboard prev/next handled centrally in RecordProvider now; local buttons removed
 
   const form = useForm<{
+    id: number;
     name: string;
     notes: string;
     isCarrier: boolean;
@@ -78,6 +79,7 @@ export default function CompanyDetailRoute() {
     isActive: boolean;
   }>({
     defaultValues: {
+      id: company.id,
       name: company.name || "",
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,
@@ -88,9 +90,12 @@ export default function CompanyDetailRoute() {
     },
   });
 
+  console.log("!! Company form values", form.getValues());
+
   // Reset form when navigating to a different company via record browser
   useEffect(() => {
     form.reset({
+      id: company.id,
       name: company.name || "",
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,

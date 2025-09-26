@@ -6,6 +6,7 @@ import {
   Select,
   Group,
   SegmentedControl,
+  Checkbox,
   Indicator,
 } from "@mantine/core";
 import { useOptions } from "../options/OptionsContext";
@@ -183,16 +184,17 @@ export function renderField(
         );
       }
       return (
-        <SegmentedControl
-          fullWidth
-          data={[
-            { label: "Unset", value: "" },
-            { label: "Yes", value: "true" },
-            { label: "No", value: "false" },
-          ]}
-          value={value ?? ""}
-          onChange={(v) => form.setValue(field.name as any, v)}
-        />
+        <Checkbox label={field.label} {...form.register(field.name as any)} />
+        // <SegmentedControl
+        //   fullWidth
+        //   data={[
+        //     { label: "Unset", value: "" },
+        //     { label: "Yes", value: "true" },
+        //     { label: "No", value: "false" },
+        //   ]}
+        //   value={value ?? ""}
+        //   onChange={(v) => form.setValue(field.name as any, v)}
+        // />
       );
     }
     case "numberRange": {

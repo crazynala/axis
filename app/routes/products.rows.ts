@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { prismaBase, runWithDbActivity } from "../utils/prisma.server";
+import { prisma, prismaBase, runWithDbActivity } from "../utils/prisma.server";
 
 // Batch hydration for products: sparse detail fields for table listing
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -29,7 +29,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         ids.length
       );
     }
-    const rows = await prismaBase.product.findMany({
+    const baseRows = await prismaBase.product.findMany({
       where: { id: { in: ids } },
       orderBy: { id: "asc" },
       select: {
@@ -39,11 +39,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
         type: true,
         costPrice: true,
         manualSalePrice: true,
-        autoSalePrice: true,
         stockTrackingEnabled: true,
         batchTrackingEnabled: true,
       },
     });
+    // Attach dynamic computed sell price (manual overrides cost-with-tax)
+    const rows = await Promise.all(
+      baseRows.map(async (r) => {
+        const autoSellPrice = await (prisma as any).product.getSellPrice(
+          { id: r.id },
+          null
+        );
+        return { ...r, autoSellPrice } as any;
+      })
+    );
     return json({ rows });
   });
 }

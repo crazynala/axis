@@ -367,7 +367,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // numerics
     num("costPrice");
     num("manualSalePrice");
-    num("autoSalePrice");
     num("purchaseTaxId");
     num("categoryId");
     num("customerId");

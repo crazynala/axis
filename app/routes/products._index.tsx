@@ -29,6 +29,7 @@ import {
 } from "react-datasheet-grid";
 import "react-datasheet-grid/dist/style.css";
 import { render } from "@react-pdf/renderer";
+import { formatUSD } from "~/utils/format";
 
 export const meta = () => [{ title: "Products" }];
 
@@ -225,9 +226,25 @@ export default function ProductsIndexRoute() {
             { accessor: "sku", title: "SKU", sortable: true },
             { accessor: "name", title: "Name", sortable: true },
             { accessor: "type", title: "Type", sortable: true },
-            { accessor: "costPrice", title: "Cost", sortable: true },
-            { accessor: "manualSalePrice", title: "Manual", sortable: true },
-            { accessor: "autoSalePrice", title: "Auto", sortable: true },
+            {
+              accessor: "costPrice",
+              title: "Cost",
+              sortable: true,
+              render: (r: any) => formatUSD(r.costPrice),
+            },
+            {
+              accessor: "manualSalePrice",
+              title: "Manual",
+              sortable: true,
+              render: (r: any) => formatUSD(r.manualSalePrice),
+            },
+            // Auto sell price is computed at read-time via Prisma helpers and hydrated into rows
+            {
+              accessor: "autoSellPrice",
+              title: "Auto",
+              sortable: false,
+              render: (r: any) => formatUSD(r.autoSellPrice),
+            },
             {
               accessor: "stockTrackingEnabled",
               title: "Stock",

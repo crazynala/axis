@@ -456,6 +456,112 @@ export const prisma: PrismaClient = (base as any).$extends({
       },
     },
   },
+  model: {
+    product: {
+      async getCost(this: any, productWhere: any, qty?: number | null) {
+        const p = await base.product.findUnique({
+          where: productWhere,
+          select: {
+            id: true,
+            costPrice: true,
+            defaultCostQty: true,
+            purchaseTaxId: true,
+            supplierId: true,
+            costGroupId: true,
+          },
+        });
+        if (!p) return null;
+        const q =
+          typeof qty === "number" && qty > 0 ? qty : p.defaultCostQty ?? 60;
+        // Prefer product-specific ranges
+        const range = await base.productCostRange.findFirst({
+          where: {
+            productId: p.id,
+            OR: [
+              { rangeFrom: null, rangeTo: null },
+              { rangeFrom: { lte: q }, rangeTo: { gte: q } },
+              { rangeFrom: { lte: q }, rangeTo: null },
+              { rangeFrom: null, rangeTo: { gte: q } },
+            ],
+          },
+          orderBy: [{ rangeFrom: "asc" }, { rangeTo: "asc" }, { id: "asc" }],
+        });
+        if (range?.costPrice != null) return range.costPrice;
+        // Next: product-assigned cost group (preferred over supplier-wide default)
+        if (p.costGroupId != null) {
+          const group = await base.productCostGroup.findUnique({
+            where: { id: p.costGroupId },
+          });
+          if (group?.costPrice != null) return group.costPrice;
+          const gRange = await base.productCostRange.findFirst({
+            where: {
+              costGroupId: p.costGroupId,
+              OR: [
+                { rangeFrom: null, rangeTo: null },
+                { rangeFrom: { lte: q }, rangeTo: { gte: q } },
+                { rangeFrom: { lte: q }, rangeTo: null },
+                { rangeFrom: null, rangeTo: { gte: q } },
+              ],
+            },
+            orderBy: [{ rangeFrom: "asc" }, { rangeTo: "asc" }, { id: "asc" }],
+          });
+          if (gRange?.costPrice != null) return gRange.costPrice;
+        }
+        // Finally: supplier-wide cost group defaults
+        if (p.supplierId != null) {
+          const group = await base.productCostGroup.findFirst({
+            where: { supplierId: p.supplierId },
+            orderBy: { id: "asc" },
+          });
+          if (group?.costPrice != null) return group.costPrice;
+          if (group) {
+            const gRange = await base.productCostRange.findFirst({
+              where: {
+                costGroupId: group.id,
+                OR: [
+                  { rangeFrom: null, rangeTo: null },
+                  { rangeFrom: { lte: q }, rangeTo: { gte: q } },
+                  { rangeFrom: { lte: q }, rangeTo: null },
+                  { rangeFrom: null, rangeTo: { gte: q } },
+                ],
+              },
+              orderBy: [
+                { rangeFrom: "asc" },
+                { rangeTo: "asc" },
+                { id: "asc" },
+              ],
+            });
+            if (gRange?.costPrice != null) return gRange.costPrice;
+          }
+        }
+        return p.costPrice ?? null;
+      },
+      async getCostWithTax(this: any, productWhere: any, qty?: number | null) {
+        const cost = await (prisma as any).product.getCost(productWhere, qty);
+        if (cost == null) return null;
+        const p = await base.product.findUnique({
+          where: productWhere,
+          select: { purchaseTaxId: true },
+        });
+        if (!p?.purchaseTaxId) return cost;
+        const tax = await base.valueList.findUnique({
+          where: { id: p.purchaseTaxId },
+          select: { value: true },
+        });
+        const rate = Number(tax?.value ?? 0);
+        return Math.round(cost * (1 + rate) * 100) / 100;
+      },
+      async getSellPrice(this: any, productWhere: any, qty?: number | null) {
+        // Use manual price if defined; otherwise cost with tax
+        const p = await base.product.findUnique({
+          where: productWhere,
+          select: { manualSalePrice: true },
+        });
+        if (p?.manualSalePrice != null) return p.manualSalePrice;
+        return await (prisma as any).product.getCostWithTax(productWhere, qty);
+      },
+    },
+  },
 });
 
 // --- Domain helpers (exports used by API routes) ---

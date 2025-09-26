@@ -15,6 +15,12 @@ This document outlines the schema conventions, key models, and decisions in `pri
   - `sku` unique; importer enforces uniqueness with de-duplication suffix when conflicts appear.
   - `variantSetId` optional; linked if the variant set exists.
   - Relations to `Company` (supplier/customer), and to `ValueList` for currency/tax/category.
+  - Pricing: removed `autoSalePrice`; added `defaultCostQty` (default 60). Added `costGroupId` relation to `ProductCostGroup`.
+    - Auto sell price is computed via Prisma helpers at read-time with precedence:
+      1. Product-specific `ProductCostRange` by qty
+      2. Product-assigned `ProductCostGroup` (default `costPrice` or group `ProductCostRange` by qty)
+      3. Supplier-wide `ProductCostGroup` (first by supplier) and its ranges
+      4. Fallback to `Product.costPrice`
 
 - Company
 
@@ -25,6 +31,18 @@ This document outlines the schema conventions, key models, and decisions in `pri
   - Generic list table with `type`, `code`, `label`, `value`.
   - Used for product currency, tax, category relations.
   - Invoices also reference `taxCode` via relation. Purchase Order Lines do not (see below).
+
+- ProductCostGroup / ProductCostRange (pricing)
+
+  - `ProductCostGroup`: optional supplier-scoped defaults with `currency`, `costPrice`, and `sellPriceManual`. Back-relation to ranges.
+  - `ProductCostRange`: tiered pricing by quantity with exactly one linkage: either `productId` or `costGroupId`. Fields: `rangeFrom`, `rangeTo`, `costPrice`, `sellPriceManual`.
+  - App/UI enforces non-overlapping ranges per linkage; importers also validate and log.
+
+  Prisma extension helpers (on `product`):
+
+  - `getCost(where, qty?)`: choose product-specific range by qty, or supplier group default/range, else product.costPrice. Uses `defaultCostQty` if qty not provided.
+  - `getCostWithTax(where, qty?)`: applies purchase tax (ValueList.value) to cost.
+  - `getSellPrice(where, qty?)`: returns `manualSalePrice` when present; otherwise uses `getCostWithTax`.
 
 - Shipment and ShipmentLine
 

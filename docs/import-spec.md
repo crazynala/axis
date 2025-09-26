@@ -87,7 +87,8 @@ Below are the key fields handled per mode. Column names are matched loosely usin
   - `name`: from `name|product_name|item name|description`.
   - `type`: maps to enum (CMT/Fabric/Finished/Trim/Service).
   - `costPrice`: from `Price|price|Cost|cost|cost price|costprice|unit cost`.
-  - `manualSalePrice`, `autoSalePrice` as before.
+  - `manualSalePrice`.
+  - `defaultCostQty` optional; defaults to 60 when omitted.
   - Flags: `stockTrackingEnabled`, `batchTrackingEnabled`.
   - `supplierId`: from numeric `a_CompanyID` or by `Supplier` name match.
   - `purchaseTaxId`: resolved from string `purchaseTaxCode|DefaultTaxCodePurchase|purchaseTaxID` by matching ValueList where `type="Tax"` on `code` or `label` (case-insensitive) or numeric id.
@@ -95,6 +96,19 @@ Below are the key fields handled per mode. Column names are matched loosely usin
   - `variantSetId`: linked if the set id exists.
 - Behavior: enforce SKU uniqueness; prefer numeric id for stable linkage.
 - Progress: logs every 100 rows with counts (created/updated/skipped/renamedSku) and final summary including variant set and supplier linkage stats.
+
+Notes on pricing:
+
+- The `autoSalePrice` column was removed from the database. The UI now displays a computed `autoSellPrice` derived at read-time using Prisma extension helpers:
+  - Prefer `manualSalePrice` when present.
+  - Otherwise, compute cost for the effective quantity (defaults to `defaultCostQty`) using `ProductCostRange` for the product if available, else a supplier-wide `ProductCostGroup`/`ProductCostRange`, else fall back to `costPrice`.
+  - Apply purchase tax to get `costWithTax` and use that as the auto sell price.
+  - Import does not accept `autoSalePrice` anymore.
+
+Related pricing models added:
+
+- `ProductCostGroup` (supplier-scoped default cost settings; optional `currency`, `costPrice`, `sellPriceManual`).
+- `ProductCostRange` (tiered pricing by `rangeFrom`/`rangeTo` bound to either a specific `productId` or a `costGroupId`). Exactly one of these linkages is required per row.
 
 ### Variant Sets (`import:variant_sets`)
 

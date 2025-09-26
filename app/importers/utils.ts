@@ -11,8 +11,7 @@ export const normalizeKey = (s: string) =>
   String(s || "")
     .toLowerCase()
     .replace(/[\s|]+/g, "|")
-    .replace(/\|+/g, "|")
-    .replace(/__/g, "__");
+    .replace(/\|+/g, "|");
 
 export const pick = (row: any, names: string[]) => {
   const map: Record<string, any> = {};

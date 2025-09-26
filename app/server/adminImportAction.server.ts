@@ -31,6 +31,8 @@ import { importExpenses } from "../importers/importExpenses";
 import { importCostings } from "../importers/importCostings";
 import { importProductLocations } from "../importers/importProductLocations";
 import { runImporter } from "../utils/prisma.server";
+import { importProductCostGroups } from "../importers/importProductCostGroups";
+import { importProductCostRanges } from "../importers/importProductCostRanges";
 
 export async function adminImportAction({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_composeUploadHandlers(
@@ -90,7 +92,9 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     "import:addresses": 50,
     "import:contacts": 60,
     "import:locations": 70,
+    "import:product_cost_groups": 75,
     "import:products": 80,
+    "import:product_cost_ranges": 85,
     "import:jobs": 90,
     "import:assemblies": 100,
     "import:assembly_activities": 110,
@@ -111,6 +115,10 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
 
   const inferMode = (filename: string): string | null => {
     const n = filename.toLowerCase();
+    if (n.startsWith("product_cost_groups") || n.includes("cost_groups"))
+      return "import:product_cost_groups";
+    if (n.startsWith("product_cost_ranges") || n.includes("cost_ranges"))
+      return "import:product_cost_ranges";
     if (n.includes("contact")) return "import:contacts";
     if (n.includes("dhl")) return "import:dhl_report_lines";
     if (n.includes("forex") || n.includes("fx")) return "import:forex_lines";
@@ -332,6 +340,20 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     }
     if (finalMode === "import:product_lines") {
       const r = await runImporter(finalMode, () => importProductLines(rows));
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
+    if (finalMode === "import:product_cost_groups") {
+      const r = await runImporter(finalMode, () =>
+        importProductCostGroups(rows)
+      );
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
+    if (finalMode === "import:product_cost_ranges") {
+      const r = await runImporter(finalMode, () =>
+        importProductCostRanges(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }

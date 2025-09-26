@@ -14,7 +14,7 @@ import { inspect } from "node:util";
 
 export async function loader(args: LoaderFunctionArgs) {
   const [
-    { runWithDbActivity, prismaBase },
+    { runWithDbActivity, prismaBase, prisma },
     { buildPrismaArgs, parseTableParams },
     { listViews },
   ] = await Promise.all([
@@ -268,7 +268,7 @@ export async function loader(args: LoaderFunctionArgs) {
     const initialIds = idList.slice(0, INITIAL_COUNT);
     let initialRows: any[] = [];
     if (initialIds.length) {
-      initialRows = await prismaBase.product.findMany({
+      const baseRows = await prismaBase.product.findMany({
         where: { id: { in: initialIds } },
         orderBy: { id: "asc" },
         select: {
@@ -278,11 +278,20 @@ export async function loader(args: LoaderFunctionArgs) {
           type: true,
           costPrice: true,
           manualSalePrice: true,
-          autoSalePrice: true,
           stockTrackingEnabled: true,
           batchTrackingEnabled: true,
         },
       });
+      const hydrated = await Promise.all(
+        baseRows.map(async (r) => {
+          const autoSellPrice = await (prisma as any).product.getSellPrice(
+            { id: r.id },
+            null
+          );
+          return { ...r, autoSellPrice } as any;
+        })
+      );
+      initialRows = hydrated;
     }
     return json({
       idList,

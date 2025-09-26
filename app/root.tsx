@@ -111,7 +111,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export function meta() {
   return [
-    { title: "ERP Remix" },
+    { title: "Holy shit! It's AXIS" },
     { name: "viewport", content: "width=device-width, initial-scale=1" },
   ];
 }

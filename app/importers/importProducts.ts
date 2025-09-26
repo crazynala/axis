@@ -13,23 +13,41 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     linkedSupplier = 0,
     missingSupplier = 0,
     linkedCustomer = 0,
-    missingCustomer = 0;
+    missingCustomer = 0,
+    // new: track cost group linkage
+    linkedCostGroup = 0,
+    missingCostGroup = 0,
+    appliedForeignCost = 0,
+    skippedForeignDueToManual = 0;
   const errors: any[] = [];
-
-  const getUniqueSku = async (
+  const toCreate: any[] = [];
+  // Seed a set of used SKUs from the database to ensure per-batch uniqueness
+  const usedSkus = new Set<string>();
+  {
+    const existingSkus = await prisma.product.findMany({
+      select: { sku: true },
+      where: { sku: { not: null } },
+    });
+    for (const r of existingSkus) {
+      const s = (r.sku || "").trim();
+      if (s) usedSkus.add(s);
+    }
+  }
+  const getUniqueSku = (
     desired: string | null,
-    currentId?: number | null
-  ): Promise<string | null> => {
+    currentSku?: string | null
+  ): string | null => {
     const base = (desired || "").trim();
     if (!base) return null;
     let candidate = base;
     let n = 1;
     while (true) {
-      const clash = await prisma.product.findFirst({
-        where: { sku: candidate },
-      });
-      if (!clash || (currentId != null && clash.id === currentId))
+      const available =
+        candidate === (currentSku || null) || !usedSkus.has(candidate);
+      if (available) {
+        usedSkus.add(candidate);
         return candidate;
+      }
       n += 1;
       candidate = n === 2 ? `${base}-dup` : `${base}-dup${n - 1}`;
     }
@@ -81,54 +99,72 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     const type =
       allowedTypes.find((t) => t.toLowerCase() === typeRaw.toLowerCase()) ||
       (typeRaw.toLowerCase() === "finished goods" ? "Finished" : null);
-    const costPrice = asNum(
+    // Base cost (may be overridden by foreign pricing rules below)
+    const costPriceBase = asNum(pick(r, ["price|cost"])) as number | null;
+    // Cost Group from FM linked table column
+    const costGroupIdRaw = asNum(
       pick(r, [
-        "Price",
-        "price",
-        "Cost",
-        "cost",
-        "costprice",
-        "cost price",
-        "cost_price",
-        "unit cost",
+        "Products_ProductSuppliers|Default_PRODUCTCOSTGROUPS::a__Serial",
       ])
     ) as number | null;
+    let resolvedCostGroupId: number | null = null;
+    if (costGroupIdRaw != null) {
+      const g = await prisma.productCostGroup.findUnique({
+        where: { id: costGroupIdRaw },
+      });
+      if (g) {
+        resolvedCostGroupId = g.id;
+        linkedCostGroup++;
+      } else {
+        missingCostGroup++;
+      }
+    }
+
+    // Foreign pricing inputs from ProductSuppliers row
+    const foreignCost = asNum(
+      pick(r, ["Products_PRODUCTSUPPLIERS::Price|Cost|Foreign"]) as any
+    ) as number | null;
+    const foreignCurrencyRaw = (
+      pick(r, ["Products_PRODUCTSUPPLIERS::Currency"]) ?? ""
+    )
+      .toString()
+      .trim();
+    const foreignCurrency = foreignCurrencyRaw
+      ? foreignCurrencyRaw.toUpperCase()
+      : "";
+    const manualForexOverride = asNum(
+      pick(r, ["Products_PRODUCTSUPPLIERS::Price|Cost|Manual"]) as any
+    ) as number | null;
+    // Derived cost/currency with rules:
+    // - If foreignCost and currency exist and currency != USD and (no manual override OR currency == EUR),
+    //   then set costPrice to foreignCost and costCurrency to currency.
+    // - Prefer manual override except when currency is EUR (ignore override for EUR).
+    let costPrice: number | null = costPriceBase;
+    let costCurrency: string | null = null;
+    if (
+      foreignCost != null &&
+      foreignCurrency &&
+      foreignCurrency !== "USD" &&
+      (manualForexOverride == null || foreignCurrency === "EUR")
+    ) {
+      costPrice = foreignCost;
+      costCurrency = foreignCurrency;
+      appliedForeignCost++;
+    } else if (
+      foreignCost != null &&
+      foreignCurrency &&
+      foreignCurrency !== "USD" &&
+      manualForexOverride != null &&
+      foreignCurrency !== "EUR"
+    ) {
+      // Explicitly recorded skip: manual override present for non-EUR => do not use foreign cost
+      skippedForeignDueToManual++;
+    }
     const manualSalePrice = asNum(
-      pick(r, [
-        "manualsaleprice",
-        "manual sale price",
-        "manual_sale_price",
-        "manual",
-        "manual price",
-      ])
+      pick(r, ["Products_PRODUCTPRICES::Price_Manual"])
     ) as number | null;
-    const autoSalePrice = asNum(
-      pick(r, [
-        "autosaleprice",
-        "auto sale price",
-        "auto_sale_price",
-        "auto",
-        "auto price",
-      ])
-    ) as number | null;
-    const stockTrackingEnabled = !!asBool(
-      pick(r, [
-        "stocktrackingenabled",
-        "stock tracking enabled",
-        "stock_tracking_enabled",
-        "stock tracking",
-        "stock",
-      ])
-    );
-    const batchTrackingEnabled = !!asBool(
-      pick(r, [
-        "batchtrackingenabled",
-        "batch tracking enabled",
-        "batch_tracking_enabled",
-        "batch tracking",
-        "batch",
-      ])
-    );
+    const stockTrackingEnabled = !!asBool(pick(r, ["trackstock|flag"]));
+    const batchTrackingEnabled = !!asBool(pick(r, ["trackstockbatches|flag"]));
     const variantSetIdVal = asNum(
       pick(r, [
         "a__VariantSetID",
@@ -267,15 +303,15 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
       const existing = await prisma.product.findUnique({
         where: { id: idNum },
       });
-      const uniqueSku = await getUniqueSku(sku, existing?.id ?? null);
+      const uniqueSku = getUniqueSku(sku, existing?.sku ?? null);
       if (uniqueSku !== (sku ?? null)) skuRenamed++;
       const data: any = {
         sku: uniqueSku,
         name,
         type: type as any,
         costPrice,
+        ...(costCurrency ? { costCurrency } : {}),
         manualSalePrice,
-        autoSalePrice,
         stockTrackingEnabled,
         batchTrackingEnabled,
         ...(resolvedVariantSetId != null
@@ -294,15 +330,30 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
         ...(resolvedCategoryId != null
           ? { categoryId: resolvedCategoryId }
           : {}),
+        ...(resolvedCostGroupId != null
+          ? { costGroupId: resolvedCostGroupId }
+          : {}),
       };
       if (existing) {
+        // console.log(`[import] products update id=${idNum} sku=${uniqueSku} name=${name} type=${type} costPrice=${costPrice} costCurrency=${costCurrency}`);
         await prisma.product.update({ where: { id: existing.id }, data });
         updated++;
       } else {
-        await prisma.product.create({ data: { id: idNum, ...data } as any });
-        created++;
+        // console.log("[import] products create", { idNum, ...data });
+        toCreate.push({ id: idNum, ...data });
       }
     } catch (e: any) {
+      // Minimal: log thrown errors with useful context
+      console.error("[import] products ERROR", {
+        index: i,
+        id: idNum,
+        sku,
+        type,
+        code: e?.code,
+        message: e?.message,
+        meta: e?.meta,
+      });
+      if (e?.stack) console.error(e.stack);
       errors.push({
         index: i,
         id: idNum,
@@ -315,14 +366,31 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
       console.log(
         `[import] products progress ${i + 1}/${
           rows.length
-        } created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} errors=${
+        } created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} linkedCostGroup=${linkedCostGroup} missingCostGroup=${missingCostGroup} appliedForeignCost=${appliedForeignCost} skippedForeignDueToManual=${skippedForeignDueToManual} errors=${
           errors.length
         }`
       );
     }
   }
+  if (toCreate.length) {
+    try {
+      const res = await prisma.product.createMany({
+        data: toCreate as any[],
+        skipDuplicates: true,
+      });
+      created += res.count;
+    } catch (e: any) {
+      errors.push({
+        index: -1,
+        id: null,
+        code: e?.code,
+        message: e?.message,
+        note: `createMany failed for ${toCreate.length} products`,
+      });
+    }
+  }
   console.log(
-    `[import] products complete total=${rows.length} created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} missingVariantSet=${missingVariantSet} linkedVariantSet=${linkedVariantSet} supplierLinked=${linkedSupplier} supplierMissing=${missingSupplier} customerLinked=${linkedCustomer} customerMissing=${missingCustomer} errors=${errors.length}`
+    `[import] products complete total=${rows.length} created=${created} updated=${updated} skipped=${skippedNoId} renamedSku=${skuRenamed} missingVariantSet=${missingVariantSet} linkedVariantSet=${linkedVariantSet} supplierLinked=${linkedSupplier} supplierMissing=${missingSupplier} customerLinked=${linkedCustomer} customerMissing=${missingCustomer} linkedCostGroup=${linkedCostGroup} missingCostGroup=${missingCostGroup} appliedForeignCost=${appliedForeignCost} skippedForeignDueToManual=${skippedForeignDueToManual} errors=${errors.length}`
   );
   if (errors.length) {
     const grouped: Record<

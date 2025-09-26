@@ -7,6 +7,7 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
     updated = 0,
     skipped = 0;
   const errors: any[] = [];
+  const toCreate: any[] = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const idNum = asNum(pick(r, ["a__Serial"])) as number | null;
@@ -44,7 +45,6 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
       pick(r, ["Record_ModifiedTimestamp"])
     ) as Date | null;
     const type = flagSupplier ? "vendor" : flagCustomer ? "customer" : "other";
-    const isActive = flagInactive ? false : true;
     const data: any = {
       name,
       email,
@@ -64,7 +64,6 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
         ]
           .filter(Boolean)
           .join(" | ") || null,
-      isActive,
       isCarrier: flagCarrier || null,
       isCustomer: flagCustomer || null,
       isSupplier: flagSupplier || null,
@@ -85,10 +84,9 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
         await prisma.company.update({ where: { id: existing.id }, data });
         updated++;
       } else {
-        if (idNum != null)
-          await prisma.company.create({ data: { id: idNum, ...data } as any });
-        else await prisma.company.create({ data });
-        created++;
+        // Stage for batch insert via createMany to allow explicit ids on autoincrement column
+        if (idNum != null) toCreate.push({ id: idNum, ...data });
+        else toCreate.push({ ...data });
       }
     } catch (e: any) {
       const log = {
@@ -100,6 +98,24 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
       };
       errors.push(log);
       // per-row error suppressed; consolidated summary will report
+    }
+  }
+  // Perform batch create for new companies
+  if (toCreate.length) {
+    try {
+      const res = await prisma.company.createMany({
+        data: toCreate as any[],
+        skipDuplicates: true,
+      });
+      created += res.count;
+    } catch (e: any) {
+      errors.push({
+        index: -1,
+        id: null,
+        code: e?.code,
+        message: e?.message,
+        note: `createMany failed for ${toCreate.length} records`,
+      });
     }
   }
   if (errors.length) {

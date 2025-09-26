@@ -27,11 +27,10 @@ export const companyMainFields: FieldConfig[] = [
   },
   {
     name: "isInactive",
-    label: "Inactive",
+    label: "Archived",
     widget: "triBool",
     findOp: "equals",
   },
-  { name: "isActive", label: "Active", widget: "triBool", findOp: "equals" },
 ];
 
 export function allCompanyFindFields() {

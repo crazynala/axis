@@ -3,12 +3,12 @@ generator client {
 }
 
 model JobTag {
-    id    Int           @id @default(autoincrement())
+    id    Int @id @default(autoincrement())
     jobId Int
     tagId Int
 
-    job Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
-    tag TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+    job Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+    tag TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
     @@unique([jobId, tagId])
     @@index([tagId])
@@ -20,12 +20,12 @@ datasource db {
 }
 
 model AssemblyTag {
-    id         Int           @id @default(autoincrement())
+    id         Int @id @default(autoincrement())
     assemblyId Int
     tagId      Int
 
-    assembly Assembly        @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
-    tag      TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+    assembly Assembly      @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+    tag      TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
     @@unique([assemblyId, tagId])
     @@index([tagId])
@@ -37,12 +37,12 @@ enum ColorScheme {
 }
 
 model CostingTag {
-    id        Int           @id @default(autoincrement())
+    id        Int @id @default(autoincrement())
     costingId Int
     tagId     Int
 
-    costing Costing         @relation(fields: [costingId], references: [id], onDelete: Cascade)
-    tag     TagDefinition   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+    costing Costing       @relation(fields: [costingId], references: [id], onDelete: Cascade)
+    tag     TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
     @@unique([costingId, tagId])
     @@index([tagId])
@@ -57,12 +57,12 @@ enum ProductType {
 }
 
 model ShipmentTag {
-    id         Int           @id @default(autoincrement())
+    id         Int @id @default(autoincrement())
     shipmentId Int
     tagId      Int
 
-    shipment Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-    tag      TagDefinition  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+    shipment Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+    tag      TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
     @@unique([shipmentId, tagId])
     @@index([tagId])
@@ -75,7 +75,7 @@ enum CompanyType {
 }
 
 model PurchaseOrderTag {
-    id              Int           @id @default(autoincrement())
+    id              Int @id @default(autoincrement())
     purchaseOrderId Int
     tagId           Int
 
@@ -98,15 +98,15 @@ enum TagScope {
 }
 
 model TagDefinition {
-    id        Int       @id @default(autoincrement())
+    id        Int      @id @default(autoincrement())
     name      String
     scope     TagScope
     ownerId   Int?
     color     String?
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 
-    owner     User?     @relation(fields: [ownerId], references: [id])
+    owner User? @relation(fields: [ownerId], references: [id])
 
     // joins
     productTags       ProductTag[]
@@ -128,13 +128,13 @@ model Product {
     supplierId           Int?
     customerId           Int?
     costPrice            Float?
-    currencyId           Int?
+    costCurrency         String?               @default("USD")
     purchaseTaxId        Int?
     categoryId           Int?
     subCategory          String?
     pricingGroupId       Int?
     manualSalePrice      Float?
-    autoSalePrice        Float?
+    defaultCostQty       Int                   @default(60)
     variantSetId         Int?
     stockTrackingEnabled Boolean               @default(false)
     batchTrackingEnabled Boolean               @default(false)
@@ -142,10 +142,12 @@ model Product {
     notes                String?
     supplier             Company?              @relation("Supplier", fields: [supplierId], references: [id])
     customer             Company?              @relation("Customer", fields: [customerId], references: [id])
-    currency             ValueList?            @relation("Currency", fields: [currencyId], references: [id])
     purchaseTax          ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
     category             ValueList?            @relation("Category", fields: [categoryId], references: [id])
     pricingGroup         SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
+    // Optional direct link to a Product Cost Group for pricing defaults
+    costGroupId          Int?
+    costGroup            ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
     variantSet           VariantSet?           @relation(fields: [variantSetId], references: [id])
     productLines         ProductLine[]         @relation("ParentProduct")
     batches              Batch[]
@@ -161,6 +163,8 @@ model Product {
     purchaseOrderLines   PurchaseOrderLine[]
     // Back-relations: Tags
     productTags          ProductTag[]
+    // Back-relations: Cost ranges (per-product tiered costs)
+    productCostRanges    ProductCostRange[]
     // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
     // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
@@ -173,13 +177,13 @@ model Product {
 
 // Join tables for tags
 model ProductTag {
-    id        Int           @id @default(autoincrement())
+    id        Int      @id @default(autoincrement())
     productId Int
     tagId     Int
-    createdAt DateTime      @default(now())
+    createdAt DateTime @default(now())
 
-    product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-    tag       TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
+    product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+    tag     TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
     @@unique([productId, tagId])
     @@index([tagId])
@@ -197,7 +201,7 @@ model Company {
     email                     String?
     website                   String?
     notes                     String?
-    isActive                  Boolean?
+    // isActive                  Boolean?
     isCarrier                 Boolean?
     isCustomer                Boolean?
     isSupplier                Boolean?
@@ -216,6 +220,8 @@ model Company {
     // Back-relations: Purchase Orders
     purchaseOrders            PurchaseOrder[]
     purchaseOrdersAsConsignee PurchaseOrder[]        @relation("POConsignee")
+    // Back-relations: Product Cost Groups
+    productCostGroups         ProductCostGroup[]
     // Metadata
     createdBy                 String?
     modifiedBy                String?
@@ -257,7 +263,6 @@ model ValueList {
     label               String?
     value               Float?
     type                String?
-    productsCurrency    Product[]     @relation("Currency")
     productsTax         Product[]     @relation("Tax")
     productsCategory    Product[]     @relation("Category")
     // Back-relations
@@ -861,4 +866,48 @@ model PurchaseOrderLine {
     assembly        Assembly?      @relation(fields: [assemblyId], references: [id])
     product         Product?       @relation(fields: [productId], references: [id])
     // Removed: relation to ValueList for tax code; use string taxCode and map via (type, code) when needed
+}
+
+// --- Product Cost Pricing ---
+
+model ProductCostGroup {
+    id              Int                @id @default(autoincrement())
+    supplierId      Int?
+    currency        String?
+    name            String?
+    costPrice       Float?
+    sellPriceManual Float?
+    supplier        Company?           @relation(fields: [supplierId], references: [id])
+    // Back-relations: Cost ranges belonging to this group
+    costRanges      ProductCostRange[]
+    // Back-relations: Products directly assigned to this group
+    products        Product[]
+    // Metadata
+    createdBy       String?
+    modifiedBy      String?
+    createdAt       DateTime?          @default(now())
+    updatedAt       DateTime?          @updatedAt
+
+    @@index([supplierId])
+}
+
+model ProductCostRange {
+    id              Int               @id @default(autoincrement())
+    productId       Int?
+    costGroupId     Int?
+    costPrice       Float?
+    sellPriceManual Float?
+    rangeFrom       Int?
+    rangeTo         Int?
+    product         Product?          @relation(fields: [productId], references: [id])
+    costGroup       ProductCostGroup? @relation(fields: [costGroupId], references: [id])
+    // Metadata
+    createdBy       String?
+    modifiedBy      String?
+    createdAt       DateTime?         @default(now())
+    updatedAt       DateTime?         @updatedAt
+
+    // Note: Exactly one of productId or costGroupId should be set; invariant enforced in application/import logic
+    @@index([productId])
+    @@index([costGroupId])
 }
