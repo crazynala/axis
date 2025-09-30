@@ -13,18 +13,18 @@ import {
 import { prisma } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
-import { ExpenseFindManager } from "../components/ExpenseFindManager";
+import { ExpenseFindManager } from "~/modules/expense/findify/ExpenseFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../record/useHybridWindow";
-import { useRecordContext } from "../record/RecordContext";
-import { useRecords } from "../record/RecordContext";
+import { useHybridWindow } from "../base/record/useHybridWindow";
+import { useRecordContext } from "../base/record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 import { Stack, Group, Title, Button, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
 import { formatUSD } from "../utils/format";

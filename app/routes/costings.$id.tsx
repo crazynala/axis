@@ -17,7 +17,7 @@ import {
 } from "@mantine/core";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { useEffect } from "react";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [

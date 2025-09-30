@@ -34,7 +34,7 @@ import {
   Paper,
 } from "@mantine/core";
 import { MantineProvider, createTheme, Input, rem, em } from "@mantine/core";
-import { HotkeyAwareModal } from "./hotkeys/HotkeyAwareModal";
+import { HotkeyAwareModal } from "./base/hotkeys/HotkeyAwareModal";
 import { useDisclosure } from "@mantine/hooks";
 import {
   GlobalFormProvider,
@@ -49,12 +49,15 @@ import "@mantine/dates/styles.css";
 import "mantine-datatable/styles.layer.css";
 import "./styles/app.css";
 import { getUser, getUserId } from "./utils/auth.server";
-import { FindProvider } from "./find/FindContext";
-import { RecordProvider, GlobalRecordBrowser } from "./record/RecordContext";
-import { HotkeyProvider } from "./hotkeys/HotkeyContext";
+import { FindProvider } from "./base/find/FindContext";
+import {
+  RecordProvider,
+  GlobalRecordBrowser,
+} from "./base/record/RecordContext";
+import { HotkeyProvider } from "./base/hotkeys/HotkeyContext";
 import { loadOptions } from "./utils/options.server";
-import { setGlobalOptions, type OptionsData } from "./options/OptionsClient";
-import { OptionsProvider } from "./options/OptionsContext";
+import { type OptionsData } from "./base/options/OptionsClient";
+import { OptionsProvider } from "./base/options/OptionsContext";
 import {
   IconBrandDatabricks,
   IconWoman,
@@ -69,7 +72,7 @@ import {
   IconCalendarDollar,
   IconChartHistogram,
 } from "@tabler/icons-react";
-import { useFind } from "./find/FindContext";
+import { useFind } from "./base/find/FindContext";
 // import { prisma } from "./utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -254,7 +257,7 @@ export default function App() {
                   <RecordProvider>
                     <GlobalFormProvider>
                       <OptionsProvider value={options ?? null}>
-                        {options ? (setGlobalOptions(options), null) : null}
+                        {/* removed, we'll just use the provider: {options ? (setGlobalOptions(options), null) : null} */}
                         <GlobalHotkeys />
                         <AppShellLayout
                           desktopNavOpenedInitial={desktopNavPref}

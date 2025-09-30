@@ -10,10 +10,10 @@ import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
-import * as jobDetail from "../formConfigs/jobDetail";
-import { JobFindModal } from "../components/JobFindModal";
+import * as jobDetail from "~/modules/job/forms/jobDetail";
+import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../record/useHybridWindow";
+import { useHybridWindow } from "../base/record/useHybridWindow";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 

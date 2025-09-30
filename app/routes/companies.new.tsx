@@ -27,7 +27,6 @@ export async function action({ request }: ActionFunctionArgs) {
     isCustomer: form.get("isCustomer") === "on",
     isSupplier: form.get("isSupplier") === "on",
     isInactive: form.get("isInactive") === "on",
-    isActive: form.get("isActive") === "on",
     notes: (form.get("notes") as string) || null,
   };
   await prisma.company.create({ data });
@@ -45,7 +44,6 @@ export default function NewCompanyRoute() {
       isCustomer: false,
       isSupplier: false,
       isInactive: false,
-      isActive: true,
       notes: "",
     },
   });
@@ -70,7 +68,6 @@ export default function NewCompanyRoute() {
             if (values.isCustomer) fd.set("isCustomer", "on");
             if (values.isSupplier) fd.set("isSupplier", "on");
             if (values.isInactive) fd.set("isInactive", "on");
-            if (values.isActive) fd.set("isActive", "on");
             if (values.notes) fd.set("notes", values.notes);
             submit(fd, { method: "post" });
           })}
@@ -116,17 +113,6 @@ export default function NewCompanyRoute() {
               render={({ field }) => (
                 <Checkbox
                   label="Inactive"
-                  checked={!!field.value}
-                  onChange={(e) => field.onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
-            <Controller
-              name="isActive"
-              control={form.control}
-              render={({ field }) => (
-                <Checkbox
-                  label="Active"
                   checked={!!field.value}
                   onChange={(e) => field.onChange(e.currentTarget.checked)}
                 />

@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
 

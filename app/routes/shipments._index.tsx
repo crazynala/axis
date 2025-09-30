@@ -15,18 +15,18 @@ import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
-import { ShipmentFindManager } from "../components/ShipmentFindManager";
+import { ShipmentFindManager } from "../modules/shipment/findify/ShipmentFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../record/useHybridWindow";
-import { useRecordContext } from "../record/RecordContext";
-import { useRecords } from "../record/RecordContext";
+import { useHybridWindow } from "../base/record/useHybridWindow";
+import { useRecordContext } from "../base/record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 

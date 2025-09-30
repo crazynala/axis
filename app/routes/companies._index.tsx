@@ -16,16 +16,16 @@ import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
 import { BreadcrumbSet } from "../../packages/timber";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../record/useHybridWindow";
-import { useRecordContext } from "../record/RecordContext";
-import { CompanyFindManagerNew } from "../components/CompanyFindManagerNew";
+import { useHybridWindow } from "../base/record/useHybridWindow";
+import { useRecordContext } from "../base/record/RecordContext";
+import { CompanyFindManagerNew } from "~/modules/company/findify/CompanyFindManagerNew";
 import { SavedViews } from "../components/find/SavedViews";
 import { listViews, saveView } from "../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 import { parseTableParams, buildPrismaArgs } from "../utils/table.server";
 import { prismaBase } from "../utils/prisma.server";
 
@@ -53,13 +53,7 @@ export async function loader(args: LoaderFunctionArgs) {
         url.searchParams.set("findReqs", saved.filters.findReqs);
     }
   }
-  const triKeys = [
-    "isCarrier",
-    "isCustomer",
-    "isSupplier",
-    "isInactive",
-    "isActive",
-  ];
+  const triKeys = ["isCarrier", "isCustomer", "isSupplier", "isInactive"];
   const keys = ["name", "notes", ...triKeys];
   let findWhere: any = null;
   const hasFindIndicators =
@@ -90,7 +84,6 @@ export async function loader(args: LoaderFunctionArgs) {
         isCustomer: (v) => ({ isCustomer: v === "true" }),
         isSupplier: (v) => ({ isSupplier: v === "true" }),
         isInactive: (v) => ({ isInactive: v === "true" }),
-        isActive: (v) => ({ isActive: v === "true" }),
       };
       const multiWhere = buildWhereFromRequests(multi, interpreters);
       findWhere = mergeSimpleAndMulti(simple, multiWhere);
@@ -134,7 +127,6 @@ export async function loader(args: LoaderFunctionArgs) {
         isCustomer: true,
         isSupplier: true,
         isInactive: true,
-        isActive: true,
       },
       orderBy: { id: "asc" },
     });
@@ -252,9 +244,9 @@ export default function CompaniesIndexRoute() {
       render: (r: any) => (r.isInactive ? "Yes" : ""),
     },
     {
-      accessor: "isActive",
+      accessor: "active",
       title: "Active",
-      render: (r: any) => (r.isActive ? "Yes" : "No"),
+      render: (r: any) => (!r.isInactive ? "Yes" : "No"),
     },
     { accessor: "notes", title: "Notes", sortable: true },
   ];

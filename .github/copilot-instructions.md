@@ -47,3 +47,10 @@ See `docs/find-pattern.md` for the authoritative specification and extension gui
 - All index tables now use `app/components/VirtualizedNavDataTable.tsx` with spacer-row virtualization and staged hydration via `useHybridWindow`.
 - Hydration endpoints accept repeated `ids` and comma-separated lists and always return JSON in the requested order.
 - Legacy table components `NavDataTable` and `RefactoredNavDataTable` were removed to eliminate inline style injection that caused SSR hydration mismatches. If you see missing imports, migrate to `VirtualizedNavDataTable`.
+
+## Modules structure (2025-09)
+
+- Domain code (components, formConfigs, services, hooks) now lives under `app/modules/<domain>/...`.
+- Keep only route files under `app/routes/`; import from modules using the `~` alias (e.g., `~/modules/product/services/...`).
+- Temporary shims under `app/services/*` may re-export from modules to avoid breaking widespread imports. Prefer updating imports to the modules path when modifying code.
+- Do not move files back out of `app/modules`. When adding new domain logic, place it under the appropriate module.

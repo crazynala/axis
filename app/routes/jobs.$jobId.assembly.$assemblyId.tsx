@@ -26,7 +26,7 @@ import {
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { prisma, prismaBase } from "../utils/prisma.server";
 import { BreadcrumbSet, getLogger } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { AssemblyActivityModal } from "../components/AssemblyActivityModal";
 import { ExternalLink } from "../components/ExternalLink";
 import { createCutActivity } from "../utils/activity.server";

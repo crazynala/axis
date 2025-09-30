@@ -17,6 +17,46 @@ Build:
 npm run build
 ```
 
+## Modules directory (new)
+
+We are moving non-route code into `app/modules/<domain>/...` while keeping Remix filename-based routes under `app/routes/`.
+
+Why:
+
+- Clear domain boundaries (company, product, job, invoice, expense, shipment, purchaseOrder, admin)
+- Reuse components/services across routes without deep relative paths
+- Enable incremental refactors without breaking route structure
+
+Layout:
+
+- `app/modules/`
+  - `<domain>/`
+    - `components/`  domain UI pieces used by routes
+    - `formConfigs/`  FieldConfig arrays and helpers
+    - `services/`  server/client-safe services (fetch minimal data; pure where possible)
+    - `hooks/` (optional)  domain hooks like findify helpers
+    - `server/` (optional)  server-only utilities (dont import in client bundles)
+    - `client/` (optional)  client-only helpers
+
+Import guidance:
+
+- From routes: `import { X } from "~/modules/product/services/Thing"` (tsconfig path alias `~/*` points to `app/*`).
+- Temporary shims live under `app/services/*` that re-export from the new module path to avoid breaking broad imports during migration. Prefer updating imports directly when you touch a file.
+
+Conventions:
+
+- Keep services pure where possible; fetch minimal inputs then call pure calculators.
+- UI components do not perform data access directly; loaders/actions own DB calls and pass props down.
+- Avoid cross-domain imports except through small, stable interfaces (e.g., a shared calculator).
+
+Example (pricing):
+
+- Pure calc: `app/modules/product/calc/calcPrice.ts`
+- Service: `app/modules/product/services/ProductPricingService.ts`
+- Shim: `app/services/ProductPricingService.ts` re-exports the service to preserve legacy imports.
+
+See also: `app/modules/README.md` for conventions and examples.
+
 ## Import mappings
 
 The Admin → Import supports Excel files with FileMaker field names. The following mappings are implemented:

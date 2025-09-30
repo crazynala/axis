@@ -6,6 +6,8 @@ Last updated: 2025-09-12
 
 ## Global UI and Behavior
 
+Note on structure: domain components, form configs, and services now live under `app/modules/<domain>/...`. Keep filename-based routes under `app/routes/` and import from modules. Temporary re-export shims may exist under `app/services/*` during migration.
+
 - AppShell header
   - Save/Cancel header (unsaved-changes UX)
   - Record navigation (Prev / Next + index/total) powered by `RecordContext` hybrid roster (legacy RecordBrowser widget removed)

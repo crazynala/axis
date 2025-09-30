@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { prisma, prismaBase, runWithDbActivity } from "../utils/prisma.server";
+import { prismaBase, runWithDbActivity } from "../utils/prisma.server";
 
 // Batch hydration for products: sparse detail fields for table listing
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -44,10 +44,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
     // Attach dynamic computed sell price (manual overrides cost-with-tax)
+    const { ProductPricingService } = await import(
+      "../services/ProductPricingService"
+    );
     const rows = await Promise.all(
       baseRows.map(async (r) => {
-        const autoSellPrice = await (prisma as any).product.getSellPrice(
-          { id: r.id },
+        const autoSellPrice = await ProductPricingService.getAutoSellPrice(
+          r.id,
           null
         );
         return { ...r, autoSellPrice } as any;

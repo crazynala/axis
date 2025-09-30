@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { prisma } from "../utils/prisma.server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
-import { PurchaseOrderPdf } from "../pdf/PurchaseOrderPdf";
+import { PurchaseOrderPdf } from "../base/pdf/PurchaseOrderPdf";
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const idNum = Number(params.id);

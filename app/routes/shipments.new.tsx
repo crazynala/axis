@@ -4,7 +4,7 @@ import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { action as shipmentsAction } from "./shipments.$id";
-import { ShipmentDetailForm } from "../components/ShipmentDetailForm";
+import { ShipmentDetailForm } from "../modules/shipment/forms/ShipmentDetailForm";
 
 export const meta: MetaFunction = () => [{ title: "New Shipment" }];
 

@@ -3,15 +3,15 @@ import { json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { useEffect } from "react";
-import { useRecords } from "../record/RecordContext";
-import { JobFindManager } from "../components/JobFindManager";
-import { jobSearchSchema } from "../find/job.search-schema";
-import { buildWhere } from "../find/buildWhere";
+import { useRecords } from "../base/record/RecordContext";
+import { JobFindManager } from "~/modules/job/findify/JobFindManager";
+import { jobSearchSchema } from "~/modules/job/findify/job.search-schema";
+import { buildWhere } from "~/base/find/buildWhere";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 import { listViews, saveView } from "../utils/views.server";
 import { SavedViews } from "../components/find/SavedViews";
 

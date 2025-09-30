@@ -4,8 +4,8 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
 import { getLogger } from "@aa/timber";
 import { useEffect } from "react";
-import { useRecords } from "../record/RecordContext";
-import { PurchaseOrderFindManager } from "../components/PurchaseOrderFindManager";
+import { useRecords } from "../base/record/RecordContext";
+import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const log = getLogger("purchase-orders");

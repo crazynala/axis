@@ -4,9 +4,9 @@ import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
 import { useEffect, useRef } from "react";
-import { useRecords } from "../record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 import { SavedViews } from "../components/find/SavedViews";
-import { useHybridWindow } from "../record/useHybridWindow";
+import { useHybridWindow } from "../base/record/useHybridWindow";
 
 // Hybrid index: no loader; relies on layout providing idList + initialRows. We join idList with sparse rowsMap.
 export default function InvoicesIndexRoute() {

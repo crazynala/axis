@@ -29,7 +29,7 @@ import {
   ActionIcon,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { HotkeyAwareModal } from "../hotkeys/HotkeyAwareModal";
+import { HotkeyAwareModal } from "../base/hotkeys/HotkeyAwareModal";
 import "react-datasheet-grid/dist/style.css";
 import {
   DataSheetGrid,
@@ -48,7 +48,10 @@ type BOMRow = {
   supplier: string;
   quantity: number | string;
 };
-import { useProductFindify } from "../find/productFindify";
+import {
+  buildProductEditDefaults,
+  useProductFindify,
+} from "~/modules/product/findify/productFindify";
 import { useCallback, useMemo, useState, useEffect } from "react";
 import { Controller } from "react-hook-form";
 import { useInitGlobalFormContext, BreadcrumbSet } from "@aa/timber";
@@ -57,8 +60,8 @@ import {
   productAssocFields,
   productPricingFields,
   productBomFindFields,
-} from "../formConfigs/productDetail";
-import { ProductDetailForm } from "../components/ProductDetailForm";
+} from "../modules/product/forms/productDetail";
+import { ProductDetailForm } from "../modules/product/components/ProductDetailForm";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import {
   prismaBase,
@@ -69,8 +72,8 @@ import {
 import { requireUserId } from "../utils/auth.server";
 import { replaceProductTags } from "../utils/tags.server";
 import { TagPicker } from "../components/TagPicker";
-import { ProductFindManager } from "../components/ProductFindManager";
-import { useRecordContext } from "../record/RecordContext";
+import { ProductFindManager } from "../modules/product/components/ProductFindManager";
+import { useRecordContext } from "../base/record/RecordContext";
 import {
   InventoryAmendmentModal,
   type BatchRowLite,
@@ -105,11 +108,12 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const productPromise = prismaBase.product.findUnique({
       where: { id },
       include: {
-        supplier: { select: { id: true, name: true } },
-        customer: { select: { id: true, name: true } },
-        purchaseTax: { select: { id: true, label: true } },
-        category: { select: { id: true, label: true } },
-        variantSet: { select: { id: true, name: true, variants: true } },
+        // supplier: { select: { id: true, name: true } },
+        // customer: { select: { id: true, name: true } },
+        // purchaseTax: { select: { id: true, label: true } },
+        // category: { select: { id: true, label: true } },
+        // variantSet: { select: { id: true, name: true, variants: true } },
+        costGroup: { include: { costRanges: true } },
         productLines: {
           include: {
             child: {
@@ -126,27 +130,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
         productTags: { include: { tag: true } },
       },
     });
-    const taxCodesPromise = prismaBase.valueList.findMany({
-      where: { type: "Tax" },
-      orderBy: { label: "asc" },
-      select: { id: true, label: true },
-    });
-    const categoriesPromise = prismaBase.valueList.findMany({
-      where: { type: "Category" },
-      orderBy: { label: "asc" },
-      select: { id: true, label: true },
-    });
-    const companiesPromise = prismaBase.company.findMany({
-      select: {
-        id: true,
-        name: true,
-        isCustomer: true,
-        isSupplier: true,
-        isCarrier: true,
-      },
-      orderBy: { name: "asc" },
-      take: 1000,
-    });
+    // Option lists (tax/category/company) are provided via OptionsContext globally;
+    // no need to query them in this route loader anymore.
     const productChoicesPromise = prismaBase.product.findMany({
       select: {
         id: true,
@@ -192,44 +177,25 @@ export async function loader({ params }: LoaderFunctionArgs) {
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 500,
     });
-    const [
-      product,
-      taxCodes,
-      categories,
-      companies,
-      productChoices,
-      movements,
-      movementHeaders,
-    ] = await Promise.all([
-      productPromise.then((r) => {
-        mark("product");
-        return r;
-      }),
-      taxCodesPromise.then((r) => {
-        mark("taxCodes");
-        return r;
-      }),
-      categoriesPromise.then((r) => {
-        mark("categories");
-        return r;
-      }),
-      companiesPromise.then((r) => {
-        mark("companies");
-        return r;
-      }),
-      productChoicesPromise.then((r) => {
-        mark("productChoices");
-        return r;
-      }),
-      movementLinesPromise.then((r) => {
-        mark("movementLines");
-        return r;
-      }),
-      movementHeadersPromise.then((r) => {
-        mark("movementHeaders");
-        return r;
-      }),
-    ]);
+    const [product, productChoices, movements, movementHeaders] =
+      await Promise.all([
+        productPromise.then((r) => {
+          mark("product");
+          return r;
+        }),
+        productChoicesPromise.then((r) => {
+          mark("productChoices");
+          return r;
+        }),
+        movementLinesPromise.then((r) => {
+          mark("movementLines");
+          return r;
+        }),
+        movementHeadersPromise.then((r) => {
+          mark("movementHeaders");
+          return r;
+        }),
+      ]);
     if (!product) throw new Response("Not found", { status: 404 });
 
     // Resolve location names for in/out in one query (lines + headers)
@@ -288,33 +254,6 @@ export async function loader({ params }: LoaderFunctionArgs) {
       movements,
       movementHeaders,
       locationNameById,
-      taxCodeOptions: (
-        taxCodes as Array<{ id: number; label: string | null }>
-      ).map((t) => ({
-        value: t.id,
-        label: t.label || String(t.id),
-      })),
-      categoryOptions: (
-        categories as Array<{ id: number; label: string | null }>
-      ).map((c) => ({
-        value: c.id,
-        label: c.label || String(c.id),
-      })),
-      companyOptions: (
-        companies as Array<{
-          id: number;
-          name: string | null;
-          isCustomer: boolean | null;
-          isSupplier: boolean | null;
-          isCarrier: boolean | null;
-        }>
-      ).map((c) => ({
-        value: c.id,
-        label: c.name || String(c.id),
-        isCustomer: !!c.isCustomer,
-        isSupplier: !!c.isSupplier,
-        isCarrier: !!c.isCarrier,
-      })),
     });
   }); // end runWithDbActivity wrapper
 }
@@ -455,6 +394,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const data = buildProductData(form);
+    console.log("!! Updating with data:", data);
+    console.log("!! From form:", Object.fromEntries(form.entries()));
     await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
   }
@@ -827,10 +768,8 @@ export default function ProductDetailRoute() {
     movements,
     movementHeaders,
     locationNameById,
-    taxCodeOptions,
-    categoryOptions,
-    companyOptions,
   } = useLoaderData<typeof loader>();
+  console.log("!! loader product", product);
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -845,6 +784,20 @@ export default function ProductDetailRoute() {
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
   const { editForm, buildUpdatePayload } = useProductFindify(product, nav);
+  useEffect(() => {
+    editForm.reset(buildProductEditDefaults(product), {
+      keepDirty: false,
+      keepDefaultValues: false,
+    });
+  }, [product]);
+
+  // console.log("!! form values:", editForm.getValues());
+  // console.log(
+  //   "!! form dirty:",
+  //   editForm.formState.isDirty,
+  //   editForm.formState.dirtyFields,
+  //   editForm.formState.defaultValues
+  // );
 
   // Find modal is handled via ProductFindManager now (no inline find toggle)
 
@@ -1191,14 +1144,6 @@ export default function ProductDetailRoute() {
           mode={"edit" as any}
           form={editForm as any}
           product={product}
-          categoryOptions={(categoryOptions as any).map((o: any) => ({
-            value: String(o.value),
-            label: o.label,
-          }))}
-          taxCodeOptions={(taxCodeOptions as any).map((o: any) => ({
-            value: String(o.value),
-            label: o.label,
-          }))}
         />
       </Form>
       {/* Tags */}

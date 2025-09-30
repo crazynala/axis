@@ -13,14 +13,14 @@ import {
   Card,
   Tooltip,
 } from "@mantine/core";
-import { ProductFindManager } from "../components/ProductFindManager";
+import { ProductFindManager } from "../modules/product/components/ProductFindManager";
 import { SavedViews } from "../components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useEffect, useState, useRef, useMemo } from "react";
-import { useRecords } from "../record/RecordContext";
-import { useHybridWindow } from "../record/useHybridWindow";
-import { HotkeyAwareModal } from "../hotkeys/HotkeyAwareModal";
+import { useRecords } from "../base/record/RecordContext";
+import { useHybridWindow } from "../base/record/useHybridWindow";
+import { HotkeyAwareModal } from "../base/hotkeys/HotkeyAwareModal";
 import {
   DataSheetGrid,
   keyColumn,

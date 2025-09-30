@@ -2,9 +2,9 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
-import { InvoiceFindManager } from "../components/InvoiceFindManager";
+import { InvoiceFindManager } from "../modules/invoice/findify/InvoiceFindManager";
 import { useEffect } from "react";
-import { useRecords } from "../record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 
 // Hybrid A' Light loader: returns full ordered id list (capped at 50k) and initial rows (first batch) with amount aggregates.
 export async function loader(_args: LoaderFunctionArgs) {

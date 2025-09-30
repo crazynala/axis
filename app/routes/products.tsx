@@ -1,15 +1,15 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
-import { productSearchSchema } from "../find/product.search-schema";
-import { buildWhere } from "../find/buildWhere";
+import { productSearchSchema } from "~/modules/product/findify/product.search-schema";
+import { buildWhere } from "~/base/find/buildWhere";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 import { useEffect } from "react";
-import { useRecords } from "../record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 import { inspect } from "node:util";
 
 export async function loader(args: LoaderFunctionArgs) {
@@ -282,10 +282,13 @@ export async function loader(args: LoaderFunctionArgs) {
           batchTrackingEnabled: true,
         },
       });
+      const { ProductPricingService } = await import(
+        "../services/ProductPricingService"
+      );
       const hydrated = await Promise.all(
         baseRows.map(async (r) => {
-          const autoSellPrice = await (prisma as any).product.getSellPrice(
-            { id: r.id },
+          const autoSellPrice = await ProductPricingService.getAutoSellPrice(
+            r.id,
             null
           );
           return { ...r, autoSellPrice } as any;

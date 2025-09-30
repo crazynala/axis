@@ -7,7 +7,7 @@ import { json } from "@remix-run/node";
 import { Form, useNavigation, useSubmit } from "@remix-run/react";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
-import { ProductDetailForm } from "../components/ProductDetailForm";
+import { ProductDetailForm } from "../modules/product/components/ProductDetailForm";
 import { action as productAction } from "./products.$id";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];

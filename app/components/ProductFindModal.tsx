@@ -1,7 +1,7 @@
 import React from "react";
-import { ProductDetailForm } from "./ProductDetailForm";
-import type { ProductFindValues } from "../find/product.search-schema";
-import { allProductFindFields } from "../formConfigs/productDetail";
+import { ProductDetailForm } from "../modules/product/components/ProductDetailForm";
+import type { ProductFindValues } from "~/modules/product/findify/product.search-schema";
+import { allProductFindFields } from "../modules/product/forms/productDetail";
 import { GenericMultiFindModal } from "./find/GenericMultiFindModal";
 
 export interface ProductFindModalProps {

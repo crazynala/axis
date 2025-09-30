@@ -1,12 +1,19 @@
 import { prisma } from "./prisma.server";
 import { buildPrismaArgs, parseTableParams } from "./table.server";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../base/find/multiFind";
 
 /**
  * Rebuilds the same filtered/sorted dataset used by invoices index route, but without pagination when `all=true`.
  * Returns rows plus map of computed amounts (priceSell * quantity aggregated per invoice).
  */
-export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) {
+export async function fetchInvoicesFiltered(
+  url: URL,
+  opts?: { all?: boolean }
+) {
   const params = parseTableParams(url.toString());
   const viewName = url.searchParams.get("view");
   // NOTE: Saved view application omitted here intentionally; export should reflect current visible filters.
@@ -14,7 +21,9 @@ export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) 
 
   const findKeys = ["invoiceCode", "status", "companyName", "date"]; // companyName derived client side
   let findWhere: any = null;
-  const hasFindIndicators = findKeys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const hasFindIndicators =
+    findKeys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of findKeys) {
@@ -27,8 +36,10 @@ export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) 
         contains: values.invoiceCode,
         mode: "insensitive",
       };
-    if (values.status) simple.status = { contains: values.status, mode: "insensitive" };
-    if (values.date) simple.date = values.date ? new Date(values.date) : undefined;
+    if (values.status)
+      simple.status = { contains: values.status, mode: "insensitive" };
+    if (values.date)
+      simple.date = values.date ? new Date(values.date) : undefined;
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
@@ -44,7 +55,11 @@ export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) 
   let baseParams: any = params;
   if (findWhere) baseParams = { ...baseParams, page: 1 }; // ignore original page if filter applied
   if (baseParams.filters) {
-    const { findReqs: _omitFindReqs, find: _legacy, ...rest } = baseParams.filters;
+    const {
+      findReqs: _omitFindReqs,
+      find: _legacy,
+      ...rest
+    } = baseParams.filters;
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs(baseParams, {
@@ -52,7 +67,11 @@ export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) 
     filterMappers: {},
     defaultSort: { field: "id", dir: "asc" },
   });
-  if (findWhere) (prismaArgs.where as any).AND = [...((prismaArgs.where as any).AND || []), findWhere];
+  if (findWhere)
+    (prismaArgs.where as any).AND = [
+      ...((prismaArgs.where as any).AND || []),
+      findWhere,
+    ];
 
   // If exporting all, drop pagination controls
   const take = opts?.all ? undefined : prismaArgs.take;
@@ -80,8 +99,16 @@ export async function fetchInvoicesFiltered(url: URL, opts?: { all?: boolean }) 
       })
     : [];
   const totals = new Map<number, number>();
-  for (const l of lines) totals.set(l.invoiceId!, (totals.get(l.invoiceId!) ?? 0) + (Number(l.priceSell) || 0) * (Number(l.quantity) || 0));
-  return { rows: rows.map((r) => ({ ...r, amount: totals.get(r.id) ?? 0 })), prismaArgs };
+  for (const l of lines)
+    totals.set(
+      l.invoiceId!,
+      (totals.get(l.invoiceId!) ?? 0) +
+        (Number(l.priceSell) || 0) * (Number(l.quantity) || 0)
+    );
+  return {
+    rows: rows.map((r) => ({ ...r, amount: totals.get(r.id) ?? 0 })),
+    prismaArgs,
+  };
 }
 
 export interface InvoiceExportRow {

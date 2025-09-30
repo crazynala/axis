@@ -10,10 +10,13 @@ import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { Card, Group, Stack, Title, Table, Button } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { NumberInput, Modal } from "@mantine/core";
-import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
-import { ProductSelect, type ProductOption } from "../components/ProductSelect";
+import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
+import {
+  ProductSelect,
+  type ProductOption,
+} from "../modules/product/components/ProductSelect";
 import { useState, useEffect } from "react";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { formatUSD } from "../utils/format";
 import { POReceiveModal } from "../components/POReceiveModal";
 

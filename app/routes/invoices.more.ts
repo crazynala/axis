@@ -5,7 +5,7 @@ import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../find/multiFind";
+} from "../base/find/multiFind";
 
 // Batch loader for infinite scroll. Cursor = last seen invoice id (numeric ascending order)
 // Accepts optional limit (default 50) and same find filter params as index route.

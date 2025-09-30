@@ -3,8 +3,8 @@ import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
-import { CompanyFindManager } from "../components/CompanyFindManager";
-import { useRecords } from "../record/RecordContext";
+import { CompanyFindManager } from "~/modules/company/findify/CompanyFindManager";
+import { useRecords } from "../base/record/RecordContext";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const ID_CAP = 50000;
@@ -30,7 +30,6 @@ export async function loader(_args: LoaderFunctionArgs) {
         isCustomer: true,
         isSupplier: true,
         isInactive: true,
-        isActive: true,
       },
     });
   }

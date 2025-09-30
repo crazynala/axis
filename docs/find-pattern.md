@@ -34,7 +34,7 @@ Goals:
 
 3. Shared DetailForm Components
 
-   - JobDetailForm, ProductDetailForm encapsulate layout & field rendering for edit + find.
+   - JobDetailForm, ProductDetailForm encapsulate layout & field rendering for edit + find. With the modules migration, these live under `app/modules/<domain>/components`.
    - Props: mode ("edit" | "find"), react-hook-form instance, record data, option lists.
    - In find mode, form fields are still controlled via react-hook-form but only used to build a query; no persistence.
 
@@ -125,7 +125,7 @@ Usage pattern:
 1. Ensure your module already has a `<Entity>DetailForm` that accepts `mode="find"` and a `form` prop (react-hook-form instance).
 2. Implement `buildDefaults()` returning a pristine values object (matching field names).
 3. Implement `allFields()` returning a flattened list of every FieldConfig containing `findOp` you want exposed.
-4. Wrap the generic modal:
+4. Wrap the generic modal (adapter + form component typically live under `app/modules/<domain>`):
 
 ```
 export function ProductFindModal(props: ProductFindModalProps) {

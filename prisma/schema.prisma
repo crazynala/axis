@@ -127,13 +127,13 @@ model Product {
     type                 ProductType?
     supplierId           Int?
     customerId           Int?
-    costPrice            Float?
+    costPrice            Decimal?              @db.Decimal(14, 4)
     costCurrency         String?               @default("USD")
     purchaseTaxId        Int?
     categoryId           Int?
     subCategory          String?
     pricingGroupId       Int?
-    manualSalePrice      Float?
+    manualSalePrice      Decimal?              @db.Decimal(14, 4)
     defaultCostQty       Int                   @default(60)
     variantSetId         Int?
     stockTrackingEnabled Boolean               @default(false)
@@ -261,7 +261,7 @@ model ValueList {
     id                  Int           @id @default(autoincrement())
     code                String?
     label               String?
-    value               Float?
+    value               Decimal?      @db.Decimal(14, 4)
     type                String?
     productsTax         Product[]     @relation("Tax")
     productsCategory    Product[]     @relation("Category")
@@ -281,7 +281,7 @@ model Assembly {
     id                  Int                 @id @default(autoincrement())
     name                String?
     status              String?
-    quantity            Float?
+    quantity            Decimal?            @db.Decimal(14, 4)
     // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
     qtyOrderedBreakdown Int[]               @default([])
     notes               String?
@@ -315,12 +315,12 @@ model Costing {
     assemblyId                    Int?
     // renamed: componentId -> productId; removed usageType/componentType per new spec
     productId                     Int?
-    quantityPerUnit               Float?
-    unitCost                      Float?
+    quantityPerUnit               Decimal?      @db.Decimal(14, 4)
+    unitCost                      Decimal?      @db.Decimal(14, 4)
     notes                         String?
     activityUsed                  String?
-    salePricePerItem              Float?
-    salePricePerUnit              Float?
+    salePricePerItem              Decimal?      @db.Decimal(14, 4)
+    salePricePerUnit              Decimal?      @db.Decimal(14, 4)
     flagAssembly                  Boolean?
     flagDefinedInProduct          Boolean?
     flagIsBillableDefaultOrManual Boolean?
@@ -344,9 +344,9 @@ model ProductLine {
     id               Int       @id @default(autoincrement())
     parentId         Int?
     childId          Int?
-    quantity         Float?
-    unitCost         Float?
-    unitCostManual   Float?
+    quantity         Decimal?  @db.Decimal(14, 4)
+    unitCost         Decimal?  @db.Decimal(14, 4)
+    unitCostManual   Decimal?  @db.Decimal(14, 4)
     activityUsed     String?
     flagAssemblyOmit Boolean?
     parent           Product?  @relation("ParentProduct", fields: [parentId], references: [id])
@@ -392,7 +392,7 @@ model Batch {
     codeSartor          String?
     name                String?
     source              String?
-    quantity            Float?
+    quantity            Decimal?              @db.Decimal(14, 4)
     receivedAt          DateTime?
     notes               String?
     product             Product?              @relation(fields: [productId], references: [id])
@@ -423,7 +423,7 @@ model ProductMovement {
     locationOutId       Int?
     shippingType        String?
     productId           Int?
-    quantity            Float?
+    quantity            Decimal?              @db.Decimal(14, 4)
     purchaseOrderLineId Int?
     shippingLineId      Int?
     notes               String?
@@ -448,7 +448,7 @@ model ProductMovementLine {
     costingId           Int?
     productMovementId   Int?
     purchaseOrderLineId Int?
-    quantity            Float?
+    quantity            Decimal?         @db.Decimal(14, 4)
     notes               String?
     movement            ProductMovement? @relation(fields: [movementId], references: [id])
     product             Product?         @relation(fields: [productId], references: [id])
@@ -534,9 +534,9 @@ model AssemblyActivity {
     locationOutId            Int?
     locationIn               Location? @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
     locationOut              Location? @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
-    quantity                 Float?
-    qtyFabricConsumed        Float?
-    qtyFabricConsumedPerUnit Float?
+    quantity                 Decimal?  @db.Decimal(14, 4)
+    qtyFabricConsumed        Decimal?  @db.Decimal(14, 4)
+    qtyFabricConsumedPerUnit Decimal?  @db.Decimal(14, 4)
     qtyBreakdown             Int[]     @default([])
     assembly                 Assembly? @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
     job                      Job?      @relation(fields: [jobId], references: [id])
@@ -582,9 +582,9 @@ model DHLReportLine {
     id                         Int       @id // a__Serial maps here
     accountName                String?
     awbNumber                  String?
-    billedWeight               Float?
+    billedWeight               Decimal?  @db.Decimal(14, 4)
     billingAccountNumber       String?
-    billingExchangeRate        Float?
+    billingExchangeRate        Decimal?  @db.Decimal(14, 4)
     destinationCountryCode     String?
     destinationCountryName     String?
     destinationServiceAreaCode String?
@@ -606,10 +606,10 @@ model DHLReportLine {
     shipmentPickUpDate         DateTime?
     shipmentReference          String?
     shipperAccountNumber       String?
-    totalRevenueEUR            Float?
-    totalRevenueLCY            Float?
-    totalTaxEUR                Float?
-    totalTaxLCY                Float?
+    totalRevenueEUR            Decimal?  @db.Decimal(14, 4)
+    totalRevenueLCY            Decimal?  @db.Decimal(14, 4)
+    totalTaxEUR                Decimal?  @db.Decimal(14, 4)
+    totalTaxLCY                Decimal?  @db.Decimal(14, 4)
     createdAt                  DateTime? @default(now())
     updatedAt                  DateTime? @updatedAt
 }
@@ -634,10 +634,10 @@ model Invoice {
     // Additional imported fields
     productSkuCopy  String?
     productNameCopy String?
-    priceCost       Float?
-    priceSell       Float?
+    priceCost       Decimal?      @db.Decimal(14, 4)
+    priceSell       Decimal?      @db.Decimal(14, 4)
     taxCodeId       Int?
-    taxRateCopy     Float?
+    taxRateCopy     Decimal?      @db.Decimal(14, 4)
     notes           String?
     status          String?
     createdBy       String?
@@ -662,13 +662,13 @@ model InvoiceLine {
     category            String?
     details             String?
     subCategory         String?
-    priceCost           Float?
-    priceSell           Float?
-    quantity            Float?
+    priceCost           Decimal?   @db.Decimal(14, 4)
+    priceSell           Decimal?   @db.Decimal(14, 4)
+    quantity            Decimal?   @db.Decimal(14, 4)
     taxCodeId           Int?
     // Renamed to reflect source import naming
-    taxRateCopy         Float?
-    invoicedTotalManual Float?
+    taxRateCopy         Decimal?   @db.Decimal(14, 4)
+    invoicedTotalManual Decimal?   @db.Decimal(14, 4)
     createdBy           String?
     createdAt           DateTime?  @default(now())
     modifiedBy          String?
@@ -691,9 +691,9 @@ model Expense {
     date            DateTime?
     details         String?
     memo            String?
-    priceCost       Float?
-    priceSell       Float?
-    quantity        Float?
+    priceCost       Decimal?      @db.Decimal(14, 4)
+    priceSell       Decimal?      @db.Decimal(14, 4)
+    quantity        Decimal?      @db.Decimal(14, 4)
     source          String?
     subcategory     String?
     createdBy       String?
@@ -759,7 +759,7 @@ model ShipmentLine {
     variantSetId Int?
     category     String?
     details      String?
-    quantity     Float?
+    quantity     Decimal?    @db.Decimal(14, 4)
     qtyBreakdown Int[]       @default([]) // parsed from Qty_Breakdown_List_c
     status       String?
     subCategory  String?
@@ -849,14 +849,14 @@ model PurchaseOrderLine {
     productId       Int?
     productSkuCopy  String?
     productNameCopy String?
-    priceCost       Float?
-    priceSell       Float?
-    qtyShipped      Float?
-    qtyReceived     Float?
-    quantity        Float?
-    quantityOrdered Float?
+    priceCost       Decimal?       @db.Decimal(14, 4)
+    priceSell       Decimal?       @db.Decimal(14, 4)
+    qtyShipped      Decimal?       @db.Decimal(14, 4)
+    qtyReceived     Decimal?       @db.Decimal(14, 4)
+    quantity        Decimal?       @db.Decimal(14, 4)
+    quantityOrdered Decimal?       @db.Decimal(14, 4)
     taxCode         String?
-    taxRate         Float?
+    taxRate         Decimal?       @db.Decimal(14, 4)
     createdBy       String?
     createdAt       DateTime?      @default(now())
     modifiedBy      String?
@@ -875,8 +875,8 @@ model ProductCostGroup {
     supplierId      Int?
     currency        String?
     name            String?
-    costPrice       Float?
-    sellPriceManual Float?
+    costPrice       Decimal?           @db.Decimal(14, 4)
+    sellPriceManual Decimal?           @db.Decimal(14, 4)
     supplier        Company?           @relation(fields: [supplierId], references: [id])
     // Back-relations: Cost ranges belonging to this group
     costRanges      ProductCostRange[]
@@ -895,8 +895,8 @@ model ProductCostRange {
     id              Int               @id @default(autoincrement())
     productId       Int?
     costGroupId     Int?
-    costPrice       Float?
-    sellPriceManual Float?
+    costPrice       Decimal?          @db.Decimal(14, 4)
+    sellPriceManual Decimal?          @db.Decimal(14, 4)
     rangeFrom       Int?
     rangeTo         Int?
     product         Product?          @relation(fields: [productId], references: [id])

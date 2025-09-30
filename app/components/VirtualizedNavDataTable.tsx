@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Table, ScrollArea, Box, Text } from "@mantine/core";
 import type { DataTableColumn, DataTableSortStatus } from "mantine-datatable";
-import { useRecords } from "../record/RecordContext";
+import { useRecords } from "../base/record/RecordContext";
 
 interface VirtualizedNavDataTableProps<T = Record<string, any>> {
   records: (T | undefined)[];

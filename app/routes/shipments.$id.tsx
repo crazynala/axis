@@ -7,7 +7,7 @@ import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import {
   Card,
   Divider,
@@ -19,7 +19,7 @@ import {
 } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { useEffect } from "react";
-import { ShipmentDetailForm } from "../components/ShipmentDetailForm";
+import { ShipmentDetailForm } from "../modules/shipment/forms/ShipmentDetailForm";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {

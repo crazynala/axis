@@ -4,7 +4,7 @@ import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { action as invoicesAction } from "./invoices.$id";
-import { InvoiceDetailForm } from "../components/InvoiceDetailForm";
+import { InvoiceDetailForm } from "../modules/invoice/forms/InvoiceDetailForm";
 
 export const meta: MetaFunction = () => [{ title: "New Invoice" }];
 

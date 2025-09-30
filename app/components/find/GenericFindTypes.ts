@@ -1,4 +1,4 @@
-import type { MultiFindState } from "../../find/multiFind";
+import type { MultiFindState } from "../../base/find/multiFind";
 
 export type FindFieldConfig = {
   name: string;

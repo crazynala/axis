@@ -3,8 +3,8 @@ import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { prismaBase } from "../utils/prisma.server";
-import { ExpenseFindManager } from "../components/ExpenseFindManager";
-import { useRecords } from "../record/RecordContext";
+import { ExpenseFindManager } from "~/modules/expense/findify/ExpenseFindManager";
+import { useRecords } from "../base/record/RecordContext";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const ID_CAP = 50000;

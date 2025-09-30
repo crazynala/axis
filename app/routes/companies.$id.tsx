@@ -11,9 +11,9 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { Button, Checkbox, Group, Stack, Text, Title } from "@mantine/core";
-import { CompanyDetailForm } from "../components/CompanyDetailForm";
+import { CompanyDetailForm } from "~/modules/company/forms/CompanyDetailForm";
 import { Controller, useForm } from "react-hook-form";
 import { useEffect } from "react";
 import { prisma } from "../utils/prisma.server";
@@ -42,7 +42,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       isCustomer: form.get("isCustomer") === "on",
       isSupplier: form.get("isSupplier") === "on",
       isInactive: form.get("isInactive") === "on",
-      isActive: form.get("isActive") === "on",
       notes: (form.get("notes") as string) || null,
     } as const;
     await prisma.company.update({ where: { id }, data: data as any });
@@ -76,7 +75,6 @@ export default function CompanyDetailRoute() {
     isCustomer: boolean;
     isSupplier: boolean;
     isInactive: boolean;
-    isActive: boolean;
   }>({
     defaultValues: {
       id: company.id,
@@ -86,7 +84,6 @@ export default function CompanyDetailRoute() {
       isCustomer: !!company.isCustomer,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
-      isActive: !!company.isActive,
     },
   });
 
@@ -102,7 +99,6 @@ export default function CompanyDetailRoute() {
       isCustomer: !!company.isCustomer,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
-      isActive: !!company.isActive,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.id]);
@@ -115,7 +111,6 @@ export default function CompanyDetailRoute() {
     isCustomer: boolean;
     isSupplier: boolean;
     isInactive: boolean;
-    isActive: boolean;
   };
   const save = (values: FormValues) => {
     const fd = new FormData();
@@ -126,7 +121,6 @@ export default function CompanyDetailRoute() {
     if (values.isCustomer) fd.set("isCustomer", "on");
     if (values.isSupplier) fd.set("isSupplier", "on");
     if (values.isInactive) fd.set("isInactive", "on");
-    if (values.isActive) fd.set("isActive", "on");
     submit(fd, { method: "post" });
   };
 

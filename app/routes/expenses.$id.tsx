@@ -7,9 +7,9 @@ import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
-import { useRecordContext } from "../record/RecordContext";
+import { useRecordContext } from "../base/record/RecordContext";
 import { Card, Divider, Group, Stack, Title, Button } from "@mantine/core";
-import { ExpenseDetailForm } from "../components/ExpenseDetailForm";
+import { ExpenseDetailForm } from "~/modules/expense/forms/ExpenseDetailForm";
 import { useForm } from "react-hook-form";
 import { useEffect } from "react";
 

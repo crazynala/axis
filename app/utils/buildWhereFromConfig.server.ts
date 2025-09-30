@@ -1,4 +1,4 @@
-import type { FieldConfig } from "../formConfigs/fieldConfigShared";
+import type { FieldConfig } from "../base/forms/fieldConfigShared";
 
 // Basic Prisma-compatible where builder using field configs + submitted values.
 // Supports findOp: contains, equals, range (number/date), gte, lte and triBool encoded as "true"/"false".

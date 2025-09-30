@@ -40,11 +40,11 @@ import { prisma } from "../utils/prisma.server";
 import { buildWhereFromConfig } from "../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../utils/getVariantLabels";
 import React from "react";
-import { useFind } from "../find/FindContext";
-import { useRecordContext } from "../record/RecordContext";
-import { JobDetailForm } from "../components/JobDetailForm";
-import * as jobDetail from "../formConfigs/jobDetail";
-import { JobFindManager } from "../components/JobFindManager";
+import { useFind } from "../base/find/FindContext";
+import { useRecordContext } from "../base/record/RecordContext";
+import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
+import * as jobDetail from "~/modules/job/forms/jobDetail";
+import { JobFindManager } from "~/modules/job/findify/JobFindManager";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 

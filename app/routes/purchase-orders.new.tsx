@@ -4,7 +4,7 @@ import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { action as poAction } from "./purchase-orders.$id";
-import { PurchaseOrderDetailForm } from "../components/PurchaseOrderDetailForm";
+import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
 
 export const meta: MetaFunction = () => [{ title: "New Purchase Order" }];
 

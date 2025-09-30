@@ -5,6 +5,7 @@ export type OptionsData = {
   categoryOptions: Option[];
   subcategoryOptions: Option[];
   taxCodeOptions: Option[];
+  taxRateById?: Record<string | number, number>;
   productTypeOptions: Option[];
   customerOptions: Option[];
   supplierOptions: Option[];
@@ -77,7 +78,7 @@ export async function loadOptions(): Promise<OptionsData> {
     prisma.valueList.findMany({
       where: { type: "Tax" },
       orderBy: { label: "asc" },
-      select: { id: true, label: true },
+      select: { id: true, label: true, value: true },
     }),
     prisma.company.findMany({
       where: { isCustomer: true },
@@ -202,6 +203,12 @@ export async function loadOptions(): Promise<OptionsData> {
       value: String(t.id),
       label: t.label ?? String(t.id),
     })),
+    taxRateById: Object.fromEntries(
+      taxes.map((t) => {
+        const n = Number((t as any)?.value ?? 0);
+        return [String(t.id), Number.isFinite(n) ? n : 0];
+      })
+    ),
     productTypeOptions: productTypes.map((pt) => ({ value: pt, label: pt })),
     customerOptions: customersList.map((c) => ({
       value: String(c.id),
