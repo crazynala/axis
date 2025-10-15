@@ -11,7 +11,9 @@ export async function importVariantSets(rows: any[]): Promise<ImportResult> {
     const r = rows[i];
     const idNum = asNum(pick(r, ["a__Serial", "id"])) as number | null;
     const name = (pick(r, ["Name"]) ?? "").toString().trim() || null;
-    const variantsRaw = (pick(r, ["Variants"]) ?? "").toString().trim();
+    const variantsRaw = (pick(r, ["VariantLabel_List_c"]) ?? "")
+      .toString()
+      .trim();
     const variants = variantsRaw
       ? variantsRaw
           .split(/[|,;\n]+/)

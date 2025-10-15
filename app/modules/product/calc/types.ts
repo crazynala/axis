@@ -1,4 +1,4 @@
-export type PriceTier = { minQty: number; unitPrice: number };
+export type PriceTier = { minQty: number; priceCost: number };
 
 export type PriceInput = {
   baseCost: number;
@@ -11,9 +11,8 @@ export type PriceInput = {
 };
 
 export type PriceOutput = {
-  unitPrice: number; // in target currency, pre-tax
-  unitPriceWithTax: number;
-  extended: number; // unit * qty
-  extendedWithTax: number;
+  unitSellPrice?: number;
+  extendedSell?: number;
+  extendedCost?: number;
   breakdown: Record<string, number>;
 };

@@ -1,4 +1,11 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 
 export type HotkeyHandler = (e: KeyboardEvent) => boolean | void;
 
@@ -8,7 +15,9 @@ interface HotkeyApi {
 
 const HotkeyContext = createContext<HotkeyApi | null>(null);
 
-export const HotkeyProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+export const HotkeyProvider: React.FC<
+  React.PropsWithChildren<{ disabled?: boolean }>
+> = ({ children, disabled }) => {
   const stackRef = useRef<HotkeyHandler[]>([]);
   const api: HotkeyApi = useMemo(
     () => ({
@@ -42,12 +51,15 @@ export const HotkeyProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   useEffect(() => {
+    if (disabled) return;
     // Use bubble phase so focused widgets (like grids/editors) get first crack at key events
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown as any);
-  }, [handleKeydown]);
+  }, [handleKeydown, disabled]);
 
-  return <HotkeyContext.Provider value={api}>{children}</HotkeyContext.Provider>;
+  return (
+    <HotkeyContext.Provider value={api}>{children}</HotkeyContext.Provider>
+  );
 };
 
 export function useHotkeysApi() {
@@ -57,7 +69,10 @@ export function useHotkeysApi() {
 }
 
 // Convenience hook to push a handler on mount and pop on unmount
-export function useHotkeyScope(handler: HotkeyHandler | null | undefined, deps: React.DependencyList = []) {
+export function useHotkeyScope(
+  handler: HotkeyHandler | null | undefined,
+  deps: React.DependencyList = []
+) {
   const { push } = useHotkeysApi();
   const handlerRef = useRef<HotkeyHandler | null>(null);
   // Always reflect latest handler in a ref so the pushed wrapper can consult it
@@ -67,7 +82,9 @@ export function useHotkeyScope(handler: HotkeyHandler | null | undefined, deps: 
   // Register when a non-null handler is provided; unregister when it changes or becomes null
   useEffect(() => {
     if (!handler) return;
-    const dispose = push((e) => (handlerRef.current ? !!handlerRef.current(e) : false));
+    const dispose = push((e) =>
+      handlerRef.current ? !!handlerRef.current(e) : false
+    );
     return dispose;
   }, [push, handler]);
 }

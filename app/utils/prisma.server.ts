@@ -466,12 +466,22 @@ export const prisma: PrismaClient = (base as any).$extends({
 // --- Domain helpers (exports used by API routes) ---
 export async function getBatchesWithComputedQty(productId: number) {
   if (!Number.isFinite(productId)) return [];
-  // Pull batches for product; adjust select shape as needed later
-  const batches = await prisma.batch.findMany({
-    where: { productId },
-    orderBy: { id: "asc" },
-  } as any);
-  return batches as any[];
+  const snap = (await getProductStockSnapshots(
+    productId
+  )) as ProductStockSnapshot | null;
+  if (!snap) return [];
+  // Return batches directly from the snapshot; keep the shape minimal for the UI
+  return (snap.byBatch || [])
+    .map((b) => ({
+      id: b.batchId,
+      name: b.batchName || null,
+      location:
+        b.locationId != null
+          ? { id: b.locationId, name: b.locationName || "" }
+          : null,
+      quantity: Math.round(Number(b.qty || 0) * 100) / 100,
+    }))
+    .sort((a, b) => (a.id || 0) - (b.id || 0));
 }
 
 async function computeProductStockQty(productId: number): Promise<number> {

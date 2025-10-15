@@ -44,6 +44,15 @@ export function AssemblyActivityModal(props: {
   initialDate?: Date | string | null;
   initialBreakdown?: number[] | null;
   initialConsumption?: Record<number, Record<number, number>>;
+  extraFields?: Record<string, string | number>;
+  overrideIntent?: string;
+  // Optional: when launching from a group, provide per-assembly quantity items
+  groupQtyItems?: Array<{
+    assemblyId: number;
+    variants: { labels: string[]; numVariants?: number };
+    ordered?: number[];
+    cut?: number[];
+  }>;
 }) {
   const {
     opened,
@@ -57,6 +66,8 @@ export function AssemblyActivityModal(props: {
     initialDate,
     initialBreakdown,
     initialConsumption,
+    extraFields,
+    overrideIntent,
   } = props;
   const submit = useSubmit();
   const labelsRaw =
@@ -82,6 +93,7 @@ export function AssemblyActivityModal(props: {
     );
     return labelsRaw.slice(0, effectiveLen);
   }, [labelsRaw, assembly]);
+  // Single-assembly defaults
   const ordered = ((assembly as any).qtyOrderedBreakdown || []) as number[];
   const alreadyCut =
     (((assembly as any).c_qtyCut_Breakdown || []) as number[]) || [];
@@ -96,20 +108,71 @@ export function AssemblyActivityModal(props: {
     });
   }, [labels, ordered, alreadyCut, leftToCutExt]);
 
+  // Group-assembly defaults prepared from provided groupQtyItems
+  const groupDefaults = useMemo(() => {
+    if (!props.groupQtyItems || props.groupQtyItems.length === 0) return null;
+    return props.groupQtyItems.map((g) => {
+      const rawLabels = g.variants?.labels || [];
+      // trim labels to last non-empty
+      let last = -1;
+      for (let i = rawLabels.length - 1; i >= 0; i--) {
+        const s = (rawLabels[i] || "").toString().trim();
+        if (s) {
+          last = i;
+          break;
+        }
+      }
+      const baseLen = Math.max(
+        rawLabels.length,
+        Math.max(g.ordered?.length || 0, g.cut?.length || 0)
+      );
+      const effectiveLen = Math.max(
+        0,
+        last >= 0 ? Math.min(baseLen, last + 1) : baseLen
+      );
+      const labels = rawLabels.slice(0, effectiveLen);
+      const def = Array.from({ length: effectiveLen }, (_, i) => {
+        const ord = Number(g.ordered?.[i] || 0) || 0;
+        const cut = Number(g.cut?.[i] || 0) || 0;
+        const left = Math.max(0, ord - cut);
+        return left;
+      });
+      return {
+        assemblyId: g.assemblyId,
+        labels,
+        defaultBreakdown: def,
+      };
+    });
+  }, [props.groupQtyItems]);
+
   const form = useForm<{
     activityDate: Date | null;
-    qtyBreakdown: { value: number }[];
+    qtyBreakdown: { value: number }[]; // single-assembly path
+    qtyGroup?: Array<{ assemblyId: number; qtyBreakdown: { value: number }[] }>; // group path
   }>({
-    defaultValues: {
-      activityDate: initialDate ? new Date(initialDate as any) : new Date(),
-      qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
-        ? initialBreakdown
-        : defaultBreakdown
-      ).map((n) => ({ value: n || 0 })),
-    },
+    defaultValues: (() => {
+      if (groupDefaults && groupDefaults.length > 0) {
+        return {
+          activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+          qtyBreakdown: [],
+          qtyGroup: groupDefaults.map((g) => ({
+            assemblyId: g.assemblyId,
+            qtyBreakdown: g.defaultBreakdown.map((n) => ({ value: n || 0 })),
+          })),
+        };
+      }
+      return {
+        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+        qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
+          ? initialBreakdown
+          : defaultBreakdown
+        ).map((n) => ({ value: n || 0 })),
+      };
+    })(),
   });
   const { control, handleSubmit, reset, watch, setValue } = form;
   const qtyArray = useFieldArray({ control, name: "qtyBreakdown" });
+  const qtyGroupArray = useFieldArray({ control, name: "qtyGroup" as const });
   const [openedCostings, setOpenedCostings] = useState<string[]>([]);
   const [batchesByCosting, setBatchesByCosting] = useState<
     Record<number, BatchRow[]>
@@ -126,20 +189,31 @@ export function AssemblyActivityModal(props: {
   );
 
   useEffect(() => {
-    // Reset defaults when labels or external defaults change
-    reset({
-      activityDate: initialDate ? new Date(initialDate as any) : new Date(),
-      qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
-        ? initialBreakdown
-        : defaultBreakdown
-      ).map((n) => ({ value: n || 0 })),
-    });
-    // Preload consumption in edit mode
+    if (!opened) return;
+    if (groupDefaults && groupDefaults.length > 0) {
+      reset({
+        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+        qtyBreakdown: [],
+        qtyGroup: groupDefaults.map((g) => ({
+          assemblyId: g.assemblyId,
+          qtyBreakdown: g.defaultBreakdown.map((n) => ({ value: n || 0 })),
+        })),
+      });
+    } else {
+      reset({
+        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+        qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
+          ? initialBreakdown
+          : defaultBreakdown
+        ).map((n) => ({ value: n || 0 })),
+      });
+    }
     if (mode === "edit" && initialConsumption) {
       setConsumption(initialConsumption);
     }
+    // Only re-run when modal opens or activity target changes to avoid loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultBreakdown, initialDate, initialBreakdown, mode]);
+  }, [opened, activityId, groupDefaults]);
 
   const eligibleCostings = useMemo(() => {
     return (costings || []).filter(
@@ -153,11 +227,16 @@ export function AssemblyActivityModal(props: {
 
   // Open first panel by default when modal opens and costings are ready
   useEffect(() => {
-    if (opened && eligibleCostings.length > 0 && openedCostings.length === 0) {
-      setOpenedCostings([String(eligibleCostings[0].id)]);
+    if (!opened) return;
+    // Use functional update to avoid stale closure and unnecessary loops
+    if (eligibleCostings.length > 0) {
+      setOpenedCostings((prev) => {
+        if (prev && prev.length > 0) return prev;
+        return [String(eligibleCostings[0].id)];
+      });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, eligibleCostings]);
+    // Only depend on primitives to reduce churn
+  }, [opened, eligibleCostings.length]);
 
   async function loadBatchesForCosting(
     costingId: number,
@@ -204,7 +283,7 @@ export function AssemblyActivityModal(props: {
           ? "Record Cut"
           : "Record Activity"
       }
-      size="lg"
+      size="xl"
       centered
     >
       <form
@@ -214,7 +293,17 @@ export function AssemblyActivityModal(props: {
             fd.set("_intent", "activity.update");
             if (activityId != null) fd.set("activityId", String(activityId));
           } else {
-            fd.set("_intent", `activity.create.${activityType}`);
+            fd.set(
+              "_intent",
+              overrideIntent
+                ? overrideIntent
+                : `activity.create.${activityType}`
+            );
+          }
+          if (extraFields) {
+            for (const [k, v] of Object.entries(extraFields)) {
+              fd.set(k, String(v));
+            }
           }
           const date = values.activityDate
             ? new Date(values.activityDate)
@@ -241,7 +330,7 @@ export function AssemblyActivityModal(props: {
           onClose();
         })}
       >
-        <Stack>
+        <Stack p="lg">
           <Group align="flex-end" justify="space-between">
             <Controller
               control={control}
@@ -261,73 +350,157 @@ export function AssemblyActivityModal(props: {
             </Button>
           </Group>
           <Stack>
-            <Title order={6}>Quantity Breakdown</Title>
-            <Table
-              withColumnBorders
-              withTableBorder
-              striped
-              style={{ tableLayout: "fixed" }}
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  {labels.map((label: string, i: number) => (
-                    <Table.Th key={`h-${i}`} ta="center" style={{ width: 56 }}>
-                      {label || `${i + 1}`}
-                    </Table.Th>
-                  ))}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                <Table.Tr>
-                  {labels.map((_label: string, i: number) => (
-                    <Table.Td
-                      key={`qty-${i}`}
-                      p={0}
-                      ta="center"
-                      style={{ position: "relative", width: 56 }}
-                    >
-                      <Controller
-                        control={control}
-                        name={`qtyBreakdown.${i}.value` as const}
-                        render={({ field }) => (
-                          <TextInput
-                            type="number"
-                            variant="unstyled"
-                            styles={{
-                              input: {
-                                width: "100%",
-                                height: "100%",
-                                textAlign: "center",
-                                padding: 0,
-                                margin: 0,
-                                outline: "none",
-                              },
-                            }}
-                            value={field.value ?? 0}
-                            onChange={(e) => {
-                              const raw = e.currentTarget.value;
-                              const v = raw === "" ? 0 : Number(raw);
-                              field.onChange(
-                                Number.isFinite(v) ? (v as number) | 0 : 0
-                              );
-                            }}
-                          />
-                        )}
-                      />
-                    </Table.Td>
-                  ))}
-                </Table.Tr>
-              </Table.Tbody>
-            </Table>
+            {groupDefaults && groupDefaults.length > 0 ? (
+              <Stack>
+                {(qtyGroupArray.fields || []).map((fg, gi) => {
+                  const gDef = groupDefaults![gi];
+                  const glabels = gDef?.labels || [];
+                  return (
+                    <Stack key={`g-${fg.id || gi}`}>
+                      <Group justify="space-between" align="center">
+                        <Title order={6}>Assembly A{gDef.assemblyId}</Title>
+                      </Group>
+                      <Table
+                        withColumnBorders
+                        withTableBorder
+                        striped
+                        style={{ tableLayout: "fixed" }}
+                      >
+                        <Table.Thead>
+                          <Table.Tr>
+                            {glabels.map((label: string, i: number) => (
+                              <Table.Th
+                                key={`gh-${gi}-${i}`}
+                                ta="center"
+                                py={2}
+                                fz="xs"
+                                style={{
+                                  width: 56,
+                                }}
+                              >
+                                {label || `${i + 1}`}
+                              </Table.Th>
+                            ))}
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          <Table.Tr>
+                            {glabels.map((_label: string, i: number) => (
+                              <Table.Td
+                                key={`gqty-${gi}-${i}`}
+                                p={0}
+                                ta="center"
+                                style={{ position: "relative", width: 56 }}
+                              >
+                                <Controller
+                                  control={control}
+                                  name={
+                                    `qtyGroup.${gi}.qtyBreakdown.${i}.value` as const
+                                  }
+                                  render={({ field }) => (
+                                    <TextInput
+                                      type="number"
+                                      variant="unstyled"
+                                      styles={{
+                                        input: {
+                                          width: "100%",
+                                          height: "100%",
+                                          textAlign: "center",
+                                          padding: 0,
+                                          margin: 0,
+                                          outline: "none",
+                                        },
+                                      }}
+                                      value={field.value ?? 0}
+                                      onChange={(e) => {
+                                        const raw = e.currentTarget.value;
+                                        const v = raw === "" ? 0 : Number(raw);
+                                        field.onChange(
+                                          Number.isFinite(v)
+                                            ? (v as number) | 0
+                                            : 0
+                                        );
+                                      }}
+                                    />
+                                  )}
+                                />
+                              </Table.Td>
+                            ))}
+                          </Table.Tr>
+                        </Table.Tbody>
+                      </Table>
+                    </Stack>
+                  );
+                })}
+              </Stack>
+            ) : (
+              <Table
+                withColumnBorders
+                withTableBorder
+                striped
+                style={{ tableLayout: "fixed" }}
+              >
+                <Table.Thead>
+                  <Table.Tr>
+                    {labels.map((label: string, i: number) => (
+                      <Table.Th
+                        key={`h-${i}`}
+                        ta="center"
+                        style={{ width: 56 }}
+                      >
+                        {label || `${i + 1}`}
+                      </Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  <Table.Tr>
+                    {labels.map((_label: string, i: number) => (
+                      <Table.Td
+                        key={`qty-${i}`}
+                        p={0}
+                        ta="center"
+                        style={{ position: "relative", width: 56 }}
+                      >
+                        <Controller
+                          control={control}
+                          name={`qtyBreakdown.${i}.value` as const}
+                          render={({ field }) => (
+                            <TextInput
+                              type="number"
+                              variant="unstyled"
+                              styles={{
+                                input: {
+                                  width: "100%",
+                                  height: "100%",
+                                  textAlign: "center",
+                                  padding: 0,
+                                  margin: 0,
+                                  outline: "none",
+                                },
+                              }}
+                              value={field.value ?? 0}
+                              onChange={(e) => {
+                                const raw = e.currentTarget.value;
+                                const v = raw === "" ? 0 : Number(raw);
+                                field.onChange(
+                                  Number.isFinite(v) ? (v as number) | 0 : 0
+                                );
+                              }}
+                            />
+                          )}
+                        />
+                      </Table.Td>
+                    ))}
+                  </Table.Tr>
+                </Table.Tbody>
+              </Table>
+            )}
           </Stack>
 
           <Stack>
             <Title order={6}>Material Consumption</Title>
             <Group justify="space-between" align="center">
-              <Text c="dimmed" size="sm">
-                Expand a costing to enter batch consumption. Header shows
-                product and consumed/expected (Qty/Unit × units in this cut).
-              </Text>
               <Group gap={8} align="center">
                 <SegmentedControl
                   data={[
@@ -356,11 +529,25 @@ export function AssemblyActivityModal(props: {
               </Group>
             </Group>
             {(() => {
-              const qb = watch("qtyBreakdown") || [];
-              const unitsInCut = qb.reduce(
-                (t: number, x: any) => t + (Number(x?.value ?? 0) || 0),
-                0
-              );
+              const qbSingle = watch("qtyBreakdown") || [];
+              const qg = (watch("qtyGroup") || []) as any[];
+              const unitsInCut =
+                (qg.length
+                  ? qg.reduce((t, g) => {
+                      const arr = (g?.qtyBreakdown || []) as any[];
+                      return (
+                        t +
+                        arr.reduce(
+                          (tt: number, x: any) =>
+                            tt + (Number(x?.value ?? 0) || 0),
+                          0
+                        )
+                      );
+                    }, 0)
+                  : qbSingle.reduce(
+                      (t: number, x: any) => t + (Number(x?.value ?? 0) || 0),
+                      0
+                    )) || 0;
               return (
                 <Accordion
                   multiple

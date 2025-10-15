@@ -40,7 +40,7 @@ export class ProductPricingService {
     const pushRange = (from: number | null, price: number | null) => {
       if (price == null) return;
       const minQty = Math.max(1, toNumber(from) ?? 1);
-      tiers.push({ minQty, unitPrice: price });
+      tiers.push({ minQty, priceCost: price });
     };
 
     // product ranges
@@ -49,7 +49,8 @@ export class ProductPricingService {
       orderBy: [{ rangeFrom: "asc" }, { id: "asc" }],
       select: { rangeFrom: true, costPrice: true },
     });
-    for (const r of productRanges) pushRange(r.rangeFrom as any, r.costPrice);
+    for (const r of productRanges)
+      pushRange(r.rangeFrom as any, toNumber(r.costPrice));
 
     // group ranges
     let groupId: number | null = p.costGroupId ?? null;
@@ -66,13 +67,14 @@ export class ProductPricingService {
         where: { id: groupId },
         select: { costPrice: true },
       });
-      if (group?.costPrice != null) pushRange(1, group.costPrice);
+      if (group?.costPrice != null) pushRange(1, toNumber(group.costPrice));
       const ranges = await prismaBase.productCostRange.findMany({
         where: { costGroupId: groupId },
         orderBy: [{ rangeFrom: "asc" }, { id: "asc" }],
         select: { rangeFrom: true, costPrice: true },
       });
-      for (const r of ranges) pushRange(r.rangeFrom as any, r.costPrice);
+      for (const r of ranges)
+        pushRange(r.rangeFrom as any, toNumber(r.costPrice));
     }
 
     // Base cost fallback when no tiers

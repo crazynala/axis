@@ -1,6 +1,14 @@
 import React, { useRef, useEffect, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Table, ScrollArea, Box, Text } from "@mantine/core";
+import {
+  Table,
+  ScrollArea,
+  Box,
+  Text,
+  Group,
+  Button,
+  Checkbox,
+} from "@mantine/core";
 import type { DataTableColumn, DataTableSortStatus } from "mantine-datatable";
 import { useRecords } from "../base/record/RecordContext";
 
@@ -27,6 +35,16 @@ interface VirtualizedNavDataTableProps<T = Record<string, any>> {
   footer?: React.ReactNode;
   overscan?: number;
   debug?: boolean;
+  // Multiselect & bulk actions
+  multiselect?: boolean;
+  bulkActions?: Array<{
+    label: string;
+    onClick: (selectedIds: Array<string | number>) => void;
+    color?: string;
+    variant?: any;
+  }>;
+  onSelectionChange?: (selectedIds: Array<string | number>) => void;
+  getRowId?: (record: T) => string | number;
 }
 
 export function VirtualizedNavDataTable<T = Record<string, any>>({
@@ -49,6 +67,10 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
   footer,
   overscan = 12,
   debug = false,
+  multiselect = false,
+  bulkActions,
+  onSelectionChange,
+  getRowId,
 }: VirtualizedNavDataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -173,6 +195,56 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
       )
     : 0;
 
+  // Multiselect state and helpers
+  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(
+    new Set()
+  );
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const resolveId = (rec: any): string | number | undefined => {
+    if (!rec) return undefined;
+    if (getRowId) return getRowId(rec as T);
+    return (rec as any)?.id;
+  };
+  const setSel = (
+    updater: (prev: Set<string | number>) => Set<string | number>
+  ) => {
+    setSelectedIds((prev) => {
+      const next = updater(prev);
+      onSelectionChange?.(Array.from(next));
+      return next;
+    });
+  };
+  const toggleId = (id: string | number, checked: boolean) => {
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+  const toggleRange = (
+    fromIndex: number,
+    toIndex: number,
+    checked: boolean
+  ) => {
+    const start = Math.min(fromIndex, toIndex);
+    const end = Math.max(fromIndex, toIndex);
+    setSel((prev) => {
+      const next = new Set(prev);
+      for (let i = start; i <= end; i++) {
+        const rec: any = records[i];
+        const id = resolveId(rec);
+        if (id == null) continue;
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSel(() => new Set());
+  const hasSelection = multiselect && selectedIds.size > 0;
+  const colCount = columns.length + (multiselect ? 1 : 0);
+
   return (
     <Box ref={containerRef} style={{ height: effectiveHeight }}>
       <ScrollArea viewportRef={parentRef} style={{ height: "100%" }}>
@@ -185,54 +257,85 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
               backgroundColor: "var(--mantine-color-body)",
             }}
           >
-            <Table.Tr>
-              {columns.map((column, index) => (
-                <Table.Th
-                  key={index}
-                  style={{
-                    width: column.width || "auto",
-                    cursor: column.sortable ? "pointer" : "default",
-                    padding: "8px 12px",
-                    borderBottom: "1px solid var(--mantine-color-gray-3)",
-                  }}
-                  onClick={() => {
-                    if (
-                      column.sortable &&
-                      onSortStatusChange &&
-                      column.accessor
-                    ) {
-                      const newDirection =
-                        sortStatus?.columnAccessor === column.accessor &&
-                        sortStatus.direction === "asc"
-                          ? "desc"
-                          : "asc";
-                      onSortStatusChange({
-                        columnAccessor: column.accessor as any,
-                        direction: newDirection,
-                      });
-                    }
-                  }}
-                >
-                  <Box
-                    style={{ display: "flex", alignItems: "center", gap: 4 }}
-                  >
-                    {column.title}
-                    {column.sortable &&
-                      sortStatus?.columnAccessor === column.accessor && (
-                        <Text size="xs">
-                          {sortStatus.direction === "asc" ? "↑" : "↓"}
-                        </Text>
-                      )}
-                  </Box>
+            {hasSelection ? (
+              <Table.Tr>
+                <Table.Th colSpan={colCount} style={{ padding: 8 }}>
+                  <Group justify="space-between" align="center">
+                    <Text size="sm">Selected: {selectedIds.size}</Text>
+                    <Group gap="xs">
+                      {bulkActions?.map((a, i) => (
+                        <Button
+                          key={i}
+                          size="xs"
+                          variant={a.variant || "light"}
+                          color={a.color}
+                          onClick={() => a.onClick(Array.from(selectedIds))}
+                        >
+                          {a.label}
+                        </Button>
+                      ))}
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={clearSelection}
+                      >
+                        Clear
+                      </Button>
+                    </Group>
+                  </Group>
                 </Table.Th>
-              ))}
-            </Table.Tr>
+              </Table.Tr>
+            ) : (
+              <Table.Tr>
+                {multiselect && <Table.Th style={{ width: 36 }} />}
+                {columns.map((column, index) => (
+                  <Table.Th
+                    key={index}
+                    style={{
+                      width: column.width || "auto",
+                      cursor: column.sortable ? "pointer" : "default",
+                      padding: "8px 12px",
+                      borderBottom: "1px solid var(--mantine-color-gray-3)",
+                    }}
+                    onClick={() => {
+                      if (
+                        column.sortable &&
+                        onSortStatusChange &&
+                        column.accessor
+                      ) {
+                        const newDirection =
+                          sortStatus?.columnAccessor === column.accessor &&
+                          sortStatus.direction === "asc"
+                            ? "desc"
+                            : "asc";
+                        onSortStatusChange({
+                          columnAccessor: column.accessor as any,
+                          direction: newDirection,
+                        });
+                      }
+                    }}
+                  >
+                    <Box
+                      style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      {column.title}
+                      {column.sortable &&
+                        sortStatus?.columnAccessor === column.accessor && (
+                          <Text size="xs">
+                            {sortStatus.direction === "asc" ? "↑" : "↓"}
+                          </Text>
+                        )}
+                    </Box>
+                  </Table.Th>
+                ))}
+              </Table.Tr>
+            )}
           </Table.Thead>
           <Table.Tbody>
             {paddingTop > 0 && (
               <Table.Tr>
                 <Table.Td
-                  colSpan={columns.length}
+                  colSpan={colCount}
                   style={{ height: paddingTop, padding: 0, border: 0 }}
                 />
               </Table.Tr>
@@ -274,6 +377,39 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
                     loaded && onRowDoubleClick?.(record as T, virtualRow.index)
                   }
                 >
+                  {multiselect && (
+                    <Table.Td style={{ width: 36 }}>
+                      {loaded ? (
+                        <Checkbox
+                          checked={selectedIds.has(resolveId(record as any)!)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            const id = resolveId(record as any);
+                            if (id == null) return;
+                            const rowIndex = virtualRow.index;
+                            const shift = (e.nativeEvent as MouseEvent)
+                              .shiftKey;
+                            const nextChecked = e.currentTarget.checked;
+                            if (shift && lastClickedIndex != null) {
+                              toggleRange(
+                                lastClickedIndex,
+                                rowIndex,
+                                nextChecked
+                              );
+                            } else {
+                              toggleId(id, nextChecked);
+                            }
+                            setLastClickedIndex(rowIndex);
+                          }}
+                          aria-label="Select row"
+                        />
+                      ) : (
+                        <span style={{ color: "var(--mantine-color-dimmed)" }}>
+                          …
+                        </span>
+                      )}
+                    </Table.Td>
+                  )}
                   {columns.map((column, colIndex) => {
                     const content = loaded
                       ? column.render
@@ -310,7 +446,7 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
             {paddingBottom > 0 && (
               <Table.Tr>
                 <Table.Td
-                  colSpan={columns.length}
+                  colSpan={colCount}
                   style={{ height: paddingBottom, padding: 0, border: 0 }}
                 />
               </Table.Tr>

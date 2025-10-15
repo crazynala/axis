@@ -26,6 +26,7 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
       (t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t),
       0
     );
+    console.log("Import assembly", qtyOrderedBreakdown);
     const data: any = {
       id,
       name: (pick(r, ["Name"]) ?? "").toString().trim() || null,

@@ -16,7 +16,7 @@ export function CompanySelect({
   onChange,
   options,
   label = "Company",
-  mod = "data-autoSize",
+  mod = "data-autosize",
   placeholder = "Select company",
   filter,
 }: {

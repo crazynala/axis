@@ -289,6 +289,9 @@ model Assembly {
     // Removed direct Batch relation; batches are independent of assemblies
     job                 Job?                @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
     jobId               Int?
+    // Optional grouping of assemblies within a job
+    assemblyGroupId     Int?
+    assemblyGroup       AssemblyGroup?      @relation(fields: [assemblyGroupId], references: [id])
     // Link Assembly to original Product by id only (no relation)
     productId           Int?
     // Optional link to a Variant Set (may mirror the Product's variant set)
@@ -319,8 +322,8 @@ model Costing {
     unitCost                      Decimal?      @db.Decimal(14, 4)
     notes                         String?
     activityUsed                  String?
+    costPricePerItem              Decimal?      @db.Decimal(14, 4)
     salePricePerItem              Decimal?      @db.Decimal(14, 4)
-    salePricePerUnit              Decimal?      @db.Decimal(14, 4)
     flagAssembly                  Boolean?
     flagDefinedInProduct          Boolean?
     flagIsBillableDefaultOrManual Boolean?
@@ -416,12 +419,16 @@ model ProductMovement {
     // New mapped fields (scalars for import mapping)
     assemblyActivityId  Int?
     assemblyId          Int?
+    // Support group-level recording of movements
+    assemblyGroupId     Int?
     costingId           Int?
     expenseId           Int?
     jobId               Int?
     locationInId        Int?
     locationOutId       Int?
     shippingType        String?
+    // Optional linkage key for grouping activities/movements
+    groupKey            String?
     productId           Int?
     quantity            Decimal?              @db.Decimal(14, 4)
     purchaseOrderLineId Int?
@@ -492,6 +499,8 @@ model Job {
     // Removed: Variant back-relation; Variant model dropped
     assemblyActivities      AssemblyActivity[]
     assemblies              Assembly[]          @relation("Job_Assemblies")
+    // Back-relations: Assembly groups within this job
+    assemblyGroups          AssemblyGroup[]
     batches                 Batch[]
     // Back-relations
     invoiceLines            InvoiceLine[]
@@ -506,6 +515,20 @@ model Job {
     modifiedBy              String?
     createdAt               DateTime?           @default(now())
     updatedAt               DateTime?           @updatedAt
+}
+
+// Group multiple assemblies within a job (for planning/visual grouping)
+model AssemblyGroup {
+    id         Int        @id @default(autoincrement())
+    jobId      Int?
+    name       String?
+    job        Job?       @relation(fields: [jobId], references: [id])
+    assemblies Assembly[]
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime?  @default(now())
+    updatedAt  DateTime?  @updatedAt
 }
 
 model SavedView {
@@ -527,6 +550,8 @@ model AssemblyActivity {
     description              String?
     activityType             String?
     activityDate             DateTime?
+    // Optional key to link activities performed together across multiple assemblies
+    groupKey                 String?
     // Removed: deprecated time/status fields per new spec
     notes                    String?
     productId                Int?
@@ -828,6 +853,7 @@ model PurchaseOrder {
     locationId         Int?
     date               DateTime?
     memo               String?
+    status             String?
     createdBy          String?
     createdAt          DateTime?           @default(now())
     modifiedBy         String?

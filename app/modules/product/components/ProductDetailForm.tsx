@@ -4,7 +4,7 @@ import type { UseFormReturn } from "react-hook-form";
 import { RenderGroup } from "../../../base/forms/fieldConfigShared";
 import {
   getGlobalOptions,
-  type OptionsData,
+  type OptionsData
 } from "../../../base/options/OptionsClient";
 import {
   productIdentityFields,

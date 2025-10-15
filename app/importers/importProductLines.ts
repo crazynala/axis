@@ -24,11 +24,7 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
         ])
       ) as number | null,
       childId: asNum(
-        pick(r, [
-          "a__ProductCode|Child",
-          "a_ProductCode|Child",
-          "ChildProductId",
-        ])
+        pick(r, ["a_ProductCode", "a_ProductCode|Child", "ChildProductId"])
       ) as number | null,
       quantity: asNum(pick(r, ["Quantity"])) as number | null,
       unitCost: asNum(pick(r, ["UnitCost"])) as number | null,

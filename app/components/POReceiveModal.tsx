@@ -14,6 +14,7 @@ import {
 import { DatePickerInput } from "@mantine/dates";
 import { useFetcher } from "@remix-run/react";
 import { useForm, Controller, useFieldArray } from "react-hook-form";
+import type { Control, UseFormWatch } from "react-hook-form";
 
 type ReceiveForm = {
   date: string; // YYYY-MM-DD
@@ -266,161 +267,174 @@ export function POReceiveModal(props: {
         </Table>
 
         <Title order={6}>Batch Breakdown</Title>
-        {lines.map((l, idx) => {
-          // Nested field array for batches for this line
-          const { fields, append, remove } = useFieldArray({
-            control,
-            name: `items.${idx}.batches` as const,
-          });
-          const batches = watch(`items.${idx}.batches` as const) || [];
-          const sum = Array.isArray(batches)
-            ? batches.reduce(
-                (t: number, r: any) => t + (Number(r?.qty) || 0),
-                0
-              )
-            : 0;
-          const total = Number(watch(`items.${idx}.total`) || 0);
-          const rem = Number(remainingByLine[l.id] || 0);
-          const needsBatches = total > 0 && batches.length === 0;
-          const sumMismatch = Math.round(sum * 100) !== Math.round(total * 100);
-          const exceedsRemaining = total > rem;
-          const ok = !needsBatches && !sumMismatch && !exceedsRemaining;
-          return (
-            <Stack key={`bd-${l.id}`} gap={6}>
-              <Group justify="space-between" align="center">
-                <Text fw={600}>
-                  {l.sku || ""} · {l.name || ""}
-                </Text>
-                <Text size="sm" c={ok ? "dimmed" : "red"}>
-                  Sum: {sum} / {total} — Remaining: {rem}
-                </Text>
-              </Group>
-              {!ok && (
-                <Stack gap={2}>
-                  {needsBatches && (
-                    <Text size="xs" c="red">
-                      Add at least one batch row for this line.
-                    </Text>
-                  )}
-                  {!needsBatches && sumMismatch && (
-                    <Text size="xs" c="red">
-                      Sum of batch qty must equal Total to Receive.
-                    </Text>
-                  )}
-                  {exceedsRemaining && (
-                    <Text size="xs" c="red">
-                      Total to Receive exceeds Remaining.
-                    </Text>
-                  )}
-                </Stack>
-              )}
-              <Table withTableBorder withColumnBorders>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Mill</Table.Th>
-                    <Table.Th>Sartor</Table.Th>
-                    <Table.Th>Qty</Table.Th>
-                    <Table.Th></Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {fields.map((f, bIdx) => (
-                    <Table.Tr key={f.id}>
-                      <Table.Td>
-                        <Controller
-                          control={control}
-                          name={`items.${idx}.batches.${bIdx}.name` as const}
-                          render={({ field }) => (
-                            <TextInput
-                              value={field.value || ""}
-                              onChange={field.onChange}
-                            />
-                          )}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Controller
-                          control={control}
-                          name={
-                            `items.${idx}.batches.${bIdx}.codeMill` as const
-                          }
-                          render={({ field }) => (
-                            <TextInput
-                              value={field.value || ""}
-                              onChange={field.onChange}
-                            />
-                          )}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Controller
-                          control={control}
-                          name={
-                            `items.${idx}.batches.${bIdx}.codeSartor` as const
-                          }
-                          render={({ field }) => (
-                            <TextInput
-                              value={field.value || ""}
-                              onChange={field.onChange}
-                            />
-                          )}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Controller
-                          control={control}
-                          name={`items.${idx}.batches.${bIdx}.qty` as const}
-                          render={({ field }) => (
-                            <NumberInput
-                              value={field.value as any}
-                              onChange={(v) => field.onChange(Number(v) || 0)}
-                              hideControls
-                              w={100}
-                            />
-                          )}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          variant="light"
-                          color="red"
-                          size="xs"
-                          onClick={() => remove(bIdx)}
-                        >
-                          Remove
-                        </Button>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                  <Table.Tr>
-                    <Table.Td colSpan={5}>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        onClick={() =>
-                          append({
-                            name: "",
-                            codeMill: "",
-                            codeSartor: "",
-                            qty: 0,
-                          })
-                        }
-                      >
-                        Add Batch Row
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                </Table.Tbody>
-              </Table>
-            </Stack>
-          );
-        })}
+        {lines.map((l, idx) => (
+          <LineBatchesSection
+            key={`bd-${l.id}`}
+            control={control}
+            watch={watch}
+            idx={idx}
+            line={l}
+            remaining={Number(remainingByLine[l.id] || 0)}
+          />
+        ))}
         <Text c="dimmed" size="sm">
           All batches created here will use the PO's location ID:{" "}
           {poLocationId ?? "(none)"}.
         </Text>
       </Stack>
     </Modal>
+  );
+}
+
+function LineBatchesSection(props: {
+  control: Control<ReceiveForm>;
+  watch: UseFormWatch<ReceiveForm>;
+  idx: number;
+  line: { id: number; sku?: string | null; name?: string | null };
+  remaining: number;
+}) {
+  const { control, watch, idx, line, remaining } = props;
+  // Hook lives inside a dedicated component to keep parent's hook order stable
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: `items.${idx}.batches` as const,
+  });
+
+  const batches = (watch(`items.${idx}.batches` as const) as any[]) || [];
+  const sum = Array.isArray(batches)
+    ? batches.reduce((t: number, r: any) => t + (Number(r?.qty) || 0), 0)
+    : 0;
+  const total = Number((watch(`items.${idx}.total` as const) as any) || 0);
+  const rem = Number(remaining || 0);
+  const needsBatches = total > 0 && batches.length === 0;
+  const sumMismatch = Math.round(sum * 100) !== Math.round(total * 100);
+  const exceedsRemaining = total > rem;
+  const ok = !needsBatches && !sumMismatch && !exceedsRemaining;
+
+  return (
+    <Stack gap={6}>
+      <Group justify="space-between" align="center">
+        <Text fw={600}>
+          {line.sku || ""} · {line.name || ""}
+        </Text>
+        <Text size="sm" c={ok ? "dimmed" : "red"}>
+          Sum: {sum} / {total} — Remaining: {rem}
+        </Text>
+      </Group>
+      {!ok && (
+        <Stack gap={2}>
+          {needsBatches && (
+            <Text size="xs" c="red">
+              Add at least one batch row for this line.
+            </Text>
+          )}
+          {!needsBatches && sumMismatch && (
+            <Text size="xs" c="red">
+              Sum of batch qty must equal Total to Receive.
+            </Text>
+          )}
+          {exceedsRemaining && (
+            <Text size="xs" c="red">
+              Total to Receive exceeds Remaining.
+            </Text>
+          )}
+        </Stack>
+      )}
+      <Table withTableBorder withColumnBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Name</Table.Th>
+            <Table.Th>Mill</Table.Th>
+            <Table.Th>Sartor</Table.Th>
+            <Table.Th>Qty</Table.Th>
+            <Table.Th></Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {fields.map((f, bIdx) => (
+            <Table.Tr key={f.id}>
+              <Table.Td>
+                <Controller
+                  control={control}
+                  name={`items.${idx}.batches.${bIdx}.name` as const}
+                  render={({ field }) => (
+                    <TextInput
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+              </Table.Td>
+              <Table.Td>
+                <Controller
+                  control={control}
+                  name={`items.${idx}.batches.${bIdx}.codeMill` as const}
+                  render={({ field }) => (
+                    <TextInput
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+              </Table.Td>
+              <Table.Td>
+                <Controller
+                  control={control}
+                  name={`items.${idx}.batches.${bIdx}.codeSartor` as const}
+                  render={({ field }) => (
+                    <TextInput
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+              </Table.Td>
+              <Table.Td>
+                <Controller
+                  control={control}
+                  name={`items.${idx}.batches.${bIdx}.qty` as const}
+                  render={({ field }) => (
+                    <NumberInput
+                      value={field.value as any}
+                      onChange={(v) => field.onChange(Number(v) || 0)}
+                      hideControls
+                      w={100}
+                    />
+                  )}
+                />
+              </Table.Td>
+              <Table.Td>
+                <Button
+                  variant="light"
+                  color="red"
+                  size="xs"
+                  onClick={() => remove(bIdx)}
+                >
+                  Remove
+                </Button>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+          <Table.Tr>
+            <Table.Td colSpan={5}>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() =>
+                  append({
+                    name: "",
+                    codeMill: "",
+                    codeSartor: "",
+                    qty: 0,
+                  })
+                }
+              >
+                Add Batch Row
+              </Button>
+            </Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>
+    </Stack>
   );
 }

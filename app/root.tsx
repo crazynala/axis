@@ -33,7 +33,15 @@ import {
   Text,
   Paper,
 } from "@mantine/core";
-import { MantineProvider, createTheme, Input, rem, em } from "@mantine/core";
+import {
+  MantineProvider,
+  createTheme,
+  Input,
+  rem,
+  em,
+  type CSSVariablesResolver,
+} from "@mantine/core";
+import { ModalsProvider } from "@mantine/modals";
 import { HotkeyAwareModal } from "./base/hotkeys/HotkeyAwareModal";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -44,10 +52,13 @@ import {
 } from "@aa/timber";
 import { Notifications } from "@mantine/notifications";
 
-import "@mantine/core/styles.css";
-import "@mantine/dates/styles.css";
+import "./styles/css-layers.css";
+import "./styles/react-datasheet-grid.layer.css";
+import "@mantine/core/styles.layer.css";
+import "@mantine/dates/styles.layer.css";
+import "@mantine/notifications/styles.layer.css";
 import "mantine-datatable/styles.layer.css";
-import "./styles/app.css";
+import "./styles/app.layer.css";
 import { getUser, getUserId } from "./utils/auth.server";
 import { FindProvider } from "./base/find/FindContext";
 import {
@@ -190,6 +201,44 @@ const theme = createTheme({
   },
 });
 
+const cssVariablesResolver: CSSVariablesResolver = (t) => ({
+  variables: {
+    // shared (both schemes)
+    "--dsg-selection-border-radius": "2px",
+    "--dsg-selection-border-width": "2px",
+    "--dsg-transition-duration": "0.1s",
+    "--dsg-corner-indicator-width": "10px",
+    "--dsg-expand-rows-indicator-width": "10px",
+    "--dsg-scroll-shadow-width": "7px",
+  },
+  light: {
+    "--dsg-border-color": t.colors.gray[3],
+    "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
+    "--dsg-selection-background-color":
+      "color-mix(in oklab, var(--mantine-primary-color-filled) 6%, transparent)",
+    "--dsg-selection-disabled-border-color": t.colors.gray[5],
+    "--dsg-selection-disabled-background-color": "rgba(0,0,0,.04)",
+    "--dsg-header-text-color": t.colors.gray[6],
+    "--dsg-header-active-text-color": "black",
+    "--dsg-cell-background-color": t.white,
+    "--dsg-cell-disabled-background-color": t.colors.gray[0],
+    "--dsg-scroll-shadow-color": "rgba(0,0,0,.2)",
+  },
+  dark: {
+    "--dsg-border-color": t.colors.dark[5],
+    "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
+    "--dsg-selection-background-color":
+      "color-mix(in oklab, var(--mantine-primary-color-filled) 10%, transparent)",
+    "--dsg-selection-disabled-border-color": t.colors.dark[3],
+    "--dsg-selection-disabled-background-color": "rgba(255,255,255,.04)",
+    "--dsg-header-text-color": t.colors.dark[2],
+    "--dsg-header-active-text-color": t.white,
+    "--dsg-cell-background-color": t.colors.dark[7],
+    "--dsg-cell-disabled-background-color": t.colors.dark[6],
+    "--dsg-scroll-shadow-color": "rgba(0,0,0,.5)",
+  },
+});
+
 export default function App() {
   const data = useLoaderData<typeof loader>();
   const colorScheme = data.colorScheme;
@@ -199,6 +248,8 @@ export default function App() {
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
+  const isSuppressAppShell = location.pathname.includes("fullzoom");
+
   const navTopItems = [
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
     { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
@@ -246,31 +297,40 @@ export default function App() {
               __html: `window.__LOG_LEVELS__=${JSON.stringify(logLevels)};`,
             }}
           />
-          <MantineProvider defaultColorScheme={colorScheme} theme={theme}>
-            <Notifications />
-            {isLogin || isAdmin ? (
-              // Public auth pages render without the main AppShell
-              <Outlet />
-            ) : (
-              <FindProvider>
-                <HotkeyProvider>
-                  <RecordProvider>
-                    <GlobalFormProvider>
-                      <OptionsProvider value={options ?? null}>
-                        {/* removed, we'll just use the provider: {options ? (setGlobalOptions(options), null) : null} */}
-                        <GlobalHotkeys />
-                        <AppShellLayout
-                          desktopNavOpenedInitial={desktopNavPref}
-                          navTopItems={navTopItems}
-                          navBottomItems={navBottomItems}
-                        />
-                      </OptionsProvider>
-                    </GlobalFormProvider>
-                  </RecordProvider>
-                </HotkeyProvider>
-              </FindProvider>
-            )}
-            <ScrollRestoration />
+          <MantineProvider
+            defaultColorScheme={colorScheme}
+            theme={theme}
+            cssVariablesResolver={cssVariablesResolver}
+          >
+            <ModalsProvider>
+              <Notifications />
+              {isLogin || isAdmin ? (
+                // Public auth pages render without the main AppShell or providers
+                <Outlet />
+              ) : (
+                <FindProvider>
+                  <HotkeyProvider disabled={isSuppressAppShell}>
+                    <RecordProvider>
+                      <GlobalFormProvider>
+                        <OptionsProvider value={options ?? null}>
+                          <GlobalHotkeys />
+                          {isSuppressAppShell ? (
+                            <Outlet />
+                          ) : (
+                            <AppShellLayout
+                              desktopNavOpenedInitial={desktopNavPref}
+                              navTopItems={navTopItems}
+                              navBottomItems={navBottomItems}
+                              disabled={isAdmin}
+                            />
+                          )}
+                        </OptionsProvider>
+                      </GlobalFormProvider>
+                    </RecordProvider>
+                  </HotkeyProvider>
+                </FindProvider>
+              )}
+            </ModalsProvider>
             <Scripts />
           </MantineProvider>
         </body>
@@ -283,10 +343,12 @@ function AppShellLayout({
   desktopNavOpenedInitial,
   navTopItems,
   navBottomItems,
+  disabled,
 }: {
   desktopNavOpenedInitial: boolean;
   navTopItems: { to: string; label: string; icon?: ReactNode }[];
   navBottomItems: { to: string; label: string; icon?: ReactNode }[];
+  disabled?: boolean;
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
   const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(
@@ -311,6 +373,7 @@ function AppShellLayout({
   // Color scheme toggle moved to settings page
   return (
     <AppShell
+      disabled={disabled}
       padding="lg"
       navbar={{
         width: desktopNavOpened ? 210 : 45,

@@ -20,14 +20,16 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       productId: asNum(
         pick(r, ["a__ProductCode", "a_ProductCode", "ComponentId", "ProductId"])
       ) as number | null,
-      quantityPerUnit: asNum(pick(r, ["Qty_PerUnit", "QuantityPerUnit"])) as
+      quantityPerUnit: asNum(pick(r, ["Qty_PerUnit", "QtyRequiredPerUnit"])) as
         | number
         | null,
       unitCost: asNum(pick(r, ["UnitCost"])) as number | null,
       notes: (pick(r, ["Notes"]) ?? "").toString().trim() || null,
       activityUsed: (pick(r, ["ActivityUsed"]) ?? "").toString().trim() || null,
-      salePricePerItem: asNum(pick(r, ["SalePricePerItem"])) as number | null,
-      salePricePerUnit: asNum(pick(r, ["SalePricePerUnit"])) as number | null,
+      salePricePerItem: asNum(pick(r, ["Price|Sale_PerItem"])) as number | null,
+      costPricePerItem: asNum(pick(r, ["Price|CostWithVAT_PerItem"])) as
+        | number
+        | null,
       flagAssembly: Boolean(pick(r, ["Flag|Assembly"])) || null,
       flagDefinedInProduct: Boolean(pick(r, ["Flag|DefinedInProduct"])) || null,
       flagIsBillableDefaultOrManual:

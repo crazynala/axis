@@ -39,7 +39,7 @@ export const purchaseOrderMainFields: FieldConfig[] = [
     readOnly: true,
     hiddenInModes: ["create"],
   },
-  { name: "Memo", label: "Memo", findOp: "contains" },
+  { name: "memo", label: "Memo", findOp: "contains" },
   { name: "date", label: "Date", type: "date", findOp: "equals" },
 ];
 

@@ -13,7 +13,7 @@ export function ProductSelect({
   onChange,
   options,
   label = "Product",
-  mod = "data-autoSize",
+  mod = "data-autosize",
   placeholder = "Select product",
 }: {
   value: number | null | undefined;
