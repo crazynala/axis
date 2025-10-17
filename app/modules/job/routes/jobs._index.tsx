@@ -1,75 +1,150 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
 import {
   Link,
-  useLoaderData,
+  useRouteLoaderData,
   useNavigate,
   useSearchParams,
 } from "@remix-run/react";
-import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
+import { Button, Group, Stack, Title, Tooltip, Badge } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
-import { prisma } from "../../../utils/prisma.server";
-import { parseTableParams, buildPrismaArgs } from "../../../utils/table.server";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import * as jobDetail from "~/modules/job/forms/jobDetail";
 import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
+import { SavedViews } from "../../../components/find/SavedViews";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
-export async function loader(args: LoaderFunctionArgs) {
-  const params = parseTableParams(args.request.url);
-  if ((params as any).filters && "find" in (params as any).filters)
-    delete (params as any).filters.find;
-  const prismaArgs = buildPrismaArgs<any>(params, {
-    defaultSort: { field: "id", dir: "asc" },
-    searchableFields: ["name", "projectCode", "status", "jobType"],
-    filterMappers: {
-      id: (v: any) => {
-        const n = Number(v);
-        if (isNaN(n)) return {};
-        return { id: n };
-      },
-    },
-  });
-  const ID_CAP = 50000;
-  const idRows = await prisma.job.findMany({
-    where: prismaArgs.where,
-    orderBy: prismaArgs.orderBy || { id: "asc" },
-    select: { id: true },
-    take: ID_CAP,
-  });
-  const idList = idRows.map((r) => r.id);
-  const idListComplete = idRows.length < ID_CAP;
-  const INITIAL_COUNT = 100;
-  const initialIds = idList.slice(0, INITIAL_COUNT);
-  let initialRows: any[] = [];
-  if (initialIds.length) {
-    initialRows = await prisma.job.findMany({
-      where: { id: { in: initialIds } },
-      select: {
-        id: true,
-        projectCode: true,
-        name: true,
-        jobType: true,
-        startDate: true,
-        endDate: true,
-        status: true,
-        company: { select: { name: true } },
-      },
-      orderBy: { id: "asc" },
-    });
-  }
-  return json({ idList, idListComplete, initialRows, total: idList.length });
-}
+// DAN removed loader; it is all handled by parent loader
+// export async function loader(args: LoaderFunctionArgs) {
+//   const params = parseTableParams(args.request.url);
+//   if ((params as any).filters && "find" in (params as any).filters)
+//     delete (params as any).filters.find;
+//   // Never pass findReqs through to Prisma where; decode and merge instead
+//   if ((params as any).filters && "findReqs" in (params as any).filters)
+//     delete (params as any).filters.findReqs;
+//   const prismaArgs = buildPrismaArgs<any>(params, {
+//     defaultSort: { field: "id", dir: "asc" },
+//     searchableFields: ["name", "projectCode", "status", "jobType"],
+//     filterMappers: {
+//       id: (v: any) => {
+//         const n = Number(v);
+//         if (isNaN(n)) return {};
+//         return { id: n };
+//       },
+//     },
+//   });
+
+//   // Build merged where (simple + multi) per find pattern
+//   const url = new URL(args.request.url);
+//   // Accept dotted alias keys (back-compat): job.assembly.* => assembly*
+//   const alias = (from: string, to: string) => {
+//     const v = url.searchParams.get(from);
+//     if (v !== null && !url.searchParams.has(to)) url.searchParams.set(to, v);
+//   };
+//   alias("job.assembly.sku", "assemblySku");
+//   alias("job.assembly.name", "assemblyName");
+//   alias("job.assembly.status", "assemblyStatus");
+//   const values: any = {};
+//   const pass = (k: string) => {
+//     const v = url.searchParams.get(k);
+//     if (v !== null && v !== "") values[k] = v;
+//   };
+//   [
+//     "id",
+//     "projectCode",
+//     "name",
+//     "status",
+//     "jobType",
+//     "endCustomerName",
+//     "companyId",
+//     "assemblySku",
+//     "assemblyName",
+//     "assemblyStatus",
+//   ].forEach(pass);
+//   const simpleWhere = buildWhere(values, jobSearchSchema);
+//   const multi = decodeRequests(url.searchParams.get("findReqs"));
+//   let where: any = simpleWhere;
+//   if (multi) {
+//     const interpreters: Record<string, (val: any) => any> = {
+//       id: (v) => ({ id: Number(v) }),
+//       projectCode: (v) => ({
+//         projectCode: { contains: v, mode: "insensitive" },
+//       }),
+//       name: (v) => ({ name: { contains: v, mode: "insensitive" } }),
+//       status: (v) => ({ status: { contains: v, mode: "insensitive" } }),
+//       jobType: (v) => ({ jobType: { contains: v, mode: "insensitive" } }),
+//       endCustomerName: (v) => ({
+//         endCustomerName: { contains: v, mode: "insensitive" },
+//       }),
+//       companyId: (v) => ({ companyId: Number(v) }),
+//       assemblySku: (v) => ({
+//         assemblies: {
+//           some: { product: { sku: { contains: v, mode: "insensitive" } } },
+//         },
+//       }),
+//       assemblyName: (v) => ({
+//         assemblies: { some: { name: { contains: v, mode: "insensitive" } } },
+//       }),
+//       assemblyStatus: (v) => ({
+//         assemblies: { some: { status: { contains: v, mode: "insensitive" } } },
+//       }),
+//     };
+//     const multiWhere = buildWhereFromRequests(multi, interpreters);
+//     where = mergeSimpleAndMulti(simpleWhere, multiWhere);
+//   }
+//   const ID_CAP = 50000;
+//   const idRows = await prisma.job.findMany({
+//     where,
+//     orderBy: prismaArgs.orderBy || { id: "asc" },
+//     select: { id: true },
+//     take: ID_CAP,
+//   });
+//   const idList = idRows.map((r) => r.id);
+//   const idListComplete = idRows.length < ID_CAP;
+//   const INITIAL_COUNT = 100;
+//   const initialIds = idList.slice(0, INITIAL_COUNT);
+//   let initialRows: any[] = [];
+//   if (initialIds.length) {
+//     initialRows = await prisma.job.findMany({
+//       where: { id: { in: initialIds } },
+//       select: {
+//         id: true,
+//         projectCode: true,
+//         name: true,
+//         jobType: true,
+//         startDate: true,
+//         endDate: true,
+//         status: true,
+//         company: { select: { name: true } },
+//       },
+//       orderBy: { id: "asc" },
+//     });
+//   }
+//   return json({ idList, idListComplete, initialRows, total: idList.length });
+// }
 
 export default function JobsIndexRoute() {
-  const { idList, idListComplete, initialRows, total } =
-    useLoaderData<typeof loader>();
+  const data = useRouteLoaderData<{
+    idList: number[];
+    idListComplete: boolean;
+    initialRows: any[];
+    total: number;
+    views?: any[];
+    activeView?: string | null;
+  }>("modules/job/routes/jobs");
+  // const { idList, idListComplete, initialRows, total } =
+  //   useLoaderData<typeof loader>();
+  const idList = data?.idList ?? [];
+  const idListComplete = data?.idListComplete ?? true;
+  const initialRows = data?.initialRows ?? [];
+  const total = data?.total ?? 0;
   const [sp] = useSearchParams();
   const navigate = useNavigate();
 
   const findOpen = sp.get("find") === "1";
+
   const fields: any[] = [
     ...((jobDetail as any).jobOverviewFields || []),
     ...((jobDetail as any).jobDateStatusLeft || []),
@@ -81,62 +156,29 @@ export default function JobsIndexRoute() {
     if (v !== null) initialFind[f.name] = v;
   }
 
-  console.log("!! id list", idList, idListComplete, total);
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
-        <Title order={2}>Jobs</Title>
-        <BreadcrumbSet breadcrumbs={[{ label: "Jobs", href: "/jobs" }]} />
-      </Group>
-      <Group>
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[{ label: "Jobs", href: appendHref("/jobs") }]}
+            />
+          );
+        })()}
         <Button component="a" href="/jobs/new" variant="filled" color="blue">
           New Job
         </Button>
-        <Button
-          variant="light"
-          onClick={() => {
-            const next = new URLSearchParams(sp);
-            if (next.get("find") === "1") {
-              next.delete("find");
-              for (const f of fields) next.delete(f.name);
-            } else {
-              next.set("find", "1");
-            }
-            navigate(`?${next.toString()}`);
-          }}
-        >
-          {findOpen ? "Close Find" : "Find"}
-        </Button>
-        {Array.from(sp.keys()).some(
-          (k) => !["page", "perPage", "sort", "dir", "view", "find"].includes(k)
-        ) && (
-          <Tooltip label="Clear all filters">
-            <Button
-              variant="default"
-              onClick={() => {
-                const next = new URLSearchParams(sp);
-                for (const k of Array.from(next.keys())) {
-                  if (
-                    ["page", "perPage", "sort", "dir", "view", "find"].includes(
-                      k
-                    )
-                  )
-                    continue;
-                  next.delete(k);
-                }
-                navigate(`?${next.toString()}`);
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Tooltip>
-        )}
       </Group>
 
       <section>
-        <Title order={4} mb="sm">
-          All Jobs
-        </Title>
+        <SavedViews
+          views={data?.views || []}
+          activeView={data?.activeView || null}
+        />
+      </section>
+      <section>
         <JobsHybridTable initialRows={initialRows} idList={idList} />
       </section>
 

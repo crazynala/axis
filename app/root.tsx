@@ -3,7 +3,6 @@ import {
   Meta,
   Outlet,
   Scripts,
-  ScrollRestoration,
   Form,
   useLoaderData,
   useLocation,
@@ -21,20 +20,21 @@ import {
   Stack,
   Title,
   Group,
+  Card,
   Button,
   Burger,
-  Kbd,
   ColorSchemeScript,
   NavLink,
   ActionIcon,
   Divider,
-  Modal,
   TextInput,
   Text,
   Paper,
+  Modal,
 } from "@mantine/core";
 import {
   MantineProvider,
+  virtualColor,
   createTheme,
   Input,
   rem,
@@ -53,7 +53,7 @@ import {
 import { Notifications } from "@mantine/notifications";
 
 import "./styles/css-layers.css";
-import "./styles/react-datasheet-grid.layer.css";
+import "react-datasheet-grid/dist/style.layer.css";
 import "@mantine/core/styles.layer.css";
 import "@mantine/dates/styles.layer.css";
 import "@mantine/notifications/styles.layer.css";
@@ -131,6 +131,21 @@ export function meta() {
 }
 
 const theme = createTheme({
+  primaryShade: { light: 6, dark: 9 },
+  colors: {
+    slate: [
+      "#B5BFC4ff",
+      "#A1ABB0ff",
+      "#8E979Cff",
+      "#7A8388ff",
+      "#677075ff",
+      "#535C61ff",
+      "#40484Dff",
+      "#2C3439ff",
+      "#192025ff",
+      "#111619ff",
+    ],
+  },
   components: {
     InputWrapper: Input.Wrapper.extend({
       styles: (theme) => {
@@ -198,6 +213,19 @@ const theme = createTheme({
         };
       },
     }),
+    Modal: Modal.extend({
+      defaultProps: {
+        overlayProps: {
+          backgroundOpacity: 0.7,
+          blur: 1,
+        },
+      },
+    }),
+    Card: Card.extend({
+      defaultProps: {
+        bg: "var(--aa-card-bg)",
+      },
+    }),
   },
 });
 
@@ -212,6 +240,7 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--dsg-scroll-shadow-width": "7px",
   },
   light: {
+    "--aa-card-bg": t.colors.gray[0],
     "--dsg-border-color": t.colors.gray[3],
     "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
     "--dsg-selection-background-color":
@@ -225,6 +254,8 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--dsg-scroll-shadow-color": "rgba(0,0,0,.2)",
   },
   dark: {
+    "--aa-card-bg": t.colors.dark[8],
+    "--mantine-color-body": t.colors.dark[9],
     "--dsg-border-color": t.colors.dark[5],
     "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
     "--dsg-selection-background-color":

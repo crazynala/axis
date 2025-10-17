@@ -101,6 +101,24 @@ export function JobDetailForm({
           </SimpleGrid>
         </Card>
       </Grid.Col>
+      {mode === "find" && (
+        <Grid.Col span={{ base: 12, md: 7 }}>
+          <Card withBorder padding="md">
+            <Stack gap={8}>
+              {(jobDetailCfg as any).assemblyFields?.map((cfg: any) => (
+                <RenderField
+                  key={cfg.name}
+                  form={form as any}
+                  field={cfg}
+                  mode={mode as any}
+                  // record={{ ...job, ...form.getValues() }}
+                  ctx={{ openCustomerModal }}
+                />
+              ))}
+            </Stack>
+          </Card>
+        </Grid.Col>
+      )}
     </Grid>
   );
 }

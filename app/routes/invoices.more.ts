@@ -82,7 +82,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     : [];
   const totals = new Map<number, number>();
   for (const l of lines) {
-    const amt = (l.priceSell ?? 0) * (l.quantity ?? 0);
+    const amt = Number(l.priceSell ?? 0) * Number(l.quantity ?? 0);
     totals.set(l.invoiceId!, (totals.get(l.invoiceId!) ?? 0) + amt);
   }
   const withTotals = slice.map((r) => ({

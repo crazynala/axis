@@ -14,10 +14,12 @@ export type OptionsData = {
   jobTypeOptions: Option[];
   jobStatusOptions: Option[];
   variantSetOptions: Option[];
+  // New: sale price groups and cost groups as id/name option lists
+  salePriceGroupOptions?: Option[];
+  costGroupOptions?: Option[];
 };
 
 type CacheEntry<T> = { value: T; at: number };
-
 const TTL_MS = 5 * 60 * 1000; // 5 minutes (value lists change rarely)
 
 let optionsCache: CacheEntry<OptionsData> | null = null;
@@ -64,6 +66,8 @@ export async function loadOptions(): Promise<OptionsData> {
     carriers,
     locations,
     variantSets,
+    salePriceGroups,
+    costGroups,
   ] = await Promise.all([
     prisma.valueList.findMany({
       where: { type: "Category" },
@@ -122,6 +126,16 @@ export async function loadOptions(): Promise<OptionsData> {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
+    }),
+    prisma.salePriceGroup.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 1000,
+    }),
+    prisma.productCostGroup.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 1000,
     }),
   ]);
 
@@ -238,6 +252,14 @@ export async function loadOptions(): Promise<OptionsData> {
       value: String(vs.id),
       label: vs.name ?? String(vs.id),
     })),
+    salePriceGroupOptions: salePriceGroups.map((g) => ({
+      value: String(g.id),
+      label: g.name ?? String(g.id),
+    })),
+    costGroupOptions: costGroups.map((g) => ({
+      value: String(g.id),
+      label: g.name ?? String(g.id),
+    })),
   };
 
   // Fallbacks: if JobType/JobStatus value lists are empty, derive distinct values from Job table
@@ -328,6 +350,7 @@ export async function loadOptions(): Promise<OptionsData> {
     jobStatuses: value.jobStatusOptions.length,
     variantSets: value.variantSetOptions.length,
   });
+
   return value;
 }
 

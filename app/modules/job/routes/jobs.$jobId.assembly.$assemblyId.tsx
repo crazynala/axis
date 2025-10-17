@@ -42,6 +42,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       job: {
         include: {
           locationIn: { select: { id: true, name: true } },
+          company: { select: { id: true, priceMultiplier: true } },
         },
       },
       variantSet: true,
@@ -73,7 +74,18 @@ export async function loader({ params }: LoaderFunctionArgs) {
   }
   const costings = await prisma.costing.findMany({
     where: { assemblyId },
-    include: { product: { select: { id: true, sku: true, name: true } } },
+    include: {
+      product: {
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          salePriceGroup: { select: { id: true, saleRanges: true } },
+          salePriceRanges: true,
+        },
+      },
+      salePriceGroup: { select: { id: true, saleRanges: true } },
+    },
   });
   const activities = await prisma.assemblyActivity.findMany({
     where: { assemblyId },
@@ -376,6 +388,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
+  if (intent === "assembly.updateOrderedBreakdown") {
+    const orderedStr = String(form.get("orderedArr") || "[]");
+    let ordered: number[] = [];
+    try {
+      const arr = JSON.parse(orderedStr);
+      if (Array.isArray(arr))
+        ordered = arr.map((n: any) =>
+          Number.isFinite(Number(n)) ? Number(n) | 0 : 0
+        );
+    } catch {}
+    await prisma.assembly.update({
+      where: { id: assemblyId },
+      data: { qtyOrderedBreakdown: ordered as any },
+    });
+    return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+  }
   return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
 }
 
@@ -407,6 +435,13 @@ export default function JobAssemblyRoute() {
   // Path building now automatic (replace last path segment with id); no custom builder needed.
   const [cutOpen, setCutOpen] = useState(false);
   const [editActivity, setEditActivity] = useState<null | any>(null);
+
+  const handleSubmitOrdered = (arr: number[]) => {
+    const fd = new FormData();
+    fd.set("_intent", "assembly.updateOrderedBreakdown");
+    fd.set("orderedArr", JSON.stringify(arr));
+    submit(fd, { method: "post" });
+  };
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -521,6 +556,8 @@ export default function JobAssemblyRoute() {
                 },
               },
             ]}
+            editableOrdered
+            onSubmitOrdered={handleSubmitOrdered}
           />
         </Grid.Col>
         <Grid.Col span={12}>
@@ -539,6 +576,34 @@ export default function JobAssemblyRoute() {
                   Number((assembly as any).c_qtyCut || 0)) *
                   Number(c.quantityPerUnit || 0)
               );
+              // Sale tiers precedence: costing.salePriceGroup > product.salePriceGroup > product.salePriceRanges
+              const tiersFromCosting =
+                (c?.salePriceGroup?.saleRanges || []).map((r: any) => ({
+                  minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
+                  unitPrice: Number(r.price || r.unitPrice || 0) || 0,
+                })) || [];
+              const tiersFromProductGroup =
+                (c?.product?.salePriceGroup?.saleRanges || []).map(
+                  (r: any) => ({
+                    minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
+                    unitPrice: Number(r.price || r.unitPrice || 0) || 0,
+                  })
+                ) || [];
+              const tiersFromProduct =
+                (c?.product?.salePriceRanges || []).map((r: any) => ({
+                  minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
+                  unitPrice: Number(r.price || r.unitPrice || 0) || 0,
+                })) || [];
+              const saleTiers = (
+                tiersFromCosting.length
+                  ? tiersFromCosting
+                  : tiersFromProductGroup.length
+                  ? tiersFromProductGroup
+                  : tiersFromProduct
+              ).sort((a: any, b: any) => a.minQty - b.minQty);
+              const priceMultiplier =
+                Number((assembly.job as any)?.company?.priceMultiplier ?? 1) ||
+                1;
               return {
                 id: c.id,
                 productId: pid,
@@ -548,6 +613,17 @@ export default function JobAssemblyRoute() {
                 unitCost: Number(c.unitCost || 0) || null,
                 required,
                 stats,
+                fixedSell:
+                  c.salePricePerItem != null
+                    ? Number(c.salePricePerItem)
+                    : null,
+                taxRate: 0,
+                saleTiers,
+                priceMultiplier,
+                manualSalePrice:
+                  c.manualSalePrice != null ? Number(c.manualSalePrice) : null,
+                marginPct:
+                  c.manualMargin != null ? Number(c.manualMargin) : null,
               };
             })}
           />

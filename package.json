@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "prebuild": "npm -w packages/timber run build",
+    "prebuild": "npm -w packages/timber run build && npm -w packages/react-datasheet-grid run build",
     "build": "remix vite:build",
     "import:sample": "node scripts/import-sample-data.js",
     "seed:admin": "node scripts/seed-admin.js",
@@ -57,8 +57,8 @@
     "mantine-datatable": "^7.15.1",
     "npm": "^11.6.0",
     "pino": "^9.9.4",
+    "react-datasheet-grid": "workspace:*",
     "react": "^18.2.0",
-    "react-datasheet-grid": "^4.11.5",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.62.0",
     "test": "^3.3.0",

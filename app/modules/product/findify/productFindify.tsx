@@ -43,6 +43,8 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     customerId: p.customerId,
     supplierId: p.supplierId,
     variantSetId: p.variantSetId,
+    pricingGroupId: p.pricingGroupId,
+    salePriceGroupId: p.salePriceGroupId,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
   };
@@ -105,6 +107,8 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     put("categoryId", values.categoryId);
     put("customerId", values.customerId);
     put("supplierId", values.supplierId);
+    put("pricingGroupId", values.pricingGroupId);
+    put("salePriceGroupId", values.salePriceGroupId);
 
     // booleans (always send explicit true/false)
     fd.set(

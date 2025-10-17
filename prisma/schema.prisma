@@ -134,6 +134,8 @@ model Product {
     subCategory          String?
     pricingGroupId       Int?
     manualSalePrice      Decimal?              @db.Decimal(14, 4)
+    // Optional per-item manual margin (mutually exclusive with manualSalePrice; enforce in app logic)
+    manualMargin         Decimal?              @db.Decimal(14, 4)
     defaultCostQty       Int                   @default(60)
     variantSetId         Int?
     stockTrackingEnabled Boolean               @default(false)
@@ -148,6 +150,9 @@ model Product {
     // Optional direct link to a Product Cost Group for pricing defaults
     costGroupId          Int?
     costGroup            ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
+    // Optional link to a Sale Price Group for sale tiers
+    salePriceGroupId     Int?
+    salePriceGroup       SalePriceGroup?       @relation(fields: [salePriceGroupId], references: [id])
     variantSet           VariantSet?           @relation(fields: [variantSetId], references: [id])
     productLines         ProductLine[]         @relation("ParentProduct")
     batches              Batch[]
@@ -165,6 +170,7 @@ model Product {
     productTags          ProductTag[]
     // Back-relations: Cost ranges (per-product tiered costs)
     productCostRanges    ProductCostRange[]
+    salePriceRanges      SalePriceRange[]
     // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
     // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
@@ -190,43 +196,50 @@ model ProductTag {
 }
 
 model Company {
-    id                        Int                    @id @default(autoincrement())
-    name                      String?
-    address                   String?
-    city                      String?
-    state                     String?
-    zip                       String?
-    country                   String?
-    phone                     String?
-    email                     String?
-    website                   String?
-    notes                     String?
+    id                              Int                     @id @default(autoincrement())
+    name                            String?
+    address                         String?
+    city                            String?
+    state                           String?
+    zip                             String?
+    country                         String?
+    phone                           String?
+    email                           String?
+    website                         String?
+    notes                           String?
     // isActive                  Boolean?
-    isCarrier                 Boolean?
-    isCustomer                Boolean?
-    isSupplier                Boolean?
-    isInactive                Boolean?
-    productsSupplied          Product[]              @relation("Supplier")
-    productsPurchased         Product[]              @relation("Customer")
-    pricingGroups             SupplierPricingGroup[]
-    jobs                      Job[]
+    isCarrier                       Boolean?
+    isCustomer                      Boolean?
+    isSupplier                      Boolean?
+    isInactive                      Boolean?
+    // Optional default margin override for this vendor (used when computing sale prices)
+    defaultMarginOverride           Decimal?                @db.Decimal(14, 4)
+    // Optional default sale price multiplier for this customer (applies to sale tiers)
+    priceMultiplier                 Decimal?                @db.Decimal(14, 4)
+    productsSupplied                Product[]               @relation("Supplier")
+    productsPurchased               Product[]               @relation("Customer")
+    pricingGroups                   SupplierPricingGroup[]
+    jobs                            Job[]
     // Back-relations
-    invoices                  Invoice[]
-    addresses                 Address[]
-    shipmentsAsCarrier        Shipment[]             @relation("CarrierCompany")
-    shipmentsAsReceiver       Shipment[]             @relation("ReceiverCompany")
-    shipmentsAsSender         Shipment[]             @relation("SenderCompany")
-    contacts                  Contact[]
+    invoices                        Invoice[]
+    addresses                       Address[]
+    shipmentsAsCarrier              Shipment[]              @relation("CarrierCompany")
+    shipmentsAsReceiver             Shipment[]              @relation("ReceiverCompany")
+    shipmentsAsSender               Shipment[]              @relation("SenderCompany")
+    contacts                        Contact[]
     // Back-relations: Purchase Orders
-    purchaseOrders            PurchaseOrder[]
-    purchaseOrdersAsConsignee PurchaseOrder[]        @relation("POConsignee")
+    purchaseOrders                  PurchaseOrder[]
+    purchaseOrdersAsConsignee       PurchaseOrder[]         @relation("POConsignee")
     // Back-relations: Product Cost Groups
-    productCostGroups         ProductCostGroup[]
+    productCostGroups               ProductCostGroup[]
+    // Back-relations: Vendor/Customer pricing mappings
+    vendorCustomerPricingAsVendor   VendorCustomerPricing[] @relation("VendorCompany")
+    vendorCustomerPricingAsCustomer VendorCustomerPricing[] @relation("CustomerCompany")
     // Metadata
-    createdBy                 String?
-    modifiedBy                String?
-    createdAt                 DateTime?              @default(now())
-    updatedAt                 DateTime?              @updatedAt
+    createdBy                       String?
+    modifiedBy                      String?
+    createdAt                       DateTime?               @default(now())
+    updatedAt                       DateTime?               @updatedAt
 }
 
 model VariantSet {
@@ -314,29 +327,36 @@ model Assembly {
 }
 
 model Costing {
-    id                            Int           @id @default(autoincrement())
+    id                            Int             @id @default(autoincrement())
     assemblyId                    Int?
     // renamed: componentId -> productId; removed usageType/componentType per new spec
     productId                     Int?
-    quantityPerUnit               Decimal?      @db.Decimal(14, 4)
-    unitCost                      Decimal?      @db.Decimal(14, 4)
+    quantityPerUnit               Decimal?        @db.Decimal(14, 4)
+    unitCost                      Decimal?        @db.Decimal(14, 4)
     notes                         String?
     activityUsed                  String?
-    costPricePerItem              Decimal?      @db.Decimal(14, 4)
-    salePricePerItem              Decimal?      @db.Decimal(14, 4)
+    costPricePerItem              Decimal?        @db.Decimal(14, 4)
+    salePricePerItem              Decimal?        @db.Decimal(14, 4)
+    // Dynamic pricing context pulled from Product to compute sale prices prior to fixing
+    // Optional link to a Sale Price Group for tiered sale pricing at the time of costing
+    salePriceGroupId              Int?
+    salePriceGroup                SalePriceGroup? @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
+    // Optional manual overrides captured on the costing
+    manualSalePrice               Decimal?        @db.Decimal(14, 4)
+    manualMargin                  Decimal?        @db.Decimal(14, 4)
     flagAssembly                  Boolean?
     flagDefinedInProduct          Boolean?
     flagIsBillableDefaultOrManual Boolean?
     flagIsBillableManual          Boolean?
     flagIsInvoiceableManual       Boolean?
     flagStockTracked              Boolean?
-    assembly                      Assembly?     @relation(fields: [assemblyId], references: [id])
-    product                       Product?      @relation(fields: [productId], references: [id])
+    assembly                      Assembly?       @relation(fields: [assemblyId], references: [id])
+    product                       Product?        @relation(fields: [productId], references: [id])
     // Metadata
     createdBy                     String?
     modifiedBy                    String?
-    createdAt                     DateTime?     @default(now())
-    updatedAt                     DateTime?     @updatedAt
+    createdAt                     DateTime?       @default(now())
+    updatedAt                     DateTime?       @updatedAt
     // Back-relations
     invoiceLines                  InvoiceLine[]
     // Back-relations: Tags
@@ -936,4 +956,74 @@ model ProductCostRange {
     // Note: Exactly one of productId or costGroupId should be set; invariant enforced in application/import logic
     @@index([productId])
     @@index([costGroupId])
+}
+
+// --- Sale Price Groups (explicit sale tiers separate from cost groups) ---
+
+model SalePriceGroup {
+    id         Int              @id @default(autoincrement())
+    name       String?
+    currency   String?
+    // Back-relations: Products directly assigned to this sale group
+    products   Product[]
+    // Back-relations: Ranges belonging to this group
+    saleRanges SalePriceRange[]
+    // Back-relations: Costings referencing this sale group at time of pricing
+    costings   Costing[]        @relation("Costing_SalePriceGroup")
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime?        @default(now())
+    updatedAt  DateTime?        @updatedAt
+}
+
+model SalePriceRange {
+    id          Int             @id @default(autoincrement())
+    productId   Int?
+    saleGroupId Int?
+    // Sale price for this tier (pre-tax, in group currency)
+    price       Decimal?        @db.Decimal(14, 4)
+    rangeFrom   Int?
+    rangeTo     Int?
+    product     Product?        @relation(fields: [productId], references: [id])
+    saleGroup   SalePriceGroup? @relation(fields: [saleGroupId], references: [id])
+    // Metadata
+    createdBy   String?
+    modifiedBy  String?
+    createdAt   DateTime?       @default(now())
+    updatedAt   DateTime?       @updatedAt
+
+    // Exactly one of productId or saleGroupId should be set; enforce in application logic
+    @@index([productId])
+    @@index([saleGroupId])
+}
+
+// --- Pricing overrides & settings ---
+
+// Pair-specific pricing between a vendor (supplier) and a customer
+model VendorCustomerPricing {
+    id             Int      @id @default(autoincrement())
+    vendorId       Int
+    customerId     Int
+    // Optional override margin to use instead of defaults when computing sale price
+    marginOverride Decimal? @db.Decimal(14, 4)
+    // Metadata
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @updatedAt
+
+    vendor   Company @relation("VendorCompany", fields: [vendorId], references: [id], onDelete: Cascade)
+    customer Company @relation("CustomerCompany", fields: [customerId], references: [id], onDelete: Cascade)
+
+    @@unique([vendorId, customerId])
+    @@index([customerId])
+}
+
+// Simple application-wide settings registry
+model Setting {
+    key       String   @id
+    value     String?
+    number    Decimal? @db.Decimal(14, 4)
+    json      Json?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }

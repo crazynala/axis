@@ -1,4 +1,13 @@
-import { Card, Divider, Group, Table, Title } from "@mantine/core";
+import {
+  Button,
+  Card,
+  Divider,
+  Group,
+  Table,
+  Title,
+  TextInput,
+} from "@mantine/core";
+import { useEffect, useMemo, useState } from "react";
 
 export type VariantInfo = {
   labels: string[];
@@ -18,10 +27,17 @@ export function AssemblyQuantitiesCard({
   title = "Quantities",
   variants,
   items,
+  editableOrdered = false,
+  onSubmitOrdered,
+  onCancelOrdered,
 }: {
   title?: string;
   variants: VariantInfo;
   items: SingleQuantities[];
+  /** Enable inline editing for the Ordered row (first item only is supported) */
+  editableOrdered?: boolean;
+  onSubmitOrdered?: (ordered: number[]) => void;
+  onCancelOrdered?: () => void;
 }) {
   console.log("Rendering AssemblyQuantitiesCard with items:", items);
   const fmt = (n: number | undefined) =>
@@ -68,10 +84,69 @@ export function AssemblyQuantitiesCard({
       (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
       0
     );
+
+  // Inline edit state (only for first item). Keep local state so total updates live.
+  const [orderedDraft, setOrderedDraft] = useState<number[] | null>(
+    editableOrdered && items[0]?.ordered ? [...items[0].ordered] : null
+  );
+  useEffect(() => {
+    if (editableOrdered) {
+      setOrderedDraft(items[0]?.ordered ? [...items[0].ordered] : []);
+    } else {
+      setOrderedDraft(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editableOrdered, items && items[0] && items[0].ordered?.join(",")]);
+
+  const handleChangeCell = (idx: number, value: string) => {
+    if (!Array.isArray(orderedDraft)) return;
+    const v = value === "" ? 0 : Number(value);
+    setOrderedDraft((prev) => {
+      const src = Array.isArray(prev) ? prev : [];
+      const next = [...src];
+      next[idx] = Number.isFinite(v) ? v | 0 : 0;
+      return next;
+    });
+  };
+
+  const effectiveOrdered =
+    editableOrdered && Array.isArray(orderedDraft)
+      ? orderedDraft
+      : items[0]?.ordered || [];
+
+  const totalOrdered = useMemo(() => sum(effectiveOrdered), [effectiveOrdered]);
+
   return (
     <Card withBorder padding="md">
       <Card.Section inheritPadding py="xs">
-        <Title order={4}>{title}</Title>
+        <Group justify="space-between" align="center">
+          <Title order={4}>{title}</Title>
+          {editableOrdered ? (
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="default"
+                onClick={() => {
+                  setOrderedDraft(
+                    items[0]?.ordered ? [...items[0].ordered] : []
+                  );
+                  onCancelOrdered?.();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="xs"
+                onClick={() => {
+                  if (Array.isArray(orderedDraft))
+                    onSubmitOrdered?.(orderedDraft);
+                }}
+              >
+                Save
+              </Button>
+            </Group>
+          ) : null}
+        </Group>
       </Card.Section>
       <Divider my="xs" />
       {items.map((it, idx) => (
@@ -100,11 +175,36 @@ export function AssemblyQuantitiesCard({
               <Table.Tr>
                 <Table.Td>Ordered</Table.Td>
                 {cols.map((_l, i) => (
-                  <Table.Td key={`ord-${idx}-${i}`}>
-                    {fmt(it.ordered[i])}
+                  <Table.Td
+                    key={`ord-${idx}-${i}`}
+                    style={{ padding: editableOrdered ? 0 : undefined }}
+                  >
+                    {editableOrdered && idx === 0 ? (
+                      <TextInput
+                        type="number"
+                        value={effectiveOrdered[i] ?? 0}
+                        onChange={(e) =>
+                          handleChangeCell(i, e.currentTarget.value)
+                        }
+                        variant="unstyled"
+                        styles={{
+                          input: {
+                            width: "100%",
+                            textAlign: "center",
+                            padding: 8,
+                          },
+                        }}
+                      />
+                    ) : (
+                      fmt(it.ordered[i])
+                    )}
                   </Table.Td>
                 ))}
-                <Table.Td>{fmt(sum(it.ordered))}</Table.Td>
+                <Table.Td>
+                  {editableOrdered && idx === 0
+                    ? fmt(totalOrdered)
+                    : fmt(sum(it.ordered))}
+                </Table.Td>
               </Table.Tr>
               <Table.Tr>
                 <Table.Td>Cut</Table.Td>

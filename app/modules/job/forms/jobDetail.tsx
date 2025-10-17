@@ -72,6 +72,28 @@ export const jobOverviewFields: FieldConfig[] = [
   },
 ];
 
+// Find-only: child assemblies
+export const assemblyFields: FieldConfig[] = [
+  {
+    name: "assemblySku",
+    label: "Assembly SKU",
+    findOp: "contains",
+    hiddenInModes: ["edit", "create"],
+  },
+  {
+    name: "assemblyName",
+    label: "Assembly Name",
+    findOp: "contains",
+    hiddenInModes: ["edit", "create"],
+  },
+  {
+    name: "assemblyStatus",
+    label: "Assembly Status",
+    findOp: "contains",
+    hiddenInModes: ["edit", "create"],
+  },
+];
+
 export function validateJobDateStatusConfig() {
   const fields = [...jobDateStatusLeft, ...jobDateStatusRight].map(
     (f) => f.name

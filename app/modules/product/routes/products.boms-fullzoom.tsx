@@ -4,9 +4,11 @@ import { useViewportSize } from "@mantine/hooks";
 import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
 import { useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
 import * as RDG from "react-datasheet-grid";
+import { useDataSheetController } from "react-datasheet-grid";
 import type { Column } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lookupProductsBySkus } from "~/modules/product/utils/productLookup.client";
+import { IconLogout2 } from "@tabler/icons-react";
 
 type MultiBOMRow = {
   productId: number;
@@ -21,7 +23,6 @@ type MultiBOMRow = {
   quantity: number | string;
   groupStart?: boolean; // first row for its product
 };
-
 export async function loader({ request }: any) {
   const url = new URL(request.url);
   const idsParam = url.searchParams.get("ids") || "";
@@ -121,77 +122,110 @@ export async function action({ request }: any) {
         .map((r) => (Number.isFinite(r.id as any) ? Number(r.id) : null))
         .filter(Boolean) as number[]
     );
+    // Load existing lines with child sku to detect replacements
     const existing = await prismaBase.productLine.findMany({
       where: { parentId: productId },
-      select: { id: true },
+      select: { id: true, child: { select: { sku: true } } },
     });
     const existingIds = new Set(existing.map((e) => e.id));
-    const deletes: number[] = [];
-    for (const id of existingIds) if (!providedIds.has(id)) deletes.push(id);
-    const updates = items
-      .filter((r) => Number.isFinite(r.id as any))
-      .map((r) => ({
-        id: Number(r.id),
-        quantity: Number(r.quantity) || 0,
-        activityUsed: r.activityUsed || null,
-      }));
-    const creates = items
-      .filter((r) => !r.id && r.childSku)
-      .map((r) => ({
-        childSku: r.childSku.trim(),
-        quantity: Number(r.quantity) || 0,
-        activityUsed: r.activityUsed || null,
-      }));
-    const res = await applyBomBatch(productId, updates, creates, deletes);
+    const existingSkuById = new Map<number, string>(
+      existing.map((e) => [e.id, e.child?.sku || ""]) as any
+    );
+    const deletesSet = new Set<number>();
+    // Delete any missing ids (removed rows)
+    for (const id of existingIds) if (!providedIds.has(id)) deletesSet.add(id);
+
+    const updates: {
+      id: number;
+      quantity?: number;
+      activityUsed?: string | null;
+    }[] = [];
+    const creates: {
+      childSku: string;
+      quantity?: number;
+      activityUsed?: string | null;
+    }[] = [];
+
+    for (const r of items) {
+      const idNum = Number.isFinite(r.id as any) ? Number(r.id) : null;
+      const skuTrim = String(r.childSku || "").trim();
+      if (idNum) {
+        const existingSku = (existingSkuById.get(idNum) || "").trim();
+        if (!skuTrim) {
+          // Cleared SKU -> delete existing line
+          deletesSet.add(idNum);
+        } else if (existingSku && skuTrim !== existingSku) {
+          // SKU changed -> replace by delete + create
+          deletesSet.add(idNum);
+          creates.push({
+            childSku: skuTrim,
+            quantity: Number(r.quantity) || 0,
+            activityUsed: r.activityUsed || null,
+          });
+        } else {
+          // Same SKU -> update fields
+          updates.push({
+            id: idNum,
+            quantity: Number(r.quantity) || 0,
+            activityUsed: r.activityUsed || null,
+          });
+        }
+      } else if (skuTrim) {
+        // New row with SKU -> create
+        creates.push({
+          childSku: skuTrim,
+          quantity: Number(r.quantity) || 0,
+          activityUsed: r.activityUsed || null,
+        });
+      }
+    }
+
+    const res = await applyBomBatch(
+      productId,
+      updates,
+      creates,
+      Array.from(deletesSet)
+    );
     results.push({ productId, ...res });
   }
   return json({ ok: true, results });
 }
 
 export default function ProductsBomsFullzoom() {
+  console.log("** ProductsBomsFullzoom mount");
   const { rows: initialRows } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const [rows, setRows] = useState<MultiBOMRow[]>(initialRows || []);
-
-  useEffect(() => {
-    setRows((prev) => {
-      // If initialRows is provided, normalize it
-      return normalizeRows(initialRows || prev || []);
+  const sanitize = useCallback((list: MultiBOMRow[]) => {
+    // Strip derived fields and trailing blanks for dirty compare
+    const core = (list || []).filter((r) => {
+      const blank =
+        !r.childSku &&
+        !r.childName &&
+        !r.activityUsed &&
+        (r.quantity === "" || r.quantity == null);
+      return !blank;
     });
-  }, [initialRows]);
-
-  // Helpers for batched SKU lookup and trailing blank per product
-  const pendingSkusRef = useRef<Set<string>>(new Set());
-  const lookupTimerRef = useRef<any>(null);
-  const enqueueLookup = useCallback((skus: string[]) => {
-    skus.filter(Boolean).forEach((s) => pendingSkusRef.current.add(s));
-    if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
-    lookupTimerRef.current = setTimeout(async () => {
-      const toFetch = Array.from(pendingSkusRef.current);
-      pendingSkusRef.current.clear();
-      if (!toFetch.length) return;
-      try {
-        const map = await lookupProductsBySkus(toFetch);
-        setRows((curr) => {
-          const next = curr.map((r) => {
-            const info = r.childSku ? map.get(r.childSku) : null;
-            if (!info) return r;
-            return {
-              ...r,
-              childName: info?.name || "",
-              type: (info?.type as string) || "",
-              supplier: (info?.supplierName as string) || "",
-            };
-          });
-          return normalizeRows(next);
-        });
-      } catch {}
-    }, 120);
+    return core.map((r) => ({
+      productId: r.productId,
+      id: r.id ?? null,
+      childSku: String(r.childSku || "").trim(),
+      quantity: Number(r.quantity) || 0,
+      activityUsed: r.activityUsed || "",
+    }));
   }, []);
 
+  const controller = useDataSheetController<MultiBOMRow>(initialRows || [], {
+    sanitize,
+    historyLimit: 200,
+  });
+  const rows = controller.value;
+  const setRows = controller.setValue;
+
+  // Helpers for trailing blanks and padding must be defined before use
   const ensureProductTrailingBlank = useCallback((list: MultiBOMRow[]) => {
+    console.log("** ensureTrailingBlank in", { len: list.length });
     // For each contiguous group of same productId, keep one trailing blank and mark first row as groupStart
     const out: MultiBOMRow[] = [];
     let i = 0;
@@ -258,6 +292,7 @@ export default function ProductsBomsFullzoom() {
         filtered[j] = { ...filtered[j], groupStart: false };
       out.push(...filtered);
     }
+    console.log("** ensureTrailingBlank out", { len: out.length });
     return out;
   }, []);
 
@@ -269,6 +304,7 @@ export default function ProductsBomsFullzoom() {
     if (out.length >= MIN_ROWS) return out;
     const last = out[out.length - 1];
     const toAdd = MIN_ROWS - out.length;
+    console.log("** padRows", { before: list.length, toAdd });
     for (let i = 0; i < toAdd; i++) {
       out.push({
         productId: last.productId,
@@ -291,6 +327,63 @@ export default function ProductsBomsFullzoom() {
     (list: MultiBOMRow[]) => padRows(ensureProductTrailingBlank(list)),
     [ensureProductTrailingBlank, padRows]
   );
+
+  useEffect(() => {
+    console.log(
+      "** useEffect initialRows",
+      Array.isArray(initialRows) ? initialRows.length : -1
+    );
+    const base = (initialRows || rows || []) as MultiBOMRow[];
+    const next = normalizeRows(base);
+    console.log("** normalize and reset on loader change", {
+      before: base.length,
+      after: next.length,
+    });
+    controller.reset(next);
+  }, [controller, initialRows, normalizeRows, rows]);
+
+  // Helpers for batched SKU lookup and trailing blank per product
+  const pendingSkusRef = useRef<Set<string>>(new Set());
+  const lookupTimerRef = useRef<any>(null);
+  const prevRowsRef = useRef<MultiBOMRow[]>(initialRows || []);
+  // We fully own paste; no DSG prePaste or overflow trackers needed
+  const enqueueLookup = useCallback(
+    (skus: string[]) => {
+      console.log("** enqueueLookup", { add: (skus || []).length });
+      skus.filter(Boolean).forEach((s) => pendingSkusRef.current.add(s));
+      if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
+      lookupTimerRef.current = setTimeout(async () => {
+        const toFetch = Array.from(pendingSkusRef.current);
+        pendingSkusRef.current.clear();
+        if (!toFetch.length) return;
+        try {
+          console.log("** lookup start", { skus: toFetch.length });
+          const map = await lookupProductsBySkus(toFetch);
+          console.log("** lookup done", { hits: map.size });
+          const curr = controller.getValue();
+          const next = curr.map((r: MultiBOMRow) => {
+            const info = r.childSku ? map.get(r.childSku) : null;
+            if (!info) return r;
+            return {
+              ...r,
+              childName: info?.name || "",
+              type: (info?.type as string) || "",
+              supplier: (info?.supplierName as string) || "",
+            } as MultiBOMRow;
+          });
+          const norm = normalizeRows(next);
+          console.log("** lookup patch", {
+            before: next.length,
+            after: norm.length,
+          });
+          controller.setValue(norm);
+        } catch {}
+      }, 120);
+    },
+    [controller, normalizeRows]
+  );
+
+  // Removed app-level paste interception. Rely on forked grid block paste.
 
   const col = useCallback(
     (
@@ -329,29 +422,6 @@ export default function ProductsBomsFullzoom() {
       id: "childSku",
       title: "SKU",
       grow: 1.2,
-      component: ({ rowData, setRowData, focus }: any) => {
-        return (
-          <input
-            style={{
-              width: "100%",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-            }}
-            value={rowData.childSku || ""}
-            onChange={(e) => {
-              const sku = e.target.value;
-              setRowData({ ...rowData, childSku: sku });
-              enqueueLookup([sku]);
-            }}
-            onPaste={(e) => {
-              const text = e.clipboardData.getData("text");
-              if (text) enqueueLookup([text.split("\t")[0].split("\n")[0]]);
-            }}
-            autoFocus={focus}
-          />
-        );
-      },
       disabled: false,
     } as any;
     const qtyCol: Column<MultiBOMRow> = {
@@ -359,44 +429,12 @@ export default function ProductsBomsFullzoom() {
       id: "quantity",
       title: "Qty",
       grow: 0.8,
-      component: ({ rowData, setRowData }: any) => {
-        return (
-          <input
-            style={{
-              width: "100%",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-            }}
-            value={rowData.quantity ?? ""}
-            onChange={(e) =>
-              setRowData({ ...rowData, quantity: e.target.value })
-            }
-          />
-        );
-      },
     } as any;
     const usageCol: Column<MultiBOMRow> = {
       ...((RDG.keyColumn as any)("activityUsed" as any, RDG.textColumn) as any),
       id: "activityUsed",
       title: "Usage",
       grow: 1,
-      component: ({ rowData, setRowData }: any) => {
-        return (
-          <input
-            style={{
-              width: "100%",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-            }}
-            value={rowData.activityUsed || ""}
-            onChange={(e) =>
-              setRowData({ ...rowData, activityUsed: e.target.value })
-            }
-          />
-        );
-      },
     } as any;
     const nameCol = col("childName" as any, "Name", 2, true) as any;
     const typeCol = col("type" as any, "Type", 1, true) as any;
@@ -416,9 +454,42 @@ export default function ProductsBomsFullzoom() {
 
   const onChange = useCallback(
     (next: MultiBOMRow[]) => {
-      setRows(() => normalizeRows((next as MultiBOMRow[]) || []));
+      console.log("** onChange", {
+        nextLen: Array.isArray(next) ? next.length : -1,
+      });
+      // Diff childSku to trigger lookups for newly set/changed SKUs
+      const prev = prevRowsRef.current || [];
+      const toLookup: string[] = [];
+      const max = next.length;
+      for (let i = 0; i < max; i++) {
+        const currSku = (next[i]?.childSku || "").trim();
+        const prevSku = (prev[i]?.childSku || "").trim();
+        if (currSku && currSku !== prevSku) toLookup.push(currSku);
+      }
+      if (toLookup.length) {
+        console.log("** onChange lookup skus", { count: toLookup.length });
+        enqueueLookup(toLookup);
+      }
+      // Clear dependent fields when SKU is blank or has just changed (until lookup fills it)
+      const cleared = (next as MultiBOMRow[]).map((r, i) => {
+        const sku = String(r.childSku || "").trim();
+        const prevSku = String(prev[i]?.childSku || "").trim();
+        if (!sku || sku !== prevSku) {
+          return {
+            ...r,
+            childName: sku ? r.childName || "" : "",
+            type: sku ? r.type || "" : "",
+            supplier: sku ? r.supplier || "" : "",
+          };
+        }
+        return r;
+      });
+      const norm = normalizeRows(cleared || []);
+      console.log("** onChange normalized", { after: norm.length });
+      prevRowsRef.current = norm;
+      controller.setValue(norm);
     },
-    [normalizeRows]
+    [controller, normalizeRows, enqueueLookup]
   );
 
   const save = useCallback(async () => {
@@ -439,15 +510,15 @@ export default function ProductsBomsFullzoom() {
   const formHandlers = useMemo(
     () => ({
       handleSubmit: (onSubmit: (data: any) => void) => () => onSubmit({}),
-      reset: () => setRows(normalizeRows(initialRows || [])),
-      formState: { isDirty: true },
+      reset: () => controller.reset(normalizeRows(initialRows || [])),
+      formState: { isDirty: controller.state.isDirty },
     }),
-    [initialRows, normalizeRows]
+    [controller.state.isDirty, initialRows, normalizeRows]
   );
   useInitGlobalFormContext(
     formHandlers as any,
     () => save(),
-    () => setRows(normalizeRows(initialRows || []))
+    () => controller.reset(normalizeRows(initialRows || []))
   );
 
   // Numeric height required by DataSheetGrid
@@ -458,31 +529,78 @@ export default function ProductsBomsFullzoom() {
     <AppShell header={{ height: 100 }} padding={0} withBorder={false}>
       <AppShell.Header>
         <Group justify="space-between" align="center" px={24} py={16}>
+          <Button variant="subtle" onClick={() => navigate(-1)}>
+            <IconLogout2 />
+            Exit
+          </Button>
           <Text size="xl">Batch Edit BOMs</Text>
-          <SaveCancelHeader />
         </Group>
       </AppShell.Header>
       <AppShell.Main>
         {/* <Stack>
           <Card withBorder> */}
-        <RDG.DataSheetGrid
-          value={rows as any}
-          onChange={onChange as any}
-          columns={columns as any}
-          height={gridHeight}
-          createRow={() => ({
-            productId: rows.length ? rows[rows.length - 1].productId : 0,
-            productSku: rows.length ? rows[rows.length - 1].productSku : "",
-            productName: rows.length ? rows[rows.length - 1].productName : "",
-            id: null,
-            childSku: "",
-            childName: "",
-            activityUsed: "",
-            type: "",
-            supplier: "",
-            quantity: "",
-          })}
-        />
+        <div>
+          <RDG.DataSheetGrid
+            value={rows as any}
+            onChange={onChange as any}
+            columns={columns as any}
+            height={gridHeight}
+            // Enable block semantics in the grid and debug logs from the fork
+            getBlockKey={({
+              rowData,
+            }: {
+              rowData: MultiBOMRow;
+              rowIndex: number;
+            }) => rowData.productId}
+            blockAutoInsert
+            debugBlocks
+            blockTopClassName="dsg-block-top"
+            createRowInBlock={({
+              blockKey,
+              rowIndex,
+            }: {
+              blockKey: string | number | null | undefined;
+              rowIndex: number;
+            }) => {
+              // Find a representative row for this product to copy metadata
+              const keyNum =
+                typeof blockKey === "number" ? blockKey : Number(blockKey ?? 0);
+              const idx = rows.findIndex((r) => r.productId === keyNum);
+              const base =
+                idx >= 0 ? rows[idx] : (rows[rows.length - 1] as MultiBOMRow);
+              console.log("** createRowInBlock", {
+                key: blockKey,
+                keyNum,
+                baseIdx: idx,
+                rowIndex,
+              });
+              return {
+                productId: base?.productId ?? keyNum ?? 0,
+                productSku: base?.productSku ?? "",
+                productName: base?.productName ?? "",
+                id: null,
+                childSku: "",
+                childName: "",
+                activityUsed: "",
+                type: "",
+                supplier: "",
+                quantity: "",
+              } as MultiBOMRow;
+            }}
+            createRow={() => ({
+              productId: rows.length ? rows[rows.length - 1].productId : 0,
+              productSku: rows.length ? rows[rows.length - 1].productSku : "",
+              productName: rows.length ? rows[rows.length - 1].productName : "",
+              id: null,
+              childSku: "",
+              childName: "",
+              activityUsed: "",
+              type: "",
+              supplier: "",
+              quantity: "",
+            })}
+          />
+        </div>
         {/* </Card>
         </Stack> */}
       </AppShell.Main>

@@ -58,7 +58,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
         tiers: priceTiers,
         taxRate: Number(r.purchaseTax?.value ?? 0) || 0,
       });
-      enrichedRow = { ...r, c_sellPrice: sellPrice.unitPriceWithTax };
+      enrichedRow = { ...r, c_sellPrice: sellPrice.unitSellPrice };
     }
     if (priceTiers.length) {
       // console.log("Has price tiers:", r.id, priceTiers);

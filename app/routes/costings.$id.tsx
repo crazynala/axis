@@ -29,7 +29,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (!id) throw new Response("Not Found", { status: 404 });
   const costing = await prisma.costing.findUnique({
     where: { id },
-    include: { assembly: true, product: true },
+    include: { assembly: true, product: true, salePriceGroup: true },
   });
   if (!costing) throw new Response("Not Found", { status: 404 });
   const products = await prisma.product.findMany({
@@ -40,7 +40,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
     select: { id: true, name: true },
     orderBy: { id: "asc" },
   });
-  return json({ costing, products, assemblies });
+  const salePriceGroups = await prisma.salePriceGroup.findMany({
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  return json({ costing, products, assemblies, salePriceGroups });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -60,6 +64,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
       : null;
     const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     const notes = (form.get("notes") as string) || null;
+    const salePriceGroupId = form.get("salePriceGroupId")
+      ? Number(form.get("salePriceGroupId"))
+      : null;
+    const manualSalePrice = form.get("manualSalePrice")
+      ? Number(form.get("manualSalePrice"))
+      : null;
+    const manualMargin = form.get("manualMargin")
+      ? Number(form.get("manualMargin"))
+      : null;
     await prisma.costing.update({
       where: { id },
       data: {
@@ -68,6 +81,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         quantityPerUnit,
         unitCost,
         notes,
+        salePriceGroupId: salePriceGroupId ?? undefined,
+        manualSalePrice,
+        manualMargin,
       },
     });
     return redirect(`/costings/${id}`);
@@ -82,7 +98,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CostingDetailRoute() {
-  const { costing, products, assemblies } = useLoaderData<typeof loader>();
+  const { costing, products, assemblies, salePriceGroups } =
+    useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
@@ -149,6 +166,35 @@ export default function CostingDetailRoute() {
             label="Unit Cost"
             w={140}
             defaultValue={costing.unitCost ?? undefined}
+            allowDecimal
+          />
+          <Select
+            name="salePriceGroupId"
+            label="Sale Price Group"
+            w={220}
+            data={salePriceGroups.map((g: any) => ({
+              value: String(g.id),
+              label: g.name || String(g.id),
+            }))}
+            defaultValue={
+              (costing as any).salePriceGroupId != null
+                ? String((costing as any).salePriceGroupId)
+                : null
+            }
+            clearable
+          />
+          <NumberInput
+            name="manualSalePrice"
+            label="Manual Sale Price"
+            w={180}
+            defaultValue={(costing as any).manualSalePrice ?? undefined}
+            allowDecimal
+          />
+          <NumberInput
+            name="manualMargin"
+            label="Manual Margin"
+            w={160}
+            defaultValue={(costing as any).manualMargin ?? undefined}
             allowDecimal
           />
           <Textarea

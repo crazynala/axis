@@ -11,6 +11,10 @@ export type JobSearchValues = {
   jobType?: string;
   endCustomerName?: string;
   companyId?: number | string | null;
+  // Related: child assemblies
+  assemblySku?: string;
+  assemblyName?: string;
+  assemblyStatus?: string;
 };
 
 export const jobSearchSchema: SearchSchema<
@@ -46,4 +50,30 @@ export const jobSearchSchema: SearchSchema<
     },
     companyId: { kind: "id", path: "companyId" },
   },
+  related: [
+    {
+      path: "assemblies",
+      quantifier: "some",
+      fields: {
+        assemblySku: {
+          kind: "text",
+          path: "product.sku",
+          op: "contains",
+          mode: "insensitive",
+        },
+        assemblyName: {
+          kind: "text",
+          path: "name",
+          op: "contains",
+          mode: "insensitive",
+        },
+        assemblyStatus: {
+          kind: "text",
+          path: "status",
+          op: "contains",
+          mode: "insensitive",
+        },
+      },
+    },
+  ],
 };

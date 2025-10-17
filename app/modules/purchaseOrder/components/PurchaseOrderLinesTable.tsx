@@ -45,10 +45,10 @@ export function PurchaseOrderLinesTable({ form, status, productMap }: Props) {
     });
     console.log("Live prices", productId, qtyOrdered, out);
     return {
-      cost: out.breakdown.baseUnit,
-      sell: out.unitSellPrice,
-      extendedCost: out.extendedCost,
-      extendedSell: out.extendedSell,
+      cost: Number(out.breakdown.baseUnit || 0),
+      sell: Number(out.unitSellPrice || 0),
+      extendedCost: Number(out.extendedCost || 0),
+      extendedSell: Number(out.extendedSell || 0),
       taxRate,
     };
   };
@@ -63,7 +63,13 @@ export function PurchaseOrderLinesTable({ form, status, productMap }: Props) {
 
   // Keep computed per-line prices in a ref aligned by row index
   const livePricesRef = useRef<
-    Array<{ cost: number; sell: number; taxRate: number }>
+    Array<{
+      cost: number;
+      sell: number;
+      taxRate: number;
+      extendedCost?: number;
+      extendedSell?: number;
+    }>
   >([]);
 
   useEffect(() => {

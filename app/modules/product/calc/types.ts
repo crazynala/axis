@@ -1,4 +1,5 @@
 export type PriceTier = { minQty: number; priceCost: number };
+export type SalePriceTier = { minQty: number; unitPrice: number };
 
 export type PriceInput = {
   baseCost: number;
@@ -6,6 +7,12 @@ export type PriceInput = {
   taxRate?: number; // decimal (0.18)
   qty?: number;
   tiers?: PriceTier[]; // sorted ascending by minQty (optional)
+  // New: explicit sale tiers (pre-tax unit prices). If provided and no manualSalePrice, these take precedence over cost+margin.
+  saleTiers?: SalePriceTier[];
+  // New: multiplier applied to sale tier prices (e.g., vendor/customer mapping). Defaults to 1.
+  priceMultiplier?: number;
+  // New: manual sale price override (pre-tax) takes absolute precedence when set.
+  manualSalePrice?: number;
   currencyRate?: number; // e.g., TRY per USD
   discounts?: { code: string; pct?: number; amount?: number }[];
 };
@@ -15,4 +22,11 @@ export type PriceOutput = {
   extendedSell?: number;
   extendedCost?: number;
   breakdown: Record<string, number>;
+  // Additional metadata about how price was derived
+  meta?: {
+    mode: "manual" | "saleTier" | "cost+margin";
+    marginUsed?: number; // decimal (0.20)
+    multiplier?: number; // e.g., 1.1
+    tier?: { minQty: number; unitPrice: number };
+  };
 };

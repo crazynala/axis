@@ -1,4 +1,6 @@
-import { Card, Divider, Group, Table, Title } from "@mantine/core";
+import { Card, Divider, Group, Table, Title, Modal, Text } from "@mantine/core";
+import { useState } from "react";
+import { calcPrice } from "~/modules/product/calc/calcPrice";
 import { ExternalLink } from "~/components/ExternalLink";
 import { AccordionTable } from "~/components/AccordionTable";
 import type { Column } from "~/components/AccordionTable";
@@ -16,6 +18,13 @@ export type CostingRow = {
   unitCost?: number | null;
   required?: number | null;
   stats?: { locStock: number; allStock: number; used: number };
+  // New: pricing inputs for dynamic sell calculation
+  fixedSell?: number | null; // costing.salePricePerItem when set
+  taxRate?: number | null; // optional tax rate; default 0 if missing
+  saleTiers?: Array<{ minQty: number; unitPrice: number }>; // pre-tax
+  priceMultiplier?: number | null; // from job.company
+  manualSalePrice?: number | null; // override for calc
+  marginPct?: number | null; // optional margin when falling back to cost+margin
 };
 
 export function AssemblyCostingsTable(props: {
@@ -36,6 +45,33 @@ export function AssemblyCostingsTable(props: {
   } = props;
 
   const DEBUG = debugEnabled("costingsTable") || !!debug;
+
+  const computeSell = (c: CostingRow) => {
+    if (c.isChild)
+      return {
+        unitSellPrice: "",
+        meta: undefined as any,
+      } as any;
+    if (c.fixedSell != null && c.fixedSell !== undefined)
+      return { unitSellPrice: c.fixedSell, meta: { mode: "manual" } } as any;
+    const qty = Number(c.required ?? 1) || 1;
+    const taxRate = Number(c.taxRate ?? 0) || 0;
+    const priceMultiplier = Number(c.priceMultiplier ?? 1) || 1;
+    const saleTiers = (c.saleTiers || [])
+      .slice()
+      .sort((a, b) => a.minQty - b.minQty);
+    const out = calcPrice({
+      baseCost: Number(c.unitCost ?? 0) || 0,
+      qty,
+      taxRate,
+      saleTiers,
+      priceMultiplier,
+      manualSalePrice:
+        c.manualSalePrice != null ? Number(c.manualSalePrice) : undefined,
+      marginPct: c.marginPct != null ? Number(c.marginPct) : undefined,
+    });
+    return out;
+  };
 
   const renderFlatRows = (rows: CostingRow[]) =>
     rows.map((c) => (
@@ -58,6 +94,26 @@ export function AssemblyCostingsTable(props: {
         <Table.Td align="center">{c.stats?.allStock ?? 0}</Table.Td>
         <Table.Td align="center">{c.stats?.used ?? 0}</Table.Td>
         <Table.Td align="center">{c.unitCost ?? ""}</Table.Td>
+        {(() => {
+          const out = computeSell(c);
+          const showButton =
+            out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
+          return (
+            <Table.Td align="center">
+              <Group gap={6} justify="center">
+                <span>{out?.unitSellPrice ?? ""}</span>
+                {showButton ? (
+                  <PriceTiersButton
+                    tiers={(c.saleTiers || [])
+                      .slice()
+                      .sort((a, b) => a.minQty - b.minQty)}
+                    picked={out.meta?.tier}
+                  />
+                ) : null}
+              </Group>
+            </Table.Td>
+          );
+        })()}
       </Table.Tr>
     ));
 
@@ -125,7 +181,97 @@ export function AssemblyCostingsTable(props: {
       align: "center",
       render: (c) => (c.isChild ? "" : c.unitCost ?? ""),
     },
+    {
+      key: "sell",
+      header: "Sell Price",
+      width: 140,
+      align: "center",
+      render: (c) => {
+        const out = computeSell(c);
+        const showButton =
+          out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
+        return (
+          <Group gap={6} justify="center">
+            <span>{out?.unitSellPrice ?? ""}</span>
+            {showButton ? (
+              <PriceTiersButton
+                tiers={(c.saleTiers || [])
+                  .slice()
+                  .sort((a, b) => a.minQty - b.minQty)}
+                picked={out.meta?.tier}
+              />
+            ) : null}
+          </Group>
+        );
+      },
+    },
   ];
+
+  function PriceTiersButton({
+    tiers,
+    picked,
+  }: {
+    tiers: Array<{ minQty: number; unitPrice: number }>;
+    picked?: { minQty: number; unitPrice: number } | null | undefined;
+  }) {
+    const [opened, setOpened] = useState(false);
+    return (
+      <>
+        {/* eslint-disable-next-line jsx-a11y/aria-role */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setOpened(true);
+          }}
+          title="View sale tiers"
+          style={{
+            background: "transparent",
+            border: 0,
+            cursor: "pointer",
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ fontWeight: 700 }}>≡</span>
+        </button>
+        <Modal
+          opened={opened}
+          onClose={() => setOpened(false)}
+          title="Sale price tiers"
+          centered
+        >
+          <Table withTableBorder withColumnBorders striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Min Qty</Table.Th>
+                <Table.Th>Unit Price</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {tiers.map((t, idx) => {
+                const isPicked =
+                  picked &&
+                  t.minQty === picked.minQty &&
+                  t.unitPrice === picked.unitPrice;
+                return (
+                  <Table.Tr
+                    key={`tier-${idx}`}
+                    style={isPicked ? { fontWeight: 700 } : undefined}
+                  >
+                    <Table.Td align="center">{t.minQty}</Table.Td>
+                    <Table.Td align="center">{t.unitPrice}</Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Modal>
+      </>
+    );
+  }
 
   // If you want to visually indicate subrows' assembly, prepend that to the name column render when rendering as a child.
 

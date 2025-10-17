@@ -80,6 +80,6 @@ export class ProductPricingService {
     // Base cost fallback when no tiers
     const baseCost = toNumber(p.costPrice) ?? 0;
     const out = calcPrice({ baseCost, qty: q, tiers, taxRate });
-    return out.unitPriceWithTax;
+    return out.unitSellPrice;
   }
 }

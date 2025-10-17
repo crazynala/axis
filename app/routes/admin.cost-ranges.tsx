@@ -44,7 +44,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const where: any = {};
   if (productId) where.productId = Number(productId);
   if (costGroupId) where.costGroupId = Number(costGroupId);
-  const ranges = await prisma.productCostRange.findMany({
+  const rows = await prisma.productCostRange.findMany({
     where,
     orderBy: [
       { productId: "asc" },
@@ -56,6 +56,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       costGroup: { select: { id: true, name: true, supplierId: true } },
     },
   });
+  const ranges = rows.map((r) => ({
+    ...r,
+    rangeFrom: r.rangeFrom == null ? null : Number(r.rangeFrom),
+    rangeTo: r.rangeTo == null ? null : Number(r.rangeTo),
+    costPrice: r.costPrice == null ? null : Number(r.costPrice as any),
+    sellPriceManual:
+      r.sellPriceManual == null ? null : Number(r.sellPriceManual as any),
+  }));
   return json({ ranges } satisfies LoaderData);
 }
 

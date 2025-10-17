@@ -435,6 +435,8 @@ export function RenderField({
         jobType: map(options?.jobTypeOptions),
         jobStatus: map(options?.jobStatusOptions),
         location: map(options?.locationOptions),
+        salePriceGroup: map(options?.salePriceGroupOptions),
+        costGroup: map(options?.costGroupOptions),
       },
     };
   }, [options, ctx]);

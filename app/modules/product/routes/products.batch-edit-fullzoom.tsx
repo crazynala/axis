@@ -136,7 +136,6 @@ export default function ProductsBatchEditFullzoom() {
               onChange={(v) =>
                 setField("costPrice", v == null ? null : Number(v))
               }
-              precision={2}
             />
             <NumberInput
               label="Manual Sale Price"
@@ -144,7 +143,6 @@ export default function ProductsBatchEditFullzoom() {
               onChange={(v) =>
                 setField("manualSalePrice", v == null ? null : Number(v))
               }
-              precision={2}
             />
             <Checkbox
               label="Stock Tracking Enabled"

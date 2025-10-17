@@ -1,4 +1,5 @@
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   Badge,
   Button,
@@ -44,15 +45,9 @@ import {
 } from "~/modules/product/findify/productFindify";
 import { requireUserId } from "~/utils/auth.server";
 import { buildWhereFromConfig } from "~/utils/buildWhereFromConfig.server";
-import {
-  getProductStockSnapshots,
-  prismaBase,
-  refreshProductStockSnapshot,
-  runWithDbActivity,
-} from "~/utils/prisma.server";
-// server-only imports must be loaded dynamically inside loader/action with Remix Vite
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { ProductFindManager } from "../components/ProductFindManager";
+import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
 import {
   productAssocFields,
   productBomFindFields,
@@ -81,12 +76,16 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const productPromise = prismaBase.product.findUnique({
       where: { id },
       include: {
+        customer: { select: { id: true, priceMultiplier: true } },
         // supplier: { select: { id: true, name: true } },
         // customer: { select: { id: true, name: true } },
         // purchaseTax: { select: { id: true, label: true } },
         // category: { select: { id: true, label: true } },
         // variantSet: { select: { id: true, name: true, variants: true } },
         costGroup: { include: { costRanges: true } },
+        // For pricing preview/defaults in form
+        salePriceGroup: { include: { saleRanges: true } },
+        salePriceRanges: true,
         productLines: {
           include: {
             child: {
@@ -150,25 +149,35 @@ export async function loader({ params }: LoaderFunctionArgs) {
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 500,
     });
-    const [product, productChoices, movements, movementHeaders] =
-      await Promise.all([
-        productPromise.then((r) => {
-          mark("product");
-          return r;
-        }),
-        productChoicesPromise.then((r) => {
-          mark("productChoices");
-          return r;
-        }),
-        movementLinesPromise.then((r) => {
-          mark("movementLines");
-          return r;
-        }),
-        movementHeadersPromise.then((r) => {
-          mark("movementHeaders");
-          return r;
-        }),
-      ]);
+    const salePriceGroupsPromise = prismaBase.salePriceGroup.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    const [
+      product,
+      productChoices,
+      movements,
+      movementHeaders,
+      salePriceGroups,
+    ] = await Promise.all([
+      productPromise.then((r) => {
+        mark("product");
+        return r;
+      }),
+      productChoicesPromise.then((r) => {
+        mark("productChoices");
+        return r;
+      }),
+      movementLinesPromise.then((r) => {
+        mark("movementLines");
+        return r;
+      }),
+      movementHeadersPromise.then((r) => {
+        mark("movementHeaders");
+        return r;
+      }),
+      salePriceGroupsPromise.then((r) => r),
+    ]);
     if (!product) throw new Response("Not found", { status: 404 });
 
     // Resolve location names for in/out in one query (lines + headers)
@@ -227,6 +236,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       movements,
       movementHeaders,
       locationNameById,
+      salePriceGroups,
     });
   }); // end runWithDbActivity wrapper
 }
@@ -341,6 +351,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     console.log("!! From form:", Object.fromEntries(form.entries()));
     await prismaBase.product.update({ where: { id }, data });
     return redirect(`/products/${id}`);
+  }
+  if (intent === "price.preview") {
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
+    const qty = Number((form || (await request.formData())).get("qty"));
+    const customerIdRaw = (form || (await request.formData())).get(
+      "customerId"
+    ) as string | null;
+    const customerId = customerIdRaw ? Number(customerIdRaw) : null;
+    const { priceProduct } = await import(
+      "~/modules/product/pricing/pricingService.server"
+    );
+    const result = await priceProduct({
+      productId: id,
+      qty: Number.isFinite(qty) ? qty : 60,
+      customerId,
+    });
+    return json(result);
   }
   if (intent === "stock.refresh") {
     const { refreshStockSnapshotSafe } = await import(
@@ -497,6 +525,7 @@ export default function ProductDetailRoute() {
     movements,
     movementHeaders,
     locationNameById,
+    salePriceGroups,
   } = useLoaderData<typeof loader>();
   console.log("!! loader product", product);
   const actionData = useActionData<typeof action>();
@@ -643,12 +672,20 @@ export default function ProductDetailRoute() {
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "Products", href: "/products" },
-            { label: String(product.id), href: `/products/${product.id}` },
-          ]}
-        />
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "Products", href: appendHref("/products") },
+                {
+                  label: String(product.id),
+                  href: appendHref(`/products/${product.id}`),
+                },
+              ]}
+            />
+          );
+        })()}
         <Group gap="xs">
           <refreshFetcher.Form method="post">
             <input type="hidden" name="_intent" value="stock.refresh" />
@@ -664,6 +701,7 @@ export default function ProductDetailRoute() {
         </Group>
       </Group>
       <ProductFindManager />
+      <PricingPreviewWidget productId={product.id} />
       <Form id="product-form" method="post">
         <ProductDetailForm
           mode={"edit" as any}

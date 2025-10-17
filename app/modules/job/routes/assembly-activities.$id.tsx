@@ -16,6 +16,7 @@ import {
   Title,
 } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
@@ -87,15 +88,23 @@ export default function AssemblyActivityDetailRoute() {
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Title order={2}>{activity.name || `Activity #${activity.id}`}</Title>
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "Assembly Activities", href: "/assembly-activities" },
-            {
-              label: String(activity.id),
-              href: `/assembly-activities/${activity.id}`,
-            },
-          ]}
-        />
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                {
+                  label: "Assembly Activities",
+                  href: appendHref("/assembly-activities"),
+                },
+                {
+                  label: String(activity.id),
+                  href: appendHref(`/assembly-activities/${activity.id}`),
+                },
+              ]}
+            />
+          );
+        })()}
       </Group>
       <Group gap="xs"></Group>
 

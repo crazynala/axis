@@ -103,8 +103,10 @@ export const productPricingFields: FieldConfig[] = [
     overrideName: "manualSalePrice",
     inputType: "number",
     computeDefault: (values, ctx) => {
+      console.log("!! Calc price per", values, ctx?.product);
       const baseCost = Number(values?.costPrice ?? 0) || 0;
       const qty = Number(values?.defaultCostQty ?? 60) || 60;
+      // tax rate from global options
       let taxRate = 0;
       const taxId = values?.purchaseTaxId ?? null;
       const rates = (ctx as any)?.options?.taxRateById || {};
@@ -113,8 +115,58 @@ export const productPricingFields: FieldConfig[] = [
         const n = Number(rates[key] ?? 0);
         taxRate = Number.isFinite(n) ? n : 0;
       }
-      const out = calcPrice({ baseCost, qty, taxRate });
-      return out.unitPriceWithTax;
+      // sale tiers precedence for interactive pricing:
+      // 1) selected Sale Price Group (live cache) → 2) product's group ranges → 3) product-specific ranges
+      const saleProduct = ((ctx as any)?.product?.salePriceRanges ||
+        []) as any[];
+      const saleGroupOnProduct = ((ctx as any)?.product?.salePriceGroup
+        ?.saleRanges || []) as any[];
+      const cachedMap = ((ctx as any)?.salePriceGroupRangesById ||
+        {}) as Record<string, Array<{ minQty: number; unitPrice: number }>>;
+      const selectedSpgId =
+        values?.salePriceGroupId != null
+          ? String(values.salePriceGroupId)
+          : null;
+
+      let saleTiers: Array<{ minQty: number; unitPrice: number }> = [];
+      if (selectedSpgId && cachedMap[selectedSpgId]) {
+        saleTiers = (cachedMap[selectedSpgId] || [])
+          .map((t) => ({
+            minQty: Number(t.minQty) || 0,
+            unitPrice: Number(t.unitPrice) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      } else if (
+        Array.isArray(saleGroupOnProduct) &&
+        saleGroupOnProduct.length
+      ) {
+        saleTiers = saleGroupOnProduct
+          .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+          .map((r: any) => ({
+            minQty: Number(r.rangeFrom) || 0,
+            unitPrice: Number(r.price) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      } else if (Array.isArray(saleProduct) && saleProduct.length) {
+        saleTiers = saleProduct
+          .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+          .map((r: any) => ({
+            minQty: Number(r.rangeFrom) || 0,
+            unitPrice: Number(r.price) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      }
+      // customer-level multiplier if present on ctx (optional)
+      const priceMultiplier =
+        Number((ctx as any)?.customer?.priceMultiplier ?? 1) || 1;
+      const out = calcPrice({
+        baseCost,
+        qty,
+        taxRate,
+        saleTiers,
+        priceMultiplier,
+      });
+      return out.unitSellPrice;
     },
     format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
   },
@@ -125,6 +177,17 @@ export const productPricingFields: FieldConfig[] = [
     widget: "numberRange",
     findOp: "range",
     hiddenInModes: ["edit", "create"],
+  },
+  // Manual margin (mutually exclusive with manualSalePrice). Edit-only numeric field.
+  {
+    name: "manualMargin",
+    label: "Manual Margin (decimal)",
+    widget: "defaultOverride",
+    hiddenInModes: ["find"],
+    overrideName: "manualMargin",
+    inputType: "number",
+    computeDefault: () => undefined,
+    format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
   },
   {
     name: "purchaseTaxId",
@@ -146,6 +209,13 @@ export const productPricingFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "supplier",
     findOp: "equals",
+  },
+  {
+    name: "salePriceGroupId",
+    label: "Sale Price Group",
+    widget: "select",
+    optionsKey: "salePriceGroup",
+    hiddenInModes: ["find"],
   },
 ];
 

@@ -13,8 +13,10 @@ const items = [
   { to: "/admin/value-lists/Subcategory", label: "Value Lists: Subcategory" },
   { to: "/admin/cost-groups", label: "Cost Groups" },
   { to: "/admin/cost-ranges", label: "Cost Ranges" },
+  { to: "/admin/sale-price-groups", label: "Sale Price Groups" },
   { to: "/admin/forex/USD/TRY", label: "Forex: USD→TRY" },
   { to: "/admin/dhl-records", label: "DHL Records" },
+  { to: "/admin/settings/pricing", label: "Pricing Settings" },
 ];
 
 export default function AdminLayoutRoute() {

@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { prisma } from "../utils/prisma.server";
 
 export const meta: MetaFunction = () => [{ title: "Contacts" }];
@@ -24,9 +25,16 @@ export default function ContactsIndexRoute() {
         }}
       >
         <h1>Contacts</h1>
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Contacts", href: "/contacts" }]}
-        />
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "Contacts", href: appendHref("/contacts") },
+              ]}
+            />
+          );
+        })()}
       </div>
       <p>Contacts model not yet defined; showing companies as placeholder.</p>
       {/* Placeholder: Contact model not yet implemented */}

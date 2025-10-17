@@ -17,6 +17,7 @@ import {
 import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "~/components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useRecords } from "~/base/record/RecordContext";
@@ -31,6 +32,7 @@ import {
 import { formatUSD } from "~/utils/format";
 import { IconLock, IconMenuDeep } from "@tabler/icons-react";
 import { Checkbox } from "@mantine/core";
+import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
 
 export default function ProductsIndexRoute() {
   // Batch create modal state
@@ -174,10 +176,18 @@ export default function ProductsIndexRoute() {
         data-products-header
       >
         <Title order={2}>Products</Title>
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Products", href: "/products" }]}
-        />
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "Products", href: appendHref("/products") },
+              ]}
+            />
+          );
+        })()}
       </Group>
+      <PricingPreviewWidget productId={Number(currentId) || undefined} />
       <Group justify="flex-end" mb="xs" gap="xs">
         {Array.from(sp.keys()).some(
           (k) =>

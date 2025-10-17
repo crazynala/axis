@@ -1,69 +1,22 @@
 /* app.css */
 @layer app {
-  /* react-datasheet-grid: Dark mode overrides to match Mantine theme */
-  /* html[data-mantine-color-scheme="dark"] .dsg-container {
-    background-color: var(--mantine-color-dark-7) !important;
-    color: var(--mantine-color-gray-0) !important;
-    border-color: var(--mantine-color-dark-4) !important;
-  }
-  html[data-mantine-color-scheme="dark"] .dsg-row {
-    background-color: var(--mantine-color-dark-7) !important;
-  }
-  html[data-mantine-color-scheme="dark"] .dsg-row:nth-child(even) {
-    background-color: var(--mantine-color-dark-6) !important;
-  }
-  html[data-mantine-color-scheme="dark"] .dsg-cell {
-    border-color: var(--mantine-color-dark-4) !important;
-    color: var(--mantine-color-gray-0) !important;
-  }
-  html[data-mantine-color-scheme="dark"] .dsg-cell.dsg-active,
-  html[data-mantine-color-scheme="dark"] .dsg-cell.dsg-selected {
-    background-color: var(--mantine-color-dark-5) !important;
-    outline-color: var(--mantine-primary-color-filled) !important;
-  }
-  html[data-mantine-color-scheme="dark"] .dsg-header {
-    background-color: var(--mantine-color-dark-6) !important;
-    color: var(--mantine-color-gray-2) !important;
-    border-color: var(--mantine-color-dark-4) !important;
-  }
+  [data-mantine-color-scheme='dark'] [data-variant='default'] {
+      --input-bd: var(--mantine-color-slate-8);
+      --input-bg: var(--mantine-color-slate-9);
+      --input-bd-focus: var(--mantine-primary-color-filled);
+    }
 
-  /* Dark mode overrides for DataSheetGrid */
-  /* [data-mantine-color-scheme='dark'] .bom-sheet-wrapper {
-    border-color: var(--mantine-color-dark-4) !important;
-  }
+  [data-mantine-color-scheme='dark'] [data-variant='filled'] {
+      --input-bd: transparent;
+      --input-bg: var(--mantine-color-dark-5);
+      --input-bd-focus: var(--mantine-primary-color-filled);
+    }
 
-  [data-mantine-color-scheme='dark'] .dsg-container,
-  [data-mantine-color-scheme='dark'] .dsg-row,
-  [data-mantine-color-scheme='dark'] .dsg-cell,
-  [data-mantine-color-scheme='dark'] .dsg-cell-header,
-  [data-mantine-color-scheme='dark'] .dsg-add-row,
-  [data-mantine-color-scheme='dark'] .dsg-add-row-btn,
-  [data-mantine-color-scheme='dark'] .dsg-add-row-input {
-    color: var(--mantine-color-text);
-  }
-
-  [data-mantine-color-scheme='dark'] .dsg-row-header,
-  [data-mantine-color-scheme='dark'] .dsg-cell-header .dsg-cell-header-container {
-    background-color: var(--mantine-color-dark-6);
-    color: var(--mantine-color-text);
-  }
-
-  [data-mantine-color-scheme='dark'] .dsg-cell-gutter {
-    background-color: var(--mantine-color-dark-7);
-    color: var(--mantine-color-text);
-  }
-
-  [data-mantine-color-scheme='dark'] .dsg-cell,
-  [data-mantine-color-scheme='dark'] .dsg-cell-header,
-  [data-mantine-color-scheme='dark'] .dsg-row {
-    border-color: var(--mantine-color-dark-4);
-  }
-
-  /* Optional: lighten header/border in light mode to match wrapper */
-  /* [data-mantine-color-scheme='light'] .dsg-row-header,
-  [data-mantine-color-scheme='light'] .dsg-cell-header .dsg-cell-header-container {
-    background-color: var(--mantine-color-gray-0);
-  } */ 
+  [data-mantine-color-scheme='dark'] [data-variant='unstyled'] {
+      --input-bd: transparent;
+      --input-bg: transparent;
+      --input-bd-focus: transparent;
+    }
 
   /* Inline labels from md+ */
   @media (min-width: 62em) {

@@ -34,7 +34,12 @@ export default defineConfig({
     include: ["react", "react-dom", "@remix-run/react"],
   },
   ssr: {
-    noExternal: ["packages/timber", "@aa/timber"],
+    noExternal: [
+      "packages/timber",
+      "@aa/timber",
+      // Bundle the datasheet grid so Vite handles its CSS subpath imports in SSR
+      "react-datasheet-grid",
+    ],
   },
   
 });

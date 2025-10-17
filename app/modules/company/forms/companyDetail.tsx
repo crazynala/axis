@@ -31,6 +31,13 @@ export const companyMainFields: FieldConfig[] = [
     widget: "triBool",
     findOp: "equals",
   },
+  {
+    name: "defaultMarginOverride",
+    label: "Default Margin Override",
+    widget: "text",
+    showIf: ({ form }) => !!(form.getValues() as any)?.isSupplier,
+    hiddenInModes: ["find"],
+  },
 ];
 
 export function allCompanyFindFields() {

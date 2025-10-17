@@ -25,12 +25,19 @@ export function buildProductData(form: FormData) {
   // numerics
   num("costPrice");
   num("manualSalePrice");
+  num("manualMargin");
   num("purchaseTaxId");
   num("categoryId");
   num("customerId");
   num("supplierId");
+  num("salePriceGroupId");
   // booleans
   bool("stockTrackingEnabled");
   bool("batchTrackingEnabled");
+  // mutual exclusivity enforcement (throwing here will surface as 500; callers may catch if needed)
+  // simple runtime check (avoid async import here)
+  if (data.manualSalePrice != null && data.manualMargin != null) {
+    throw new Error("manualSalePrice and manualMargin cannot both be set");
+  }
   return data;
 }

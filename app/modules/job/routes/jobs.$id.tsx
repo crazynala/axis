@@ -33,9 +33,11 @@ import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { useInitGlobalFormContext } from "@aa/timber";
 // useJobFindify removed (modal-based find standard)
 import { prisma } from "../../../utils/prisma.server";
+import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services/assemblyFromProduct.server";
 // Legacy jobSearchSchema/buildWhere replaced by config-driven builder
 import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
@@ -176,29 +178,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "assembly.createFromProduct") {
     const productId = Number(form.get("productId"));
     if (Number.isFinite(productId)) {
-      const prod = await prisma.product.findUnique({
-        where: { id: productId },
-        select: {
-          id: true,
-          name: true,
-          variantSetId: true,
-          variantSet: { select: { variants: true } },
-        },
-      });
-      if (prod) {
-        const vsLen = prod.variantSet?.variants?.length || 0;
-        const ordered: number[] =
-          vsLen > 0 ? Array.from({ length: vsLen }, () => 0) : [];
-        const data: any = {
-          name: prod.name || `Assembly ${productId}`,
-          productId: prod.id,
-          jobId: id,
-          qtyOrderedBreakdown: ordered as any,
-          status: "new",
-        };
-        if (prod.variantSetId != null) data.variantSetId = prod.variantSetId;
-        await prisma.assembly.create({ data });
-      }
+      await createAssemblyFromProductAndSeedCostings(id, productId);
     }
     return redirect(`/jobs/${id}`);
   }
@@ -406,12 +386,17 @@ export default function JobDetailRoute() {
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "Jobs", href: "/jobs" },
-            { label: String(job.id), href: `/jobs/${job.id}` },
-          ]}
-        />
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "Jobs", href: appendHref("/jobs") },
+                { label: String(job.id), href: appendHref(`/jobs/${job.id}`) },
+              ]}
+            />
+          );
+        })()}
         <Group gap="xs"></Group>
       </Group>
 

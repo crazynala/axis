@@ -13,7 +13,6 @@ import {
   mergeSimpleAndMulti,
 } from "../../../base/find/multiFind";
 import { listViews, saveView } from "../../../utils/views.server";
-import { SavedViews } from "../../../components/find/SavedViews";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const url = new URL(_args.request.url);
@@ -21,27 +20,38 @@ export async function loader(_args: LoaderFunctionArgs) {
   const viewName = url.searchParams.get("view");
   if (viewName) {
     const v = views.find((x: any) => x.name === viewName) as any;
+    console.log("!!! found view", v);
     const vp: any = v?.params;
     if (vp?.filters) {
       const savedFilters = vp.filters as any;
+      // carry advanced find blob if present
       if (savedFilters.findReqs && !url.searchParams.has("findReqs")) {
         url.searchParams.set("findReqs", savedFilters.findReqs);
       }
-      // apply simple keys if not present
-      for (const k of [
-        "id",
-        "projectCode",
-        "name",
-        "status",
-        "jobType",
-        "endCustomerName",
-        "companyId",
-      ]) {
-        if (savedFilters[k] && !url.searchParams.has(k))
-          url.searchParams.set(k, savedFilters[k]);
+      // Map legacy/dotted keys to canonical param names
+      const aliasMap: Record<string, string> = {
+        "job.assembly.sku": "assemblySku",
+        "job.assembly.name": "assemblyName",
+        "job.assembly.status": "assemblyStatus",
+      };
+      // Apply all simple filters generically (avoid brittle whitelists)
+      for (const [rawKey, rawVal] of Object.entries(savedFilters)) {
+        if (rawKey === "findReqs") continue; // handled above
+        if (rawVal === undefined || rawVal === null || rawVal === "") continue;
+        const key = aliasMap[rawKey] || rawKey;
+        if (!url.searchParams.has(key))
+          url.searchParams.set(key, String(rawVal));
       }
     }
   }
+  // Accept dotted alias keys (back-compat): job.assembly.* => assembly*
+  const alias = (from: string, to: string) => {
+    const v = url.searchParams.get(from);
+    if (v !== null && !url.searchParams.has(to)) url.searchParams.set(to, v);
+  };
+  alias("job.assembly.sku", "assemblySku");
+  alias("job.assembly.name", "assemblyName");
+  alias("job.assembly.status", "assemblyStatus");
   const hasFindIndicators =
     [
       "id",
@@ -51,6 +61,9 @@ export async function loader(_args: LoaderFunctionArgs) {
       "jobType",
       "endCustomerName",
       "companyId",
+      "assemblySku",
+      "assemblyName",
+      "assemblyStatus",
     ].some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
   let where: any = undefined;
   if (hasFindIndicators) {
@@ -67,6 +80,9 @@ export async function loader(_args: LoaderFunctionArgs) {
       "jobType",
       "endCustomerName",
       "companyId",
+      "assemblySku",
+      "assemblyName",
+      "assemblyStatus",
     ].forEach(pass);
     const simple = buildWhere(values, jobSearchSchema);
     const multi = decodeRequests(url.searchParams.get("findReqs"));
@@ -83,6 +99,19 @@ export async function loader(_args: LoaderFunctionArgs) {
           endCustomerName: { contains: v, mode: "insensitive" },
         }),
         companyId: (v) => ({ companyId: Number(v) }),
+        assemblySku: (v) => ({
+          assemblies: {
+            some: { product: { sku: { contains: v, mode: "insensitive" } } },
+          },
+        }),
+        assemblyName: (v) => ({
+          assemblies: { some: { name: { contains: v, mode: "insensitive" } } },
+        }),
+        assemblyStatus: (v) => ({
+          assemblies: {
+            some: { status: { contains: v, mode: "insensitive" } },
+          },
+        }),
       };
       const multiWhere = buildWhereFromRequests(multi, interpreters);
       where = mergeSimpleAndMulti(simple, multiWhere);
@@ -167,10 +196,6 @@ export default function JobsLayout() {
   return (
     <>
       <JobFindManager />
-      <SavedViews
-        views={data.views || []}
-        activeView={data.activeView || null}
-      />
       <Outlet />
     </>
   );

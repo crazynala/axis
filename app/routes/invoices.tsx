@@ -41,7 +41,7 @@ export async function loader(_args: LoaderFunctionArgs) {
     });
     const totals = new Map<number, number>();
     for (const l of lines) {
-      const amt = (l.priceSell ?? 0) * (l.quantity ?? 0);
+      const amt = Number(l.priceSell ?? 0) * Number(l.quantity ?? 0);
       totals.set(l.invoiceId!, (totals.get(l.invoiceId!) ?? 0) + amt);
     }
     initialRows = rows.map((r) => ({ ...r, amount: totals.get(r.id) ?? 0 }));

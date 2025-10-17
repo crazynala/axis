@@ -20,6 +20,9 @@ function buildJobFindDefaults() {
     jobType: "",
     endCustomerName: "",
     companyId: undefined,
+    assemblySku: "",
+    assemblyName: "",
+    assemblyStatus: "",
   } as any;
 }
 
@@ -28,6 +31,7 @@ export function JobFindModal(props: JobFindModalProps) {
     ...((jobDetail as any).jobOverviewFields || []),
     ...((jobDetail as any).jobDateStatusLeft || []),
     ...((jobDetail as any).jobDateStatusRight || []),
+    ...((jobDetail as any).assemblyFields || []),
   ];
   return (
     <GenericMultiFindModal

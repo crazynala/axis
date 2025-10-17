@@ -48,7 +48,7 @@ export async function applyBomBatch(
   const updateData = updates
     .filter((u) => Number.isFinite(u.id))
     .map((u) => ({
-      where: { id: u.id },
+      id: Number(u.id),
       data: {
         ...(u.quantity !== undefined
           ? { quantity: Number(u.quantity) || 0 }
@@ -67,9 +67,13 @@ export async function applyBomBatch(
     }
     let updatedCount = 0;
     for (const upd of updateData) {
-      if (Object.keys(upd.data).length === 0) continue;
-      await tx.productLine.update(upd as any);
-      updatedCount++;
+      if (!upd || Object.keys(upd.data).length === 0) continue;
+      // Use updateMany scoped by parentId to avoid P2025 if the id was removed/replaced upstream
+      const res = await tx.productLine.updateMany({
+        where: { id: upd.id, parentId },
+        data: upd.data,
+      });
+      if (res.count > 0) updatedCount++;
     }
     let deletedCount = 0;
     if (deletes.length) {
