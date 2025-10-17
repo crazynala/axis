@@ -1,3 +1,6 @@
 [submodule "packages/timber"]
 	path = packages/timber
 	url = https://github.com/crazynala/timber
+[submodule "react-datasheet-grid"]
+	path = react-datasheet-grid
+	url = https://github.com/crazynala/react-datasheet-grid.git
