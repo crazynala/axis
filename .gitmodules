@@ -4,3 +4,6 @@
 [submodule "react-datasheet-grid"]
 	path = react-datasheet-grid
 	url = https://github.com/crazynala/react-datasheet-grid.git
+[submodule "packages/react-datasheet-grid"]
+	path = packages/react-datasheet-grid
+	url = https://github.com/crazynala/react-datasheet-grid.git
