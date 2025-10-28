@@ -1,44 +1,24 @@
 import React from "react";
-import {
-  Group,
-  NumberInput,
-  Select,
-  Text,
-  Card,
-  Tooltip,
-  Stack,
-} from "@mantine/core";
+import { Group, NumberInput, Select, Text, Card, Tooltip, Stack } from "@mantine/core";
 import { useFetcher } from "@remix-run/react";
 import { useOptions } from "~/base/options/OptionsContext";
 
 export function useProductPricingPrefs() {
-  const [customerId, setCustomerId] = React.useState<string | null>(
-    (typeof window !== "undefined" &&
-      window.sessionStorage.getItem("pricing.customerId")) ||
-      null
-  );
+  const [customerId, setCustomerId] = React.useState<string | null>((typeof window !== "undefined" && window.sessionStorage.getItem("pricing.customerId")) || null);
   const [qty, setQty] = React.useState<number>(() => {
-    const raw =
-      typeof window !== "undefined"
-        ? window.sessionStorage.getItem("pricing.qty")
-        : null;
+    const raw = typeof window !== "undefined" ? window.sessionStorage.getItem("pricing.qty") : null;
     const n = raw ? Number(raw) : 60;
     return Number.isFinite(n) ? n : 60;
   });
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-    if (customerId != null)
-      window.sessionStorage.setItem("pricing.customerId", customerId);
+    if (customerId != null) window.sessionStorage.setItem("pricing.customerId", customerId);
     window.sessionStorage.setItem("pricing.qty", String(qty));
   }, [customerId, qty]);
   return { customerId, setCustomerId, qty, setQty } as const;
 }
 
-export function PricingPreviewWidget({
-  productId,
-}: {
-  productId?: number | null;
-}) {
+export function PricingPreviewWidget({ productId }: { productId?: number | null }) {
   const options = useOptions();
   const customers = (options?.customerOptions || []).map((c) => ({
     value: c.value,
@@ -57,67 +37,11 @@ export function PricingPreviewWidget({
     fetcher.submit(fd, { method: "post", action: `/products/${productId}` });
   }, [productId, customerId, qty]);
   return (
-    <Card withBorder padding="xs" radius="sm">
-      <Group gap="xs" align="end">
-        <Select
-          label="Customer"
-          placeholder="Select customer"
-          data={customers}
-          value={customerId}
-          onChange={setCustomerId}
-          searchable
-          clearable
-          w={260}
-        />
-        <NumberInput
-          label="Qty"
-          value={qty}
-          onChange={(v) => setQty((v as number) || 60)}
-          step={1}
-          min={1}
-          w={120}
-        />
-        {canPrice && (
-          <Tooltip
-            disabled={fetcher.state !== "idle" || !result}
-            label={
-              result ? (
-                <Stack gap={2}>
-                  <Text size="xs">Mode: {result?.applied?.mode || "-"}</Text>
-                  {result?.applied?.marginUsed != null && (
-                    <Text size="xs">
-                      Margin:{" "}
-                      {(Number(result.applied.marginUsed) * 100).toFixed(1)}%
-                    </Text>
-                  )}
-                  {result?.applied?.priceMultiplier != null && (
-                    <Text size="xs">
-                      Multiplier:{" "}
-                      {Number(result.applied.priceMultiplier).toFixed(3)}
-                    </Text>
-                  )}
-                  {result?.extendedSell != null && (
-                    <Text size="xs">
-                      Total ({qty}): {Number(result.extendedSell).toFixed(2)}
-                    </Text>
-                  )}
-                </Stack>
-              ) : (
-                ""
-              )
-            }
-            withArrow
-            position="bottom"
-          >
-            <Text size="sm" c="dimmed">
-              {fetcher.state !== "idle"
-                ? "Calculating…"
-                : result?.unitSellPrice != null
-                ? `Unit: ${Number(result.unitSellPrice).toFixed(2)}`
-                : ""}
-            </Text>
-          </Tooltip>
-        )}
+    <Card withBorder p={5} radius="sm">
+      <Group gap="xs" align="center">
+        <Text size="xs">$ per</Text>
+        <Select size="xs" w={180} placeholder="Select customer" data={customers} value={customerId} onChange={setCustomerId} searchable clearable />
+        <NumberInput size="xs" w={60} hideControls value={qty} onChange={(v) => setQty((v as number) || 60)} step={1} min={1} />
       </Group>
     </Card>
   );

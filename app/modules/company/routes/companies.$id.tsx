@@ -1,37 +1,17 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigation,
-  useSubmit,
-} from "@remix-run/react";
+import { Link, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useRecordContext } from "../base/record/RecordContext";
-import {
-  Button,
-  Checkbox,
-  Group,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  Title,
-  NumberInput,
-  Select,
-} from "@mantine/core";
+import { useRecordContext } from "../../../base/record/RecordContext";
+import { Button, Checkbox, Group, Stack, Table, Text, TextInput, Title, NumberInput, Select } from "@mantine/core";
 import { CompanyDetailForm } from "~/modules/company/forms/CompanyDetailForm";
 import { Controller, useForm } from "react-hook-form";
 import { useEffect } from "react";
-import { prisma } from "../utils/prisma.server";
+import { prisma } from "../../../utils/prisma.server";
+import { BreadcrumbSet } from "@aa/timber";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => [
-  { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
-];
+export const meta: MetaFunction<typeof loader> = ({ data }) => [{ title: data?.company?.name ? `Company ${data.company.name}` : "Company" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
@@ -67,16 +47,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       isSupplier: form.get("isSupplier") === "on",
       isInactive: form.get("isInactive") === "on",
       notes: (form.get("notes") as string) || null,
-      defaultMarginOverride:
-        form.get("defaultMarginOverride") != null &&
-        String(form.get("defaultMarginOverride")).trim() !== ""
-          ? Number(form.get("defaultMarginOverride"))
-          : null,
-      priceMultiplier:
-        form.get("priceMultiplier") != null &&
-        String(form.get("priceMultiplier")).trim() !== ""
-          ? Number(form.get("priceMultiplier"))
-          : null,
+      defaultMarginOverride: form.get("defaultMarginOverride") != null && String(form.get("defaultMarginOverride")).trim() !== "" ? Number(form.get("defaultMarginOverride")) : null,
+      priceMultiplier: form.get("priceMultiplier") != null && String(form.get("priceMultiplier")).trim() !== "" ? Number(form.get("priceMultiplier")) : null,
     } as const;
     await prisma.company.update({ where: { id }, data: data as any });
     return redirect(`/companies/${id}`);
@@ -91,12 +63,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       create: {
         vendorId,
         customerId: id,
-        marginOverride:
-          margin != null && String(margin) !== "" ? Number(margin) : null,
+        marginOverride: margin != null && String(margin) !== "" ? Number(margin) : null,
       },
       update: {
-        marginOverride:
-          margin != null && String(margin) !== "" ? Number(margin) : null,
+        marginOverride: margin != null && String(margin) !== "" ? Number(margin) : null,
       },
     });
     return redirect(`/companies/${id}`);
@@ -150,22 +120,16 @@ export default function CompanyDetailRoute() {
       isCustomer: !!company.isCustomer,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
-      defaultMarginOverride:
-        company.defaultMarginOverride != null
-          ? Number(company.defaultMarginOverride)
-          : null,
-      priceMultiplier:
-        company.priceMultiplier != null
-          ? Number(company.priceMultiplier)
-          : undefined,
+      defaultMarginOverride: company.defaultMarginOverride != null ? Number(company.defaultMarginOverride) : null,
+      priceMultiplier: company.priceMultiplier != null ? Number(company.priceMultiplier) : undefined,
     },
   });
 
-  console.log("!! Company form values", form.getValues());
+  // console.log("!! Company form values", form.getValues(), form.formState.defaultValues);
 
-  // Reset form when navigating to a different company via record browser
+  // Reset form when loader data changes (after save or record navigation)
   useEffect(() => {
-    form.reset({
+    const next = {
       id: company.id,
       name: company.name || "",
       notes: company.notes || "",
@@ -173,17 +137,17 @@ export default function CompanyDetailRoute() {
       isCustomer: !!company.isCustomer,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
-      defaultMarginOverride:
-        company.defaultMarginOverride != null
-          ? Number(company.defaultMarginOverride)
-          : null,
-      priceMultiplier:
-        company.priceMultiplier != null
-          ? Number(company.priceMultiplier)
-          : undefined,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company.id]);
+      defaultMarginOverride: company.defaultMarginOverride != null ? Number(company.defaultMarginOverride) : null,
+      priceMultiplier: company.priceMultiplier != null ? Number(company.priceMultiplier) : undefined,
+    };
+
+    const curr = form.getValues();
+
+    // Cheap deep compare; replace with a real deepEqual if you prefer
+    if (JSON.stringify(curr) !== JSON.stringify(next)) {
+      form.reset(next, { keepDirtyValues: true, keepDirty: true });
+    }
+  }, [company.id, company.updatedAt]); // narrow deps to avoid loops
 
   // Wire this form into the global Save/Cancel header via GlobalFormProvider in root
   type FormValues = {
@@ -205,13 +169,8 @@ export default function CompanyDetailRoute() {
     if (values.isCustomer) fd.set("isCustomer", "on");
     if (values.isSupplier) fd.set("isSupplier", "on");
     if (values.isInactive) fd.set("isInactive", "on");
-    if (
-      values.defaultMarginOverride != null &&
-      String(values.defaultMarginOverride) !== ""
-    )
-      fd.set("defaultMarginOverride", String(values.defaultMarginOverride));
-    if (values.priceMultiplier != null && String(values.priceMultiplier) !== "")
-      fd.set("priceMultiplier", String(values.priceMultiplier));
+    if (values.defaultMarginOverride != null && String(values.defaultMarginOverride) !== "") fd.set("defaultMarginOverride", String(values.defaultMarginOverride));
+    if (values.priceMultiplier != null && String(values.priceMultiplier) !== "") fd.set("priceMultiplier", String(values.priceMultiplier));
     submit(fd, { method: "post" });
   };
 
@@ -220,8 +179,20 @@ export default function CompanyDetailRoute() {
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
-        <Title order={2}>{company.name || `Company #${company.id}`}</Title>
-        <Group></Group>
+        {(() => {
+          const appendHref = useFindHrefAppender();
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "Companies", href: appendHref("/companies") },
+                {
+                  label: company.name,
+                  href: appendHref(`/companies/${company.id}`),
+                },
+              ]}
+            />
+          );
+        })()}
       </Group>
 
       <CompanyDetailForm mode="edit" form={form as any} company={company} />
@@ -233,15 +204,7 @@ export default function CompanyDetailRoute() {
             <Controller
               name="priceMultiplier"
               control={form.control}
-              render={({ field }) => (
-                <NumberInput
-                  {...field}
-                  label="Price Multiplier"
-                  placeholder="e.g. 1.10"
-                  step={0.01}
-                  value={field.value ?? undefined}
-                />
-              )}
+              render={({ field }) => <NumberInput {...field} label="Price Multiplier" placeholder="e.g. 1.10" step={0.01} value={field.value ?? undefined} />}
             />
           </Group>
         </Stack>
@@ -263,11 +226,7 @@ export default function CompanyDetailRoute() {
                 }))}
                 required
               />
-              <TextInput
-                name="marginOverride"
-                label="Margin (decimal)"
-                placeholder="e.g. 0.15"
-              />
+              <TextInput name="marginOverride" label="Margin (decimal)" placeholder="e.g. 0.15" />
               {/* Multiplier is now a customer-level field, not per-vendor mapping */}
               <Button type="submit" variant="light">
                 Add / Update
@@ -291,18 +250,9 @@ export default function CompanyDetailRoute() {
                   <Table.Td>{m.priceMultiplier ?? ""}</Table.Td>
                   <Table.Td>
                     <form method="post" style={{ display: "inline" }}>
-                      <input
-                        type="hidden"
-                        name="_intent"
-                        value="pricing.delete"
-                      />
+                      <input type="hidden" name="_intent" value="pricing.delete" />
                       <input type="hidden" name="vendorId" value={m.vendorId} />
-                      <Button
-                        type="submit"
-                        color="red"
-                        variant="subtle"
-                        size="xs"
-                      >
+                      <Button type="submit" color="red" variant="subtle" size="xs">
                         Delete
                       </Button>
                     </form>

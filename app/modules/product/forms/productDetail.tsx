@@ -1,9 +1,6 @@
 import type { FieldConfig } from "../../../base/forms/fieldConfigShared";
 import { calcPrice } from "../calc/calcPrice";
-export {
-  renderField,
-  extractFindValues,
-} from "../../../base/forms/fieldConfigShared";
+export { renderField, extractFindValues } from "../../../base/forms/fieldConfigShared";
 
 // Overview / identity fields
 export const productIdentityFields: FieldConfig[] = [
@@ -35,6 +32,7 @@ export const productAssocFields: FieldConfig[] = [
     label: "Customer",
     widget: "select",
     optionsKey: "customer",
+    allOptionsKey: "customerAll",
     findOp: "equals",
   },
   {
@@ -103,7 +101,6 @@ export const productPricingFields: FieldConfig[] = [
     overrideName: "manualSalePrice",
     inputType: "number",
     computeDefault: (values, ctx) => {
-      console.log("!! Calc price per", values, ctx?.product);
       const baseCost = Number(values?.costPrice ?? 0) || 0;
       const qty = Number(values?.defaultCostQty ?? 60) || 60;
       // tax rate from global options
@@ -117,16 +114,10 @@ export const productPricingFields: FieldConfig[] = [
       }
       // sale tiers precedence for interactive pricing:
       // 1) selected Sale Price Group (live cache) → 2) product's group ranges → 3) product-specific ranges
-      const saleProduct = ((ctx as any)?.product?.salePriceRanges ||
-        []) as any[];
-      const saleGroupOnProduct = ((ctx as any)?.product?.salePriceGroup
-        ?.saleRanges || []) as any[];
-      const cachedMap = ((ctx as any)?.salePriceGroupRangesById ||
-        {}) as Record<string, Array<{ minQty: number; unitPrice: number }>>;
-      const selectedSpgId =
-        values?.salePriceGroupId != null
-          ? String(values.salePriceGroupId)
-          : null;
+      const saleProduct = ((ctx as any)?.product?.salePriceRanges || []) as any[];
+      const saleGroupOnProduct = ((ctx as any)?.product?.salePriceGroup?.saleRanges || []) as any[];
+      const cachedMap = ((ctx as any)?.salePriceGroupRangesById || {}) as Record<string, Array<{ minQty: number; unitPrice: number }>>;
+      const selectedSpgId = values?.salePriceGroupId != null ? String(values.salePriceGroupId) : null;
 
       let saleTiers: Array<{ minQty: number; unitPrice: number }> = [];
       if (selectedSpgId && cachedMap[selectedSpgId]) {
@@ -136,10 +127,7 @@ export const productPricingFields: FieldConfig[] = [
             unitPrice: Number(t.unitPrice) || 0,
           }))
           .sort((a, b) => a.minQty - b.minQty);
-      } else if (
-        Array.isArray(saleGroupOnProduct) &&
-        saleGroupOnProduct.length
-      ) {
+      } else if (Array.isArray(saleGroupOnProduct) && saleGroupOnProduct.length) {
         saleTiers = saleGroupOnProduct
           .filter((r: any) => r && r.rangeFrom != null && r.price != null)
           .map((r: any) => ({
@@ -157,8 +145,7 @@ export const productPricingFields: FieldConfig[] = [
           .sort((a, b) => a.minQty - b.minQty);
       }
       // customer-level multiplier if present on ctx (optional)
-      const priceMultiplier =
-        Number((ctx as any)?.customer?.priceMultiplier ?? 1) || 1;
+      const priceMultiplier = Number((ctx as any)?.customer?.priceMultiplier ?? 1) || 1;
       const out = calcPrice({
         baseCost,
         qty,
@@ -236,10 +223,5 @@ export const productBomFindFields: FieldConfig[] = [
 // Future: spec validation hook similar to jobs.
 
 export function allProductFindFields() {
-  return [
-    ...productIdentityFields,
-    ...productAssocFields,
-    ...productPricingFields,
-    ...productBomFindFields,
-  ];
+  return [...productIdentityFields, ...productAssocFields, ...productPricingFields, ...productBomFindFields];
 }

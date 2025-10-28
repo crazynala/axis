@@ -5,7 +5,6 @@ function round(n: number): number {
 }
 
 export function calcPrice(i: PriceInput): PriceOutput {
-  console.log("!! calc price input", i);
   // Defensive numeric coercions: callers may pass strings (e.g., from forms/JSON)
   const toNum = (v: any, def = 0) => {
     const n = typeof v === "number" ? v : Number(v);

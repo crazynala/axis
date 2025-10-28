@@ -7,15 +7,17 @@ import { useRecords } from "../../../base/record/RecordContext";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
 import { jobSearchSchema } from "~/modules/job/findify/job.search-schema";
 import { buildWhere } from "~/base/find/buildWhere";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../../../base/find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../../../base/find/multiFind";
 import { listViews, saveView } from "../../../utils/views.server";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const url = new URL(_args.request.url);
+  const unaccent = (s: any) =>
+    s == null
+      ? s
+      : String(s)
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
   const views = await listViews("jobs");
   const viewName = url.searchParams.get("view");
   if (viewName) {
@@ -39,8 +41,7 @@ export async function loader(_args: LoaderFunctionArgs) {
         if (rawKey === "findReqs") continue; // handled above
         if (rawVal === undefined || rawVal === null || rawVal === "") continue;
         const key = aliasMap[rawKey] || rawKey;
-        if (!url.searchParams.has(key))
-          url.searchParams.set(key, String(rawVal));
+        if (!url.searchParams.has(key)) url.searchParams.set(key, String(rawVal));
       }
     }
   }
@@ -53,18 +54,8 @@ export async function loader(_args: LoaderFunctionArgs) {
   alias("job.assembly.name", "assemblyName");
   alias("job.assembly.status", "assemblyStatus");
   const hasFindIndicators =
-    [
-      "id",
-      "projectCode",
-      "name",
-      "status",
-      "jobType",
-      "endCustomerName",
-      "companyId",
-      "assemblySku",
-      "assemblyName",
-      "assemblyStatus",
-    ].some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+    ["id", "projectCode", "name", "description", "status", "jobType", "endCustomerName", "companyId", "assemblySku", "assemblyName", "assemblyStatus"].some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   let where: any = undefined;
   if (hasFindIndicators) {
     const values: any = {};
@@ -72,19 +63,16 @@ export async function loader(_args: LoaderFunctionArgs) {
       const v = url.searchParams.get(k);
       if (v !== null && v !== "") values[k] = v;
     };
-    [
-      "id",
-      "projectCode",
-      "name",
-      "status",
-      "jobType",
-      "endCustomerName",
-      "companyId",
-      "assemblySku",
-      "assemblyName",
-      "assemblyStatus",
-    ].forEach(pass);
-    const simple = buildWhere(values, jobSearchSchema);
+    ["id", "projectCode", "name", "description", "status", "jobType", "endCustomerName", "companyId", "assemblySku", "assemblyName", "assemblyStatus"].forEach(pass);
+    const valuesForSchema = { ...values };
+    delete valuesForSchema.name;
+    delete valuesForSchema.description;
+    const simpleBase = buildWhere(valuesForSchema, jobSearchSchema);
+    const simpleClauses: any[] = [];
+    if (simpleBase && Object.keys(simpleBase).length > 0) simpleClauses.push(simpleBase);
+    if (values.name) simpleClauses.push({ nameUnaccented: { contains: unaccent(values.name), mode: "insensitive" } });
+    if (values.description) simpleClauses.push({ descriptionUnaccented: { contains: unaccent(values.description), mode: "insensitive" } });
+    const simple = simpleClauses.length === 0 ? null : simpleClauses.length === 1 ? simpleClauses[0] : { AND: simpleClauses };
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
@@ -92,7 +80,8 @@ export async function loader(_args: LoaderFunctionArgs) {
         projectCode: (v) => ({
           projectCode: { contains: v, mode: "insensitive" },
         }),
-        name: (v) => ({ name: { contains: v, mode: "insensitive" } }),
+        name: (v) => ({ nameUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
+        description: (v) => ({ descriptionUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
         status: (v) => ({ status: { contains: v, mode: "insensitive" } }),
         jobType: (v) => ({ jobType: { contains: v, mode: "insensitive" } }),
         endCustomerName: (v) => ({
@@ -105,7 +94,7 @@ export async function loader(_args: LoaderFunctionArgs) {
           },
         }),
         assemblyName: (v) => ({
-          assemblies: { some: { name: { contains: v, mode: "insensitive" } } },
+          assemblies: { some: { nameUnaccented: { contains: unaccent(v), mode: "insensitive" } } },
         }),
         assemblyStatus: (v) => ({
           assemblies: {
@@ -190,8 +179,7 @@ export default function JobsLayout() {
   const { setIdList, addRows } = useRecords();
   useEffect(() => {
     setIdList("jobs", data.idList, data.idListComplete);
-    if (data.initialRows?.length)
-      addRows("jobs", data.initialRows, { updateRecordsArray: true });
+    if (data.initialRows?.length) addRows("jobs", data.initialRows, { updateRecordsArray: true });
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
   return (
     <>

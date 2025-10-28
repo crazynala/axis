@@ -6,8 +6,11 @@ export type OptionsData = {
   // Optional: map of tax ValueList id -> numeric rate (e.g., 0.18)
   taxRateById?: Record<string | number, number>;
   productTypeOptions: Option[];
+  companyAllOptions?: Option[];
   customerOptions: Option[];
+  customerAllOptions?: Option[];
   supplierOptions: Option[];
+  supplierAllOptions?: Option[];
   carrierOptions: Option[];
   locationOptions: Option[];
   jobTypeOptions: Option[];

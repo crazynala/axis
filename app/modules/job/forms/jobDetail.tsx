@@ -19,7 +19,7 @@ export const jobDateStatusLeft: FieldConfig[] = [
   },
   { name: "endCustomerName", label: "End Customer", findOp: "contains" },
   {
-    name: "customerOrderNumber",
+    name: "customerPoNum",
     label: "Customer PO #",
     findOp: "equals",
     findPlaceholder: "equals...",
@@ -40,17 +40,19 @@ export const jobDateStatusRight: FieldConfig[] = [
     type: "date",
     findOp: "equals",
   },
-  {
-    name: "companyId",
-    label: "Company ID",
-    editable: false,
-    findOp: "equals",
-    findPlaceholder: "equals...",
-  },
 ];
 
 // Overview (ID + main fields; customer/company picker handled separately)
 export const jobOverviewFields: FieldConfig[] = [
+  { name: "projectCode", label: "Project Code", findOp: "contains" },
+  { name: "name", label: "Name", findOp: "contains" },
+  {
+    name: "companyId",
+    label: "Customer",
+    widget: "select",
+    optionsKey: "customer",
+    findOp: "contains",
+  },
   {
     name: "id",
     label: "ID",
@@ -60,15 +62,6 @@ export const jobOverviewFields: FieldConfig[] = [
     widget: "idStatic",
     findOp: "equals",
     findPlaceholder: "equals...",
-  },
-  { name: "projectCode", label: "Project Code", findOp: "contains" },
-  { name: "name", label: "Name", findOp: "contains" },
-  {
-    name: "companyId",
-    label: "Customer",
-    widget: "select",
-    optionsKey: "customer",
-    findOp: "contains",
   },
 ];
 
@@ -95,14 +88,10 @@ export const assemblyFields: FieldConfig[] = [
 ];
 
 export function validateJobDateStatusConfig() {
-  const fields = [...jobDateStatusLeft, ...jobDateStatusRight].map(
-    (f) => f.name
-  );
+  const fields = [...jobDateStatusLeft, ...jobDateStatusRight].map((f) => f.name);
   for (const f of JOB_DATES_STATUS_FIELDS) {
     if (!fields.includes(f)) {
-      console.warn(
-        `[jobDetailConfig] Missing spec field in date/status config: ${f}`
-      );
+      console.warn(`[jobDetailConfig] Missing spec field in date/status config: ${f}`);
     }
   }
 }

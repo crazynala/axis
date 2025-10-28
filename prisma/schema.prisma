@@ -142,6 +142,10 @@ model Product {
     batchTrackingEnabled Boolean               @default(false)
     isActive             Boolean?
     notes                String?
+    // Unaccented shadow columns for accent-insensitive search
+    nameUnaccented        String?
+    descriptionUnaccented String?
+    notesUnaccented       String?
     supplier             Company?              @relation("Supplier", fields: [supplierId], references: [id])
     customer             Company?              @relation("Customer", fields: [customerId], references: [id])
     purchaseTax          ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
@@ -240,6 +244,8 @@ model Company {
     modifiedBy                      String?
     createdAt                       DateTime?               @default(now())
     updatedAt                       DateTime?               @updatedAt
+    // Unaccented shadow columns
+    nameUnaccented                  String?
 }
 
 model VariantSet {
@@ -324,6 +330,9 @@ model Assembly {
     modifiedBy          String?
     createdAt           DateTime?           @default(now())
     updatedAt           DateTime?           @updatedAt
+    // Unaccented shadow columns
+    nameUnaccented      String?
+    notesUnaccented     String?
 }
 
 model Costing {
@@ -535,6 +544,9 @@ model Job {
     modifiedBy              String?
     createdAt               DateTime?           @default(now())
     updatedAt               DateTime?           @updatedAt
+    // Unaccented shadow columns
+    nameUnaccented          String?
+    descriptionUnaccented   String?
 }
 
 // Group multiple assemblies within a job (for planning/visual grouping)

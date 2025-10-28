@@ -1,19 +1,6 @@
-import {
-  Link,
-  useLocation,
-  useNavigate,
-  useSearchParams,
-} from "@remix-run/react";
-import {
-  Button,
-  Group,
-  Stack,
-  Title,
-  Text,
-  Card,
-  Tooltip,
-  Indicator,
-} from "@mantine/core";
+import { Link, useLocation, useNavigate, useSearchParams } from "@remix-run/react";
+import { Button, Group, Stack, Title, Text, Card, Tooltip, Indicator } from "@mantine/core";
+import SplitButton from "~/components/SplitButton";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { SavedViews } from "~/components/find/SavedViews";
 import { BreadcrumbSet } from "packages/timber";
@@ -23,18 +10,13 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 import { useHybridWindow } from "~/base/record/useHybridWindow";
 import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
-import {
-  DataSheetGrid,
-  keyColumn,
-  textColumn,
-  type Column,
-} from "react-datasheet-grid";
+import { DataSheetGrid, keyColumn, textColumn, type Column } from "react-datasheet-grid";
 import { formatUSD } from "~/utils/format";
-import { IconLock, IconMenuDeep } from "@tabler/icons-react";
-import { Checkbox } from "@mantine/core";
+
 import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
 
 export default function ProductsIndexRoute() {
+  const appendHref = useFindHrefAppender();
   // Batch create modal state
   type NewProd = {
     sku: string;
@@ -57,11 +39,7 @@ export default function ProductsIndexRoute() {
     errors: Array<{ index: number; message: string }>;
   } | null>(null);
   const sheetColumns = useMemo<Column<NewProd>[]>(() => {
-    const col = <K extends keyof NewProd>(
-      key: K,
-      title: string,
-      disabled = false
-    ): Column<NewProd> => ({
+    const col = <K extends keyof NewProd>(key: K, title: string, disabled = false): Column<NewProd> => ({
       ...(keyColumn<NewProd, any>(key as any, textColumn) as any),
       id: key as string,
       title,
@@ -169,64 +147,30 @@ export default function ProductsIndexRoute() {
   return (
     <Stack gap="lg">
       <ProductFindManager />
-      <Group
-        justify="space-between"
-        mb="xs"
-        align="center"
-        data-products-header
-      >
-        <Title order={2}>Products</Title>
-        {(() => {
-          const appendHref = useFindHrefAppender();
-          return (
-            <BreadcrumbSet
-              breadcrumbs={[
-                { label: "Products", href: appendHref("/products") },
-              ]}
-            />
-          );
-        })()}
+      <Group justify="space-between" mb="xs" align="center" data-products-header>
+        <BreadcrumbSet breadcrumbs={[{ label: "Products", href: appendHref("/products") }]} />
+        <Group justify="flex-end" mb="xs" gap="xs">
+          <SplitButton
+            size="xs"
+            onPrimaryClick={() => navigate("/products/new")}
+            items={[
+              {
+                label: "Batch Create",
+                onClick: () => navigate("/products/batch-fullzoom"),
+              },
+            ]}
+            variant="filled"
+            color="blue"
+          >
+            New Product
+          </SplitButton>
+        </Group>
       </Group>
-      <PricingPreviewWidget productId={Number(currentId) || undefined} />
-      <Group justify="flex-end" mb="xs" gap="xs">
-        {Array.from(sp.keys()).some(
-          (k) =>
-            k !== "page" &&
-            k !== "perPage" &&
-            k !== "sort" &&
-            k !== "dir" &&
-            k !== "view"
-        ) && (
-          <Tooltip label="Clear all filters">
-            <Button
-              variant="default"
-              onClick={() => {
-                const next = new URLSearchParams(sp);
-                // Keep paging & sorting, drop filters (including findReqs)
-                for (const k of Array.from(next.keys())) {
-                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
-                    continue;
-                  next.delete(k);
-                }
-                navigate(`?${next.toString()}`);
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Tooltip>
-        )}
-        <Button
-          variant="light"
-          onClick={() => navigate("/products/batch-fullzoom")}
-        >
-          Create in Sheet
-        </Button>
-        <Button component={Link} to="/products/new">
-          New Product
-        </Button>
+      <Group justify="space-between">
+        <SavedViews views={[]} activeView={null} />
+        <PricingPreviewWidget productId={Number(currentId) || undefined} />
       </Group>
       <section>
-        <SavedViews views={[]} activeView={null} />
         <VirtualizedNavDataTable
           records={records}
           currentId={currentId}
@@ -235,13 +179,11 @@ export default function ProductsIndexRoute() {
           bulkActions={[
             {
               label: "Batch Edit Products",
-              onClick: (ids) =>
-                navigate(`/products/batch-fullzoom?ids=${ids.join(",")}`),
+              onClick: (ids) => navigate(`/products/batch-fullzoom?ids=${ids.join(",")}`),
             },
             {
               label: "Batch Edit BOMs",
-              onClick: (ids) =>
-                navigate(`/products/boms-fullzoom?ids=${ids.join(",")}`),
+              onClick: (ids) => navigate(`/products/boms-fullzoom?ids=${ids.join(",")}`),
             },
           ]}
           columns={[
@@ -267,16 +209,10 @@ export default function ProductsIndexRoute() {
               sortable: false,
               render: (r: any) => (
                 <Group>
-                  <Indicator
-                    color="red"
-                    position="middle-start"
-                    offset={-5}
-                    size="4"
-                    disabled={!r.c_isSellPriceManual}
-                  >
+                  <Indicator color="red" position="middle-start" offset={-5} size="4" disabled={!r.c_isSellPriceManual}>
                     {formatUSD(r.c_sellPrice)}
                   </Indicator>
-                  {r.c_hasPriceTiers ? <IconMenuDeep size={16} /> : ""}
+                  {r.c_hasPriceTiers ? <span title="Has tiers">⋯</span> : ""}
                 </Group>
               ),
             },
@@ -297,10 +233,7 @@ export default function ProductsIndexRoute() {
               direction: (sp.get("dir") as any) || "asc",
             } as any
           }
-          onSortStatusChange={(s: {
-            columnAccessor: string;
-            direction: "asc" | "desc";
-          }) => {
+          onSortStatusChange={(s: { columnAccessor: string; direction: "asc" | "desc" }) => {
             const next = new URLSearchParams(sp);
             next.set("sort", s.columnAccessor);
             next.set("dir", s.direction);
@@ -313,30 +246,13 @@ export default function ProductsIndexRoute() {
             setCurrentId(rec?.id);
           }}
           onReachEnd={() => requestMore()}
-          footer={
-            atEnd ? (
-              <span style={{ fontSize: 12 }}>End of results ({total})</span>
-            ) : loading ? (
-              <span>Loading rows…</span>
-            ) : (
-              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
-            )
-          }
+          footer={atEnd ? <span style={{ fontSize: 12 }}>End of results ({total})</span> : loading ? <span>Loading rows…</span> : <span style={{ fontSize: 11 }}>Scroll to load more…</span>}
         />
       </section>
 
-      <HotkeyAwareModal
-        opened={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        title="Batch Create Products"
-        size="90vw"
-        centered
-      >
+      <HotkeyAwareModal opened={sheetOpen} onClose={() => setSheetOpen(false)} title="Batch Create Products" size="90vw" centered>
         <Stack>
-          <Text c="dimmed">
-            Paste rows from Excel or type directly. Leave a row entirely blank
-            to ignore it.
-          </Text>
+          <Text c="dimmed">Paste rows from Excel or type directly. Leave a row entirely blank to ignore it.</Text>
           <div
             style={{
               border: "1px solid var(--mantine-color-gray-4)",
@@ -357,19 +273,10 @@ export default function ProductsIndexRoute() {
             />
           </div>
           <Group justify="flex-end">
-            <Button
-              variant="default"
-              onClick={() => setSheetOpen(false)}
-              disabled={saving}
-            >
+            <Button variant="default" onClick={() => setSheetOpen(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button
-              color="green"
-              onClick={saveSheet}
-              loading={saving}
-              disabled={!dirty}
-            >
+            <Button color="green" onClick={saveSheet} loading={saving} disabled={!dirty}>
               Save
             </Button>
           </Group>

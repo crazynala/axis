@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { prisma } from "../utils/prisma.server";
+import { prisma } from "../../../utils/prisma.server";
 
 // Batch hydration endpoint: /companies/rows?ids=1,2,3
 export async function loader({ request }: LoaderFunctionArgs) {

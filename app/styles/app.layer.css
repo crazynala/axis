@@ -1,22 +1,27 @@
 /* app.css */
 @layer app {
-  [data-mantine-color-scheme='dark'] [data-variant='default'] {
-      --input-bd: var(--mantine-color-slate-8);
-      --input-bg: var(--mantine-color-slate-9);
-      --input-bd-focus: var(--mantine-primary-color-filled);
-    }
+  [data-mantine-color-scheme="dark"] [data-variant="default"] {
+    --input-bd: var(--mantine-color-slate-8);
+    --input-bg: var(--mantine-color-slate-9);
+    --input-bd-focus: var(--mantine-primary-color-filled);
+  }
 
-  [data-mantine-color-scheme='dark'] [data-variant='filled'] {
-      --input-bd: transparent;
-      --input-bg: var(--mantine-color-dark-5);
-      --input-bd-focus: var(--mantine-primary-color-filled);
-    }
+  [data-mantine-color-scheme="dark"] [data-variant="filled"] {
+    --input-bd: transparent;
+    --input-bg: var(--mantine-color-dark-5);
+    --input-bd-focus: var(--mantine-primary-color-filled);
+  }
 
-  [data-mantine-color-scheme='dark'] [data-variant='unstyled'] {
-      --input-bd: transparent;
-      --input-bg: transparent;
-      --input-bd-focus: transparent;
-    }
+  [data-mantine-color-scheme="dark"] [data-variant="unstyled"] {
+    --input-bd: transparent;
+    --input-bg: transparent;
+    --input-bd-focus: transparent;
+  }
+
+  .mantine-TextInput-input:read-only {
+    background-color: transparent;
+    border: none;
+  }
 
   /* Inline labels from md+ */
   @media (min-width: 62em) {

@@ -7,8 +7,11 @@ export type OptionsData = {
   taxCodeOptions: Option[];
   taxRateById?: Record<string | number, number>;
   productTypeOptions: Option[];
+  companyAllOptions: Option[];
   customerOptions: Option[];
+  customerAllOptions: Option[];
   supplierOptions: Option[];
+  supplierAllOptions: Option[];
   carrierOptions: Option[];
   locationOptions: Option[];
   jobTypeOptions: Option[];
@@ -58,8 +61,11 @@ export async function loadOptions(): Promise<OptionsData> {
     categories,
     subcategories,
     taxes,
+    companies_all,
     customers,
+    customers_all,
     suppliers,
+    suppliers_all,
     productTypesVL,
     jobTypesVL,
     jobStatusesVL,
@@ -85,7 +91,24 @@ export async function loadOptions(): Promise<OptionsData> {
       select: { id: true, label: true, value: true },
     }),
     prisma.company.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.company.findMany({
+      where: { isCustomer: true, OR: [{ isInactive: false }, { isInactive: null }] },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.company.findMany({
       where: { isCustomer: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.company.findMany({
+      where: { isSupplier: true, OR: [{ isInactive: false }, { isInactive: null }] },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
@@ -140,68 +163,14 @@ export async function loadOptions(): Promise<OptionsData> {
   ]);
 
   // Prefer ValueList(ProductType). If empty, fall back to enum defaults.
-  const productTypes = productTypesVL.length
-    ? productTypesVL.map((pt) => pt.code || pt.label || "")
-    : ["CMT", "Fabric", "Finished", "Trim", "Service"];
+  const productTypes = productTypesVL.length ? productTypesVL.map((pt) => pt.code || pt.label || "") : ["CMT", "Fabric", "Finished", "Trim", "Service"];
 
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
-  let customersList = customers;
-  let suppliersList = suppliers;
-  let carriersList = carriers;
-  if (customersList.length === 0) {
-    try {
-      const all = await prisma.company.findMany({
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-        take: 2000,
-      });
-      customersList = all;
-      // eslint-disable-next-line no-console
-      console.log(
-        "[options] customerOptions empty; using ALL companies fallback",
-        { count: all.length }
-      );
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log("[options] customer fallback fetch failed", e);
-    }
-  }
-  if (suppliersList.length === 0) {
-    try {
-      const all = await prisma.company.findMany({
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-        take: 2000,
-      });
-      suppliersList = all;
-      // eslint-disable-next-line no-console
-      console.log(
-        "[options] supplierOptions empty; using ALL companies fallback",
-        { count: all.length }
-      );
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log("[options] supplier fallback fetch failed", e);
-    }
-  }
-  if (carriersList.length === 0) {
-    try {
-      const all = await prisma.company.findMany({
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-        take: 2000,
-      });
-      carriersList = all;
-      // eslint-disable-next-line no-console
-      console.log(
-        "[options] carrierOptions empty; using ALL companies fallback",
-        { count: all.length }
-      );
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log("[options] carrier fallback fetch failed", e);
-    }
-  }
+  const customersAllList = customers_all.length > 0 ? customers_all : companies_all;
+  const suppliersAllList = suppliers_all.length > 0 ? suppliers_all : companies_all;
+  const customersList = customers.length > 0 ? customers : customersAllList;
+  const suppliersList = suppliers.length > 0 ? suppliers : suppliersAllList;
+  const carriersList = carriers.length > 0 ? carriers : companies_all;
 
   // Build base value object
   const value: OptionsData = {
@@ -224,11 +193,23 @@ export async function loadOptions(): Promise<OptionsData> {
       })
     ),
     productTypeOptions: productTypes.map((pt) => ({ value: pt, label: pt })),
+    companyAllOptions: companies_all.map((c) => ({
+      value: String(c.id),
+      label: c.name ?? String(c.id),
+    })),
     customerOptions: customersList.map((c) => ({
       value: String(c.id),
       label: c.name ?? String(c.id),
     })),
+    customerAllOptions: customersAllList.map((s) => ({
+      value: String(s.id),
+      label: s.name ?? String(s.id),
+    })),
     supplierOptions: suppliersList.map((s) => ({
+      value: String(s.id),
+      label: s.name ?? String(s.id),
+    })),
+    supplierAllOptions: suppliersAllList.map((s) => ({
       value: String(s.id),
       label: s.name ?? String(s.id),
     })),

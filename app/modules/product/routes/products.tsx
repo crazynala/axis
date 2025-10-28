@@ -2,22 +2,14 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { productSearchSchema } from "~/modules/product/findify/product.search-schema";
 import { buildWhere } from "~/base/find/buildWhere";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "~/base/find/multiFind";
+import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "~/base/find/multiFind";
 import { inspect } from "node:util";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 
 export async function loader(args: LoaderFunctionArgs) {
-  const [
-    { runWithDbActivity, prismaBase, prisma },
-    { buildPrismaArgs, parseTableParams },
-    { listViews },
-  ] = await Promise.all([
+  const [{ runWithDbActivity, prismaBase, prisma }, { buildPrismaArgs, parseTableParams }, { listViews }] = await Promise.all([
     import("~/utils/prisma.server"),
     import("~/utils/table.server"),
     import("~/utils/views.server"),
@@ -67,6 +59,12 @@ export async function loader(args: LoaderFunctionArgs) {
       }
     }
     // Advanced / find filters
+    const unaccent = (s: any) =>
+      s == null
+        ? s
+        : String(s)
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
     const findKeys = [
       "sku",
       "name",
@@ -87,8 +85,7 @@ export async function loader(args: LoaderFunctionArgs) {
       "componentChildSupplierId",
       "componentChildType",
     ];
-    const hasFindIndicators =
-      findKeys.some((k) => q.has(k)) || q.has("findReqs");
+    const hasFindIndicators = findKeys.some((k) => q.has(k)) || q.has("findReqs");
     let findWhere: any = null;
     if (hasFindIndicators) {
       const values: Record<string, any> = {};
@@ -99,13 +96,7 @@ export async function loader(args: LoaderFunctionArgs) {
       // Guard against stray params accidentally treated as filters
       delete (values as any).refreshed;
       // Normalize enum-like params (case-insensitive -> canonical)
-      const TYPE_CANON = [
-        "CMT",
-        "Fabric",
-        "Finished",
-        "Trim",
-        "Service",
-      ] as const;
+      const TYPE_CANON = ["CMT", "Fabric", "Finished", "Trim", "Service"] as const;
       const canonType = (v: any) => {
         if (v == null || v === "") return v;
         const s = String(v).toLowerCase();
@@ -113,42 +104,37 @@ export async function loader(args: LoaderFunctionArgs) {
         return hit ?? v;
       };
       if (values.type) values.type = canonType(values.type);
-      if ((values as any).componentChildType)
-        (values as any).componentChildType = canonType(
-          (values as any).componentChildType
-        );
+      if ((values as any).componentChildType) (values as any).componentChildType = canonType((values as any).componentChildType);
       // Build simple where: exclude name/sku from schema-driven builder, then add partial/insensitive clauses for them
       const valuesForSchema = { ...values };
+      // Exclude fields we handle with unaccented shadow columns
       delete valuesForSchema.name;
       delete valuesForSchema.sku;
+      delete valuesForSchema.description;
       const simpleBase = buildWhere(valuesForSchema, productSearchSchema);
       d("[products.index] simple values", valuesForSchema);
       d("[products.index] simpleBase", simpleBase);
       const simpleClauses: any[] = [];
-      if (simpleBase && Object.keys(simpleBase).length > 0)
-        simpleClauses.push(simpleBase);
+      if (simpleBase && Object.keys(simpleBase).length > 0) simpleClauses.push(simpleBase);
       if (values.name)
         simpleClauses.push({
-          name: { contains: values.name, mode: "insensitive" },
+          nameUnaccented: { contains: unaccent(values.name), mode: "insensitive" },
         });
       if (values.sku)
         simpleClauses.push({
           sku: { contains: values.sku, mode: "insensitive" },
         });
-      const simple =
-        simpleClauses.length === 0
-          ? null
-          : simpleClauses.length === 1
-          ? simpleClauses[0]
-          : { AND: simpleClauses };
+      if (values.description)
+        simpleClauses.push({
+          descriptionUnaccented: { contains: unaccent(values.description), mode: "insensitive" },
+        });
+      const simple = simpleClauses.length === 0 ? null : simpleClauses.length === 1 ? simpleClauses[0] : { AND: simpleClauses };
       const multi = decodeRequests(q.get("findReqs"));
       if (multi) {
         const interpreters: Record<string, (val: any) => any> = {
           sku: (v) => ({ sku: { contains: v, mode: "insensitive" } }),
-          name: (v) => ({ name: { contains: v, mode: "insensitive" } }),
-          description: (v) => ({
-            description: { contains: v, mode: "insensitive" },
-          }),
+          name: (v) => ({ nameUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
+          description: (v) => ({ descriptionUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
           // 'type' enum: use equals semantics
           type: (v) => ({ type: canonType(v) }),
           costPriceMin: (v) => ({ costPrice: { gte: Number(v) } }),
@@ -172,7 +158,7 @@ export async function loader(args: LoaderFunctionArgs) {
           }),
           componentChildName: (v) => ({
             productLines: {
-              some: { child: { name: { contains: v, mode: "insensitive" } } },
+              some: { child: { nameUnaccented: { contains: unaccent(v), mode: "insensitive" } } },
             },
           }),
           componentChildSupplierId: (v) => ({
@@ -197,12 +183,7 @@ export async function loader(args: LoaderFunctionArgs) {
     let baseParams = findWhere ? { ...effective, page: 1 } : effective;
     // Remove any find-related keys from generic filters to avoid accidental exact-match filtering
     if (baseParams.filters) {
-      const {
-        findReqs: _omitFindReqs,
-        find: _legacy,
-        refreshed: _omitRefreshed,
-        ...rest
-      } = baseParams.filters;
+      const { findReqs: _omitFindReqs, find: _legacy, refreshed: _omitRefreshed, ...rest } = baseParams.filters;
       // Also strip all explicit find keys handled above (name contains, sku contains, ids, enums, ranges, etc.)
       for (const k of [
         "ids", // prevent accidental where.ids from batch routes
@@ -235,8 +216,7 @@ export async function loader(args: LoaderFunctionArgs) {
       filterMappers: {},
       defaultSort: { field: "id", dir: "asc" },
     });
-    if (findWhere)
-      (where as any).AND = [...((where as any).AND || []), findWhere];
+    if (findWhere) (where as any).AND = [...((where as any).AND || []), findWhere];
     d("[products.index] prisma where", where);
     d("[products.index] prisma orderBy", orderBy);
     if (__debug) {
@@ -263,9 +243,7 @@ export async function loader(args: LoaderFunctionArgs) {
     const initialIds = idList.slice(0, INITIAL_COUNT);
     let initialRows: any[] = [];
     if (initialIds.length) {
-      const { fetchAndHydrateProductsByIds } = await import(
-        "~/modules/product/services/hydrateProducts"
-      );
+      const { fetchAndHydrateProductsByIds } = await import("~/modules/product/services/hydrateProducts");
       initialRows = await fetchAndHydrateProductsByIds(initialIds);
     }
     return json({
@@ -295,30 +273,20 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   if (intent === "product.batchCreate") {
     const rows = Array.isArray(body?.rows) ? body.rows : [];
-    const { batchCreateProducts } = await import(
-      "~/modules/product/services/batchCreateProducts.server"
-    );
+    const { batchCreateProducts } = await import("~/modules/product/services/batchCreateProducts.server");
     const result = await batchCreateProducts(rows);
     return json(result);
   }
   if (intent === "product.batchUpdate") {
-    const ids = Array.isArray(body?.ids)
-      ? body.ids
-          .map((n: any) => Number(n))
-          .filter((n: any) => Number.isFinite(n))
-      : [];
+    const ids = Array.isArray(body?.ids) ? body.ids.map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n)) : [];
     const patch = body?.patch || {};
-    const { batchUpdateProducts } = await import(
-      "~/modules/product/services/batchUpdateProducts.server"
-    );
+    const { batchUpdateProducts } = await import("~/modules/product/services/batchUpdateProducts.server");
     const result = await batchUpdateProducts(ids, patch);
     return json(result);
   }
   if (intent === "product.batchSaveRows") {
     const rows = Array.isArray(body?.rows) ? body.rows : [];
-    const { batchSaveProductRows } = await import(
-      "~/modules/product/services/batchSaveProductRows.server"
-    );
+    const { batchSaveProductRows } = await import("~/modules/product/services/batchSaveProductRows.server");
     const result = await batchSaveProductRows(rows);
     return json(result);
   }

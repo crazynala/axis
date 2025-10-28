@@ -15,6 +15,7 @@ type SheetRow = {
 };
 
 export async function batchSaveProductRows(rows: SheetRow[]) {
+  console.log("!!! Batch save rows", rows);
   return runWithDbActivity("products.batchSaveRows", async () => {
     const cleanText = (v: any) => {
       if (v === undefined || v === null) return null;
@@ -60,6 +61,7 @@ export async function batchSaveProductRows(rows: SheetRow[]) {
       try {
         const idNum = toNumberOrNull(r.id);
         if (idNum) {
+          console.log("!!! Updating product", idNum, data);
           await prismaBase.product.update({ where: { id: idNum }, data });
           updated++;
         } else {
