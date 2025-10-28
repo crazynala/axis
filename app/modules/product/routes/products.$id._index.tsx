@@ -210,6 +210,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }
     // Fetch stock snapshot from materialized view (single pre-aggregated source)
     const snapshot = await getProductStockSnapshots(id);
+    // console.log("!! snapshot", snapshot);
     // Normalize snapshot to snake_case keys expected by UI
     const stockByLocation = ((snapshot as any)?.byLocation || []).map(
       (l: any) => ({
@@ -528,6 +529,7 @@ export default function ProductDetailRoute() {
     salePriceGroups,
   } = useLoaderData<typeof loader>();
   console.log("!! loader product", product);
+  console.log("!! loader stockByBatch", stockByBatch);
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -619,6 +621,7 @@ export default function ProductDetailRoute() {
       const name =
         row.location_name ||
         (row.location_id ? `#${row.location_id}` : "(none)");
+      // console.log("!! adding location name to set:", name);
       set.add(name);
     });
     const arr = Array.from(set);
@@ -635,9 +638,16 @@ export default function ProductDetailRoute() {
         (row.location_id ? `#${row.location_id}` : "(none)");
       const scopeOk = batchScope === "all" || qty !== 0;
       const locOk = batchLocation === "all" || name === batchLocation;
+      // if (qty > 0) {
+      //   console.log("!! non-zero batch", row, { scopeOk, locOk });
+      // } else {
+      //   console.log("!! zero batch", row, { scopeOk, locOk });
+      // }
+
       return scopeOk && locOk;
     });
   }, [stockByBatch, batchScope, batchLocation]);
+  console.log("!! filtered stockByBatch", filteredBatches);
   // Inventory modal state
   const [amendBatchOpen, setAmendBatchOpen] = useState(false);
   const [amendProductOpen, setAmendProductOpen] = useState(false);

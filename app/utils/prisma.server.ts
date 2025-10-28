@@ -846,20 +846,72 @@ export async function getProductStockSnapshots(
 ): Promise<ProductStockSnapshot[] | ProductStockSnapshot | null> {
   const ids = Array.isArray(productIds) ? productIds : [productIds];
   if (ids.length === 0) return Array.isArray(productIds) ? [] : null;
-  const rows = (await base.$queryRawUnsafe(
+
+  // 1) Total per product (one row per product)
+  const totals = (await base.$queryRawUnsafe(
     `
-    SELECT * FROM product_stock_snapshot
+    SELECT product_id, MAX(total_qty) AS total_qty
+    FROM product_stock_snapshot
     WHERE product_id IN (${ids.map((_, i) => `$${i + 1}`).join(",")})
-    ORDER BY product_id
+    GROUP BY product_id
+    `,
+    ...ids
+  )) as Array<{ product_id: number; total_qty: any }>;
+  const totalByProduct = new Map<number, number>(
+    totals.map((r) => [
+      r.product_id,
+      Math.round(Number(r.total_qty || 0) * 100) / 100,
+    ])
+  );
+
+  // 2) By location (grouped so we don’t multiply per batch)
+  const rowsLoc = (await base.$queryRawUnsafe(
+    `
+    SELECT 
+      product_id,
+      location_id,
+      COALESCE(location_name,'') AS location_name,
+      MAX(location_qty) AS location_qty
+    FROM product_stock_snapshot
+    WHERE product_id IN (${ids
+      .map((_, i) => `$${i + 1}`)
+      .join(",")}) AND location_id IS NOT NULL
+    GROUP BY product_id, location_id, location_name
+    ORDER BY location_name NULLS LAST, location_id
     `,
     ...ids
   )) as Array<{
     product_id: number;
-    total_qty: any;
     location_id: number | null;
     location_name: string;
     location_qty: any;
-    batch_id: number | null;
+  }>;
+
+  // 3) By batch (grouped so we don’t multiply per location)
+  const rowsBatch = (await base.$queryRawUnsafe(
+    `
+    SELECT
+      product_id,
+      batch_id,
+      COALESCE(code_mill,'')   AS code_mill,
+      COALESCE(code_sartor,'') AS code_sartor,
+      COALESCE(batch_name,'')  AS batch_name,
+      received_at,
+      batch_location_id,
+      COALESCE(batch_location_name,'') AS batch_location_name,
+      MAX(batch_qty) AS batch_qty
+    FROM product_stock_snapshot
+    WHERE product_id IN (${ids
+      .map((_, i) => `$${i + 1}`)
+      .join(",")}) AND batch_id IS NOT NULL
+    GROUP BY
+      product_id, batch_id, code_mill, code_sartor, batch_name, received_at, batch_location_id, batch_location_name
+    ORDER BY received_at DESC NULLS LAST, batch_id DESC
+    `,
+    ...ids
+  )) as Array<{
+    product_id: number;
+    batch_id: number;
     code_mill: string;
     code_sartor: string;
     batch_name: string;
@@ -868,61 +920,42 @@ export async function getProductStockSnapshots(
     batch_location_name: string;
     batch_qty: any;
   }>;
+
+  // Assemble
   const map = new Map<number, ProductStockSnapshot>();
-  for (const r of rows) {
-    let snap = map.get(r.product_id);
-    if (!snap) {
-      snap = {
-        productId: r.product_id,
-        totalQty: Math.round(Number(r.total_qty || 0) * 100) / 100,
-        byLocation: [],
-        byBatch: [],
-      };
-      map.set(r.product_id, snap);
-    }
-    // Location aggregate: only push when location_id present AND first occurrence for that location id+product.
-    if (r.location_id != null) {
-      const already = snap.byLocation.find(
-        (l) => l.locationId === r.location_id
-      );
-      if (!already) {
-        // sum all rows for this product/location (since rowset is denormalized by batch join)
-        const locTotal = rows
-          .filter(
-            (x) =>
-              x.product_id === r.product_id && x.location_id === r.location_id
-          )
-          .reduce((acc, x) => acc + Number(x.location_qty || 0), 0);
-        snap.byLocation.push({
-          locationId: r.location_id,
-          locationName: r.location_name || "",
-          qty: Math.round(locTotal * 100) / 100,
-        });
-      }
-    }
-    // Batch row (batch_id may be null when there are no batches; skip those)
-    if (r.batch_id != null) {
-      snap.byBatch.push({
-        batchId: r.batch_id,
-        codeMill: r.code_mill || "",
-        codeSartor: r.code_sartor || "",
-        batchName: r.batch_name || "",
-        receivedAt: r.received_at,
-        locationId: r.batch_location_id,
-        locationName: r.batch_location_name || "",
-        qty: Math.round(Number(r.batch_qty || 0) * 100) / 100,
-      });
-    }
+  for (const pid of ids) {
+    map.set(pid, {
+      productId: pid,
+      totalQty: totalByProduct.get(pid) ?? 0,
+      byLocation: [],
+      byBatch: [],
+    });
   }
-  const result = ids.map(
-    (id) =>
-      map.get(id) || {
-        productId: id,
-        totalQty: 0,
-        byLocation: [],
-        byBatch: [],
-      }
-  );
+
+  for (const r of rowsLoc) {
+    const snap = map.get(r.product_id)!;
+    snap.byLocation.push({
+      locationId: r.location_id,
+      locationName: r.location_name || "",
+      qty: Math.round(Number(r.location_qty || 0) * 100) / 100,
+    });
+  }
+
+  for (const r of rowsBatch) {
+    const snap = map.get(r.product_id)!;
+    snap.byBatch.push({
+      batchId: r.batch_id,
+      codeMill: r.code_mill || "",
+      codeSartor: r.code_sartor || "",
+      batchName: r.batch_name || "",
+      receivedAt: r.received_at,
+      locationId: r.batch_location_id,
+      locationName: r.batch_location_name || "",
+      qty: Math.round(Number(r.batch_qty || 0) * 100) / 100,
+    });
+  }
+
+  const result = ids.map((id) => map.get(id)!);
   return Array.isArray(productIds) ? result : result[0] ?? null;
 }
 
