@@ -306,23 +306,15 @@ export function AssembliesEditor(props: {
           );
         })}
         <Grid.Col span={12}>
-          {/* Costings header and Add Costing (single assembly only if products provided) */}
-          {!isGroup && products ? (
-            <Group justify="space-between" align="center" mb="xs">
-              <Title order={4}>Costings</Title>
+          <AssemblyCostingsTable
+            title={isGroup ? "Costings (Group)" : "Costings"}
+            actions={[
               <AddCostingButton
                 products={products}
                 jobId={job?.id || 0}
                 assemblyId={firstAssembly?.id || 0}
-              />
-            </Group>
-          ) : (
-            <Title order={4} mb="xs">
-              {isGroup ? "Costings (Group)" : "Costings"}
-            </Title>
-          )}
-          <AssemblyCostingsTable
-            title={isGroup ? "Costings (Group)" : "Costings"}
+              />,
+            ]}
             editableCosting
             canEditCosting={(row) => {
               const aid = Number((row.assemblyId as any) || 0) || 0;

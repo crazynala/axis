@@ -424,19 +424,11 @@ export const GlobalRecordBrowser: React.FC = () => {
   }
   let idx: number | undefined;
   let total = 0;
-  console.log(
-    "GlobalRecordBrowser compute state",
-    derivedId,
-    typeof derivedId,
-    state
-  );
+
   if (state.idList && state.idIndexMap) {
     total = state.idList.length;
     const key = derivedId != null ? String(derivedId) : null;
-    console.log(
-      "Using idList for index lookup",
-      key != null ? state.idIndexMap.get(key) : undefined
-    );
+
     if (key != null) idx = state.idIndexMap.get(key);
   } else {
     total = state.records.length;
@@ -475,15 +467,7 @@ export const GlobalRecordBrowser: React.FC = () => {
   const canLast =
     derivedId != null && lastId() != null && derivedId !== lastId();
   const posLabel = `${idx != null ? idx + 1 : "-"} / ${total}`;
-  console.log("GlobalRecordBrowser render", {
-    derivedId,
-    idx,
-    total,
-    canPrev,
-    canNext,
-    canFirst,
-    canLast,
-  });
+
   return (
     <Group gap={4} align="center" wrap="nowrap">
       <Tooltip label="First" withArrow disabled={!canFirst}>

@@ -488,7 +488,6 @@ export function AssemblyCostingsTable(props: {
       <Card.Section inheritPadding py="xs">
         <Title order={4}>{title}</Title>
       </Card.Section>
-      <Divider my="xs" />
       {!showAccordion ? (
         <Table withTableBorder withColumnBorders highlightOnHover>
           <Table.Thead>

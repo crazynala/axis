@@ -146,6 +146,15 @@ const theme = createTheme({
       "#111619ff",
     ],
   },
+  headings: {
+    sizes: {
+      h1: { fontSize: rem(24) },
+      h2: { fontSize: rem(20) },
+      h3: { fontSize: rem(16) },
+      h4: { fontSize: rem(14) },
+      h5: { fontSize: rem(12) },
+    },
+  },
   components: {
     InputWrapper: Input.Wrapper.extend({
       styles: (theme) => {

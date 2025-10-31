@@ -5,35 +5,13 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
-import {
-  Button,
-  Group,
-  Stack,
-  Table,
-  Title,
-  Text,
-  Card,
-  Divider,
-  Grid,
-  Modal,
-  TextInput,
-} from "@mantine/core";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { useForm } from "react-hook-form";
-import { useInitGlobalFormContext } from "@aa/timber";
+import { Group, Stack, Grid } from "@mantine/core";
+import { useEffect, useState } from "react";
 import { prisma, prismaBase } from "../../../utils/prisma.server";
 import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
-import { AssemblyActivityModal } from "../../../components/AssemblyActivityModal";
-import { ExternalLink } from "../../../components/ExternalLink";
 import { createCutActivity } from "../../../utils/activity.server";
-import { StateChangeButton } from "~/base/state/StateChangeButton";
-import { assemblyStateConfig } from "~/base/state/configs";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
-import {
-  buildCostingRows,
-  canEditQpuDefault,
-} from "~/modules/job/services/costingsView";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -723,364 +701,61 @@ export default function JobAssemblyRoute() {
             },
           ]}
         />
-        <Group gap="xs" align="center">
-          <StateChangeButton
-            value={(assembly as any).status || "DRAFT"}
-            defaultValue={(assembly as any).status || "DRAFT"}
-            onChange={(v) => {
-              const fd = new FormData();
-              fd.set("_intent", "assembly.update");
-              if ((assembly as any).name)
-                fd.set("name", String((assembly as any).name));
-              fd.set("status", v);
-              submit(fd, { method: "post" });
-            }}
-            config={assemblyStateConfig}
-          />
-          <Button variant="light" size="xs" onClick={() => setCutOpen(true)}>
-            Record Cut
-          </Button>
-        </Group>
       </Group>
-      <Grid>
-        <Grid.Col span={5}>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Title order={4}>Assembly</Title>
-            </Card.Section>
-            <Divider my="xs" />
-            <Stack gap={6}>
-              <TextInput
-                readOnly
-                value={assembly.name || ""}
-                label="Name"
-                mod="data-autosize"
-              />
-              <TextInput
-                readOnly
-                value={job.name || job.id}
-                label="Job"
-                mod="data-autosize"
-              />
-              <TextInput
-                readOnly
-                value={assembly.status || ""}
-                label="Status"
-                mod="data-autosize"
-              />
-              <TextInput
-                readOnly
-                value={assembly.id || ""}
-                label="ID"
-                mod="data-autosize"
-              />
-            </Stack>
-          </Card>
-        </Grid.Col>
-        <Grid.Col span={7}>
-          <AssembliesEditor
-            mode="assembly"
-            job={job as any}
-            assemblies={
-              [
-                {
-                  ...assembly,
-                  costings: costings as any,
-                  qtyOrderedBreakdown:
-                    (assembly as any).qtyOrderedBreakdown || [],
-                  c_qtyOrdered: (assembly as any).c_qtyOrdered ?? 0,
-                  c_qtyCut: (assembly as any).c_qtyCut ?? 0,
-                },
-              ] as any
-            }
-            quantityItems={
-              [
-                {
-                  assemblyId: assembly.id,
-                  variants: {
-                    labels:
-                      (assembly.variantSet?.variants?.length
-                        ? assembly.variantSet.variants
-                        : productVariantSet?.variants) || [],
-                    numVariants:
-                      Number((assembly as any).c_numVariants || 0) || 0,
-                  },
-                  ordered: ((assembly as any).qtyOrderedBreakdown ||
-                    []) as number[],
-                  cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
-                  make: ((assembly as any).c_qtyMake_Breakdown ||
-                    []) as number[],
-                  pack: ((assembly as any).c_qtyPack_Breakdown ||
-                    []) as number[],
-                  totals: {
-                    cut: Number((assembly as any).c_qtyCut || 0),
-                    make: Number((assembly as any).c_qtyMake || 0),
-                    pack: Number((assembly as any).c_qtyPack || 0),
-                  },
-                },
-              ] as any
-            }
-            priceMultiplier={
-              Number((assembly.job as any)?.company?.priceMultiplier ?? 1) || 1
-            }
-            costingStats={costingStats as any}
-            saveIntent="assembly.updateOrderedBreakdown"
-            stateChangeIntent="assembly.update"
-            products={products as any}
-            activities={activities as any}
-            activityConsumptionMap={activityConsumptionMap as any}
-            activityVariantLabels={
-              (assembly.variantSet?.variants?.length
-                ? (assembly.variantSet.variants as any)
-                : (productVariantSet?.variants as any)) || []
-            }
-          />
-        </Grid.Col>
-        <Grid.Col span={12}>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Title order={4}>Activity History</Title>
-            </Card.Section>
-            <Divider my="xs" />
-            <Table striped withTableBorder withColumnBorders highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>ID</Table.Th>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Job</Table.Th>
-                  <Table.Th>End</Table.Th>
-                  {(() => {
-                    const raw =
-                      (assembly.variantSet?.variants?.length
-                        ? assembly.variantSet.variants
-                        : productVariantSet?.variants) || [];
-                    let last = -1;
-                    for (let i = raw.length - 1; i >= 0; i--) {
-                      const s = (raw[i] || "").toString().trim();
-                      if (s) {
-                        last = i;
-                        break;
-                      }
-                    }
-                    const cnum = (assembly as any).c_numVariants as
-                      | number
-                      | undefined;
-                    const effectiveLen = Math.max(
-                      0,
-                      Math.min(
-                        typeof cnum === "number" && cnum > 0
-                          ? cnum
-                          : raw.length,
-                        last + 1
-                      )
-                    );
-                    const cols = raw.slice(0, effectiveLen);
-                    return (
-                      cols.length
-                        ? cols
-                        : (
-                            activities.find((a: any) =>
-                              Array.isArray(a.qtyBreakdown)
-                            )?.qtyBreakdown || []
-                          ).map((_x: any, i: number) => `${i + 1}`)
-                    ).map((label: string, idx: number) => (
-                      <Table.Th key={`vcol-${idx}`}>
-                        {label || `${idx + 1}`}
-                      </Table.Th>
-                    ));
-                  })()}
-                  <Table.Th>Notes</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {activities.map((a: any) => {
-                  const raw =
-                    (assembly.variantSet?.variants?.length
-                      ? assembly.variantSet.variants
-                      : productVariantSet?.variants) || [];
-                  let last = -1;
-                  for (let i = raw.length - 1; i >= 0; i--) {
-                    const s = (raw[i] || "").toString().trim();
-                    if (s) {
-                      last = i;
-                      break;
-                    }
-                  }
-                  const cnum = (assembly as any).c_numVariants as
-                    | number
-                    | undefined;
-                  const effectiveLen = Math.max(
-                    0,
-                    Math.min(
-                      typeof cnum === "number" && cnum > 0 ? cnum : raw.length,
-                      last + 1
-                    )
-                  );
-                  const labels = raw.slice(0, effectiveLen);
-                  const breakdown = (a.qtyBreakdown || []) as number[];
-                  const cols = labels.length
-                    ? labels
-                    : breakdown.map((_x, i) => `${i + 1}`);
-                  return (
-                    <Table.Tr
-                      key={a.id}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => {
-                        setEditActivity(a);
-                        setCutOpen(true);
-                      }}
-                    >
-                      <Table.Td>{a.id}</Table.Td>
-                      <Table.Td>{a.name}</Table.Td>
-                      <Table.Td>{a.job?.name || a.jobId}</Table.Td>
-                      <Table.Td>
-                        {a.endTime ? new Date(a.endTime).toLocaleString() : ""}
-                      </Table.Td>
-                      {cols.map((_label: string, idx: number) => (
-                        <Table.Td key={`${a.id}-qty-${idx}`}>
-                          {breakdown[idx] ? breakdown[idx] : ""}
-                        </Table.Td>
-                      ))}
-                      <Table.Td>{a.notes}</Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </Card>
-        </Grid.Col>
-      </Grid>
-      <AssemblyActivityModal
-        opened={cutOpen}
-        onClose={() => {
-          setCutOpen(false);
-          setEditActivity(null);
-        }}
-        assembly={assembly}
-        productVariantSet={productVariantSet as any}
-        costings={costings as any}
-        activityType={
-          editActivity &&
-          String(editActivity?.activityType || editActivity?.name || "")
-            .toLowerCase()
-            .includes("make")
-            ? "make"
-            : editActivity &&
-              String(editActivity?.activityType || editActivity?.name || "")
-                .toLowerCase()
-                .includes("pack")
-            ? "pack"
-            : "cut"
+
+      <AssembliesEditor
+        mode="assembly"
+        job={job as any}
+        assemblies={
+          [
+            {
+              ...assembly,
+              costings: costings as any,
+              qtyOrderedBreakdown: (assembly as any).qtyOrderedBreakdown || [],
+              c_qtyOrdered: (assembly as any).c_qtyOrdered ?? 0,
+              c_qtyCut: (assembly as any).c_qtyCut ?? 0,
+            },
+          ] as any
         }
-        mode={editActivity ? "edit" : "create"}
-        activityId={editActivity?.id ?? undefined}
-        initialDate={
-          editActivity?.activityDate || editActivity?.endTime || null
+        quantityItems={
+          [
+            {
+              assemblyId: assembly.id,
+              variants: {
+                labels:
+                  (assembly.variantSet?.variants?.length
+                    ? assembly.variantSet.variants
+                    : productVariantSet?.variants) || [],
+                numVariants: Number((assembly as any).c_numVariants || 0) || 0,
+              },
+              ordered: ((assembly as any).qtyOrderedBreakdown ||
+                []) as number[],
+              cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
+              make: ((assembly as any).c_qtyMake_Breakdown || []) as number[],
+              pack: ((assembly as any).c_qtyPack_Breakdown || []) as number[],
+              totals: {
+                cut: Number((assembly as any).c_qtyCut || 0),
+                make: Number((assembly as any).c_qtyMake || 0),
+                pack: Number((assembly as any).c_qtyPack || 0),
+              },
+            },
+          ] as any
         }
-        initialBreakdown={(editActivity?.qtyBreakdown as any) || null}
-        initialConsumption={
-          editActivity
-            ? activityConsumptionMap?.[editActivity.id] || {}
-            : undefined
+        priceMultiplier={
+          Number((assembly.job as any)?.company?.priceMultiplier ?? 1) || 1
+        }
+        costingStats={costingStats as any}
+        saveIntent="assembly.updateOrderedBreakdown"
+        stateChangeIntent="assembly.update"
+        products={products as any}
+        activities={activities as any}
+        activityConsumptionMap={activityConsumptionMap as any}
+        activityVariantLabels={
+          (assembly.variantSet?.variants?.length
+            ? (assembly.variantSet.variants as any)
+            : (productVariantSet?.variants as any)) || []
         }
       />
     </Stack>
-  );
-}
-
-function AddCostingButton({
-  products,
-  jobId,
-  assemblyId,
-}: {
-  products: Array<{ id: number; sku: string | null; name: string | null }>;
-  jobId: number;
-  assemblyId: number;
-}) {
-  const submit = useSubmit();
-  const [opened, setOpened] = useState(false);
-  const [q, setQ] = useState("");
-  const [quantityPerUnit, setQuantityPerUnit] = useState<string>("");
-  const [unitCost, setUnitCost] = useState<string>("");
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return products;
-    return products.filter((p) =>
-      `${p.sku ?? ""} ${p.name ?? ""}`.toLowerCase().includes(s)
-    );
-  }, [products, q]);
-  return (
-    <>
-      <Button variant="default" onClick={() => setOpened(true)}>
-        Add Costing
-      </Button>
-      <Modal.Root
-        opened={opened}
-        onClose={() => setOpened(false)}
-        centered
-        size="xl"
-      >
-        <Modal.Overlay />
-        <Modal.Content>
-          <Modal.Header>
-            <Group justify="space-between" w="100%">
-              <Title order={5}>Add Costing</Title>
-            </Group>
-          </Modal.Header>
-          <Modal.Body>
-            <Stack>
-              <TextInput
-                placeholder="Search products..."
-                value={q}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setQ(e.currentTarget.value)
-                }
-              />
-              <Group grow>
-                <TextInput
-                  label="Qty / Unit"
-                  type="number"
-                  value={quantityPerUnit}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setQuantityPerUnit(e.currentTarget.value)
-                  }
-                />
-                <TextInput
-                  label="Unit Cost"
-                  type="number"
-                  value={unitCost}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setUnitCost(e.currentTarget.value)
-                  }
-                />
-              </Group>
-              <div style={{ maxHeight: 360, overflow: "auto" }}>
-                {filtered.map((p) => (
-                  <Group
-                    key={p.id}
-                    py={6}
-                    onClick={() => {
-                      const fd = new FormData();
-                      fd.set("_intent", "costing.create");
-                      fd.set("productId", String(p.id));
-                      if (quantityPerUnit !== "")
-                        fd.set("quantityPerUnit", quantityPerUnit);
-                      if (unitCost !== "") fd.set("unitCost", unitCost);
-                      submit(fd, { method: "post" });
-                      setOpened(false);
-                    }}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <Text w={60}>{p.id}</Text>
-                    <Text w={160}>{p.sku}</Text>
-                    <Text style={{ flex: 1 }}>{p.name}</Text>
-                  </Group>
-                ))}
-              </div>
-            </Stack>
-          </Modal.Body>
-        </Modal.Content>
-      </Modal.Root>
-    </>
   );
 }

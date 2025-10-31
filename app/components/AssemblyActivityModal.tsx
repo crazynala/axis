@@ -250,7 +250,6 @@ export function AssemblyActivityModal(props: {
     costingId: number,
     productId: number | null | undefined
   ) {
-    console.log("!! Loading batches for costing", costingId, productId);
     if (!productId) return;
     if (loadingCosting[costingId]) return;
     setLoadingCosting((s) => ({ ...s, [costingId]: true }));
@@ -275,7 +274,7 @@ export function AssemblyActivityModal(props: {
       if (!Number.isFinite(cid)) continue;
       if (!batchesByCosting[cid]) {
         const cost = eligibleCostings.find((x) => x.id === cid);
-        if (cost) void loadBatchesForCosting(cid, cost.component?.id ?? null);
+        if (cost) void loadBatchesForCosting(cid, cost.product?.id ?? null);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -568,9 +567,9 @@ export function AssemblyActivityModal(props: {
                 >
                   {eligibleCostings.map((c) => {
                     const cid = c.id;
-                    const compId = c.component?.id ?? null;
-                    const compSku = c.component?.sku ?? "";
-                    const compName = c.component?.name ?? "";
+                    const compId = c.product?.id ?? null;
+                    const compSku = c.product?.sku ?? "";
+                    const compName = c.product?.name ?? "";
                     const consumed = Object.values(
                       consumption[cid] || {}
                     ).reduce((t, n) => t + (Number(n) || 0), 0);
@@ -640,7 +639,7 @@ export function AssemblyActivityModal(props: {
                                 .filter((b) => {
                                   if (batchLocScope === "all") return true;
                                   const jobLocId = (assembly?.job
-                                    ?.locationInId ?? null) as number | null;
+                                    ?.stockLocationId ?? null) as number | null;
                                   if (!jobLocId) return true;
                                   return (b.location?.id ?? null) === jobLocId;
                                 })
