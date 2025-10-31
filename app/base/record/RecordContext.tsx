@@ -115,7 +115,7 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
             rowsMap: new Map(),
           } as RecordState);
         const idIndexMap = new Map<string | number, number>();
-        ids.forEach((id, i) => idIndexMap.set(id, i));
+        ids.forEach((id, i) => idIndexMap.set(String(id), i));
         return { ...base, idList: ids, idListComplete: complete, idIndexMap };
       });
     },
@@ -179,11 +179,12 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
     (cid: string | number | null) => {
       if (!state || cid == null) return null;
       if (state.idList && state.idIndexMap) {
-        const idx = state.idIndexMap.get(cid);
+        const idx = state.idIndexMap.get(String(cid));
         if (idx == null || idx + 1 >= state.idList.length) return null;
         return state.idList[idx + 1];
       }
-      const idx = state.indexById.get(cid);
+      let idx = state.indexById.get(cid as any);
+      if (idx == null) idx = state.indexById.get(String(cid) as any);
       if (idx == null || idx + 1 >= state.records.length) return null;
       return state.getId(state.records[idx + 1]);
     },
@@ -194,11 +195,12 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
     (cid: string | number | null) => {
       if (!state || cid == null) return null;
       if (state.idList && state.idIndexMap) {
-        const idx = state.idIndexMap.get(cid);
+        const idx = state.idIndexMap.get(String(cid));
         if (idx == null || idx - 1 < 0) return null;
         return state.idList[idx - 1];
       }
-      const idx = state.indexById.get(cid);
+      let idx = state.indexById.get(cid as any);
+      if (idx == null) idx = state.indexById.get(String(cid) as any);
       if (idx == null || idx - 1 < 0) return null;
       return state.getId(state.records[idx - 1]);
     },
@@ -208,9 +210,11 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
   const getPathForId = useCallback(
     (id: string | number) => {
       if (!state) return null;
-      const row = state.rowsMap?.get(id);
+      let row = state.rowsMap?.get(id as any);
+      if (!row) row = state.rowsMap?.get(String(id) as any);
       if (row) return state.getPath(row);
-      const idx = state.indexById.get(id);
+      let idx = state.indexById.get(id as any);
+      if (idx == null) idx = state.indexById.get(String(id) as any);
       if (idx != null) return state.getPath(state.records[idx]);
       return `/${state.module}/${id}`;
     },
@@ -420,12 +424,25 @@ export const GlobalRecordBrowser: React.FC = () => {
   }
   let idx: number | undefined;
   let total = 0;
+  console.log(
+    "GlobalRecordBrowser compute state",
+    derivedId,
+    typeof derivedId,
+    state
+  );
   if (state.idList && state.idIndexMap) {
     total = state.idList.length;
-    if (derivedId != null) idx = state.idIndexMap.get(derivedId);
+    const key = derivedId != null ? String(derivedId) : null;
+    console.log(
+      "Using idList for index lookup",
+      key != null ? state.idIndexMap.get(key) : undefined
+    );
+    if (key != null) idx = state.idIndexMap.get(key);
   } else {
     total = state.records.length;
-    if (derivedId != null) idx = state.indexById.get(derivedId);
+    if (derivedId != null) idx = state.indexById.get(derivedId as any);
+    if (idx == null && derivedId != null)
+      idx = state.indexById.get(String(derivedId) as any);
   }
   const isIndex = location.pathname === `/${state.module}`;
   const doNav = (targetId: string | number | null) => {
@@ -458,6 +475,15 @@ export const GlobalRecordBrowser: React.FC = () => {
   const canLast =
     derivedId != null && lastId() != null && derivedId !== lastId();
   const posLabel = `${idx != null ? idx + 1 : "-"} / ${total}`;
+  console.log("GlobalRecordBrowser render", {
+    derivedId,
+    idx,
+    total,
+    canPrev,
+    canNext,
+    canFirst,
+    canLast,
+  });
   return (
     <Group gap={4} align="center" wrap="nowrap">
       <Tooltip label="First" withArrow disabled={!canFirst}>

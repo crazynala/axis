@@ -28,8 +28,7 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
       continue;
     }
     const companyId = asNum(pick(r, ["a_CompanyID"])) as number | null;
-    const locInId = asNum(pick(r, ["a_LocationID|In"])) as number | null;
-    const locOutId = asNum(pick(r, ["a_LocationID|Out"])) as number | null;
+    const locationId = asNum(pick(r, ["a_LocationID|In"])) as number | null;
     const status = (pick(r, ["JobType"]) ?? "").toString().trim() || null;
     const endCustomerName =
       (pick(r, ["EndCustomerName"]) ?? "").toString().trim() || null;
@@ -59,8 +58,7 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
       firstInvoiceDate,
       targetDate,
       companyId: companyId ?? undefined,
-      locationInId: locInId ?? undefined,
-      locationOutId: locOutId ?? undefined,
+      stockLocationId: locationId ?? undefined,
     };
     try {
       const existing = await prisma.job.findUnique({ where: { id: jobIdNum } });

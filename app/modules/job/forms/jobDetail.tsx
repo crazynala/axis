@@ -40,6 +40,13 @@ export const jobDateStatusRight: FieldConfig[] = [
     type: "date",
     findOp: "equals",
   },
+  {
+    name: "stockLocationId",
+    label: "Stock Location",
+    widget: "select",
+    optionsKey: "location",
+    findOp: "equals",
+  },
 ];
 
 // Overview (ID + main fields; customer/company picker handled separately)
@@ -53,6 +60,7 @@ export const jobOverviewFields: FieldConfig[] = [
     optionsKey: "customer",
     findOp: "contains",
   },
+
   {
     name: "id",
     label: "ID",
@@ -88,10 +96,14 @@ export const assemblyFields: FieldConfig[] = [
 ];
 
 export function validateJobDateStatusConfig() {
-  const fields = [...jobDateStatusLeft, ...jobDateStatusRight].map((f) => f.name);
+  const fields = [...jobDateStatusLeft, ...jobDateStatusRight].map(
+    (f) => f.name
+  );
   for (const f of JOB_DATES_STATUS_FIELDS) {
     if (!fields.includes(f)) {
-      console.warn(`[jobDetailConfig] Missing spec field in date/status config: ${f}`);
+      console.warn(
+        `[jobDetailConfig] Missing spec field in date/status config: ${f}`
+      );
     }
   }
 }

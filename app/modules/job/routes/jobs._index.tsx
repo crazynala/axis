@@ -5,14 +5,14 @@ import {
   useNavigate,
   useSearchParams,
 } from "@remix-run/react";
-import { Button, Group, Stack, Title, Tooltip, Badge } from "@mantine/core";
+import { Button, Group, Stack } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import * as jobDetail from "~/modules/job/forms/jobDetail";
 import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
-import { SavedViews } from "../../../components/find/SavedViews";
+import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
@@ -173,7 +173,7 @@ export default function JobsIndexRoute() {
       </Group>
 
       <section>
-        <SavedViews
+        <FindRibbonAuto
           views={data?.views || []}
           activeView={data?.activeView || null}
         />

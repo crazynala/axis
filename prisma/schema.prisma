@@ -120,69 +120,69 @@ model TagDefinition {
 }
 
 model Product {
-    id                   Int                   @id @default(autoincrement())
-    sku                  String?               @unique
-    name                 String?
-    description          String?
-    type                 ProductType?
-    supplierId           Int?
-    customerId           Int?
-    costPrice            Decimal?              @db.Decimal(14, 4)
-    costCurrency         String?               @default("USD")
-    purchaseTaxId        Int?
-    categoryId           Int?
-    subCategory          String?
-    pricingGroupId       Int?
-    manualSalePrice      Decimal?              @db.Decimal(14, 4)
+    id                    Int                   @id @default(autoincrement())
+    sku                   String?               @unique
+    name                  String?
+    description           String?
+    type                  ProductType?
+    supplierId            Int?
+    customerId            Int?
+    costPrice             Decimal?              @db.Decimal(14, 4)
+    costCurrency          String?               @default("USD")
+    purchaseTaxId         Int?
+    categoryId            Int?
+    subCategory           String?
+    pricingGroupId        Int?
+    manualSalePrice       Decimal?              @db.Decimal(14, 4)
     // Optional per-item manual margin (mutually exclusive with manualSalePrice; enforce in app logic)
-    manualMargin         Decimal?              @db.Decimal(14, 4)
-    defaultCostQty       Int                   @default(60)
-    variantSetId         Int?
-    stockTrackingEnabled Boolean               @default(false)
-    batchTrackingEnabled Boolean               @default(false)
-    isActive             Boolean?
-    notes                String?
+    manualMargin          Decimal?              @db.Decimal(14, 4)
+    defaultCostQty        Int                   @default(60)
+    variantSetId          Int?
+    stockTrackingEnabled  Boolean               @default(false)
+    batchTrackingEnabled  Boolean               @default(false)
+    isActive              Boolean?
+    notes                 String?
     // Unaccented shadow columns for accent-insensitive search
     nameUnaccented        String?
     descriptionUnaccented String?
     notesUnaccented       String?
-    supplier             Company?              @relation("Supplier", fields: [supplierId], references: [id])
-    customer             Company?              @relation("Customer", fields: [customerId], references: [id])
-    purchaseTax          ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
-    category             ValueList?            @relation("Category", fields: [categoryId], references: [id])
-    pricingGroup         SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
+    supplier              Company?              @relation("Supplier", fields: [supplierId], references: [id])
+    customer              Company?              @relation("Customer", fields: [customerId], references: [id])
+    purchaseTax           ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
+    category              ValueList?            @relation("Category", fields: [categoryId], references: [id])
+    pricingGroup          SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
     // Optional direct link to a Product Cost Group for pricing defaults
-    costGroupId          Int?
-    costGroup            ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
+    costGroupId           Int?
+    costGroup             ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
     // Optional link to a Sale Price Group for sale tiers
-    salePriceGroupId     Int?
-    salePriceGroup       SalePriceGroup?       @relation(fields: [salePriceGroupId], references: [id])
-    variantSet           VariantSet?           @relation(fields: [variantSetId], references: [id])
-    productLines         ProductLine[]         @relation("ParentProduct")
-    batches              Batch[]
-    productMovements     ProductMovementLine[]
-    Costing              Costing[]
-    ProductLine          ProductLine[]
+    salePriceGroupId      Int?
+    salePriceGroup        SalePriceGroup?       @relation(fields: [salePriceGroupId], references: [id])
+    variantSet            VariantSet?           @relation(fields: [variantSetId], references: [id])
+    productLines          ProductLine[]         @relation("ParentProduct")
+    batches               Batch[]
+    productMovements      ProductMovementLine[]
+    Costing               Costing[]
+    ProductLine           ProductLine[]
     // Removed: Variant back-relation; Variant model dropped
     // Back-relations
-    invoiceLines         InvoiceLine[]
-    shipmentLines        ShipmentLine[]
-    expenses             Expense[]
+    invoiceLines          InvoiceLine[]
+    shipmentLines         ShipmentLine[]
+    expenses              Expense[]
     // Back-relations: Purchase Orders
-    purchaseOrderLines   PurchaseOrderLine[]
+    purchaseOrderLines    PurchaseOrderLine[]
     // Back-relations: Tags
-    productTags          ProductTag[]
+    productTags           ProductTag[]
     // Back-relations: Cost ranges (per-product tiered costs)
-    productCostRanges    ProductCostRange[]
-    salePriceRanges      SalePriceRange[]
+    productCostRanges     ProductCostRange[]
+    salePriceRanges       SalePriceRange[]
     // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
     // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
     // Metadata
-    createdBy            String?
-    modifiedBy           String?
-    createdAt            DateTime?             @default(now())
-    updatedAt            DateTime?             @updatedAt
+    createdBy             String?
+    modifiedBy            String?
+    createdAt             DateTime?             @default(now())
+    updatedAt             DateTime?             @updatedAt
 }
 
 // Join tables for tags
@@ -220,6 +220,9 @@ model Company {
     defaultMarginOverride           Decimal?                @db.Decimal(14, 4)
     // Optional default sale price multiplier for this customer (applies to sale tiers)
     priceMultiplier                 Decimal?                @db.Decimal(14, 4)
+    // Optional default stock location for this customer; used to initialize Job in/out locations
+    stockLocationId                 Int?
+    stockLocation                   Location?               @relation("Company_stockLocation", fields: [stockLocationId], references: [id])
     productsSupplied                Product[]               @relation("Supplier")
     productsPurchased               Product[]               @relation("Customer")
     pricingGroups                   SupplierPricingGroup[]
@@ -358,7 +361,6 @@ model Costing {
     flagIsBillableDefaultOrManual Boolean?
     flagIsBillableManual          Boolean?
     flagIsInvoiceableManual       Boolean?
-    flagStockTracked              Boolean?
     assembly                      Assembly?       @relation(fields: [assemblyId], references: [id])
     product                       Product?        @relation(fields: [productId], references: [id])
     // Metadata
@@ -398,8 +400,6 @@ model Location {
     notes                 String?
     batches               Batch[]
     ProductMovement       ProductMovement[]
-    jobsIn                Job[]              @relation("Job_LocationIn")
-    jobsOut               Job[]              @relation("Job_LocationOut")
     assemblyActivitiesIn  AssemblyActivity[] @relation("AssemblyActivity_LocationIn")
     assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
     // Back-relations
@@ -407,6 +407,10 @@ model Location {
     shipmentLines         ShipmentLine[]
     // Back-relations: Purchase Orders
     purchaseOrders        PurchaseOrder[]
+    // Back-relations: Company default stock locations
+    companiesStock        Company[]          @relation("Company_stockLocation")
+    // Back-relation: Jobs that use this location as their consolidated stockLocation
+    jobsStock             Job[]              @relation("Job_stockLocation")
     // Metadata
     createdBy             String?
     modifiedBy            String?
@@ -512,10 +516,9 @@ model Job {
     endCustomerName         String?
     companyId               Int?
     company                 Company?            @relation(fields: [companyId], references: [id])
-    locationInId            Int?
-    locationOutId           Int?
-    locationIn              Location?           @relation("Job_LocationIn", fields: [locationInId], references: [id])
-    locationOut             Location?           @relation("Job_LocationOut", fields: [locationOutId], references: [id])
+    // Consolidated stock location for this job
+    stockLocationId         Int?
+    stockLocation           Location?           @relation("Job_stockLocation", fields: [stockLocationId], references: [id])
     customerOrderDate       DateTime?
     customerOrderDateManual DateTime?
     cutSubmissionDate       DateTime?

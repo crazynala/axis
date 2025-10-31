@@ -99,6 +99,31 @@ Semantics Example:
 
 Views now persist any `find` flag and `findReqs` parameter inside `filters`. When loading a view those are re-applied unless explicitly overridden by the current URL. Legacy views without `findReqs` continue to function.
 
+## Find Ribbon & URL semantics: keepKeys and labelMap
+
+To standardize the list/index UX, modules use a shared FindRibbon wrapped by `FindRibbonAuto`. Two ergonomic options matter here:
+
+- keepKeys: list of URL params to preserve when changing filters or switching views. Defaults: `view`, `sort`, `dir`, `perPage`. We intentionally do not preserve `page` so pagination resets to page 1 on filter changes. Add `"page"` to keepKeys in modules where you want to keep it.
+- labelMap: per-module mapping from query param keys to human‑friendly chip labels for simple filters (e.g., `{ sku: "SKU", isInactive: "Archived" }`).
+
+Action behavior with keepKeys:
+
+- Select View: Clears non‑preserved params (simple filters and `findReqs`), applies `view` (omitted for "All"), resets `page` unless preserved.
+- Remove Chip: Deletes only that filter key. Resets `page` unless preserved.
+- Clear Advanced: Deletes `findReqs`. Resets `page` unless preserved.
+- Cancel: Returns to view mode by clearing all non‑preserved filters and ensuring `view` reflects the active view. Resets `page` unless preserved.
+
+Usage example:
+
+```
+<FindRibbonAuto
+   views={views}
+   activeView={activeView}
+   keepKeys={["view", "sort", "dir", "perPage", "tab"]}
+   labelMap={{ sku: "SKU", type: "Type", supplierId: "Supplier" }}
+/>
+```
+
 ## Future Enhancements
 
 - Export / import view definitions.

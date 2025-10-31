@@ -38,6 +38,14 @@ export const companyMainFields: FieldConfig[] = [
     showIf: ({ form }) => !!(form.getValues() as any)?.isSupplier,
     hiddenInModes: ["find"],
   },
+  {
+    name: "stockLocationId",
+    label: "Stock Location",
+    widget: "select",
+    optionsKey: "location",
+    showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
+    hiddenInModes: ["find"],
+  },
 ];
 
 export function allCompanyFindFields() {

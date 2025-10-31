@@ -13,9 +13,12 @@
   }
 
   [data-mantine-color-scheme="dark"] [data-variant="unstyled"] {
-    --input-bd: transparent;
+    /* --input-bd: transparent;
     --input-bg: transparent;
-    --input-bd-focus: transparent;
+    --input-bd-focus: transparent; */
+    --input-bd: var(--mantine-color-slate-8);
+    --input-bg: var(--mantine-color-slate-8);
+    --input-bd-focus: var(--mantine-primary-color-filled);
   }
 
   .mantine-TextInput-input:read-only {

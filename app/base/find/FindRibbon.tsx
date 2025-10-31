@@ -12,6 +12,7 @@ import {
   rem,
   ScrollArea,
 } from "@mantine/core";
+import { CloseButton } from "@mantine/core";
 
 export type FilterChip = {
   key: string;
@@ -27,6 +28,9 @@ export type FindRibbonProps = {
   onCancelFind?: () => void;
   onSaveAs?: (name: string) => void; // if provided, shows Save As button and modal
   title?: string; // optional left title
+  onRemoveChip?: (key: string) => void; // enable 'x' per chip
+  advancedActive?: boolean; // show an Advanced chip when true
+  onClearAdvanced?: () => void; // clear advanced findReqs
 };
 
 /**
@@ -44,6 +48,9 @@ export function FindRibbon({
   onCancelFind,
   onSaveAs,
   title,
+  onRemoveChip,
+  advancedActive,
+  onClearAdvanced,
 }: FindRibbonProps) {
   const [opened, setOpened] = useState(false);
   const [name, setName] = useState("");
@@ -103,16 +110,52 @@ export function FindRibbon({
               >
                 <Group gap={6} wrap="nowrap">
                   {filterChips.length ? (
-                    filterChips.map((c) => (
-                      <Badge
-                        key={c.key}
-                        variant="light"
-                        radius="sm"
-                        styles={{ root: { fontWeight: 500 } }}
-                      >
-                        {c.label}
-                      </Badge>
-                    ))
+                    <>
+                      {filterChips.map((c) => (
+                        <Badge
+                          key={c.key}
+                          variant="light"
+                          radius="sm"
+                          styles={{ root: { fontWeight: 500 } }}
+                          rightSection={
+                            onRemoveChip ? (
+                              <CloseButton
+                                size="xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRemoveChip(c.key);
+                                }}
+                                aria-label={`Remove ${c.key}`}
+                              />
+                            ) : undefined
+                          }
+                        >
+                          {c.label}
+                        </Badge>
+                      ))}
+                      {advancedActive ? (
+                        <Badge
+                          key="advanced"
+                          variant="light"
+                          radius="sm"
+                          color="grape"
+                          rightSection={
+                            onClearAdvanced ? (
+                              <CloseButton
+                                size="xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onClearAdvanced();
+                                }}
+                                aria-label={`Remove advanced`}
+                              />
+                            ) : undefined
+                          }
+                        >
+                          Advanced
+                        </Badge>
+                      ) : null}
+                    </>
                   ) : (
                     <Badge variant="light" radius="sm">
                       No criteria

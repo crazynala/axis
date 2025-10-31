@@ -47,6 +47,7 @@ export async function loadOptions(): Promise<OptionsData> {
         customers: v.customerOptions.length,
         suppliers: v.supplierOptions.length,
         carriers: v.carrierOptions.length,
+        locations: v.locationOptions.length,
         jobTypes: v.jobTypeOptions.length,
         jobStatuses: v.jobStatusOptions.length,
         variantSets: v.variantSetOptions.length,
@@ -96,7 +97,10 @@ export async function loadOptions(): Promise<OptionsData> {
       take: 2000,
     }),
     prisma.company.findMany({
-      where: { isCustomer: true, OR: [{ isInactive: false }, { isInactive: null }] },
+      where: {
+        isCustomer: true,
+        OR: [{ isInactive: false }, { isInactive: null }],
+      },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
@@ -108,7 +112,10 @@ export async function loadOptions(): Promise<OptionsData> {
       take: 2000,
     }),
     prisma.company.findMany({
-      where: { isSupplier: true, OR: [{ isInactive: false }, { isInactive: null }] },
+      where: {
+        isSupplier: true,
+        OR: [{ isInactive: false }, { isInactive: null }],
+      },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
@@ -163,11 +170,15 @@ export async function loadOptions(): Promise<OptionsData> {
   ]);
 
   // Prefer ValueList(ProductType). If empty, fall back to enum defaults.
-  const productTypes = productTypesVL.length ? productTypesVL.map((pt) => pt.code || pt.label || "") : ["CMT", "Fabric", "Finished", "Trim", "Service"];
+  const productTypes = productTypesVL.length
+    ? productTypesVL.map((pt) => pt.code || pt.label || "")
+    : ["CMT", "Fabric", "Finished", "Trim", "Service"];
 
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
-  const customersAllList = customers_all.length > 0 ? customers_all : companies_all;
-  const suppliersAllList = suppliers_all.length > 0 ? suppliers_all : companies_all;
+  const customersAllList =
+    customers_all.length > 0 ? customers_all : companies_all;
+  const suppliersAllList =
+    suppliers_all.length > 0 ? suppliers_all : companies_all;
   const customersList = customers.length > 0 ? customers : customersAllList;
   const suppliersList = suppliers.length > 0 ? suppliers : suppliersAllList;
   const carriersList = carriers.length > 0 ? carriers : companies_all;

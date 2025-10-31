@@ -1,12 +1,23 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import {
+  Outlet,
+  useLoaderData,
+  useNavigate,
+  useSearchParams,
+} from "@remix-run/react";
 import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { useRecords } from "../../../base/record/RecordContext";
 import { CompanyFindManagerNew } from "~/modules/company/findify/CompanyFindManagerNew";
+import { FindRibbon, defaultSummarizeFilters } from "~/base/find/FindRibbon";
 import { listViews, saveView } from "../../../utils/views.server";
-import { decodeRequests, buildWhereFromRequests, mergeSimpleAndMulti } from "../../../base/find/multiFind";
+import {
+  decodeRequests,
+  buildWhereFromRequests,
+  mergeSimpleAndMulti,
+} from "../../../base/find/multiFind";
+import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const url = new URL(_args.request.url);
@@ -31,14 +42,17 @@ export async function loader(_args: LoaderFunctionArgs) {
       for (const [rawKey, rawVal] of Object.entries(savedFilters)) {
         if (rawKey === "findReqs") continue; // handled above
         if (rawVal === undefined || rawVal === null || rawVal === "") continue;
-        if (!url.searchParams.has(rawKey)) url.searchParams.set(rawKey, String(rawVal));
+        if (!url.searchParams.has(rawKey))
+          url.searchParams.set(rawKey, String(rawVal));
       }
     }
   }
   const triKeys = ["isCarrier", "isCustomer", "isSupplier", "isInactive"];
   const keys = ["name", "notes", ...triKeys];
   let where: any = undefined;
-  const hasFindIndicators = keys.some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const hasFindIndicators =
+    keys.some((k) => url.searchParams.has(k)) ||
+    url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
@@ -46,8 +60,16 @@ export async function loader(_args: LoaderFunctionArgs) {
       if (v !== null && v !== "") values[k] = v;
     }
     const simple: any = {};
-    if (values.name) simple.nameUnaccented = { contains: unaccent(values.name), mode: "insensitive" };
-    if (values.notes) simple.notesUnaccented = { contains: unaccent(values.notes), mode: "insensitive" };
+    if (values.name)
+      simple.nameUnaccented = {
+        contains: unaccent(values.name),
+        mode: "insensitive",
+      };
+    if (values.notes)
+      simple.notesUnaccented = {
+        contains: unaccent(values.notes),
+        mode: "insensitive",
+      };
     for (const tk of triKeys) {
       const raw = values[tk];
       if (raw === "true") simple[tk] = true;
@@ -56,8 +78,12 @@ export async function loader(_args: LoaderFunctionArgs) {
     const multi = decodeRequests(url.searchParams.get("findReqs"));
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
-        name: (v) => ({ nameUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
-        notes: (v) => ({ notesUnaccented: { contains: unaccent(v), mode: "insensitive" } }),
+        name: (v) => ({
+          nameUnaccented: { contains: unaccent(v), mode: "insensitive" },
+        }),
+        notes: (v) => ({
+          notesUnaccented: { contains: unaccent(v), mode: "insensitive" },
+        }),
         isCarrier: (v) => ({ isCarrier: v === "true" }),
         isCustomer: (v) => ({ isCustomer: v === "true" }),
         isSupplier: (v) => ({ isSupplier: v === "true" }),
@@ -129,6 +155,24 @@ export async function action({ request }: ActionFunctionArgs) {
   return redirect("/companies");
 }
 
+// Prevent revalidation of the companies parent loader on child/detail routes
+// and after mutations, keeping the found-set stable and avoiding heavy reloads.
+export const shouldRevalidate = makeModuleShouldRevalidate("/companies", [
+  // keys that can influence the companies index filter
+  "name",
+  "notes",
+  "isCarrier",
+  "isCustomer",
+  "isSupplier",
+  "isInactive",
+  "findReqs",
+  "view",
+  "sort",
+  "dir",
+  "perPage",
+  "q",
+]);
+
 export default function CompaniesLayout() {
   const data = useLoaderData<{
     idList: number[];
@@ -138,6 +182,8 @@ export default function CompaniesLayout() {
     views?: any[];
     activeView?: string | null;
   }>();
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
   const { setIdList, addRows } = useRecords();
   useEffect(() => {
     setIdList("companies", data.idList, data.idListComplete);
@@ -145,6 +191,7 @@ export default function CompaniesLayout() {
       addRows("companies", data.initialRows, { updateRecordsArray: true });
     }
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
+
   return (
     <>
       <CompanyFindManagerNew />

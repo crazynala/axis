@@ -19,6 +19,8 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useForm } from "react-hook-form";
+import { useInitGlobalFormContext } from "@aa/timber";
 import { prisma, prismaBase } from "../../../utils/prisma.server";
 import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
@@ -27,34 +29,136 @@ import { ExternalLink } from "../../../components/ExternalLink";
 import { createCutActivity } from "../../../utils/activity.server";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
-import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
-import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
+import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
+import {
+  buildCostingRows,
+  canEditQpuDefault,
+} from "~/modules/job/services/costingsView";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const jobId = Number(params.jobId);
-  const assemblyId = Number(params.assemblyId);
+  const raw = String(params.assemblyId || "");
+  const idList = raw
+    .split(",")
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const isMulti = idList.length > 1;
+
+  if (isMulti) {
+    // Multi-assembly view under the same route: fetch all assemblies
+    const assemblies = await prisma.assembly.findMany({
+      where: { id: { in: idList }, jobId },
+      include: {
+        variantSet: true,
+        costings: {
+          include: { product: { select: { id: true, sku: true, name: true } } },
+        },
+      },
+      orderBy: { id: "asc" },
+    });
+    if (!assemblies.length) throw new Response("Not Found", { status: 404 });
+    // Fallback: product variant sets
+    const prodIds = Array.from(
+      new Set(
+        (assemblies as any[])
+          .map((a) => (a as any).productId)
+          .filter((id) => Number.isFinite(Number(id)))
+          .map((n) => Number(n))
+      )
+    );
+    const prodVariantMap = new Map<number, string[]>();
+    if (prodIds.length) {
+      const prods = (await prisma.product.findMany({
+        where: { id: { in: prodIds } },
+        select: { id: true, variantSet: { select: { variants: true } } },
+      })) as Array<{ id: number; variantSet?: { variants: string[] } | null }>;
+      for (const p of prods) {
+        const vars = (p.variantSet?.variants as any) || [];
+        if (Array.isArray(vars) && vars.length) prodVariantMap.set(p.id, vars);
+      }
+    }
+    const quantityItems = assemblies.map((a: any) => {
+      let labels = (a.variantSet?.variants || []) as string[];
+      if ((!labels || labels.length === 0) && (a as any).productId) {
+        const fb = prodVariantMap.get(Number((a as any).productId));
+        if (fb && fb.length) labels = fb as string[];
+      }
+      return {
+        assemblyId: a.id,
+        label: `Assembly ${a.id}`,
+        variants: {
+          labels,
+          numVariants:
+            Number((a as any).c_numVariants || labels.length || 0) || 0,
+        },
+        ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
+        cut: ((a as any).c_qtyCut_Breakdown || []) as number[],
+        make: ((a as any).c_qtyMake_Breakdown || []) as number[],
+        pack: ((a as any).c_qtyPack_Breakdown || []) as number[],
+        totals: {
+          cut: Number((a as any).c_qtyCut || 0),
+          make: Number((a as any).c_qtyMake || 0),
+          pack: Number((a as any).c_qtyPack || 0),
+        },
+      };
+    });
+    const groupMovements = await prisma.productMovement.findMany({
+      where: { assemblyId: { in: idList } },
+      orderBy: { date: "desc" },
+      take: 50,
+    });
+    // Minimal job info
+    const job = await prisma.job.findUnique({
+      where: { id: jobId },
+      select: { id: true, name: true },
+    });
+    return json({ job, assemblies, quantityItems, groupMovements });
+  }
+
+  const assemblyId = idList[0];
 
   const assembly = await prisma.assembly.findUnique({
     where: { id: assemblyId },
     include: {
       job: {
         include: {
-          locationIn: { select: { id: true, name: true } },
+          stockLocation: { select: { id: true, name: true } },
           company: { select: { id: true, priceMultiplier: true } },
         },
       },
       variantSet: true,
+      costings: {
+        include: {
+          product: {
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              stockTrackingEnabled: true,
+              batchTrackingEnabled: true,
+              salePriceGroup: { select: { id: true, saleRanges: true } },
+              salePriceRanges: true,
+            },
+          },
+          salePriceGroup: { select: { id: true, saleRanges: true } },
+        },
+      },
     },
   });
   if (!assembly || assembly.jobId !== jobId)
     throw new Response("Not Found", { status: 404 });
-  // If assembly is in a group, redirect to the group page canonically
+  // If assembly is in a group, redirect canonically to the comma-delimited assemblies path
   if ((assembly as any).assemblyGroupId) {
-    return redirect(
-      `/jobs/${jobId}/group/${(assembly as any).assemblyGroupId}`
-    );
+    const grp = await prisma.assemblyGroup.findUnique({
+      where: { id: Number((assembly as any).assemblyGroupId) },
+      include: { assemblies: { select: { id: true }, orderBy: { id: "asc" } } },
+    });
+    const ids = (grp?.assemblies || []).map((a: any) => a.id);
+    if (ids.length > 1) {
+      return redirect(`/jobs/${jobId}/assembly/${ids.join(",")}`);
+    }
   }
   let productVariantSet: {
     id: number;
@@ -72,21 +176,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     });
     productVariantSet = (p?.variantSet as any) || null;
   }
-  const costings = await prisma.costing.findMany({
-    where: { assemblyId },
-    include: {
-      product: {
-        select: {
-          id: true,
-          sku: true,
-          name: true,
-          salePriceGroup: { select: { id: true, saleRanges: true } },
-          salePriceRanges: true,
-        },
-      },
-      salePriceGroup: { select: { id: true, saleRanges: true } },
-    },
-  });
+  const costings = (assembly as any).costings as any[];
   const activities = await prisma.assemblyActivity.findMany({
     where: { assemblyId },
     include: { job: true },
@@ -96,7 +186,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
   });
   // Compute per-costing stocks (location and global) and used qty
-  const jobLocId = assembly.job?.locationIn?.id ?? null;
+  const jobLocId =
+    (assembly.job as any)?.stockLocation?.id ??
+    (assembly.job as any)?.stockLocationId ??
+    null;
   const compIds = Array.from(
     new Set(
       costings
@@ -175,8 +268,33 @@ export async function loader({ params }: LoaderFunctionArgs) {
       used: usedByCosting.get(c.id) ?? 0,
     };
   }
+  const quantityItems = [
+    {
+      assemblyId: assembly.id,
+      label: `Assembly ${assembly.id}`,
+      variants: {
+        labels:
+          (assembly.variantSet?.variants?.length
+            ? (assembly.variantSet.variants as any)
+            : (productVariantSet?.variants as any)) || [],
+        numVariants: Number((assembly as any).c_numVariants || 0) || 0,
+      },
+      ordered: ((assembly as any).qtyOrderedBreakdown || []) as number[],
+      cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
+      make: ((assembly as any).c_qtyMake_Breakdown || []) as number[],
+      pack: ((assembly as any).c_qtyPack_Breakdown || []) as number[],
+      totals: {
+        cut: Number((assembly as any).c_qtyCut || 0),
+        make: Number((assembly as any).c_qtyMake || 0),
+        pack: Number((assembly as any).c_qtyPack || 0),
+      },
+    },
+  ];
+  const job = { id: assembly.jobId, name: (assembly.job as any)?.name ?? null };
   return json({
-    assembly,
+    job,
+    assemblies: [assembly],
+    quantityItems,
     costings,
     costingStats,
     activityConsumptionMap,
@@ -188,10 +306,70 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const jobId = Number(params.jobId);
-  const assemblyId = Number(params.assemblyId);
-  if (!jobId || !assemblyId) return redirect(`/jobs/${jobId}`);
+  const raw = String(params.assemblyId || "");
+  const idList = raw
+    .split(",")
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const assemblyId = idList[0];
+  if (!jobId || !idList.length) return redirect(`/jobs/${jobId}`);
   const form = await request.formData();
+  console.log("form", form);
   const intent = form.get("_intent");
+  if (intent === "group.updateOrderedBreakdown") {
+    const orderedStr = String(form.get("orderedArr") || "{}");
+    const qpuStr = String(form.get("qpu") || "{}");
+    const activityStr = String(form.get("activity") || "{}");
+    let orderedByAssembly: Record<string, number[]> = {};
+    let qpu: Record<string, number> = {};
+    let activity: Record<string, string> = {};
+    try {
+      const obj = JSON.parse(orderedStr);
+      if (obj && typeof obj === "object") orderedByAssembly = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(qpuStr);
+      if (obj && typeof obj === "object") qpu = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(activityStr);
+      if (obj && typeof obj === "object") activity = obj;
+    } catch {}
+    // Apply ordered breakdown per assembly
+    for (const [aid, arr] of Object.entries(orderedByAssembly)) {
+      const aId = Number(aid);
+      if (!Number.isFinite(aId)) continue;
+      await prisma.assembly.update({
+        where: { id: aId },
+        data: { qtyOrderedBreakdown: Array.isArray(arr) ? (arr as any) : [] },
+      });
+    }
+    // Apply Qty/Unit updates
+    const entries = Object.entries(qpu)
+      .filter(
+        ([id, v]) => Number.isFinite(Number(id)) && Number.isFinite(Number(v))
+      )
+      .map(([id, v]) => [Number(id), Number(v)] as const);
+    for (const [cid, val] of entries) {
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { quantityPerUnit: val },
+      });
+    }
+    // Apply Activity Used updates
+    const actEntries = Object.entries(activity)
+      .filter(([id, v]) => Number.isFinite(Number(id)) && typeof v === "string")
+      .map(([id, v]) => [Number(id), String(v).toLowerCase()] as const);
+    const allowed = new Set(["cut", "make"]);
+    for (const [cid, val] of actEntries) {
+      if (!allowed.has(val)) continue;
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { activityUsed: val },
+      });
+    }
+    return redirect(`/jobs/${jobId}/assembly/${raw}`);
+  }
   if (intent === "assembly.update") {
     const name = (form.get("name") as string) || null;
     const status = (form.get("status") as string) || null;
@@ -211,8 +389,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const quantityPerUnit = form.get("quantityPerUnit")
       ? Number(form.get("quantityPerUnit"))
       : null;
-    const unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
+    let unitCost = form.get("unitCost") ? Number(form.get("unitCost")) : null;
     const notes = (form.get("notes") as string) || null;
+    // Default cost/price inputs from the product when not explicitly provided
+    if ((unitCost == null || Number.isNaN(unitCost)) && productId) {
+      const p = await prisma.product.findUnique({
+        where: { id: productId },
+        select: { costPrice: true },
+      });
+      unitCost = Number(p?.costPrice ?? 0) || 0;
+    }
     await prisma.costing.create({
       data: {
         assemblyId: assemblyId,
@@ -390,7 +576,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
   if (intent === "assembly.updateOrderedBreakdown") {
     const orderedStr = String(form.get("orderedArr") || "[]");
+    const qpuStr = String(form.get("qpu") || "{}");
+    const activityStr = String(form.get("activity") || "{}");
     let ordered: number[] = [];
+    let qpu: Record<string, number> = {};
+    let activity: Record<string, string> = {};
     try {
       const arr = JSON.parse(orderedStr);
       if (Array.isArray(arr))
@@ -398,39 +588,69 @@ export async function action({ request, params }: ActionFunctionArgs) {
           Number.isFinite(Number(n)) ? Number(n) | 0 : 0
         );
     } catch {}
+    try {
+      const obj = JSON.parse(qpuStr);
+      if (obj && typeof obj === "object") qpu = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(activityStr);
+      if (obj && typeof obj === "object") activity = obj;
+    } catch {}
+    // Apply ordered breakdown update
     await prisma.assembly.update({
       where: { id: assemblyId },
       data: { qtyOrderedBreakdown: ordered as any },
     });
+    // Apply Qty/Unit updates (if any)
+    console.log("Updating QPU for costings:", qpu);
+    const entries = Object.entries(qpu)
+      .filter(
+        ([id, v]) => Number.isFinite(Number(id)) && Number.isFinite(Number(v))
+      )
+      .map(([id, v]) => [Number(id), Number(v)] as const);
+    console.log("mapped calues", entries);
+    for (const [cid, val] of entries) {
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { quantityPerUnit: val },
+      });
+    }
+    // Apply Activity Used updates (if any)
+    console.log("Updating Activity Used for costings:", activity);
+    const actEntries = Object.entries(activity)
+      .filter(([id, v]) => Number.isFinite(Number(id)) && typeof v === "string")
+      .map(([id, v]) => [Number(id), String(v).toLowerCase()] as const);
+    const allowed = new Set(["cut", "make"]);
+    for (const [cid, val] of actEntries) {
+      if (!allowed.has(val)) continue;
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { activityUsed: val },
+      });
+    }
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
   return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
 }
 
 export default function JobAssemblyRoute() {
-  const {
-    assembly,
-    costings,
-    costingStats,
-    activityConsumptionMap,
-    activities,
-    products,
-    productVariantSet,
-  } = useLoaderData<typeof loader>();
-  // Derive job info directly from assembly loaded in this route to avoid fragile routeId coupling
-  const job = {
-    id: assembly.jobId as number,
-    name: assembly.job?.name ?? null,
-  };
+  const data = useLoaderData<typeof loader>() as any;
+  const assemblies = (data.assemblies || []) as any[];
+  const isGroup = (assemblies?.length || 0) > 1;
+
+  const job = { id: data?.job?.id as number, name: data?.job?.name ?? null };
   const log = getLogger("assembly");
-  log.debug({ assemblyId: assembly.id, jobId: job.id }, "Rendering assembly");
+  const idKey = (assemblies || []).map((a: any) => a.id).join(",");
+  log.debug({ assemblyId: idKey, jobId: job.id }, "Rendering assembly view");
 
   const nav = useNavigation();
   const submit = useSubmit();
-  const { setCurrentId, nextId, prevId } = useRecordContext();
+  const { setCurrentId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(assembly.id);
-  }, [assembly.id, setCurrentId]);
+    if (isGroup) setCurrentId(idKey);
+    else if (assemblies?.[0]?.id) setCurrentId(assemblies[0].id);
+  }, [isGroup, idKey, assemblies, setCurrentId]);
+
   // Prev/Next hotkeys handled globally in RecordProvider
   // Path building now automatic (replace last path segment with id); no custom builder needed.
   const [cutOpen, setCutOpen] = useState(false);
@@ -442,6 +662,54 @@ export default function JobAssemblyRoute() {
     fd.set("orderedArr", JSON.stringify(arr));
     submit(fd, { method: "post" });
   };
+  if (isGroup) {
+    const quantityItems = (data.quantityItems || []) as any[];
+    return (
+      <Stack gap="lg">
+        <Group justify="space-between" align="center">
+          <BreadcrumbSet
+            breadcrumbs={[
+              { label: "Jobs", href: "/jobs" },
+              { label: `Job ${job.id}`, href: `/jobs/${job.id}` },
+              {
+                label: `Assemblies ${(assemblies || [])
+                  .map((a: any) => `A${a.id}`)
+                  .join(",")}`,
+                href: `/jobs/${job.id}/assembly/${(assemblies || [])
+                  .map((a: any) => a.id)
+                  .join(",")}`,
+              },
+            ]}
+          />
+        </Group>
+        <Grid>
+          <Grid.Col span={12}>
+            <AssembliesEditor
+              mode="group"
+              job={job as any}
+              assemblies={assemblies as any}
+              quantityItems={quantityItems as any}
+              priceMultiplier={1}
+              saveIntent="group.updateOrderedBreakdown"
+              stateChangeIntent="assembly.update.fromGroup"
+              groupMovements={(data.groupMovements || []) as any}
+              groupContext={{ jobId: job.id, groupId: 0 }}
+            />
+          </Grid.Col>
+        </Grid>
+      </Stack>
+    );
+  }
+
+  const assembly = assemblies[0] as any;
+  const {
+    costings,
+    costingStats,
+    activityConsumptionMap,
+    activities,
+    products,
+    productVariantSet,
+  } = data as any;
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -456,28 +724,6 @@ export default function JobAssemblyRoute() {
           ]}
         />
         <Group gap="xs" align="center">
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const p = prevId(assembly.id as any);
-              if (p != null)
-                window.location.href = `/jobs/${job.id}/assembly/${p}`;
-            }}
-          >
-            Prev
-          </Button>
-          <Button
-            size="xs"
-            variant="default"
-            onClick={() => {
-              const n = nextId(assembly.id as any);
-              if (n != null)
-                window.location.href = `/jobs/${job.id}/assembly/${n}`;
-            }}
-          >
-            Next
-          </Button>
           <StateChangeButton
             value={(assembly as any).status || "DRAFT"}
             defaultValue={(assembly as any).status || "DRAFT"}
@@ -504,128 +750,90 @@ export default function JobAssemblyRoute() {
             </Card.Section>
             <Divider my="xs" />
             <Stack gap={6}>
-              <Group gap="md">
-                <Text fw={600} w={140}>
-                  ID
-                </Text>
-                <Text>{assembly.id}</Text>
-              </Group>
-              <Group gap="md">
-                <Text fw={600} w={140}>
-                  Name
-                </Text>
-                <Text>{assembly.name || ""}</Text>
-              </Group>
-              <Group gap="md">
-                <Text fw={600} w={140}>
-                  Job
-                </Text>
-                <Text>{job.name || job.id}</Text>
-              </Group>
-              <Group gap="md">
-                <Text fw={600} w={140}>
-                  Status
-                </Text>
-                <Text>{assembly.status || ""}</Text>
-              </Group>
+              <TextInput
+                readOnly
+                value={assembly.name || ""}
+                label="Name"
+                mod="data-autosize"
+              />
+              <TextInput
+                readOnly
+                value={job.name || job.id}
+                label="Job"
+                mod="data-autosize"
+              />
+              <TextInput
+                readOnly
+                value={assembly.status || ""}
+                label="Status"
+                mod="data-autosize"
+              />
+              <TextInput
+                readOnly
+                value={assembly.id || ""}
+                label="ID"
+                mod="data-autosize"
+              />
             </Stack>
           </Card>
         </Grid.Col>
         <Grid.Col span={7}>
-          <AssemblyQuantitiesCard
-            title="Quantities"
-            variants={{
-              labels:
-                (assembly.variantSet?.variants?.length
-                  ? assembly.variantSet.variants
-                  : productVariantSet?.variants) || [],
-              numVariants: Number((assembly as any).c_numVariants || 0) || 0,
-            }}
-            items={[
-              {
-                label: `Assembly ${assembly.id}`,
-                ordered: ((assembly as any).qtyOrderedBreakdown ||
-                  []) as number[],
-                cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
-                make: ((assembly as any).c_qtyMake_Breakdown || []) as number[],
-                pack: ((assembly as any).c_qtyPack_Breakdown || []) as number[],
-                totals: {
-                  cut: Number((assembly as any).c_qtyCut || 0),
-                  make: Number((assembly as any).c_qtyMake || 0),
-                  pack: Number((assembly as any).c_qtyPack || 0),
+          <AssembliesEditor
+            mode="assembly"
+            job={job as any}
+            assemblies={
+              [
+                {
+                  ...assembly,
+                  costings: costings as any,
+                  qtyOrderedBreakdown:
+                    (assembly as any).qtyOrderedBreakdown || [],
+                  c_qtyOrdered: (assembly as any).c_qtyOrdered ?? 0,
+                  c_qtyCut: (assembly as any).c_qtyCut ?? 0,
                 },
-              },
-            ]}
-            editableOrdered
-            onSubmitOrdered={handleSubmitOrdered}
-          />
-        </Grid.Col>
-        <Grid.Col span={12}>
-          <AssemblyCostingsTable
-            title="Costings"
-            common={costings.map((c: any) => {
-              const pid = c.product?.id || (c as any).productId || null;
-              const stats = costingStats?.[c.id] || {
-                allStock: 0,
-                locStock: 0,
-                used: 0,
-              };
-              const required = Math.max(
-                0,
-                (Number((assembly as any).c_qtyOrdered || 0) -
-                  Number((assembly as any).c_qtyCut || 0)) *
-                  Number(c.quantityPerUnit || 0)
-              );
-              // Sale tiers precedence: costing.salePriceGroup > product.salePriceGroup > product.salePriceRanges
-              const tiersFromCosting =
-                (c?.salePriceGroup?.saleRanges || []).map((r: any) => ({
-                  minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
-                  unitPrice: Number(r.price || r.unitPrice || 0) || 0,
-                })) || [];
-              const tiersFromProductGroup =
-                (c?.product?.salePriceGroup?.saleRanges || []).map(
-                  (r: any) => ({
-                    minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
-                    unitPrice: Number(r.price || r.unitPrice || 0) || 0,
-                  })
-                ) || [];
-              const tiersFromProduct =
-                (c?.product?.salePriceRanges || []).map((r: any) => ({
-                  minQty: Number(r.rangeFrom || r.minQty || 1) || 1,
-                  unitPrice: Number(r.price || r.unitPrice || 0) || 0,
-                })) || [];
-              const saleTiers = (
-                tiersFromCosting.length
-                  ? tiersFromCosting
-                  : tiersFromProductGroup.length
-                  ? tiersFromProductGroup
-                  : tiersFromProduct
-              ).sort((a: any, b: any) => a.minQty - b.minQty);
-              const priceMultiplier =
-                Number((assembly.job as any)?.company?.priceMultiplier ?? 1) ||
-                1;
-              return {
-                id: c.id,
-                productId: pid,
-                sku: c.product?.sku || null,
-                name: c.product?.name || null,
-                quantityPerUnit: Number(c.quantityPerUnit || 0) || null,
-                unitCost: Number(c.unitCost || 0) || null,
-                required,
-                stats,
-                fixedSell:
-                  c.salePricePerItem != null
-                    ? Number(c.salePricePerItem)
-                    : null,
-                taxRate: 0,
-                saleTiers,
-                priceMultiplier,
-                manualSalePrice:
-                  c.manualSalePrice != null ? Number(c.manualSalePrice) : null,
-                marginPct:
-                  c.manualMargin != null ? Number(c.manualMargin) : null,
-              };
-            })}
+              ] as any
+            }
+            quantityItems={
+              [
+                {
+                  assemblyId: assembly.id,
+                  variants: {
+                    labels:
+                      (assembly.variantSet?.variants?.length
+                        ? assembly.variantSet.variants
+                        : productVariantSet?.variants) || [],
+                    numVariants:
+                      Number((assembly as any).c_numVariants || 0) || 0,
+                  },
+                  ordered: ((assembly as any).qtyOrderedBreakdown ||
+                    []) as number[],
+                  cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
+                  make: ((assembly as any).c_qtyMake_Breakdown ||
+                    []) as number[],
+                  pack: ((assembly as any).c_qtyPack_Breakdown ||
+                    []) as number[],
+                  totals: {
+                    cut: Number((assembly as any).c_qtyCut || 0),
+                    make: Number((assembly as any).c_qtyMake || 0),
+                    pack: Number((assembly as any).c_qtyPack || 0),
+                  },
+                },
+              ] as any
+            }
+            priceMultiplier={
+              Number((assembly.job as any)?.company?.priceMultiplier ?? 1) || 1
+            }
+            costingStats={costingStats as any}
+            saveIntent="assembly.updateOrderedBreakdown"
+            stateChangeIntent="assembly.update"
+            products={products as any}
+            activities={activities as any}
+            activityConsumptionMap={activityConsumptionMap as any}
+            activityVariantLabels={
+              (assembly.variantSet?.variants?.length
+                ? (assembly.variantSet.variants as any)
+                : (productVariantSet?.variants as any)) || []
+            }
           />
         </Grid.Col>
         <Grid.Col span={12}>
@@ -806,7 +1014,12 @@ function AddCostingButton({
       <Button variant="default" onClick={() => setOpened(true)}>
         Add Costing
       </Button>
-      <Modal.Root opened={opened} onClose={() => setOpened(false)} centered>
+      <Modal.Root
+        opened={opened}
+        onClose={() => setOpened(false)}
+        centered
+        size="xl"
+      >
         <Modal.Overlay />
         <Modal.Content>
           <Modal.Header>

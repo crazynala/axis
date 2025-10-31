@@ -1,7 +1,34 @@
-import type { LoaderFunctionArgs, MetaFunction, ActionFunctionArgs } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useLoaderData, useNavigation, useSubmit, Form, useSearchParams, useNavigate } from "@remix-run/react";
-import { Stack, Title, Group, Table, Text, Card, SimpleGrid, Grid, Divider, Button, Modal, TextInput, Switch, Badge } from "@mantine/core";
+import {
+  Link,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  Form,
+  useSearchParams,
+  useNavigate,
+} from "@remix-run/react";
+import {
+  Stack,
+  Title,
+  Group,
+  Table,
+  Text,
+  Card,
+  SimpleGrid,
+  Grid,
+  Divider,
+  Button,
+  Modal,
+  TextInput,
+  Switch,
+  Badge,
+} from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
@@ -32,7 +59,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   if (!job) throw new Response("Not Found", { status: 404 });
   // Gather product details for assemblies
-  const productIds = Array.from(new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))) as number[];
+  const productIds = Array.from(
+    new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))
+  ) as number[];
   const products = productIds.length
     ? await prisma.product.findMany({
         where: { id: { in: productIds } },
@@ -44,7 +73,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
         },
       })
     : [];
-  const productsById: Record<number, any> = Object.fromEntries(products.map((p: any) => [p.id, p]));
+  const productsById: Record<number, any> = Object.fromEntries(
+    products.map((p: any) => [p.id, p])
+  );
   const customers = await prisma.company.findMany({
     where: { isCustomer: true },
     select: { id: true, name: true },
@@ -63,7 +94,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
     take: 1000,
   });
-  const groupsById: Record<number, any> = Object.fromEntries((job.assemblyGroups || []).map((g: any) => [g.id, g]));
+  const groupsById: Record<number, any> = Object.fromEntries(
+    (job.assemblyGroups || []).map((g: any) => [g.id, g])
+  );
   return json({ job, productsById, customers, productChoices, groupsById });
 }
 
@@ -80,7 +113,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
       raw[k] = v === "" ? null : v;
     }
     // Build where from config fields that have findOp metadata
-    const searchFields: any[] = [...((jobDetail as any).jobOverviewFields || []), ...((jobDetail as any).jobDateStatusLeft || []), ...((jobDetail as any).jobDateStatusRight || [])];
+    const searchFields: any[] = [
+      ...((jobDetail as any).jobOverviewFields || []),
+      ...((jobDetail as any).jobDateStatusLeft || []),
+      ...((jobDetail as any).jobDateStatusRight || []),
+    ];
     // buildWhereFromConfig(values, configs)
     const where = buildWhereFromConfig(raw as any, searchFields as any);
     const first = await prisma.job.findFirst({
@@ -109,8 +146,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
   if (intent === "job.update") {
     const data: any = {};
-    const fields = ["projectCode", "name", "status", "jobType", "endCustomerName", "customerPoNum"];
-    for (const f of fields) if (form.has(f)) data[f] = (form.get(f) as string) || null;
+    const fields = [
+      "projectCode",
+      "name",
+      "status",
+      "jobType",
+      "endCustomerName",
+      "customerPoNum",
+    ];
+    for (const f of fields)
+      if (form.has(f)) data[f] = (form.get(f) as string) || null;
     if (form.has("companyId")) {
       const raw = String(form.get("companyId") ?? "");
       if (raw === "") {
@@ -118,9 +163,32 @@ export async function action({ request, params }: ActionFunctionArgs) {
       } else {
         const cid = Number(raw);
         data.companyId = Number.isFinite(cid) ? cid : null;
+        // If a customer is being set, adopt its stock location when available
+        if (Number.isFinite(cid)) {
+          const company = await prisma.company.findUnique({
+            where: { id: cid },
+            select: { stockLocationId: true },
+          });
+          const locId = company?.stockLocationId ?? null;
+          if (locId != null) data.stockLocationId = locId;
+        }
       }
     }
-    const dateFields = ["customerOrderDate", "targetDate", "dropDeadDate", "cutSubmissionDate"];
+    // Honor explicit stockLocationId from form (allows clear or override)
+    if (form.has("stockLocationId")) {
+      const raw = String(form.get("stockLocationId") ?? "");
+      if (raw === "") data.stockLocationId = null;
+      else {
+        const lid = Number(raw);
+        data.stockLocationId = Number.isFinite(lid) ? lid : null;
+      }
+    }
+    const dateFields = [
+      "customerOrderDate",
+      "targetDate",
+      "dropDeadDate",
+      "cutSubmissionDate",
+    ];
     for (const df of dateFields)
       if (form.has(df)) {
         const v = form.get(df) as string;
@@ -144,7 +212,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
     try {
       const arr = JSON.parse(arrStr);
       if (Array.isArray(arr)) {
-        const ints = arr.map((n: any) => (Number.isFinite(Number(n)) ? Number(n) | 0 : 0));
+        const ints = arr.map((n: any) =>
+          Number.isFinite(Number(n)) ? Number(n) | 0 : 0
+        );
         await prisma.assembly.update({
           where: { id: assemblyId },
           data: { qtyOrderedBreakdown: ints as any },
@@ -187,7 +257,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function JobDetailRoute() {
-  const { job, productsById, customers, productChoices, groupsById } = useLoaderData<typeof loader>();
+  const { job, productsById, customers, productChoices, groupsById } =
+    useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(job.id);
@@ -219,6 +290,8 @@ export default function JobDetailRoute() {
     customerPoNum: j.customerPoNum || "",
     // Normalize to empty string so form value matches defaults and isn't marked dirty
     companyId: (j.companyId ?? j.company?.id ?? "") as any,
+    // Consolidated stock location (prefer new field; fallback to legacy locationInId)
+    stockLocationId: (j.stockLocationId ?? j.locationInId ?? "") as any,
     customerOrderDate: j.customerOrderDate?.slice?.(0, 10) || "",
     targetDate: j.targetDate?.slice?.(0, 10) || "",
     dropDeadDate: j.dropDeadDate?.slice?.(0, 10) || "",
@@ -231,7 +304,14 @@ export default function JobDetailRoute() {
   const save = (values: any) => {
     const fd = new FormData();
     fd.set("_intent", "job.update");
-    const simple = ["projectCode", "name", "status", "jobType", "endCustomerName", "customerPoNum"];
+    const simple = [
+      "projectCode",
+      "name",
+      "status",
+      "jobType",
+      "endCustomerName",
+      "customerPoNum",
+    ];
     simple.forEach((k) => {
       if (values[k] != null) fd.set(k, values[k]);
     });
@@ -239,6 +319,14 @@ export default function JobDetailRoute() {
     if (Object.prototype.hasOwnProperty.call(values, "companyId")) {
       const raw = values.companyId;
       fd.set("companyId", raw === undefined || raw === null ? "" : String(raw));
+    }
+    // Always include stockLocationId so clearing propagates
+    if (Object.prototype.hasOwnProperty.call(values, "stockLocationId")) {
+      const raw = values.stockLocationId;
+      fd.set(
+        "stockLocationId",
+        raw === undefined || raw === null ? "" : String(raw)
+      );
     }
     const toDateString = (v: any) => {
       if (!v) return "";
@@ -251,7 +339,12 @@ export default function JobDetailRoute() {
       }
       return "";
     };
-    ["customerOrderDate", "targetDate", "dropDeadDate", "cutSubmissionDate"].forEach((df) => {
+    [
+      "customerOrderDate",
+      "targetDate",
+      "dropDeadDate",
+      "cutSubmissionDate",
+    ].forEach((df) => {
       if (Object.prototype.hasOwnProperty.call(values, df)) {
         fd.set(df, toDateString(values[df]));
       }
@@ -300,7 +393,9 @@ export default function JobDetailRoute() {
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();
     if (!q) return customers;
-    return customers.filter((c: any) => (c.name || "").toLowerCase().includes(q));
+    return customers.filter((c: any) =>
+      (c.name || "").toLowerCase().includes(q)
+    );
   }, [customers, customerSearch]);
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(false);
@@ -308,7 +403,9 @@ export default function JobDetailRoute() {
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
     if (!q) return productChoices;
-    return productChoices.filter((p: any) => ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q));
+    return productChoices.filter((p: any) =>
+      ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
+    );
   }, [productChoices, productSearch]);
 
   useEffect(() => {
@@ -316,8 +413,13 @@ export default function JobDetailRoute() {
     const labels: string[] = Array.isArray(qtyAsm.labels) ? qtyAsm.labels : [];
     const cols = getVariantLabels(labels, qtyAsm.c_numVariants as any);
     setQtyLabels(cols);
-    const orderedRaw: number[] = Array.isArray(qtyAsm.qtyOrderedBreakdown) ? qtyAsm.qtyOrderedBreakdown : [];
-    const initial = Array.from({ length: cols.length }, (_, i) => orderedRaw[i] || 0);
+    const orderedRaw: number[] = Array.isArray(qtyAsm.qtyOrderedBreakdown)
+      ? qtyAsm.qtyOrderedBreakdown
+      : [];
+    const initial = Array.from(
+      { length: cols.length },
+      (_, i) => orderedRaw[i] || 0
+    );
     setOrderedArr(initial);
   }, [qtyAsm]);
 
@@ -331,7 +433,8 @@ export default function JobDetailRoute() {
     setSelectedAsmIds((prev) => {
       const has = prev.includes(id);
       if (on === true || (!has && on === undefined)) return [...prev, id];
-      if (on === false || (has && on === undefined)) return prev.filter((x) => x !== id);
+      if (on === false || (has && on === undefined))
+        return prev.filter((x) => x !== id);
       return prev;
     });
   }, []);
@@ -355,7 +458,12 @@ export default function JobDetailRoute() {
       </Group>
 
       <div>
-        <JobDetailForm mode="edit" form={jobForm as any} job={job} openCustomerModal={() => setCustomerModalOpen(true)} />
+        <JobDetailForm
+          mode="edit"
+          form={jobForm as any}
+          job={job}
+          openCustomerModal={() => setCustomerModalOpen(true)}
+        />
       </div>
 
       <JobFindManager jobSample={job} />
@@ -376,8 +484,16 @@ export default function JobDetailRoute() {
             <Group gap="xs">
               <Form method="post">
                 <input type="hidden" name="_intent" value="assembly.group" />
-                <input type="hidden" name="assemblyIds" value={selectedAsmIds.join(",")} />
-                <Button type="submit" variant="default" disabled={selectedAsmIds.length < 2}>
+                <input
+                  type="hidden"
+                  name="assemblyIds"
+                  value={selectedAsmIds.join(",")}
+                />
+                <Button
+                  type="submit"
+                  variant="default"
+                  disabled={selectedAsmIds.length < 2}
+                >
                   Group
                 </Button>
               </Form>
@@ -401,13 +517,27 @@ export default function JobDetailRoute() {
             </Table.Thead>
             <Table.Tbody>
               {(job.assemblies || []).map((a: any) => {
-                const p = a.productId ? (productsById as any)[a.productId] : null;
+                const p = a.productId
+                  ? (productsById as any)[a.productId]
+                  : null;
                 return (
                   <Table.Tr key={a.id}>
                     <Table.Td>
-                      <input type="checkbox" checked={selectedAsmIds.includes(a.id)} onChange={(e) => toggleSelected(a.id, e.currentTarget.checked)} />
+                      <input
+                        type="checkbox"
+                        checked={selectedAsmIds.includes(a.id)}
+                        onChange={(e) =>
+                          toggleSelected(a.id, e.currentTarget.checked)
+                        }
+                      />
                     </Table.Td>
-                    <Table.Td>{a.assemblyGroupId ? <Link to={`group/${a.assemblyGroupId}`}>{a.id}</Link> : <Link to={`assembly/${a.id}`}>{a.id}</Link>}</Table.Td>
+                    <Table.Td>
+                      {a.assemblyGroupId ? (
+                        <Link to={`group/${a.assemblyGroupId}`}>{a.id}</Link>
+                      ) : (
+                        <Link to={`assembly/${a.id}`}>{a.id}</Link>
+                      )}
+                    </Table.Td>
                     <Table.Td>{p?.sku || ""}</Table.Td>
                     <Table.Td>{p?.name || ""}</Table.Td>
                     <Table.Td>
@@ -415,9 +545,22 @@ export default function JobDetailRoute() {
                         <Group gap={6} wrap="nowrap">
                           <Badge variant="light">G{a.assemblyGroupId}</Badge>
                           <Form method="post">
-                            <input type="hidden" name="_intent" value="assembly.ungroupOne" />
-                            <input type="hidden" name="assemblyId" value={a.id} />
-                            <Button size="xs" variant="subtle" color="red" type="submit">
+                            <input
+                              type="hidden"
+                              name="_intent"
+                              value="assembly.ungroupOne"
+                            />
+                            <input
+                              type="hidden"
+                              name="assemblyId"
+                              value={a.id}
+                            />
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              color="red"
+                              type="submit"
+                            >
                               Ungroup
                             </Button>
                           </Form>
@@ -432,7 +575,8 @@ export default function JobDetailRoute() {
                         size="xs"
                         variant="subtle"
                         onClick={() => {
-                          const labels = (p?.variantSet?.variants || []) as string[];
+                          const labels = (p?.variantSet?.variants ||
+                            []) as string[];
                           setQtyAsm({ ...a, labels });
                           setQtyModalOpen(true);
                         }}
@@ -445,11 +589,20 @@ export default function JobDetailRoute() {
                         size="xs"
                         variant="subtle"
                         onClick={() => {
-                          const labels = (p?.variantSet?.variants || []) as string[];
+                          const labels = (p?.variantSet?.variants ||
+                            []) as string[];
                           // use existing variant logic for lengths
-                          const cols = getVariantLabels(labels, p?.variantSet?.variants?.length as any);
-                          const current = Array.isArray(a.qtyCutBreakdown) ? a.qtyCutBreakdown : [];
-                          const initial = Array.from({ length: cols.length }, (_, i) => current[i] || 0);
+                          const cols = getVariantLabels(
+                            labels,
+                            p?.variantSet?.variants?.length as any
+                          );
+                          const current = Array.isArray(a.qtyCutBreakdown)
+                            ? a.qtyCutBreakdown
+                            : [];
+                          const initial = Array.from(
+                            { length: cols.length },
+                            (_, i) => current[i] || 0
+                          );
                           setCutAsm({ ...a, labels: cols });
                           setCutArr(initial);
                           setCutModalOpen(true);
@@ -470,13 +623,21 @@ export default function JobDetailRoute() {
       )}
 
       {/* Customer Picker Modal */}
-      <Modal.Root opened={customerModalOpen} onClose={() => setCustomerModalOpen(false)} centered>
+      <Modal.Root
+        opened={customerModalOpen}
+        onClose={() => setCustomerModalOpen(false)}
+        centered
+      >
         <Modal.Overlay />
         <Modal.Content>
           <Modal.Header>
             <Stack>
               <Text>Select Customer</Text>
-              <TextInput placeholder="Search customers..." value={customerSearch} onChange={(e) => setCustomerSearch(e.currentTarget.value)} />
+              <TextInput
+                placeholder="Search customers..."
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.currentTarget.value)}
+              />
             </Stack>
           </Modal.Header>
           <Modal.Body>
@@ -498,19 +659,46 @@ export default function JobDetailRoute() {
       </Modal.Root>
 
       {/* Product Picker Modal for new Assembly */}
-      <Modal opened={productModalOpen} onClose={() => setProductModalOpen(false)} title="Add Assembly from Product" size="xl" centered>
+      <Modal
+        opened={productModalOpen}
+        onClose={() => setProductModalOpen(false)}
+        title="Add Assembly from Product"
+        size="xl"
+        centered
+      >
         <Stack>
           <Group align="flex-end" justify="space-between">
-            <TextInput placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.currentTarget.value)} w={320} />
+            <TextInput
+              placeholder="Search products..."
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.currentTarget.value)}
+              w={320}
+            />
             <Group>
-              <Switch label="Customer" checked={customerFilter} onChange={(e) => setCustomerFilter(e.currentTarget.checked)} />
-              <Switch label="Assembly" checked={assemblyOnly} onChange={(e) => setAssemblyOnly(e.currentTarget.checked)} />
+              <Switch
+                label="Customer"
+                checked={customerFilter}
+                onChange={(e) => setCustomerFilter(e.currentTarget.checked)}
+              />
+              <Switch
+                label="Assembly"
+                checked={assemblyOnly}
+                onChange={(e) => setAssemblyOnly(e.currentTarget.checked)}
+              />
             </Group>
           </Group>
           <div style={{ maxHeight: 420, overflow: "auto" }}>
             {filteredProducts
-              .filter((p: any) => !customerFilter || (jobForm.watch("companyId") ? p.customerId === jobForm.watch("companyId") : true))
-              .filter((p: any) => !assemblyOnly || (p._count?.productLines ?? 0) > 0)
+              .filter(
+                (p: any) =>
+                  !customerFilter ||
+                  (jobForm.watch("companyId")
+                    ? p.customerId === jobForm.watch("companyId")
+                    : true)
+              )
+              .filter(
+                (p: any) => !assemblyOnly || (p._count?.productLines ?? 0) > 0
+              )
               .map((p: any) => (
                 <Group
                   key={p.id}
@@ -551,9 +739,17 @@ export default function JobDetailRoute() {
               setQtyModalOpen(false);
             }}
           >
-            <input type="hidden" name="_intent" value="assembly.updateOrderedBreakdown" />
+            <input
+              type="hidden"
+              name="_intent"
+              value="assembly.updateOrderedBreakdown"
+            />
             <input type="hidden" name="assemblyId" value={qtyAsm.id} />
-            <input type="hidden" name="orderedArr" value={JSON.stringify(orderedArr)} />
+            <input
+              type="hidden"
+              name="orderedArr"
+              value={JSON.stringify(orderedArr)}
+            />
             <Table withTableBorder withColumnBorders striped>
               <Table.Thead>
                 <Table.Tr>
@@ -574,8 +770,15 @@ export default function JobDetailRoute() {
                         type="number"
                         value={orderedArr[i]}
                         onChange={(e) => {
-                          const v = e.currentTarget.value === "" ? 0 : Number(e.currentTarget.value);
-                          setOrderedArr((prev) => prev.map((x, idx) => (idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x)));
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setOrderedArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
                         }}
                       />
                     </Table.Td>
@@ -610,7 +813,11 @@ export default function JobDetailRoute() {
               setCutModalOpen(false);
             }}
           >
-            <input type="hidden" name="_intent" value="assembly.updateCutBreakdown" />
+            <input
+              type="hidden"
+              name="_intent"
+              value="assembly.updateCutBreakdown"
+            />
             <input type="hidden" name="assemblyId" value={cutAsm.id} />
             <input type="hidden" name="cutArr" value={JSON.stringify(cutArr)} />
             <Table withTableBorder withColumnBorders striped>
@@ -633,8 +840,15 @@ export default function JobDetailRoute() {
                         type="number"
                         value={cutArr[i]}
                         onChange={(e) => {
-                          const v = e.currentTarget.value === "" ? 0 : Number(e.currentTarget.value);
-                          setCutArr((prev) => prev.map((x, idx) => (idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x)));
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setCutArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
                         }}
                       />
                     </Table.Td>

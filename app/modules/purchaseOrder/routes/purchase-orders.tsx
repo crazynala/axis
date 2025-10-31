@@ -6,6 +6,7 @@ import { getLogger } from "@aa/timber";
 import { useEffect } from "react";
 import { useRecords } from "../../../base/record/RecordContext";
 import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
+import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const log = getLogger("purchase-orders");
@@ -73,3 +74,13 @@ export default function PurchaseOrdersLayout() {
     </>
   );
 }
+
+export const shouldRevalidate = makeModuleShouldRevalidate("/purchase-orders", [
+  // add any find/watch keys for PO module when available
+  "view",
+  "sort",
+  "dir",
+  "perPage",
+  "q",
+  "findReqs",
+]);

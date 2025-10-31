@@ -216,13 +216,21 @@ export function AssemblyActivityModal(props: {
   }, [opened, activityId, groupDefaults]);
 
   const eligibleCostings = useMemo(() => {
-    return (costings || []).filter(
+    const eligibleCostings = (costings || []).filter(
       (c) =>
         (c.usageType || (c as any)) &&
         String(c.usageType || (c as any).activityUsed || "").toLowerCase() ===
           activityType &&
         !!(c.quantityPerUnit && c.quantityPerUnit !== 0)
     );
+    // console.log(
+    //   "Eligible costings for activity type",
+    //   activityType,
+    //   eligibleCostings,
+    //   "all costings",
+    //   costings
+    // );
+    return eligibleCostings;
   }, [costings, activityType]);
 
   // Open first panel by default when modal opens and costings are ready
@@ -242,6 +250,7 @@ export function AssemblyActivityModal(props: {
     costingId: number,
     productId: number | null | undefined
   ) {
+    console.log("!! Loading batches for costing", costingId, productId);
     if (!productId) return;
     if (loadingCosting[costingId]) return;
     setLoadingCosting((s) => ({ ...s, [costingId]: true }));
@@ -276,6 +285,8 @@ export function AssemblyActivityModal(props: {
     <Modal
       opened={opened}
       onClose={onClose}
+      closeOnClickOutside={false}
+      withCloseButton={mode === "edit"}
       title={
         mode === "edit"
           ? "Edit Activity"
@@ -283,7 +294,7 @@ export function AssemblyActivityModal(props: {
           ? "Record Cut"
           : "Record Activity"
       }
-      size="xl"
+      size="xxl"
       centered
     >
       <form

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "@remix-run/react";
 import { ActionIcon, Tooltip } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
@@ -10,6 +10,22 @@ export function CompanyFindManagerNew() {
   const navigate = useNavigate();
   const { registerFindCallback } = useFind();
   const [opened, setOpened] = useState(false);
+  const initialValues = useMemo(() => {
+    const keys = [
+      "name",
+      "notes",
+      "isCarrier",
+      "isCustomer",
+      "isSupplier",
+      "isInactive",
+    ];
+    const obj: Record<string, any> = {};
+    keys.forEach((k) => {
+      const v = sp.get(k);
+      if (v !== null && v !== "") obj[k] = v;
+    });
+    return obj;
+  }, [sp]);
 
   useEffect(
     () => registerFindCallback(() => setOpened(true)),
@@ -46,7 +62,12 @@ export function CompanyFindManagerNew() {
           <IconSearch size={18} />
         </ActionIcon>
       </Tooltip>
-      <CompanyFindModal opened={opened} onClose={close} onSearch={onSearch} />
+      <CompanyFindModal
+        opened={opened}
+        onClose={close}
+        onSearch={onSearch}
+        initialValues={initialValues}
+      />
     </>
   );
 }

@@ -1,4 +1,8 @@
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type {
+  LoaderFunctionArgs,
+  MetaFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useSubmit } from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
@@ -12,9 +16,14 @@ import {
   Stack,
   Title,
 } from "@mantine/core";
-import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
-import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
-import { useMemo, useState } from "react";
+import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
+import {
+  buildCostingRows,
+  canEditQpuDefault,
+} from "~/modules/job/services/costingsView";
+import { useMemo, useState, useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { useInitGlobalFormContext } from "@aa/timber";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
@@ -95,25 +104,15 @@ export async function loader({ params }: LoaderFunctionArgs) {
   // Clean unified view for accordion table: flatten all assembly costings into one list.
   // Accordion grouping will be handled in the table component by productId.
   const unifiedRows = assemblies.flatMap((a: any) =>
-    (a.costings || []).map((c: any) => {
-      const productId = c?.product?.id || (c as any)?.productId || null;
-      const required = Math.max(
-        0,
-        (Number((a as any).c_qtyOrdered || 0) -
-          Number((a as any).c_qtyCut || 0)) *
-          Number(c.quantityPerUnit || 0)
-      );
-      return {
-        id: c.id,
-        assemblyId: a.id,
-        productId,
-        sku: c.product?.sku || null,
-        name: c.product?.name || null,
-        quantityPerUnit: Number(c.quantityPerUnit || 0) || null,
-        unitCost: Number(c.unitCost || 0) || null,
-        required,
-        stats: { locStock: 0, allStock: 0, used: 0 },
-      };
+    buildCostingRows({
+      assemblyId: a.id,
+      costings: (a.costings || []) as any,
+      requiredInputs: {
+        qtyOrdered: (a as any).c_qtyOrdered ?? 0,
+        qtyCut: (a as any).c_qtyCut ?? 0,
+      },
+      priceMultiplier: 1,
+      costingStats: undefined,
     })
   );
   // Fetch recent group-level movements
@@ -132,10 +131,64 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
 }
 
-export async function action({ request, params }: LoaderFunctionArgs) {
+export async function action({ request, params }: ActionFunctionArgs) {
   const jobId = Number(params.jobId);
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  if (intent === "group.updateOrderedBreakdown") {
+    const orderedStr = String(form.get("orderedArr") || "{}");
+    const qpuStr = String(form.get("qpu") || "{}");
+    const activityStr = String(form.get("activity") || "{}");
+    let orderedByAssembly: Record<string, number[]> = {};
+    let qpu: Record<string, number> = {};
+    let activity: Record<string, string> = {};
+    try {
+      const obj = JSON.parse(orderedStr);
+      if (obj && typeof obj === "object") orderedByAssembly = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(qpuStr);
+      if (obj && typeof obj === "object") qpu = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(activityStr);
+      if (obj && typeof obj === "object") activity = obj;
+    } catch {}
+    // Apply ordered breakdown per assembly
+    for (const [aid, arr] of Object.entries(orderedByAssembly)) {
+      const assemblyId = Number(aid);
+      if (!Number.isFinite(assemblyId)) continue;
+      await prisma.assembly.update({
+        where: { id: assemblyId },
+        data: { qtyOrderedBreakdown: Array.isArray(arr) ? (arr as any) : [] },
+      });
+    }
+    // Apply Qty/Unit updates (if any)
+    const entries = Object.entries(qpu)
+      .filter(
+        ([id, v]) => Number.isFinite(Number(id)) && Number.isFinite(Number(v))
+      )
+      .map(([id, v]) => [Number(id), Number(v)] as const);
+    for (const [cid, val] of entries) {
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { quantityPerUnit: val },
+      });
+    }
+    // Apply Activity Used updates (if any)
+    const actEntries = Object.entries(activity)
+      .filter(([id, v]) => Number.isFinite(Number(id)) && typeof v === "string")
+      .map(([id, v]) => [Number(id), String(v).toLowerCase()] as const);
+    const allowed = new Set(["cut", "make"]);
+    for (const [cid, val] of actEntries) {
+      if (!allowed.has(val)) continue;
+      await prisma.costing.update({
+        where: { id: cid },
+        data: { activityUsed: val },
+      });
+    }
+    return json({ ok: true });
+  }
   if (intent === "assembly.update.fromGroup") {
     const assemblyId = Number(form.get("assemblyId"));
     const name = (form.get("name") as string) || null;
@@ -283,6 +336,99 @@ export default function AssemblyGroupRoute() {
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const [cutOpen, setCutOpen] = useState(false);
+  // RHF for inline group edits mirroring assembly fields
+  const editForm = useForm<{
+    orderedByAssembly: Record<string, number[]>;
+    qpu: Record<string, number>;
+    activity: Record<string, string>;
+  }>({
+    defaultValues: {
+      orderedByAssembly: Object.fromEntries(
+        (assemblies as any[]).map((a: any) => [
+          String(a.id),
+          ((a as any).qtyOrderedBreakdown || []) as number[],
+        ])
+      ) as any,
+      qpu: Object.fromEntries(
+        (assemblies as any[])
+          .flatMap((a: any) => a.costings || [])
+          .map((c: any) => [String(c.id), Number(c.quantityPerUnit || 0) || 0])
+      ) as any,
+      activity: Object.fromEntries(
+        (assemblies as any[])
+          .flatMap((a: any) => a.costings || [])
+          .map((c: any) => [
+            String(c.id),
+            String(c.activityUsed ?? "").toLowerCase(),
+          ])
+      ) as any,
+    },
+  });
+  useEffect(() => {
+    // Reset when group changes (or after save)
+    editForm.reset(
+      {
+        orderedByAssembly: Object.fromEntries(
+          (assemblies as any[]).map((a: any) => [
+            String(a.id),
+            ((a as any).qtyOrderedBreakdown || []) as number[],
+          ])
+        ) as any,
+        qpu: Object.fromEntries(
+          (assemblies as any[])
+            .flatMap((a: any) => a.costings || [])
+            .map((c: any) => [
+              String(c.id),
+              Number(c.quantityPerUnit || 0) || 0,
+            ])
+        ) as any,
+        activity: Object.fromEntries(
+          (assemblies as any[])
+            .flatMap((a: any) => a.costings || [])
+            .map((c: any) => [
+              String(c.id),
+              String(c.activityUsed ?? "").toLowerCase(),
+            ])
+        ) as any,
+      },
+      { keepDirty: false }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id]);
+  const saveUpdate = () => {
+    const fd = new FormData();
+    fd.set("_intent", "group.updateOrderedBreakdown");
+    fd.set(
+      "orderedArr",
+      JSON.stringify(editForm.getValues("orderedByAssembly"))
+    );
+    fd.set("qpu", JSON.stringify(editForm.getValues("qpu")));
+    fd.set("activity", JSON.stringify(editForm.getValues("activity")));
+    submit(fd, { method: "post" });
+  };
+  useInitGlobalFormContext(editForm as any, saveUpdate, () =>
+    editForm.reset({
+      orderedByAssembly: Object.fromEntries(
+        (assemblies as any[]).map((a: any) => [
+          String(a.id),
+          ((a as any).qtyOrderedBreakdown || []) as number[],
+        ])
+      ) as any,
+      qpu: Object.fromEntries(
+        (assemblies as any[])
+          .flatMap((a: any) => a.costings || [])
+          .map((c: any) => [String(c.id), Number(c.quantityPerUnit || 0) || 0])
+      ) as any,
+      activity: Object.fromEntries(
+        (assemblies as any[])
+          .flatMap((a: any) => a.costings || [])
+          .map((c: any) => [
+            String(c.id),
+            String(c.activityUsed ?? "").toLowerCase(),
+          ])
+      ) as any,
+    })
+  );
   // Use first assembly for labels/costings context; movements will be recorded at group level
   const firstAssembly = (assemblies as any[])[0] as any;
   const getItemFor = (aid: number) =>
@@ -330,32 +476,18 @@ export default function AssemblyGroupRoute() {
         </Group>
       </Card>
       <Grid>
-        {assemblies.map((a: any) => {
-          const item = quantityItems.find((i: any) => i.assemblyId === a.id)!;
-          return (
-            <Grid.Col span={6} key={a.id}>
-              <AssemblyQuantitiesCard
-                title={`Quantities — Assembly ${a.id}`}
-                variants={item.variants}
-                items={[
-                  {
-                    label: `Assembly ${a.id}`,
-                    ordered: item.ordered,
-                    cut: item.cut,
-                    make: item.make,
-                    pack: item.pack,
-                    totals: item.totals,
-                  },
-                ]}
-              />
-            </Grid.Col>
-          );
-        })}
         <Grid.Col span={12}>
-          <AssemblyCostingsTable
-            title="Costings (Group)"
-            common={commonRows as any}
-            accordionByProduct
+          <AssembliesEditor
+            mode="group"
+            job={job as any}
+            assemblies={assemblies as any}
+            quantityItems={quantityItems as any}
+            priceMultiplier={1}
+            costingStats={undefined}
+            saveIntent="group.updateOrderedBreakdown"
+            stateChangeIntent="assembly.update.fromGroup"
+            groupMovements={groupMovements as any}
+            groupContext={{ jobId: job.id, groupId: group.id }}
           />
         </Grid.Col>
         <Grid.Col span={12}>

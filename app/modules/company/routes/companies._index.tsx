@@ -1,31 +1,38 @@
 import type { MetaFunction } from "@remix-run/node";
-import { Link, useNavigation, useRouteLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import {
+  Link,
+  useNavigation,
+  useRouteLoaderData,
+  useNavigate,
+  useSearchParams,
+} from "@remix-run/react";
 import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
 import { BreadcrumbSet } from "../../../../packages/timber/dist";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecordContext } from "../../../base/record/RecordContext";
-import { SavedViews } from "../../../components/find/SavedViews";
+import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
 export default function CompaniesIndexRoute() {
-  const { idList, idListComplete, initialRows, total, views, activeView } = useRouteLoaderData<{
-    idList: number[];
-    idListComplete: boolean;
-    initialRows: any[];
-    total: number;
-    views?: any[];
-    activeView?: string | null;
-  }>("modules/company/routes/companies") ?? {
-    idList: [],
-    idListComplete: true,
-    initialRows: [],
-    total: 0,
-    views: [],
-    activeView: null,
-  };
+  const { idList, idListComplete, initialRows, total, views, activeView } =
+    useRouteLoaderData<{
+      idList: number[];
+      idListComplete: boolean;
+      initialRows: any[];
+      total: number;
+      views?: any[];
+      activeView?: string | null;
+    }>("modules/company/routes/companies") ?? {
+      idList: [],
+      idListComplete: true,
+      initialRows: [],
+      total: 0,
+      views: [],
+      activeView: null,
+    };
   const nav = useNavigation();
   const fetching = nav.state !== "idle"; // only reflects URL changes; row fetches are separate
   const { state, setIdList, addRows, currentId } = useRecordContext();
@@ -34,7 +41,8 @@ export default function CompaniesIndexRoute() {
   // Seed/override RecordContext with loader-provided idList + initialRows so sorting/filtering take effect
   useEffect(() => {
     setIdList("companies", idList, idListComplete);
-    if (initialRows?.length) addRows("companies", initialRows, { updateRecordsArray: true });
+    if (initialRows?.length)
+      addRows("companies", initialRows, { updateRecordsArray: true });
   }, [idList, idListComplete, initialRows, setIdList, addRows]);
   // useHybridWindow handles window sizing + hydration (records = current window)
   const {
@@ -62,7 +70,9 @@ export default function CompaniesIndexRoute() {
       accessor: "name",
       title: "Name",
       sortable: true,
-      render: (r: any) => <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>,
+      render: (r: any) => (
+        <Link to={`/companies/${r.id}`}>{r.name || `Company #${r.id}`}</Link>
+      ),
     },
     {
       accessor: "isCarrier",
@@ -97,12 +107,31 @@ export default function CompaniesIndexRoute() {
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
-        <BreadcrumbSet breadcrumbs={[{ label: "Companies", href: "/companies" }]} />
-        <Button component="a" href="/companies/new" variant="filled" color="blue">
+        <BreadcrumbSet
+          breadcrumbs={[{ label: "Companies", href: "/companies" }]}
+        />
+        <Button
+          component="a"
+          href="/companies/new"
+          variant="filled"
+          color="blue"
+        >
           New Company
         </Button>
       </Group>
-      <SavedViews views={(views as any) || []} activeView={(activeView as any) || null} />
+      <FindRibbonAuto
+        views={(views as any) || []}
+        activeView={(activeView as any) || null}
+        labelMap={{
+          id: "ID",
+          name: "Name",
+          notes: "Notes",
+          isCarrier: "Carrier",
+          isCustomer: "Customer",
+          isSupplier: "Supplier",
+          isInactive: "Archived",
+        }}
+      />
       <section>
         <VirtualizedNavDataTable
           records={records as any}
@@ -114,7 +143,10 @@ export default function CompaniesIndexRoute() {
               direction: (sp.get("dir") as any) || "asc",
             } as any
           }
-          onSortStatusChange={(s: { columnAccessor: string; direction: "asc" | "desc" }) => {
+          onSortStatusChange={(s: {
+            columnAccessor: string;
+            direction: "asc" | "desc";
+          }) => {
             const next = new URLSearchParams(sp);
             next.set("sort", s.columnAccessor);
             next.set("dir", s.direction);
@@ -129,7 +161,15 @@ export default function CompaniesIndexRoute() {
           onReachEnd={() => {
             if (!atEnd) requestMore();
           }}
-          footer={atEnd ? <span style={{ fontSize: 12 }}>End of results ({total})</span> : rowFetching ? <span>Loading…</span> : <span style={{ fontSize: 11 }}>Scroll to load more…</span>}
+          footer={
+            atEnd ? (
+              <span style={{ fontSize: 12 }}>End of results ({total})</span>
+            ) : rowFetching ? (
+              <span>Loading…</span>
+            ) : (
+              <span style={{ fontSize: 11 }}>Scroll to load more…</span>
+            )
+          }
         />
       </section>
     </Stack>

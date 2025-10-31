@@ -1,7 +1,18 @@
 import React from "react";
 import { Controller, type UseFormReturn } from "react-hook-form";
 import { DatePickerInput } from "@mantine/dates";
-import { TextInput, Select, Group, SegmentedControl, Checkbox, Indicator, Input, CloseButton, Combobox, useCombobox } from "@mantine/core";
+import {
+  TextInput,
+  Select,
+  Group,
+  SegmentedControl,
+  Checkbox,
+  Indicator,
+  Input,
+  CloseButton,
+  Combobox,
+  useCombobox,
+} from "@mantine/core";
 import { useOptions } from "../options/OptionsContext";
 import { IconEditCircle } from "@tabler/icons-react";
 
@@ -10,7 +21,15 @@ export type FieldMode = "edit" | "find" | "create";
 export type FieldConfig = {
   name: string;
   label: string;
-  widget?: "text" | "select" | "idStatic" | "triBool" | "numberRange" | "date" | "computed" | "defaultOverride";
+  widget?:
+    | "text"
+    | "select"
+    | "idStatic"
+    | "triBool"
+    | "numberRange"
+    | "date"
+    | "computed"
+    | "defaultOverride";
   // optional semantic type hint (e.g., "date") used for defaults
   type?: string;
   findOp?: "contains" | "equals" | "range" | string;
@@ -24,7 +43,13 @@ export type FieldConfig = {
   rangeFields?: { min?: string; max?: string };
   // computed (display-only) widget props
   deps?: string[]; // names to watch to refresh computed output (RenderGroup already watches all; this can be used for clarity)
-  compute?: (args: { form: UseFormReturn<any>; mode: FieldMode; field: FieldConfig; ctx?: RenderContext; values: any }) => React.ReactNode;
+  compute?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+    values: any;
+  }) => React.ReactNode;
   // defaultOverride widget props
   overrideName?: string; // the editable field name that will be submitted
   defaultName?: string; // fallback: read this field's value when override empty
@@ -34,10 +59,25 @@ export type FieldConfig = {
   inputType?: string; // input type for override editor (e.g., number)
   placeholder?: string;
   // Optional predicate to conditionally display this field
-  showIf?: (args: { form: UseFormReturn<any>; mode: FieldMode; field: FieldConfig; ctx?: RenderContext }) => boolean;
-  render?: (args: { form: UseFormReturn<any>; mode: FieldMode; field: FieldConfig; ctx?: RenderContext }) => React.ReactNode;
+  showIf?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
+  render?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => React.ReactNode;
   // Optional rightSection content for inputs (ActionIcon, etc.)
-  rightSection?: (args: { form: UseFormReturn<any>; mode: FieldMode; field: FieldConfig; ctx?: RenderContext }) => React.ReactNode;
+  rightSection?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => React.ReactNode;
 };
 
 export type RenderContext = {
@@ -48,22 +88,37 @@ export type RenderContext = {
 };
 
 // Hoisted renderer for defaultOverride to avoid remounting on each parent render
-function DefaultOverrideRenderer({ form, field, mode, ctx }: { form: UseFormReturn<any>; field: FieldConfig; mode: FieldMode; ctx?: RenderContext }) {
+function DefaultOverrideRenderer({
+  form,
+  field,
+  mode,
+  ctx,
+}: {
+  form: UseFormReturn<any>;
+  field: FieldConfig;
+  mode: FieldMode;
+  ctx?: RenderContext;
+}) {
   const common: any = { label: field.label, mod: "data-autosize" };
   const curOverrideName = field.overrideName as string | undefined;
   const sticky = field.sticky ?? true;
   const format = field.format || ((v: any) => (v != null ? String(v) : ""));
   const inputType = field.inputType ?? "number";
   const placeholder = field.placeholder ?? "Enter override";
-  const overrideVal = curOverrideName ? (form.watch(curOverrideName as any) as any) : undefined;
+  const overrideVal = curOverrideName
+    ? (form.watch(curOverrideName as any) as any)
+    : undefined;
   const computeDefaultVal = React.useCallback(() => {
-    if (field.computeDefault) return field.computeDefault(form.getValues(), ctx);
+    if (field.computeDefault)
+      return field.computeDefault(form.getValues(), ctx);
     if (field.defaultName) return (form.getValues() as any)[field.defaultName];
     return undefined;
   }, [field, form, ctx]);
   const defaultVal = computeDefaultVal();
   const hasOverride = overrideVal != null && String(overrideVal) !== "";
-  const [editing, setEditing] = React.useState<boolean>(sticky ? !!hasOverride : false);
+  const [editing, setEditing] = React.useState<boolean>(
+    sticky ? !!hasOverride : false
+  );
   React.useEffect(() => {
     if (sticky) setEditing(!!hasOverride);
   }, [sticky, hasOverride]);
@@ -105,7 +160,12 @@ function DefaultOverrideRenderer({ form, field, mode, ctx }: { form: UseFormRetu
   );
 }
 
-export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: FieldMode, ctx?: RenderContext) {
+export function renderField(
+  form: UseFormReturn<any>,
+  field: FieldConfig,
+  mode: FieldMode,
+  ctx?: RenderContext
+) {
   if (field.hiddenInModes && field.hiddenInModes.includes(mode)) return null;
   if (field.showIf && !field.showIf({ form, mode, field, ctx })) {
     return null;
@@ -122,8 +182,14 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
         fallback: [] as { value: string; label: string }[],
       };
     }
-    const primary = field.optionsKey && ctx?.fieldOptions?.[field.optionsKey] ? ctx.fieldOptions[field.optionsKey] : [];
-    const fallback = field.allOptionsKey && ctx?.fieldOptions?.[field.allOptionsKey] ? ctx.fieldOptions[field.allOptionsKey] : [];
+    const primary =
+      field.optionsKey && ctx?.fieldOptions?.[field.optionsKey]
+        ? ctx.fieldOptions[field.optionsKey]
+        : [];
+    const fallback =
+      field.allOptionsKey && ctx?.fieldOptions?.[field.allOptionsKey]
+        ? ctx.fieldOptions[field.allOptionsKey]
+        : [];
     return { primary, fallback } as {
       primary: { value: string; label: string }[];
       fallback: { value: string; label: string }[];
@@ -133,10 +199,18 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
   switch (widget) {
     case "computed": {
       const values = form.getValues();
-      const out = field.compute ? field.compute({ form, mode, field, ctx, values }) : null;
+      const out = field.compute
+        ? field.compute({ form, mode, field, ctx, values })
+        : null;
       // Render as read-only text input when scalar; else render a simple block
       if (typeof out === "string" || typeof out === "number" || out == null) {
-        return <TextInput {...common} readOnly value={out != null ? String(out) : ""} />;
+        return (
+          <TextInput
+            {...common}
+            readOnly
+            value={out != null ? String(out) : ""}
+          />
+        );
       }
       return (
         <div>
@@ -146,26 +220,56 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
       );
     }
     case "defaultOverride": {
-      return <DefaultOverrideRenderer form={form} field={field} mode={mode} ctx={ctx} />;
+      return (
+        <DefaultOverrideRenderer
+          form={form}
+          field={field}
+          mode={mode}
+          ctx={ctx}
+        />
+      );
     }
     case "idStatic": {
       if (mode === "find") {
-        return <TextInput {...common} placeholder={field.findPlaceholder || "equals..."} {...form.register(field.name as any)} />;
+        return (
+          <TextInput
+            {...common}
+            placeholder={field.findPlaceholder || "equals..."}
+            {...form.register(field.name as any)}
+          />
+        );
       }
-      const v = form.watch(field.name as any) ?? (form.getValues() as any)?.[field.name];
-      return <TextInput {...common} readOnly value={v != null ? String(v) : ""} />;
+      const v =
+        form.watch(field.name as any) ??
+        (form.getValues() as any)?.[field.name];
+      return (
+        <TextInput {...common} readOnly value={v != null ? String(v) : ""} />
+      );
     }
     case "date": {
       if (mode === "find") {
-        return <TextInput {...common} placeholder={field.findPlaceholder || "yyyy-mm-dd"} {...form.register(field.name as any)} />;
+        return (
+          <TextInput
+            {...common}
+            placeholder={field.findPlaceholder || "yyyy-mm-dd"}
+            {...form.register(field.name as any)}
+          />
+        );
       }
-      const isSameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      const isSameDay = (a: Date, b: Date) =>
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
       const dayRenderer = (dateInput: any) => {
         const today = new Date();
         const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
         const valid = d instanceof Date && !isNaN(d.getTime());
         const isToday = valid && isSameDay(d, today);
-        const label = valid ? d.getDate() : typeof dateInput === "number" ? dateInput : "";
+        const label = valid
+          ? d.getDate()
+          : typeof dateInput === "number"
+          ? dateInput
+          : "";
         return (
           <Indicator size={6} color="red" offset={-5} disabled={!isToday}>
             <div>{label}</div>
@@ -179,7 +283,11 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
           name={field.name as any}
           render={({ field: f }) => {
             const v: any = f.value;
-            const value: Date | null = v ? (v instanceof Date ? v : new Date(v)) : null;
+            const value: Date | null = v
+              ? v instanceof Date
+                ? v
+                : new Date(v)
+              : null;
             return (
               <DatePickerInput
                 {...common}
@@ -205,11 +313,16 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
           control={form.control}
           name={field.name as any}
           render={({ field: f }) => {
-            const unaccentText = (s: string) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const unaccentText = (s: string) =>
+              (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
             const cur = f.value;
-            const coerceToNumber = typeof cur === "number" || /Id$/.test(field.name);
+            const coerceToNumber =
+              typeof cur === "number" || /Id$/.test(field.name);
             const valueStr = cur == null || cur === "" ? null : String(cur);
-            const allForLookup = React.useMemo(() => [...(primary || []), ...(fallback || [])], [primary, fallback]);
+            const allForLookup = React.useMemo(
+              () => [...(primary || []), ...(fallback || [])],
+              [primary, fallback]
+            );
             const selectedLabel = React.useMemo(() => {
               if (valueStr == null) return "";
               const hit = allForLookup.find((o) => o.value === valueStr);
@@ -221,7 +334,9 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
             });
             const [search, setSearch] = React.useState<string>("");
 
-            const baseList = primary && primary.length ? primary : fallback || [];
+            const baseList =
+              primary && primary.length ? primary : fallback || [];
+
             const filter = (list: { value: string; label: string }[]) => {
               if (!search) return list;
               const q = unaccentText(search).toLowerCase();
@@ -233,10 +348,19 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
             };
             const filteredPrimary = filter(primary || []);
             const filteredFallback = filter(fallback || []);
-            const visible = primary && primary.length && filteredPrimary.length > 0 ? filteredPrimary : filteredFallback.length > 0 ? filteredFallback : filter(baseList);
+            const visible =
+              primary && primary.length && filteredPrimary.length > 0
+                ? filteredPrimary
+                : filteredFallback.length > 0
+                ? filteredFallback
+                : filter(baseList);
 
             const setFormValue = (v: string | null) => {
-              const out = coerceToNumber ? (v != null && v !== "" ? Number(v) : null) : v ?? null;
+              const out = coerceToNumber
+                ? v != null && v !== ""
+                  ? Number(v)
+                  : null
+                : v ?? null;
               f.onChange(out);
             };
 
@@ -274,7 +398,8 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
                       f.onBlur();
                     }}
                     rightSection={
-                      valueStr != null || (mode === "find" && (f.value ?? "") !== "") ? (
+                      valueStr != null ||
+                      (mode === "find" && (f.value ?? "") !== "") ? (
                         <CloseButton
                           size="sm"
                           onMouseDown={(e) => e.preventDefault()}
@@ -285,26 +410,40 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
                         />
                       ) : undefined
                     }
-                    placeholder={mode === "find" ? field.findPlaceholder || "any" : undefined}
+                    placeholder={
+                      mode === "find"
+                        ? field.findPlaceholder || "any"
+                        : undefined
+                    }
                     ref={f.ref as any}
                   />
                 </Combobox.Target>
                 <Combobox.Dropdown>
                   <div
-                    style={{ maxHeight: 260, overflowY: "auto", overscrollBehavior: "contain" }}
+                    style={{
+                      maxHeight: 260,
+                      overflowY: "auto",
+                      overscrollBehavior: "contain",
+                    }}
                     onWheel={(e) => {
                       // prevent page scroll while interacting with dropdown
                       e.stopPropagation();
                     }}
                   >
                     <Combobox.Options>
-                      {mode === "find" && <Combobox.Option value="__EMPTY__">(Any)</Combobox.Option>}
+                      {mode === "find" && (
+                        <Combobox.Option value="__EMPTY__">
+                          (Any)
+                        </Combobox.Option>
+                      )}
                       {visible.map((o) => (
                         <Combobox.Option key={o.value} value={o.value}>
                           {o.label}
                         </Combobox.Option>
                       ))}
-                      {visible.length === 0 && <Combobox.Empty>Nothing found</Combobox.Empty>}
+                      {visible.length === 0 && (
+                        <Combobox.Empty>Nothing found</Combobox.Empty>
+                      )}
                     </Combobox.Options>
                   </div>
                 </Combobox.Dropdown>
@@ -350,8 +489,18 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
         const maxField = field.rangeFields?.max || `${field.name}Max`;
         return (
           <Group gap="xs" align="flex-end" style={{ alignItems: "flex-end" }}>
-            <TextInput label={field.label + " Min"} placeholder="min" {...form.register(minField as any)} style={{ flex: 1 }} />
-            <TextInput label={field.label + " Max"} placeholder="max" {...form.register(maxField as any)} style={{ flex: 1 }} />
+            <TextInput
+              label={field.label + " Min"}
+              placeholder="min"
+              {...form.register(minField as any)}
+              style={{ flex: 1 }}
+            />
+            <TextInput
+              label={field.label + " Max"}
+              placeholder="max"
+              {...form.register(maxField as any)}
+              style={{ flex: 1 }}
+            />
           </Group>
         );
       }
@@ -359,8 +508,16 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
         <TextInput
           {...common}
           type="number"
-          rightSection={field.rightSection ? field.rightSection({ form, mode, field, ctx }) : undefined}
-          value={(form.watch(field.name as any) ?? (form.getValues() as any)?.[field.name] ?? "") as any}
+          rightSection={
+            field.rightSection
+              ? field.rightSection({ form, mode, field, ctx })
+              : undefined
+          }
+          value={
+            (form.watch(field.name as any) ??
+              (form.getValues() as any)?.[field.name] ??
+              "") as any
+          }
           onChange={(e) => form.setValue(field.name as any, e.target.value)}
         />
       );
@@ -369,10 +526,21 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
       return (
         <TextInput
           {...common}
-          rightSection={field.rightSection ? field.rightSection({ form, mode, field, ctx }) : undefined}
-          placeholder={mode === "find" ? field.findPlaceholder || (field.findOp === "equals" ? "equals..." : "contains...") : undefined}
+          rightSection={
+            field.rightSection
+              ? field.rightSection({ form, mode, field, ctx })
+              : undefined
+          }
+          placeholder={
+            mode === "find"
+              ? field.findPlaceholder ||
+                (field.findOp === "equals" ? "equals..." : "contains...")
+              : undefined
+          }
           {...form.register(field.name as any)}
-          readOnly={mode === "edit" && (field.editable === false || field.readOnly)}
+          readOnly={
+            mode === "edit" && (field.editable === false || field.readOnly)
+          }
         />
       );
     }
@@ -380,7 +548,17 @@ export function renderField(form: UseFormReturn<any>, field: FieldConfig, mode: 
 }
 
 // JSX wrapper that pulls options via context and maps to renderField
-export function RenderField({ form, field, mode, ctx }: { form: UseFormReturn<any>; field: FieldConfig; mode: FieldMode; ctx?: RenderContext }) {
+export function RenderField({
+  form,
+  field,
+  mode,
+  ctx,
+}: {
+  form: UseFormReturn<any>;
+  field: FieldConfig;
+  mode: FieldMode;
+  ctx?: RenderContext;
+}) {
   const options = useOptions();
   const autoCtx: RenderContext | undefined = React.useMemo(() => {
     if (!options && !ctx) return ctx;
@@ -414,18 +592,35 @@ export function RenderField({ form, field, mode, ctx }: { form: UseFormReturn<an
 }
 
 // JSX to render a group of fields with shared props
-export function RenderGroup({ form, fields, mode, ctx, gap = 6 }: { form: UseFormReturn<any>; fields: FieldConfig[]; mode: FieldMode; ctx?: RenderContext; gap?: number }) {
+export function RenderGroup({
+  form,
+  fields,
+  mode,
+  ctx,
+  gap = 6,
+}: {
+  form: UseFormReturn<any>;
+  fields: FieldConfig[];
+  mode: FieldMode;
+  ctx?: RenderContext;
+  gap?: number;
+}) {
   // Subscribe to all form changes so conditional fields can react to deps
   form.watch();
   const list: FieldConfig[] = Array.isArray(fields) ? fields : [];
   // Filter out fields hidden for this mode to avoid duplicate keys from hidden siblings
-  const visible = list.filter((f) => !(f.hiddenInModes && f.hiddenInModes.includes(mode)));
+  const visible = list.filter(
+    (f) => !(f.hiddenInModes && f.hiddenInModes.includes(mode))
+  );
   return (
     <Group gap={0} style={{ width: "100%" }}>
       <div style={{ width: "100%" }}>
         <div style={{ display: "flex", flexDirection: "column", gap }}>
           {visible.map((field) => {
-            const key = (field.overrideName as string | undefined) || field.name || field.label;
+            const key =
+              (field.overrideName as string | undefined) ||
+              field.name ||
+              field.label;
             return (
               <React.Fragment key={key}>
                 <RenderField form={form} field={field} mode={mode} ctx={ctx} />

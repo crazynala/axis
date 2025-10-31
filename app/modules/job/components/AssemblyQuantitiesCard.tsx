@@ -30,6 +30,9 @@ export function AssemblyQuantitiesCard({
   editableOrdered = false,
   onSubmitOrdered,
   onCancelOrdered,
+  orderedValue,
+  onChangeOrdered,
+  hideInlineActions,
 }: {
   title?: string;
   variants: VariantInfo;
@@ -38,10 +41,15 @@ export function AssemblyQuantitiesCard({
   editableOrdered?: boolean;
   onSubmitOrdered?: (ordered: number[]) => void;
   onCancelOrdered?: () => void;
+  /** Controlled ordered array; when provided, component becomes controlled */
+  orderedValue?: number[];
+  /** Change handler for controlled mode */
+  onChangeOrdered?: (ordered: number[]) => void;
+  /** Hide inline Save/Cancel buttons (use global form header instead) */
+  hideInlineActions?: boolean;
 }) {
-  console.log("Rendering AssemblyQuantitiesCard with items:", items);
   const fmt = (n: number | undefined) =>
-    n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "" : n;
+    n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "∙" : n;
   const rawLabels = variants.labels;
   // Determine if labels include any non-empty values and where the last non-empty is
   const lastNonEmpty = (() => {
@@ -86,32 +94,41 @@ export function AssemblyQuantitiesCard({
     );
 
   // Inline edit state (only for first item). Keep local state so total updates live.
+  const isControlled = Array.isArray(orderedValue);
   const [orderedDraft, setOrderedDraft] = useState<number[] | null>(
-    editableOrdered && items[0]?.ordered ? [...items[0].ordered] : null
+    editableOrdered && !isControlled && items[0]?.ordered
+      ? [...items[0].ordered]
+      : null
   );
   useEffect(() => {
-    if (editableOrdered) {
+    if (isControlled) return; // parent controls state
+    if (editableOrdered)
       setOrderedDraft(items[0]?.ordered ? [...items[0].ordered] : []);
-    } else {
-      setOrderedDraft(null);
-    }
+    else setOrderedDraft(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editableOrdered, items && items[0] && items[0].ordered?.join(",")]);
 
   const handleChangeCell = (idx: number, value: string) => {
-    if (!Array.isArray(orderedDraft)) return;
     const v = value === "" ? 0 : Number(value);
-    setOrderedDraft((prev) => {
-      const src = Array.isArray(prev) ? prev : [];
-      const next = [...src];
-      next[idx] = Number.isFinite(v) ? v | 0 : 0;
+    const updater = (srcArr: number[]) => {
+      const next = [...srcArr];
+      next[idx] = Number.isFinite(v) ? (v as number) | 0 : 0;
       return next;
-    });
+    };
+    if (isControlled && Array.isArray(orderedValue)) {
+      const next = updater(orderedValue);
+      onChangeOrdered?.(next);
+    } else if (Array.isArray(orderedDraft)) {
+      setOrderedDraft((prev) => updater(Array.isArray(prev) ? prev : []));
+    }
   };
 
   const effectiveOrdered =
-    editableOrdered && Array.isArray(orderedDraft)
-      ? orderedDraft
+    editableOrdered &&
+    (isControlled ? Array.isArray(orderedValue) : Array.isArray(orderedDraft))
+      ? isControlled
+        ? (orderedValue as number[])
+        : (orderedDraft as number[])
       : items[0]?.ordered || [];
 
   const totalOrdered = useMemo(() => sum(effectiveOrdered), [effectiveOrdered]);
@@ -121,15 +138,17 @@ export function AssemblyQuantitiesCard({
       <Card.Section inheritPadding py="xs">
         <Group justify="space-between" align="center">
           <Title order={4}>{title}</Title>
-          {editableOrdered ? (
+          {editableOrdered && !hideInlineActions ? (
             <Group gap="xs">
               <Button
                 size="xs"
                 variant="default"
                 onClick={() => {
-                  setOrderedDraft(
-                    items[0]?.ordered ? [...items[0].ordered] : []
-                  );
+                  if (isControlled) onCancelOrdered?.();
+                  else
+                    setOrderedDraft(
+                      items[0]?.ordered ? [...items[0].ordered] : []
+                    );
                   onCancelOrdered?.();
                 }}
               >
@@ -138,7 +157,9 @@ export function AssemblyQuantitiesCard({
               <Button
                 size="xs"
                 onClick={() => {
-                  if (Array.isArray(orderedDraft))
+                  if (isControlled && Array.isArray(orderedValue))
+                    onSubmitOrdered?.(orderedValue);
+                  else if (Array.isArray(orderedDraft))
                     onSubmitOrdered?.(orderedDraft);
                 }}
               >
@@ -159,12 +180,15 @@ export function AssemblyQuantitiesCard({
               <Title order={6}>{it.label}</Title>
             </Group>
           )}
-          <Table withTableBorder withColumnBorders striped>
+          <Table withTableBorder withColumnBorders>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Type</Table.Th>
                 {cols.map((l: string, i: number) => (
-                  <Table.Th key={`qcol-${idx}-${i}`}>
+                  <Table.Th
+                    key={`qcol-${idx}-${i}`}
+                    style={{ textAlign: "center" }}
+                  >
                     {l || `${i + 1}`}
                   </Table.Th>
                 ))}
@@ -200,7 +224,7 @@ export function AssemblyQuantitiesCard({
                     )}
                   </Table.Td>
                 ))}
-                <Table.Td>
+                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
                   {editableOrdered && idx === 0
                     ? fmt(totalOrdered)
                     : fmt(sum(it.ordered))}
@@ -209,27 +233,35 @@ export function AssemblyQuantitiesCard({
               <Table.Tr>
                 <Table.Td>Cut</Table.Td>
                 {cols.map((_l, i) => (
-                  <Table.Td key={`cut-${idx}-${i}`}>{fmt(it.cut[i])}</Table.Td>
+                  <Table.Td key={`cut-${idx}-${i}`} align="center">
+                    {fmt(it.cut[i])}
+                  </Table.Td>
                 ))}
-                <Table.Td>{fmt(it.totals.cut)}</Table.Td>
+                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
+                  {fmt(it.totals.cut)}
+                </Table.Td>
               </Table.Tr>
               <Table.Tr>
                 <Table.Td>Make</Table.Td>
                 {cols.map((_l, i) => (
-                  <Table.Td key={`make-${idx}-${i}`}>
+                  <Table.Td key={`make-${idx}-${i}`} align="center">
                     {fmt(it.make[i])}
                   </Table.Td>
                 ))}
-                <Table.Td>{fmt(it.totals.make)}</Table.Td>
+                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
+                  {fmt(it.totals.make)}
+                </Table.Td>
               </Table.Tr>
               <Table.Tr>
                 <Table.Td>Pack</Table.Td>
                 {cols.map((_l, i) => (
-                  <Table.Td key={`pack-${idx}-${i}`}>
+                  <Table.Td key={`pack-${idx}-${i}`} align="center">
                     {fmt(it.pack[i])}
                   </Table.Td>
                 ))}
-                <Table.Td>{fmt(it.totals.pack)}</Table.Td>
+                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
+                  {fmt(it.totals.pack)}
+                </Table.Td>
               </Table.Tr>
             </Table.Tbody>
           </Table>

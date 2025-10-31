@@ -164,7 +164,6 @@ export function ProductDetailForm({
     }),
     [hasCostTiers, product, salePriceGroupRangesById, costGroupRangesById]
   );
-  console.log("!! context", ctx);
   return (
     <Grid>
       <Grid.Col span={{ base: 12, md: 12 }}>

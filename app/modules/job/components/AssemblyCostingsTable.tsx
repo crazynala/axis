@@ -1,10 +1,21 @@
-import { Card, Divider, Group, Table, Title, Modal, Text } from "@mantine/core";
+import {
+  Card,
+  Divider,
+  Group,
+  Table,
+  Title,
+  Modal,
+  Text,
+  TextInput,
+  NativeSelect,
+} from "@mantine/core";
 import { useState } from "react";
 import { calcPrice } from "~/modules/product/calc/calcPrice";
 import { ExternalLink } from "~/components/ExternalLink";
 import { AccordionTable } from "~/components/AccordionTable";
 import type { Column } from "~/components/AccordionTable";
 import { debugEnabled } from "~/utils/debugFlags";
+import type { UseFormRegister } from "react-hook-form";
 
 export type CostingRow = {
   id: number;
@@ -14,10 +25,14 @@ export type CostingRow = {
   isChild?: boolean;
   sku?: string | null;
   name?: string | null;
+  /** Per-activity usage type: "cut" or "make" */
+  activityUsed?: string | null;
   quantityPerUnit?: number | null;
   unitCost?: number | null;
   required?: number | null;
   stats?: { locStock: number; allStock: number; used: number };
+  stockTrackingEnabled?: boolean; // for stock columns display
+  batchTrackingEnabled?: boolean; // for QPU edit gating
   // New: pricing inputs for dynamic sell calculation
   fixedSell?: number | null; // costing.salePricePerItem when set
   taxRate?: number | null; // optional tax rate; default 0 if missing
@@ -35,6 +50,24 @@ export function AssemblyCostingsTable(props: {
   accordionByProduct?: boolean;
   /** Enable verbose logging (or set window.__COSTINGS_DEBUG__ = true in DevTools) */
   debug?: boolean;
+  /** Enable inline editing for costing fields (QPU + Activity). Back-compat: editableQpu */
+  editableCosting?: boolean;
+  /** Decide if a specific row is editable (e.g., based on batch tracking or cut totals). Back-compat: canEditQpu */
+  canEditCosting?: (row: CostingRow) => boolean;
+  /** Deprecated: use editableCosting */
+  editableQpu?: boolean;
+  /** Deprecated: use canEditCosting */
+  canEditQpu?: (row: CostingRow) => boolean;
+  /** Controlled values for Qty/Unit, keyed by costing id */
+  qpuValueById?: Record<number, number>;
+  /** Change handler for Qty/Unit edits */
+  onChangeQpu?: (id: number, value: number) => void;
+  /** Build the RHF field name for a row (e.g., qpuById.123) */
+  fieldNameForQpu?: (row: CostingRow) => string;
+  /** RHF register to bind inputs without Controller */
+  register?: UseFormRegister<any>;
+  /** Build the RHF field name for activity used (e.g., activity.123) */
+  fieldNameForActivityUsed?: (row: CostingRow) => string;
 }) {
   const {
     title = "Costings",
@@ -42,6 +75,15 @@ export function AssemblyCostingsTable(props: {
     uncommon,
     accordionByProduct = true,
     debug = false,
+    editableCosting,
+    canEditCosting,
+    editableQpu,
+    canEditQpu,
+    qpuValueById,
+    onChangeQpu,
+    fieldNameForQpu,
+    register,
+    fieldNameForActivityUsed,
   } = props;
 
   const DEBUG = debugEnabled("costingsTable") || !!debug;
@@ -73,6 +115,17 @@ export function AssemblyCostingsTable(props: {
     return out;
   };
 
+  const hasRHF = !!register && !!fieldNameForQpu && !!fieldNameForActivityUsed;
+  const editable = (editableCosting ?? editableQpu ?? false) && hasRHF;
+  const canEditFn = canEditCosting ?? canEditQpu;
+  const canEditRow = (row: CostingRow) =>
+    Boolean(
+      editable &&
+        !row.isChild &&
+        typeof canEditFn === "function" &&
+        canEditFn(row)
+    );
+
   const renderFlatRows = (rows: CostingRow[]) =>
     rows.map((c) => (
       <Table.Tr key={`c-${c.id}`}>
@@ -88,10 +141,74 @@ export function AssemblyCostingsTable(props: {
         </Table.Td>
         <Table.Td>{c.sku || ""}</Table.Td>
         <Table.Td>{c.name || c.productId || ""}</Table.Td>
-        <Table.Td align="center">{c.quantityPerUnit ?? ""}</Table.Td>
+        {/* Activity (per-activity usage) */}
+        <Table.Td
+          align="center"
+          style={{
+            padding: editable && !(c as any).isChild ? 0 : undefined,
+          }}
+        >
+          {hasRHF ? (
+            <NativeSelect
+              data={[
+                { value: "cut", label: "Cut" },
+                { value: "make", label: "Make" },
+              ]}
+              disabled={!canEditRow(c)}
+              variant="unstyled"
+              {...(hasRHF ? register!(fieldNameForActivityUsed!(c)) : {})}
+              rightSectionWidth={0}
+              styles={{
+                input: {
+                  width: "100%",
+                  textAlignLast: "center",
+                },
+              }}
+            />
+          ) : (
+            <Text>
+              {c.activityUsed === "cut"
+                ? "Cut"
+                : c.activityUsed === "make"
+                ? "Make"
+                : ""}
+            </Text>
+          )}
+        </Table.Td>
+        <Table.Td
+          align="center"
+          style={{
+            padding: editable && !(c as any).isChild ? 0 : undefined,
+          }}
+        >
+          {hasRHF ? (
+            <TextInput
+              key={`qpu-${c.id}`}
+              type="number"
+              readOnly={!canEditRow(c)}
+              variant="unstyled"
+              {...(hasRHF
+                ? register!(fieldNameForQpu!(c), { valueAsNumber: true })
+                : {})}
+              styles={{
+                input: {
+                  width: "100%",
+                  textAlign: "center",
+                  padding: 8,
+                },
+              }}
+            />
+          ) : (
+            <Text>{c.quantityPerUnit ?? ""}</Text>
+          )}
+        </Table.Td>
         <Table.Td align="center">{c.required ?? ""}</Table.Td>
-        <Table.Td align="center">{c.stats?.locStock ?? 0}</Table.Td>
-        <Table.Td align="center">{c.stats?.allStock ?? 0}</Table.Td>
+        <Table.Td align="center">
+          {c.stockTrackingEnabled ? c.stats?.locStock ?? 0 : "-"}
+        </Table.Td>
+        <Table.Td align="center">
+          {c.stockTrackingEnabled ? c.stats?.allStock ?? 0 : "-"}
+        </Table.Td>
         <Table.Td align="center">{c.stats?.used ?? 0}</Table.Td>
         <Table.Td align="center">{c.unitCost ?? ""}</Table.Td>
         {(() => {
@@ -139,6 +256,20 @@ export function AssemblyCostingsTable(props: {
     },
     { key: "sku", header: "SKU", width: 140, render: (c) => c.sku || "" },
     { key: "name", header: "Name", render: (c) => c.name || c.productId || "" },
+    {
+      key: "act",
+      header: "Activity",
+      width: 100,
+      align: "center",
+      render: (c) =>
+        (c as any).isChild
+          ? ""
+          : c.activityUsed === "cut"
+          ? "Cut"
+          : c.activityUsed === "make"
+          ? "Make"
+          : "",
+    },
     {
       key: "qpu",
       header: "Qty/Unit",
@@ -359,11 +490,14 @@ export function AssemblyCostingsTable(props: {
       </Card.Section>
       <Divider my="xs" />
       {!showAccordion ? (
-        <Table striped withTableBorder withColumnBorders highlightOnHover>
+        <Table withTableBorder withColumnBorders highlightOnHover>
           <Table.Thead>
             <Table.Tr>
               {columns.map((c) => (
-                <Table.Th key={c.key} style={{ width: c.width }}>
+                <Table.Th
+                  key={c.key}
+                  style={{ width: c.width, textAlign: c.align || "left" }}
+                >
                   {c.header}
                 </Table.Th>
               ))}
