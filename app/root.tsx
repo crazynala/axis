@@ -241,6 +241,7 @@ const theme = createTheme({
 const cssVariablesResolver: CSSVariablesResolver = (t) => ({
   variables: {
     // shared (both schemes)
+    "--mantine-font-size-xxs": rem(10),
     "--overlay-z-index": "1000",
     "--modal-size-xxl": "60rem",
     "--dsg-selection-border-radius": "2px",

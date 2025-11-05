@@ -322,7 +322,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         data: { qtyOrderedBreakdown: Array.isArray(arr) ? (arr as any) : [] },
       });
     }
-    // Apply Qty/Unit updates
+    // Apply Qty/Unit updates (direct targets)
     const entries = Object.entries(qpu)
       .filter(
         ([id, v]) => Number.isFinite(Number(id)) && Number.isFinite(Number(v))
@@ -334,7 +334,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         data: { quantityPerUnit: val },
       });
     }
-    // Apply Activity Used updates
+    // Apply Activity Used updates (direct targets)
     const actEntries = Object.entries(activity)
       .filter(([id, v]) => Number.isFinite(Number(id)) && typeof v === "string")
       .map(([id, v]) => [Number(id), String(v).toLowerCase()] as const);
@@ -345,6 +345,53 @@ export async function action({ request, params }: ActionFunctionArgs) {
         where: { id: cid },
         data: { activityUsed: val },
       });
+    }
+    // Propagate edits across shared product costings in the selected assemblies
+    // Build product-level intents from any changed costing ids
+    const changedCostingIds = Array.from(
+      new Set([
+        ...entries.map(([id]) => id),
+        ...actEntries.map(([id]) => id),
+      ])
+    );
+    if (changedCostingIds.length) {
+      const changed = await prisma.costing.findMany({
+        where: { id: { in: changedCostingIds } },
+        select: { id: true, productId: true },
+      });
+      const byProduct = new Map<number, { qpu?: number; activity?: string }>();
+      for (const c of changed) {
+        const pid = Number(c.productId || 0) || 0;
+        if (!pid) continue;
+        const map = byProduct.get(pid) || {};
+        if (qpu[String(c.id)] != null && Number.isFinite(Number(qpu[String(c.id)]))) {
+          map.qpu = Number(qpu[String(c.id)]);
+        }
+        if (activity[String(c.id)]) {
+          const val = String(activity[String(c.id)]).toLowerCase();
+          if (allowed.has(val)) map.activity = val;
+        }
+        byProduct.set(pid, map);
+      }
+      if (byProduct.size) {
+        const targetProducts = Array.from(byProduct.keys());
+        const related = await prisma.costing.findMany({
+          where: {
+            assemblyId: { in: idList },
+            productId: { in: targetProducts },
+          },
+          select: { id: true, productId: true },
+        });
+        for (const r of related) {
+          const spec = byProduct.get(Number(r.productId));
+          if (!spec) continue;
+          const data: any = {};
+          if (spec.qpu != null) data.quantityPerUnit = spec.qpu;
+          if (spec.activity) data.activityUsed = spec.activity;
+          if (Object.keys(data).length)
+            await prisma.costing.update({ where: { id: r.id }, data });
+        }
+      }
     }
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }

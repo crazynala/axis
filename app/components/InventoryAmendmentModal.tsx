@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Button,
   Group,
@@ -13,6 +13,7 @@ import {
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useSubmit } from "@remix-run/react";
+import { Controller, useFieldArray, useForm } from "react-hook-form";
 
 export type BatchRowLite = {
   batchId: number;
@@ -39,27 +40,60 @@ export function InventoryAmendmentModal(props: {
 }) {
   const { opened, onClose, productId, mode, date, batch, batches } = props;
   const submit = useSubmit();
-  const [when, setWhen] = useState<Date | null>(date ?? new Date());
+  type CreateRow = {
+    name?: string;
+    codeMill?: string;
+    codeSartor?: string;
+    locationId: number | null;
+    qty: number;
+  };
 
-  // Batch mode state
-  const [newQty, setNewQty] = useState<number | "">(() =>
-    batch ? batch.qty : 0
+  const form = useForm<{
+    when: Date | null;
+    scope: "all" | "nonzero";
+    newQty: number | ""; // batch mode
+    rows: BulkRow[]; // product mode existing batches
+    newRows: CreateRow[]; // product mode creations
+  }>({
+    defaultValues: {
+      when: date ?? new Date(),
+      scope: "nonzero",
+      newQty: batch ? batch.qty : 0,
+      rows: (batches || []).map((b) => ({ ...b, target: b.qty })),
+      newRows: [],
+    },
+    mode: "onChange",
+  });
+
+  const { control, handleSubmit, watch } = form;
+  const rowsFA = useFieldArray({ control, name: "rows" });
+  const newRowsFA = useFieldArray({ control, name: "newRows" });
+
+  // Reset the form whenever inputs change (modal can open with different data)
+  useEffect(() => {
+    if (!opened) return;
+    console.log("!! Resetting InventoryAmendmentModal form", batches);
+    const defaults = {
+      when: date ?? new Date(),
+      scope: "nonzero" as const,
+      newQty: batch ? batch.qty : 0,
+      rows: (batches || []).map((b) => ({ ...b, target: b.qty })),
+      newRows: [] as CreateRow[],
+    };
+    form.reset(defaults);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, mode, date, batch, batches]);
+
+  console.log(
+    "!! InventoryAmendmentModal form defaults:",
+    form.formState.defaultValues
   );
 
-  // Product mode state
-  const [rows, setRows] = useState<BulkRow[]>(() =>
-    (batches || []).map((b) => ({ ...b, target: b.qty }))
-  );
-  const [newRows, setNewRows] = useState<
-    Array<{
-      name?: string;
-      codeMill?: string;
-      codeSartor?: string;
-      locationId: number | null;
-      qty: number;
-    }>
-  >([]);
-  const [scope, setScope] = useState<"all" | "nonzero">("nonzero");
+  const when = watch("when");
+  const scope = watch("scope");
+  const rows = watch("rows");
+  const newRows = watch("newRows");
+  const newQty = watch("newQty");
 
   const delta = useMemo(() => {
     if (mode !== "batch" || !batch) return 0;
@@ -67,12 +101,27 @@ export function InventoryAmendmentModal(props: {
     return Math.round((nv - (batch?.qty || 0)) * 100) / 100;
   }, [mode, batch, newQty]);
 
+  type RowWithIndex = { row: BulkRow; idx: number };
   const filteredRows = useMemo(() => {
-    if (mode !== "product") return [] as BulkRow[];
-    const base = rows;
-    return scope === "nonzero"
-      ? base.filter((r) => Math.round((r.target - r.qty) * 100) / 100 !== 0)
-      : base;
+    if (mode !== "product") return [] as RowWithIndex[];
+    const base = rows.map((r, i) => ({ row: r, idx: i }));
+    let filteredRows = base;
+    if (scope === "nonzero") {
+      filteredRows = base.filter(
+        ({ row }) =>
+          // current non-zero
+          Math.round(row.qty * 100) / 100 !== 0 ||
+          // or target changed
+          row.target !== row.qty
+      );
+    } else if (scope === "adjusted") {
+      filteredRows = base.filter(
+        ({ row }) =>
+          // target changed
+          row.target !== row.qty
+      );
+    }
+    return filteredRows;
   }, [mode, rows, scope]);
 
   return (
@@ -86,26 +135,39 @@ export function InventoryAmendmentModal(props: {
       {mode === "batch" && batch && (
         <Stack>
           <Group justify="space-between">
-            <DatePickerInput
-              label="Date"
-              value={when}
-              onChange={(d) => setWhen((d as any) ?? null)}
-              valueFormat="YYYY-MM-DD"
-              required
+            <Controller
+              control={control}
+              name="when"
+              render={({ field }) => (
+                <DatePickerInput
+                  label="Date"
+                  value={field.value}
+                  onChange={(d) => field.onChange((d as any) ?? null)}
+                  valueFormat="YYYY-MM-DD"
+                  required
+                />
+              )}
             />
             <Button
-              onClick={() => {
+              onClick={handleSubmit((vals) => {
                 const fd = new FormData();
                 fd.set("_intent", "inventory.amend.batch");
                 fd.set("productId", String(productId));
                 fd.set("batchId", String(batch.batchId));
                 fd.set("locationId", String(batch.locationId ?? ""));
-                if (when)
-                  fd.set("date", new Date(when).toISOString().slice(0, 10));
-                fd.set("delta", String(delta));
+                if (vals.when)
+                  fd.set(
+                    "date",
+                    new Date(vals.when).toISOString().slice(0, 10)
+                  );
+                const d =
+                  Math.round(
+                    (Number(vals.newQty || 0) - (batch.qty || 0)) * 100
+                  ) / 100;
+                fd.set("delta", String(d));
                 submit(fd, { method: "post" });
                 onClose();
-              }}
+              })}
               disabled={!when}
             >
               Save
@@ -134,52 +196,74 @@ export function InventoryAmendmentModal(props: {
                 </Table.Td>
                 <Table.Td>{batch.qty}</Table.Td>
                 <Table.Td>
-                  <NumberInput
-                    value={newQty as any}
-                    onChange={(v) => setNewQty(Number(v) || 0)}
-                    hideControls
-                    w={100}
+                  <Controller
+                    control={control}
+                    name="newQty"
+                    render={({ field }) => (
+                      <NumberInput
+                        value={field.value as any}
+                        onChange={(v) => field.onChange(Number(v) || 0)}
+                        hideControls
+                        w={100}
+                      />
+                    )}
                   />
                 </Table.Td>
                 <Table.Td>{delta}</Table.Td>
               </Table.Tr>
             </Table.Tbody>
           </Table>
-          <Text c="dimmed" size="sm">
-            This will create an inventory adjustment movement (
-            {delta >= 0 ? "adjust_in" : "adjust_out"}).
-          </Text>
         </Stack>
       )}
-
       {mode === "product" && (
         <Stack>
           <Group justify="space-between" align="center">
-            <DatePickerInput
-              label="Date"
-              value={when}
-              onChange={(d) => setWhen((d as any) ?? null)}
-              valueFormat="YYYY-MM-DD"
-              required
+            <Controller
+              control={control}
+              name="when"
+              render={({ field }) => (
+                <DatePickerInput
+                  label="Date"
+                  value={field.value}
+                  onChange={(d) => field.onChange((d as any) ?? null)}
+                  valueFormat="YYYY-MM-DD"
+                  required
+                />
+              )}
             />
             <Group gap={8} align="center">
-              <SegmentedControl
-                data={[
-                  { label: "All", value: "all" },
-                  { label: "Changed", value: "nonzero" },
-                ]}
-                size="xs"
-                value={scope}
-                onChange={(v) => setScope(v as any)}
+              <Controller
+                control={control}
+                name="scope"
+                render={({ field }) => (
+                  <SegmentedControl
+                    data={[
+                      { label: "All", value: "all" },
+                      { label: "Current", value: "nonzero" },
+                      { label: "Adjusted", value: "adjusted" },
+                    ]}
+                    size="xs"
+                    value={field.value}
+                    onChange={(v) => field.onChange(v as any)}
+                  />
+                )}
               />
               <Button
-                onClick={() => {
-                  const changes = filteredRows.map((r) => ({
+                onClick={handleSubmit((vals) => {
+                  const visibleRows = (
+                    vals.scope === "nonzero"
+                      ? vals.rows.filter(
+                          (r) =>
+                            Math.round((r.target - r.qty) * 100) / 100 !== 0
+                        )
+                      : vals.rows
+                  ) as BulkRow[];
+                  const changes = visibleRows.map((r) => ({
                     batchId: r.batchId,
                     locationId: r.locationId,
                     delta: Math.round((r.target - r.qty) * 100) / 100,
                   }));
-                  const creates = newRows
+                  const creates = (vals.newRows || [])
                     .filter((r) => Number(r.qty) > 0)
                     .map((r) => ({
                       name: r.name || null,
@@ -191,13 +275,16 @@ export function InventoryAmendmentModal(props: {
                   const fd = new FormData();
                   fd.set("_intent", "inventory.amend.product");
                   fd.set("productId", String(productId));
-                  if (when)
-                    fd.set("date", new Date(when).toISOString().slice(0, 10));
+                  if (vals.when)
+                    fd.set(
+                      "date",
+                      new Date(vals.when).toISOString().slice(0, 10)
+                    );
                   fd.set("changes", JSON.stringify(changes));
                   fd.set("creates", JSON.stringify(creates));
                   submit(fd, { method: "post" });
                   onClose();
-                }}
+                })}
                 disabled={!when}
               >
                 Save
@@ -217,30 +304,31 @@ export function InventoryAmendmentModal(props: {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {filteredRows.map((r, idx) => (
-                <Table.Tr key={r.batchId}>
+              {filteredRows.map(({ row, idx }) => (
+                <Table.Tr key={row.batchId}>
                   <Table.Td>
-                    {r.name || r.codeMill || r.codeSartor || r.batchId}
+                    {row.name || row.codeMill || row.codeSartor || row.batchId}
                   </Table.Td>
-                  <Table.Td>{r.locationName || r.locationId || ""}</Table.Td>
-                  <Table.Td>{r.qty}</Table.Td>
                   <Table.Td>
-                    <NumberInput
-                      value={r.target as any}
-                      onChange={(v) => {
-                        const nv = Number(v) || 0;
-                        setRows((prev) =>
-                          prev.map((x, i) =>
-                            i === idx ? { ...x, target: nv } : x
-                          )
-                        );
-                      }}
-                      hideControls
-                      w={100}
+                    {row.locationName || row.locationId || ""}
+                  </Table.Td>
+                  <Table.Td>{row.qty}</Table.Td>
+                  <Table.Td>
+                    <Controller
+                      control={control}
+                      name={`rows.${idx}.target` as const}
+                      render={({ field }) => (
+                        <NumberInput
+                          value={field.value as any}
+                          onChange={(v) => field.onChange(Number(v) || 0)}
+                          hideControls
+                          w={100}
+                        />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
-                    {Math.round((r.target - r.qty) * 100) / 100}
+                    {Math.round((row.target - row.qty) * 100) / 100}
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -263,75 +351,62 @@ export function InventoryAmendmentModal(props: {
               {newRows.map((r, idx) => (
                 <Table.Tr key={idx}>
                   <Table.Td>
-                    <TextInput
-                      value={r.name || ""}
-                      onChange={(e) =>
-                        setNewRows((p) =>
-                          p.map((x, i) =>
-                            i === idx
-                              ? { ...x, name: e.currentTarget.value }
-                              : x
-                          )
-                        )
-                      }
+                    <Controller
+                      control={control}
+                      name={`newRows.${idx}.name` as const}
+                      render={({ field }) => (
+                        <TextInput {...field} value={field.value || ""} />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
-                    <TextInput
-                      value={r.codeMill || ""}
-                      onChange={(e) =>
-                        setNewRows((p) =>
-                          p.map((x, i) =>
-                            i === idx
-                              ? { ...x, codeMill: e.currentTarget.value }
-                              : x
-                          )
-                        )
-                      }
+                    <Controller
+                      control={control}
+                      name={`newRows.${idx}.codeMill` as const}
+                      render={({ field }) => (
+                        <TextInput {...field} value={field.value || ""} />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
-                    <TextInput
-                      value={r.codeSartor || ""}
-                      onChange={(e) =>
-                        setNewRows((p) =>
-                          p.map((x, i) =>
-                            i === idx
-                              ? { ...x, codeSartor: e.currentTarget.value }
-                              : x
-                          )
-                        )
-                      }
+                    <Controller
+                      control={control}
+                      name={`newRows.${idx}.codeSartor` as const}
+                      render={({ field }) => (
+                        <TextInput {...field} value={field.value || ""} />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
-                    <NumberInput
-                      value={r.locationId as any}
-                      onChange={(v) =>
-                        setNewRows((p) =>
-                          p.map((x, i) =>
-                            i === idx
-                              ? { ...x, locationId: (Number(v) as any) ?? null }
-                              : x
-                          )
-                        )
-                      }
-                      hideControls
-                      w={100}
+                    <Controller
+                      control={control}
+                      name={`newRows.${idx}.locationId` as const}
+                      render={({ field }) => (
+                        <NumberInput
+                          value={(field.value as any) ?? null}
+                          onChange={(v) =>
+                            field.onChange(
+                              v === "" || v == null ? null : (Number(v) as any)
+                            )
+                          }
+                          hideControls
+                          w={100}
+                        />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
-                    <NumberInput
-                      value={r.qty as any}
-                      onChange={(v) =>
-                        setNewRows((p) =>
-                          p.map((x, i) =>
-                            i === idx ? { ...x, qty: Number(v) || 0 } : x
-                          )
-                        )
-                      }
-                      hideControls
-                      w={100}
+                    <Controller
+                      control={control}
+                      name={`newRows.${idx}.qty` as const}
+                      render={({ field }) => (
+                        <NumberInput
+                          value={field.value as any}
+                          onChange={(v) => field.onChange(Number(v) || 0)}
+                          hideControls
+                          w={100}
+                        />
+                      )}
                     />
                   </Table.Td>
                   <Table.Td>
@@ -339,9 +414,7 @@ export function InventoryAmendmentModal(props: {
                       variant="light"
                       color="red"
                       size="xs"
-                      onClick={() =>
-                        setNewRows((p) => p.filter((_x, i) => i !== idx))
-                      }
+                      onClick={() => newRowsFA.remove(idx)}
                     >
                       Remove
                     </Button>
@@ -354,16 +427,13 @@ export function InventoryAmendmentModal(props: {
                     size="xs"
                     variant="light"
                     onClick={() =>
-                      setNewRows((p) => [
-                        ...p,
-                        {
-                          name: "",
-                          codeMill: "",
-                          codeSartor: "",
-                          locationId: null,
-                          qty: 0,
-                        },
-                      ])
+                      newRowsFA.append({
+                        name: "",
+                        codeMill: "",
+                        codeSartor: "",
+                        locationId: null,
+                        qty: 0,
+                      })
                     }
                   >
                     Add Row

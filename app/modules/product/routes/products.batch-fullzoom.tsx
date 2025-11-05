@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
-import { AppShell, Group, Text, Button, Stack, Card, NativeSelect } from "@mantine/core";
+import { NativeSelect } from "@mantine/core";
+import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
 import { notifications } from "@mantine/notifications";
 import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -7,6 +8,7 @@ import type { Column, CellProps } from "react-datasheet-grid";
 import * as RDG from "react-datasheet-grid";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { useOptions } from "~/base/options/OptionsContext";
+import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 
 export async function loader({ request }: any) {
   const url = new URL(request.url);
@@ -49,7 +51,7 @@ export async function loader({ request }: any) {
   }));
   return json({ mode: "edit", rows });
 }
-
+type Choice = { label: string; value: string };
 type SheetRow = {
   id?: number | "";
   sku: string;
@@ -63,7 +65,6 @@ type SheetRow = {
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
 };
-
 export default function ProductsBatchCreateFullzoom() {
   const navigate = useNavigate();
   const loaderData = useLoaderData<{
@@ -74,17 +75,15 @@ export default function ProductsBatchCreateFullzoom() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const originalRef = useRef<SheetRow[]>([]);
-  const [mode, setMode] = useState<"create" | "edit">(loaderData?.mode || "create");
+  const [mode] = useState<"create" | "edit">(loaderData?.mode || "create");
   const options = useOptions();
 
-  console.log("!!! rows", rows);
-
-  // Simple select column using Mantine NativeSelect to avoid SSR/CJS named export issues
-  type Choice = { label: string; value: string };
   type SelectOptions = { choices: Choice[]; disabled?: boolean };
   const MantineSelectCell = useMemo(
     () =>
-      function MantineSelectCell(props: CellProps<string | null, SelectOptions>) {
+      function MantineSelectCell(
+        props: CellProps<string | null, SelectOptions>
+      ) {
         const { rowData, setRowData, focus, stopEditing, columnData } = props;
         const value = rowData ?? "";
         return (
@@ -115,8 +114,10 @@ export default function ProductsBatchCreateFullzoom() {
       keepFocus: true,
       disabled: false,
       deleteValue: () => null,
-      copyValue: ({ rowData }: any) => choices.find((c) => c.value === rowData)?.label ?? null,
-      pasteValue: ({ value }: any) => choices.find((c) => c.label === value)?.value ?? null,
+      copyValue: ({ rowData }: any) =>
+        choices.find((c) => c.value === rowData)?.label ?? null,
+      pasteValue: ({ value }: any) =>
+        choices.find((c) => c.label === value)?.value ?? null,
     }),
     [MantineSelectCell]
   );
@@ -131,7 +132,11 @@ export default function ProductsBatchCreateFullzoom() {
         return v.trim() === "" ? null : v;
       },
     } as any;
-    const col = <K extends keyof SheetRow>(key: K, title: string, disabled = false): Column<SheetRow> => ({
+    const col = <K extends keyof SheetRow>(
+      key: K,
+      title: string,
+      disabled = false
+    ): Column<SheetRow> => ({
       ...((RDG.keyColumn as any)(key as any, RDG.textColumn) as any),
       id: key as string,
       title,
@@ -174,29 +179,46 @@ export default function ProductsBatchCreateFullzoom() {
       } as any,
       // Tax select by name
       {
-        ...((RDG.keyColumn as any)("purchaseTaxId" as any, buildSelectColumn(taxOptions.map((o) => ({ label: o.label, value: String(o.value) })))) as any),
+        ...((RDG.keyColumn as any)(
+          "purchaseTaxId" as any,
+          buildSelectColumn(
+            taxOptions.map((o) => ({ label: o.label, value: String(o.value) }))
+          )
+        ) as any),
         id: "purchaseTaxId",
         title: "Tax",
       } as any,
       // Price fields: use nullable text column so Delete and empty paste become null
       {
-        ...((RDG.keyColumn as any)("costPrice" as any, nullableTextColumn) as any),
+        ...((RDG.keyColumn as any)(
+          "costPrice" as any,
+          nullableTextColumn
+        ) as any),
         id: "costPrice",
         title: "Cost",
       } as any,
       {
-        ...((RDG.keyColumn as any)("manualSalePrice" as any, nullableTextColumn) as any),
+        ...((RDG.keyColumn as any)(
+          "manualSalePrice" as any,
+          nullableTextColumn
+        ) as any),
         id: "manualSalePrice",
         title: "Sell",
       } as any,
       // Booleans as checkboxes
       {
-        ...((RDG.keyColumn as any)("stockTrackingEnabled" as any, RDG.checkboxColumn) as any),
+        ...((RDG.keyColumn as any)(
+          "stockTrackingEnabled" as any,
+          RDG.checkboxColumn
+        ) as any),
         id: "stockTrackingEnabled",
         title: "Stock",
       } as any,
       {
-        ...((RDG.keyColumn as any)("batchTrackingEnabled" as any, RDG.checkboxColumn) as any),
+        ...((RDG.keyColumn as any)(
+          "batchTrackingEnabled" as any,
+          RDG.checkboxColumn
+        ) as any),
         id: "batchTrackingEnabled",
         title: "Batch",
       } as any,
@@ -206,7 +228,12 @@ export default function ProductsBatchCreateFullzoom() {
       return [col("id", "ID", true), ...base];
     }
     return base;
-  }, [mode, options?.supplierOptions, options?.categoryOptions, options?.taxCodeOptions]);
+  }, [
+    mode,
+    options?.supplierOptions,
+    options?.categoryOptions,
+    options?.taxCodeOptions,
+  ]);
 
   const createRow = (): SheetRow => ({
     sku: "",
@@ -230,7 +257,10 @@ export default function ProductsBatchCreateFullzoom() {
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const payload = mode === "edit" ? { _intent: "product.batchSaveRows", rows } : { _intent: "product.batchCreate", rows };
+      const payload =
+        mode === "edit"
+          ? { _intent: "product.batchSaveRows", rows }
+          : { _intent: "product.batchCreate", rows };
       console.log("!!! payload", payload);
       const resp = await fetch("/products", {
         method: "POST",
@@ -242,7 +272,12 @@ export default function ProductsBatchCreateFullzoom() {
         notifications.show({
           color: "teal",
           title: mode === "edit" ? "Batch save" : "Batch create",
-          message: mode === "edit" ? `Saved ${data?.updated || 0} updated, ${data?.created || 0} created` : `Created ${data?.created || 0} products`,
+          message:
+            mode === "edit"
+              ? `Saved ${data?.updated || 0} updated, ${
+                  data?.created || 0
+                } created`
+              : `Created ${data?.created || 0} products`,
         });
         setDirty(false);
         navigate("/products?refreshed=1");
@@ -280,47 +315,27 @@ export default function ProductsBatchCreateFullzoom() {
   }, [loaderData]);
 
   return (
-    <AppShell header={{ height: 100 }} padding="md" withBorder={false}>
-      <AppShell.Header>
-        <Group justify="space-between" align="center" px={24} py={16}>
-          <Text size="xl">{mode === "edit" ? "Batch Edit Products" : "Batch Create Products"}</Text>
-          <SaveCancelHeader />
-        </Group>
-      </AppShell.Header>
-      <AppShell.Main>
-        <Stack>
-          <Card withBorder>
-            <div
-              style={{
-                border: "1px solid var(--mantine-color-gray-4)",
-                borderRadius: 4,
-                overflow: "hidden",
-              }}
-            >
-              <RDG.DataSheetGrid
-                className="products-batch-sheet"
-                value={rows as any}
-                onChange={(r: SheetRow[]) => {
-                  console.log("!!! sheet onChange", r);
-                  setRows(r);
-                  setDirty(true);
-                }}
-                columns={sheetColumns}
-                height={520}
-                createRow={createRow}
-              />
-            </div>
-            <Group justify="flex-end" mt="md">
-              <Button variant="default" onClick={() => navigate("/products")}>
-                Cancel
-              </Button>
-              <Button color="green" onClick={save} loading={saving} disabled={!dirty}>
-                Save
-              </Button>
-            </Group>
-          </Card>
-        </Stack>
-      </AppShell.Main>
-    </AppShell>
+    <FullzoomAppShell
+      title={mode === "edit" ? "Batch Edit Products" : "Batch Create Products"}
+      right={<SaveCancelHeader />}
+    >
+      {(gridHeight) => {
+        const displayRows = padToMinRows(rows, DEFAULT_MIN_ROWS, () =>
+          createRow()
+        );
+        return (
+          <RDG.DataSheetGrid
+            value={displayRows as any}
+            onChange={(r: SheetRow[]) => {
+              setRows(r);
+              setDirty(true);
+            }}
+            columns={sheetColumns}
+            height={gridHeight}
+            createRow={createRow}
+          />
+        );
+      }}
+    </FullzoomAppShell>
   );
 }

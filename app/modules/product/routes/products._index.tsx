@@ -198,7 +198,9 @@ export default function ProductsIndexRoute() {
       </Group>
       <Group justify="space-between" align="center">
         <FindRibbonAuto views={[]} activeView={null} />
-        <PricingPreviewWidget productId={Number(currentId) || undefined} />
+        <Card withBorder padding={5}>
+          <PricingPreviewWidget productId={Number(currentId) || undefined} />
+        </Card>
       </Group>
       <section>
         <VirtualizedNavDataTable

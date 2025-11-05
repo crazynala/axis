@@ -7,15 +7,14 @@ export async function amendBatch(
   date: Date,
   delta: number
 ) {
-  const movementType = delta >= 0 ? "adjust_in" : "adjust_out";
   const hdr = await prismaBase.productMovement.create({
     data: {
       productId: Number.isFinite(productId as any)
         ? (productId as any)
         : undefined,
-      movementType,
+      movementType: "Amendment",
       date,
-      locationId: locationId ?? undefined,
+      locationInId: locationId ?? undefined,
       quantity: Math.abs(delta),
       notes: "Inventory amendment",
     },

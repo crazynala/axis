@@ -1,4 +1,5 @@
 /* app.css */
+/* Input Coloring */
 @layer app {
   [data-mantine-color-scheme="dark"] [data-variant="default"] {
     --input-bd: var(--mantine-color-slate-8);
@@ -24,6 +25,16 @@
   .mantine-TextInput-input:read-only {
     background-color: transparent;
     border: none;
+  }
+
+/* Table styling */
+.mantine-Table-th {
+  font-size: .7rem;
+  color: rgb(59, 59, 59)
+}
+
+  [data-mantine-color-scheme="dark"] .mantine-Table-th {
+    color: rgb(151, 151, 151)
   }
 
   /* Inline labels from md+ */
@@ -68,5 +79,45 @@
 
   .mantine-InputWrapper-root[data-inline-label="false"] {
     display: block;
+  }
+
+  /* Assembly/group rail styling */
+ 
+  /* Table/cell-native rail using border-collapse to eliminate gaps */
+  .asm-rail-table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .asm-rail-table td:not(.asm-rail-cell){
+    border-bottom: 1px solid var(--table-border-color);
+  }
+
+  .asm-rail-table th:not(.asm-rail-cell) {
+    border-top: 1px solid var(--table-border-color);
+    border-bottom: 1px solid var(--table-border-color);
+  }
+
+  .asm-rail-table td, .asm-rail-table th {
+    border-inline-end: none;
+  }
+
+    .asm-rail-table td:last-child, .asm-rail-table th:last-child {
+    border-inline-end: 1px solid var(--table-border-color);
+  }
+
+  .asm-rail-cell {
+    --rail-color: #9aa0a6;
+    position: relative;
+    width: 20px;
+    padding: 0; /* reduce padding so caps meet edges nicely */
+  }
+  .asm-rail-cell.is-in-group { border-left: 2px solid var(--rail-color); }
+  .asm-rail-cell.is-first {
+    border-top: 2px solid var(--rail-color);
+    border-top-left-radius: 6px;
+  }
+  .asm-rail-cell.is-last {
+    border-bottom: 2px solid var(--rail-color);
+    border-bottom-left-radius: 6px;
   }
 }

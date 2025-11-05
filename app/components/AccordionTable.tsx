@@ -60,8 +60,8 @@ export type AccordionTableProps<T> = {
 
 export function AccordionTable<T>(props: AccordionTableProps<T>) {
   const {
-    data,
-    columns,
+    data: dataProp,
+    columns: columnsProp,
     getSubrows,
     getRowId,
     expandedIds,
@@ -76,6 +76,9 @@ export function AccordionTable<T>(props: AccordionTableProps<T>) {
     striped = false,
     withRowBorders = true,
   } = props;
+  // Runtime guards to avoid SSR crashes if a caller passes undefined
+  const data = Array.isArray(dataProp) ? dataProp : [];
+  const columns = Array.isArray(columnsProp) ? columnsProp : [];
   const DEBUG = debugEnabled("accordionTable") || !!props.debug;
 
   const [internalExpanded, setInternalExpanded] = useState<

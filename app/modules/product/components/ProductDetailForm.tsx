@@ -1,5 +1,5 @@
 import React from "react";
-import { Card, Grid, SimpleGrid } from "@mantine/core";
+import { Card, Grid, SimpleGrid, Center } from "@mantine/core";
 import type { UseFormReturn } from "react-hook-form";
 import { RenderGroup } from "../../../base/forms/fieldConfigShared";
 import {
@@ -12,6 +12,7 @@ import {
   productPricingFields,
 } from "../forms/productDetail";
 import { ProductCostTiersModal } from "../components/ProductCostTiersModal";
+import { PricingPreviewWidget } from "./PricingPreviewWidget";
 
 export type ProductDetailFormProps = {
   mode: "edit" | "find" | "create";
@@ -191,6 +192,13 @@ export function ProductDetailForm({
               mode={mode as any}
               ctx={ctx as any}
             />
+            {product?.id ? (
+              <Card.Section bg="dark.6" py={5} mt="xs">
+                <Center>
+                  <PricingPreviewWidget productId={product.id} />
+                </Center>
+              </Card.Section>
+            ) : null}
           </Card>
         </SimpleGrid>
       </Grid.Col>

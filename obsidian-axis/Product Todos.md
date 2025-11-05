@@ -1,0 +1,11 @@
+- [ ] Must be able to view 0 qty batches
+- [ ] Filter batch by location, is current
+- [ ] Must be able to select cost group
+- [x] Amend All doesn't present any batches
+- [x] Amend batch creates movement with wrong type, no In / Out location
+- [ ] Make Stock Tracking toggle fit form layout better
+- [ ] Rework and harden "tags"
+- [x] Move batch "Amend" and "Transfer" to a hamburger menu
+- [ ] Batch product update always returns "Updated: 0" even on success
+- [ ] Batch product update only updating first row
+- [ ] Sheet view layout not consistent; some pages missing Exit button

@@ -6,15 +6,9 @@ import {
   type Column,
 } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Button,
-  Checkbox,
-  Group,
-  Stack,
-  Text,
-  TextInput,
-} from "@mantine/core";
+import { Button, Checkbox, Group, Stack, Text, TextInput } from "@mantine/core";
 import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
+import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 
 export type BOMRow = {
   id: number | null;
@@ -32,12 +26,16 @@ export default function ProductBomSpreadsheet({
   loading,
   dirty,
   onRowsChange,
+  height,
+  minRows = DEFAULT_MIN_ROWS,
 }: {
   rows: BOMRow[];
   onSave: () => void;
   loading: boolean;
   dirty: boolean;
   onRowsChange?: (rows: BOMRow[]) => void;
+  height?: number;
+  minRows?: number;
 }) {
   // const navigate = useNavigate();
   const [localRows, setLocalRows] = useState<BOMRow[]>(rows);
@@ -78,39 +76,42 @@ export default function ProductBomSpreadsheet({
   // Debounced batch lookup for SKUs
   const pendingSkusRef = useRef<Set<string>>(new Set());
   const lookupTimerRef = useRef<any>(null);
-  const enqueueLookup = useCallback((skus: string[]) => {
-    skus.filter(Boolean).forEach((s) => pendingSkusRef.current.add(s));
-    if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
-    lookupTimerRef.current = setTimeout(async () => {
-      const toFetch = Array.from(pendingSkusRef.current);
-      pendingSkusRef.current.clear();
-      if (!toFetch.length) return;
-      try {
-        const url = new URL(`/api/products/lookup`, window.location.origin);
-        url.searchParams.set("skus", toFetch.join(","));
-        const resp = await fetch(url.toString());
-        const data = await resp.json();
-        const map = new Map<string, any>();
-        if (data?.products) {
-          for (const p of data.products) map.set(p.sku || "", p);
-        }
-        setLocalRows((curr) => {
-          const next = curr.map((r) => {
-            const info = r.childSku ? map.get(r.childSku) : null;
-            if (!info) return r;
-            return {
-              ...r,
-              childName: info?.name || "",
-              type: (info?.type as string) || "",
-              supplier: (info?.supplier?.name as string) || "",
-            };
+  const enqueueLookup = useCallback(
+    (skus: string[]) => {
+      skus.filter(Boolean).forEach((s) => pendingSkusRef.current.add(s));
+      if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
+      lookupTimerRef.current = setTimeout(async () => {
+        const toFetch = Array.from(pendingSkusRef.current);
+        pendingSkusRef.current.clear();
+        if (!toFetch.length) return;
+        try {
+          const url = new URL(`/api/products/lookup`, window.location.origin);
+          url.searchParams.set("skus", toFetch.join(","));
+          const resp = await fetch(url.toString());
+          const data = await resp.json();
+          const map = new Map<string, any>();
+          if (data?.products) {
+            for (const p of data.products) map.set(p.sku || "", p);
+          }
+          setLocalRows((curr) => {
+            const next = curr.map((r) => {
+              const info = r.childSku ? map.get(r.childSku) : null;
+              if (!info) return r;
+              return {
+                ...r,
+                childName: info?.name || "",
+                type: (info?.type as string) || "",
+                supplier: (info?.supplier?.name as string) || "",
+              };
+            });
+            onRowsChange?.(next.filter((r) => !isBlank(r)));
+            return next;
           });
-          onRowsChange?.(next.filter((r) => !isBlank(r)));
-          return next;
-        });
-      } catch {}
-    }, 120);
-  }, [onRowsChange]);
+        } catch {}
+      }, 120);
+    },
+    [onRowsChange]
+  );
 
   const sheetColumns = useMemo<Column<BOMRow>[]>(() => {
     const idCol = {
@@ -229,7 +230,7 @@ export default function ProductBomSpreadsheet({
         </Button>
       </Group>
       <DataSheetGrid
-        value={localRows}
+        value={padToMinRows(localRows, minRows, () => ({ ...blankRow }))}
         onChange={(next) => {
           const typed = (next as BOMRow[]) || [];
           const normalized = ensureTrailingBlank(typed);
@@ -238,7 +239,10 @@ export default function ProductBomSpreadsheet({
             const changed: string[] = [];
             const minLen = Math.min(localRows.length, normalized.length);
             for (let i = 0; i < minLen; i++) {
-              if ((localRows[i]?.childSku || "") !== (normalized[i]?.childSku || "")) {
+              if (
+                (localRows[i]?.childSku || "") !==
+                (normalized[i]?.childSku || "")
+              ) {
                 const s = normalized[i]?.childSku || "";
                 if (s) changed.push(s);
               }
@@ -253,7 +257,7 @@ export default function ProductBomSpreadsheet({
           onRowsChange?.(normalized.filter((r) => !isBlank(r)));
         }}
         columns={sheetColumns}
-        //   height={"calc(100vh - 120px)"}
+        height={height}
         createRow={() => ({ ...blankRow })}
       />
       {/* SKU picker modal */}

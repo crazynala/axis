@@ -3,9 +3,10 @@ import { useLoaderData, useParams } from "@remix-run/react";
 import ProductBomSpreadsheet from "../components/ProductBomSpreadsheet";
 import type { BOMRow } from "../components/ProductBomSpreadsheet";
 import { prismaBase } from "~/utils/prisma.server";
-import { AppShell, Group, Text } from "@mantine/core";
+// no extra layout wrappers; FullzoomAppShell handles layout
+import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
 import { notifications } from "@mantine/notifications";
-import { useNavigate } from "@remix-run/react";
+// import { useNavigate } from "@remix-run/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
 
@@ -48,7 +49,7 @@ export async function loader({ params }: any) {
 
 export default function ProductBomRoute() {
   const { rows } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   const params = useParams();
   const productId = Number(params.id);
 
@@ -64,7 +65,6 @@ export default function ProductBomRoute() {
   const dirty = useMemo(() => {
     const a = (originalRef.current || []) as RowLite[];
     const b = (editedRows || []) as RowLite[];
-    console.log("Dirty Check", a, b);
     if (a.length !== b.length) return true;
     for (let i = 0; i < a.length; i++) {
       const A = a[i];
@@ -202,22 +202,20 @@ export default function ProductBomRoute() {
   useInitGlobalFormContext(formHandlers as any, () => save(), reset);
 
   return (
-    <AppShell header={{ height: 100 }} padding="md" withBorder={false}>
-      <AppShell.Header>
-        <Group justify="space-between" align="center" px={24} py={16}>
-          <Text size="xl">Bill of Materials Spreadsheet</Text>
-          <SaveCancelHeader />
-        </Group>
-      </AppShell.Header>
-      <AppShell.Main>
+    <FullzoomAppShell
+      title="Bill of Materials Spreadsheet"
+      right={<SaveCancelHeader />}
+    >
+      {(gridHeight) => (
         <ProductBomSpreadsheet
           rows={editedRows}
           onSave={() => {}}
           loading={false}
           dirty={dirty}
           onRowsChange={setEditedRows}
+          height={gridHeight}
         />
-      </AppShell.Main>
-    </AppShell>
+      )}
+    </FullzoomAppShell>
   );
 }

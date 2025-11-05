@@ -135,41 +135,6 @@ export function AssemblyQuantitiesCard({
 
   return (
     <Card withBorder padding="md">
-      <Card.Section inheritPadding py="xs">
-        <Group justify="space-between" align="center">
-          <Title order={4}>{title}</Title>
-          {editableOrdered && !hideInlineActions ? (
-            <Group gap="xs">
-              <Button
-                size="xs"
-                variant="default"
-                onClick={() => {
-                  if (isControlled) onCancelOrdered?.();
-                  else
-                    setOrderedDraft(
-                      items[0]?.ordered ? [...items[0].ordered] : []
-                    );
-                  onCancelOrdered?.();
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="xs"
-                onClick={() => {
-                  if (isControlled && Array.isArray(orderedValue))
-                    onSubmitOrdered?.(orderedValue);
-                  else if (Array.isArray(orderedDraft))
-                    onSubmitOrdered?.(orderedDraft);
-                }}
-              >
-                Save
-              </Button>
-            </Group>
-          ) : null}
-        </Group>
-      </Card.Section>
-      <Divider my="xs" />
       {items.map((it, idx) => (
         <div
           key={`q-${idx}`}

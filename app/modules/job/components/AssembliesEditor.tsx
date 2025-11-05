@@ -17,6 +17,7 @@ import { useInitGlobalFormContext } from "@aa/timber";
 import { useSubmit } from "@remix-run/react";
 import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
 import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
+import { Link } from "@remix-run/react";
 import {
   buildCostingRows,
   canEditQpuDefault,
@@ -234,75 +235,61 @@ export function AssembliesEditor(props: {
       </Card>
 
       <Grid>
-        {/* Assembly info card (single assembly only) */}
-        {!isGroup ? (
-          <Grid.Col span={5}>
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Title order={4}>Assembly</Title>
-              </Card.Section>
-              <Divider my="xs" />
-              <Stack gap={6}>
-                <TextInput
-                  readOnly
-                  value={firstAssembly?.name || ""}
-                  label="Name"
-                  mod="data-autosize"
-                />
-                <TextInput
-                  readOnly
-                  value={job?.name || job?.id || ""}
-                  label="Job"
-                  mod="data-autosize"
-                />
-                <TextInput
-                  readOnly
-                  value={firstAssembly?.status || ""}
-                  label="Status"
-                  mod="data-autosize"
-                />
-                <TextInput
-                  readOnly
-                  value={firstAssembly?.id || ""}
-                  label="ID"
-                  mod="data-autosize"
-                />
-              </Stack>
-            </Card>
-          </Grid.Col>
-        ) : null}
-
         {(assemblies || []).map((a) => {
           const item = (quantityItems || []).find((i) => i.assemblyId === a.id);
           if (!item) return null;
           return (
-            <Grid.Col span={isGroup ? 6 : 7} key={a.id}>
-              <AssemblyQuantitiesCard
-                title={`Quantities — Assembly ${a.id}`}
-                variants={item.variants}
-                items={[
-                  {
-                    label: `Assembly ${a.id}`,
-                    ordered: item.ordered,
-                    cut: item.cut,
-                    make: item.make,
-                    pack: item.pack,
-                    totals: item.totals,
-                  },
-                ]}
-                editableOrdered
-                hideInlineActions
-                orderedValue={editForm.watch(
-                  `orderedByAssembly.${a.id}` as any
-                )}
-                onChangeOrdered={(arr) =>
-                  editForm.setValue(`orderedByAssembly.${a.id}` as any, arr, {
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-              />
-            </Grid.Col>
+            <>
+              <Grid.Col span={5}>
+                <Card withBorder padding="md">
+                  <TextInput
+                    readOnly
+                    value={a.name || ""}
+                    label="Name"
+                    mod="data-autosize"
+                  />
+                  <TextInput
+                    readOnly
+                    value={a.status || ""}
+                    label="Status"
+                    mod="data-autosize"
+                  />
+                  <TextInput
+                    readOnly
+                    value={a.id || ""}
+                    label="ID"
+                    mod="data-autosize"
+                  />
+                </Card>
+              </Grid.Col>
+              <Grid.Col span={7} key={a.id}>
+                <AssemblyQuantitiesCard
+                  // title={`Quantities — Assembly ${a.id}`}
+                  variants={item.variants}
+                  items={[
+                    {
+                      label: `Assembly ${a.id}`,
+                      ordered: item.ordered,
+                      cut: item.cut,
+                      make: item.make,
+                      pack: item.pack,
+                      totals: item.totals,
+                    },
+                  ]}
+                  editableOrdered
+                  hideInlineActions
+                  orderedValue={editForm.watch(
+                    `orderedByAssembly.${a.id}` as any
+                  )}
+                  onChangeOrdered={(arr) =>
+                    editForm.setValue(`orderedByAssembly.${a.id}` as any, arr, {
+                      shouldDirty: true,
+                      shouldTouch: true,
+                    })
+                  }
+                />
+              </Grid.Col>
+            </>
           );
         })}
         <Grid.Col span={12}>
@@ -310,10 +297,22 @@ export function AssembliesEditor(props: {
             title={isGroup ? "Costings (Group)" : "Costings"}
             actions={[
               <AddCostingButton
-                products={products}
+                products={products || []}
                 jobId={job?.id || 0}
                 assemblyId={firstAssembly?.id || 0}
               />,
+              <Link
+                to={`/costings/fullzoom?ids=${(assemblies || [])
+                  .map((a) => a.id)
+                  .join(",")}`}
+                prefetch="intent"
+                key="open-sheet"
+                style={{ textDecoration: "none" }}
+              >
+                <Button variant="default" size="xs">
+                  Open Sheet
+                </Button>
+              </Link>,
             ]}
             editableCosting
             canEditCosting={(row) => {

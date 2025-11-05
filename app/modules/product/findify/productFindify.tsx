@@ -17,6 +17,10 @@ export type ProductFindFormValues = {
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
   variantSetId?: number | null;
+  // tags
+  tagNames?: string[];
+  pricingGroupId?: number | null;
+  salePriceGroupId?: number | null;
   // search-only ranges + component criteria
   costPriceMin?: number | null;
   costPriceMax?: number | null;
@@ -43,10 +47,13 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     customerId: p.customerId,
     supplierId: p.supplierId,
     variantSetId: p.variantSetId,
-    pricingGroupId: p.pricingGroupId,
+    costGroupId: p.costGroupId,
     salePriceGroupId: p.salePriceGroupId,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
+    tagNames: (p.productTags || [])
+      .map((pt: any) => pt?.tag?.name)
+      .filter(Boolean) as string[],
   };
 }
 
@@ -107,7 +114,7 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     put("categoryId", values.categoryId);
     put("customerId", values.customerId);
     put("supplierId", values.supplierId);
-    put("pricingGroupId", values.pricingGroupId);
+    put("costGroupId", values.costGroupId);
     put("salePriceGroupId", values.salePriceGroupId);
 
     // booleans (always send explicit true/false)
@@ -119,6 +126,14 @@ export function useProductFindify(product: any, nav?: { state: string }) {
       "batchTrackingEnabled",
       values.batchTrackingEnabled ? "true" : "false"
     );
+
+    // tags: send JSON array of names
+    try {
+      const tags = Array.isArray(values.tagNames) ? values.tagNames : [];
+      fd.set("tagNames", JSON.stringify(tags));
+    } catch {
+      // ignore
+    }
 
     return fd;
   }, []);

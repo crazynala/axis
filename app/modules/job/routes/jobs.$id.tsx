@@ -28,6 +28,8 @@ import {
   TextInput,
   Switch,
   Badge,
+  Tooltip,
+  ActionIcon,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
 import { useEffect, useMemo, useState, useCallback } from "react";
@@ -42,6 +44,7 @@ import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services
 import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
+import { IconLink, IconUnlink } from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
@@ -480,7 +483,11 @@ export default function JobDetailRoute() {
           </Card.Section>
           <Divider my="xs" />
           <Group justify="space-between" mb="xs">
-            <Text c="dimmed">Selected: {selectedAsmIds.length}</Text>
+            {selectedAsmIds?.length > 0 ? (
+              <Text c="dimmed">Selected: {selectedAsmIds.length}</Text>
+            ) : (
+              <span> </span>
+            )}
             <Group gap="xs">
               <Form method="post">
                 <input type="hidden" name="_intent" value="assembly.group" />
@@ -499,14 +506,21 @@ export default function JobDetailRoute() {
               </Form>
             </Group>
           </Group>
-          <Table striped withTableBorder withColumnBorders highlightOnHover>
+          <Table
+            // withTableBorder
+            withRowBorders
+            withColumnBorders
+            highlightOnHover
+            className="asm-rail-table"
+          >
             <Table.Thead>
               <Table.Tr>
-                <Table.Th></Table.Th>
-                <Table.Th>ID</Table.Th>
+                <Table.Th className="asm-rail-cell" style={{ width: 25 }} />
+                <Table.Th style={{ width: 60, textAlign: "center" }}>
+                  ID
+                </Table.Th>
                 <Table.Th>Product SKU</Table.Th>
                 <Table.Th>Product Name</Table.Th>
-                <Table.Th>Group</Table.Th>
                 <Table.Th>Variant Set</Table.Th>
                 <Table.Th># Ordered</Table.Th>
                 <Table.Th>Cut</Table.Th>
@@ -516,107 +530,142 @@ export default function JobDetailRoute() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {(job.assemblies || []).map((a: any) => {
-                const p = a.productId
-                  ? (productsById as any)[a.productId]
-                  : null;
-                return (
-                  <Table.Tr key={a.id}>
-                    <Table.Td>
-                      <input
-                        type="checkbox"
-                        checked={selectedAsmIds.includes(a.id)}
-                        onChange={(e) =>
-                          toggleSelected(a.id, e.currentTarget.checked)
-                        }
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      {a.assemblyGroupId ? (
-                        <Link to={`group/${a.assemblyGroupId}`}>{a.id}</Link>
-                      ) : (
-                        <Link to={`assembly/${a.id}`}>{a.id}</Link>
-                      )}
-                    </Table.Td>
-                    <Table.Td>{p?.sku || ""}</Table.Td>
-                    <Table.Td>{p?.name || ""}</Table.Td>
-                    <Table.Td>
-                      {a.assemblyGroupId ? (
-                        <Group gap={6} wrap="nowrap">
-                          <Badge variant="light">G{a.assemblyGroupId}</Badge>
-                          <Form method="post">
-                            <input
-                              type="hidden"
-                              name="_intent"
-                              value="assembly.ungroupOne"
-                            />
-                            <input
-                              type="hidden"
-                              name="assemblyId"
-                              value={a.id}
-                            />
-                            <Button
+              {(() => {
+                const rows = (job.assemblies || []) as any[];
+                // Build a map of groupId -> comma-delimited member id list for deep-linking
+                const groupMembers = new Map<number, number[]>();
+                for (const r of rows) {
+                  const gid = r?.assemblyGroupId ?? null;
+                  if (gid != null) {
+                    const arr = groupMembers.get(gid) || [];
+                    arr.push(Number(r.id));
+                    groupMembers.set(gid, arr);
+                  }
+                }
+                // Sort member lists for stable, canonical URLs
+                for (const [gid, arr] of groupMembers.entries()) {
+                  arr.sort((a, b) => a - b);
+                  groupMembers.set(gid, arr);
+                }
+                const getPos = (
+                  idx: number
+                ): "first" | "middle" | "last" | "solo" | null => {
+                  const cur = rows[idx];
+                  const gid = cur?.assemblyGroupId ?? null;
+                  if (!gid) return null;
+                  const prevSame =
+                    idx > 0 && (rows[idx - 1]?.assemblyGroupId ?? null) === gid;
+                  const nextSame =
+                    idx < rows.length - 1 &&
+                    (rows[idx + 1]?.assemblyGroupId ?? null) === gid;
+                  if (!prevSame && !nextSame) return "solo";
+                  if (!prevSame && nextSame) return "first";
+                  if (prevSame && nextSame) return "middle";
+                  return "last";
+                };
+                return rows.map((a: any, idx: number) => {
+                  const p = a.productId
+                    ? (productsById as any)[a.productId]
+                    : null;
+                  const pos = getPos(idx);
+                  return (
+                    <Table.Tr key={a.id}>
+                      <Table.Td
+                        align="center"
+                        className={`asm-rail-cell ${pos ? "is-in-group" : ""} ${
+                          pos === "first" ? "is-first" : ""
+                        } ${pos === "last" ? "is-last" : ""}`}
+                      >
+                        {pos === "first" ? (
+                          <Tooltip label="Linked group">
+                            <ActionIcon
+                              variant="transparent"
+                              color="gray"
                               size="xs"
-                              variant="subtle"
-                              color="red"
-                              type="submit"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
                             >
-                              Ungroup
-                            </Button>
-                          </Form>
-                        </Group>
-                      ) : (
-                        <Text c="dimmed">—</Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
-                    <Table.Td>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        onClick={() => {
-                          const labels = (p?.variantSet?.variants ||
-                            []) as string[];
-                          setQtyAsm({ ...a, labels });
-                          setQtyModalOpen(true);
-                        }}
-                      >
-                        {(a as any).c_qtyOrdered ?? 0}
-                      </Button>
-                    </Table.Td>
-                    <Table.Td>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        onClick={() => {
-                          const labels = (p?.variantSet?.variants ||
-                            []) as string[];
-                          // use existing variant logic for lengths
-                          const cols = getVariantLabels(
-                            labels,
-                            p?.variantSet?.variants?.length as any
-                          );
-                          const current = Array.isArray(a.qtyCutBreakdown)
-                            ? a.qtyCutBreakdown
-                            : [];
-                          const initial = Array.from(
-                            { length: cols.length },
-                            (_, i) => current[i] || 0
-                          );
-                          setCutAsm({ ...a, labels: cols });
-                          setCutArr(initial);
-                          setCutModalOpen(true);
-                        }}
-                      >
-                        {(a as any).c_qtyCut ?? 0}
-                      </Button>
-                    </Table.Td>
-                    <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
-                    <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
-                    <Table.Td>{a.status || ""}</Table.Td>
-                  </Table.Tr>
-                );
-              })}
+                              <IconLink size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        ) : (
+                          pos === null && (
+                            <input
+                              type="checkbox"
+                              checked={selectedAsmIds.includes(a.id)}
+                              onChange={(e) =>
+                                toggleSelected(a.id, e.currentTarget.checked)
+                              }
+                            />
+                          )
+                        )}
+                      </Table.Td>
+
+                      <Table.Td align="center">
+                        {a.assemblyGroupId ? (
+                          <Link
+                            to={`assembly/${(
+                              groupMembers.get(a.assemblyGroupId) || [a.id]
+                            ).join(",")}`}
+                          >
+                            {a.id}
+                          </Link>
+                        ) : (
+                          <Link to={`assembly/${a.id}`}>{a.id}</Link>
+                        )}
+                      </Table.Td>
+                      <Table.Td>{p?.sku || ""}</Table.Td>
+                      <Table.Td>{p?.name || ""}</Table.Td>
+                      <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          onClick={() => {
+                            const labels = (p?.variantSet?.variants ||
+                              []) as string[];
+                            setQtyAsm({ ...a, labels });
+                            setQtyModalOpen(true);
+                          }}
+                        >
+                          {(a as any).c_qtyOrdered ?? 0}
+                        </Button>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          onClick={() => {
+                            const labels = (p?.variantSet?.variants ||
+                              []) as string[];
+                            const cols = getVariantLabels(
+                              labels,
+                              p?.variantSet?.variants?.length as any
+                            );
+                            const current = Array.isArray(a.qtyCutBreakdown)
+                              ? a.qtyCutBreakdown
+                              : [];
+                            const initial = Array.from(
+                              { length: cols.length },
+                              (_, i) => current[i] || 0
+                            );
+                            setCutAsm({ ...a, labels: cols });
+                            setCutArr(initial);
+                            setCutModalOpen(true);
+                          }}
+                        >
+                          {(a as any).c_qtyCut ?? 0}
+                        </Button>
+                      </Table.Td>
+                      <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
+                      <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
+                      <Table.Td>{a.status || ""}</Table.Td>
+                    </Table.Tr>
+                  );
+                });
+              })()}
             </Table.Tbody>
           </Table>
         </Card>
