@@ -42,6 +42,7 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     type: p.type || "",
     costPrice: p.costPrice,
     manualSalePrice: p.manualSalePrice,
+    manualMargin: p.manualMargin,
     purchaseTaxId: p.purchaseTaxId,
     categoryId: p.categoryId,
     customerId: p.customerId,
@@ -66,6 +67,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     type: "",
     costPrice: undefined,
     manualSalePrice: undefined,
+    manualMargin: undefined,
     purchaseTaxId: undefined,
     categoryId: undefined,
     customerId: undefined,
@@ -110,6 +112,7 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     // numbers (allow 0; clear with "")
     put("costPrice", values.costPrice);
     put("manualSalePrice", values.manualSalePrice);
+    put("manualMargin", values.manualMargin);
     put("purchaseTaxId", values.purchaseTaxId);
     put("categoryId", values.categoryId);
     put("customerId", values.customerId);

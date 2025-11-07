@@ -345,6 +345,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   const buildParamsFromValues = (vals: any) => {
     const params = new URLSearchParams();
     for (const f of fields) {
+      console.log("!! buildParamsFromValues field", f, f.findOp);
       if (!f.findOp) continue;
       if (f.widget === "numberRange") {
         const minName = f.rangeFields?.min || `${f.name}Min`;
@@ -359,6 +360,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
       const s = serializeValue(vals[f.name]);
       if (s !== null) params.set(key, s);
     }
+    console.log("!! buildParamsFromValues", vals, params.toString());
     return params;
   };
 
@@ -565,7 +567,7 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
       opened={opened}
       onClose={onClose}
       title={title}
-      size="xl"
+      size="xxl"
       centered
     >
       <form

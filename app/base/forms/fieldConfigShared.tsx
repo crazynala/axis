@@ -55,6 +55,13 @@ export type FieldConfig = {
   defaultName?: string; // fallback: read this field's value when override empty
   computeDefault?: (values: any, ctx?: RenderContext) => any; // or compute default from values
   format?: (v: any) => React.ReactNode; // optional formatter for display
+  // Treat certain values as "empty" for override presence (e.g., 0 for percentages)
+  overrideIsEmpty?: (value: any, ctx?: RenderContext) => boolean;
+  // When editing defaultOverride, optionally transform between stored value and input value
+  overrideAdapter?: {
+    toInput: (value: any, ctx?: RenderContext) => any;
+    fromInput: (input: any, ctx?: RenderContext) => any;
+  };
   sticky?: boolean; // if true (default), show override input by default when value present
   inputType?: string; // input type for override editor (e.g., number)
   placeholder?: string;
@@ -65,6 +72,10 @@ export type FieldConfig = {
     field: FieldConfig;
     ctx?: RenderContext;
   }) => boolean;
+  // Layout: render this field inline with the next visible field on the same row
+  inlineWithNext?: boolean;
+  // Layout: flex grow/basis for inline items (defaults to 1)
+  flex?: number;
   render?: (args: {
     form: UseFormReturn<any>;
     mode: FieldMode;
@@ -99,6 +110,7 @@ function DefaultOverrideRenderer({
   mode: FieldMode;
   ctx?: RenderContext;
 }) {
+  // console.log("!! default overrride render:", field.name, ctx);
   const common: any = { label: field.label, mod: "data-autosize" };
   const curOverrideName = field.overrideName as string | undefined;
   const sticky = field.sticky ?? true;
@@ -109,19 +121,42 @@ function DefaultOverrideRenderer({
     ? (form.watch(curOverrideName as any) as any)
     : undefined;
   const computeDefaultVal = React.useCallback(() => {
-    if (field.computeDefault)
+    if (field.computeDefault) {
+      // console.log("!! compute default for", field.name, ctx);
       return field.computeDefault(form.getValues(), ctx);
+    }
     if (field.defaultName) return (form.getValues() as any)[field.defaultName];
     return undefined;
   }, [field, form, ctx]);
   const defaultVal = computeDefaultVal();
-  const hasOverride = overrideVal != null && String(overrideVal) !== "";
+  // console.log("!! default value", defaultVal);
+  const hasOverride = React.useMemo(() => {
+    const isEmpty = field.overrideIsEmpty
+      ? field.overrideIsEmpty(overrideVal, ctx)
+      : overrideVal == null || String(overrideVal) === "";
+    return !isEmpty;
+  }, [overrideVal, field, ctx]);
   const [editing, setEditing] = React.useState<boolean>(
     sticky ? !!hasOverride : false
   );
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const registered = React.useMemo(() => {
+    return curOverrideName ? form.register(curOverrideName as any) : undefined;
+  }, [form, curOverrideName]);
   React.useEffect(() => {
-    if (sticky) setEditing(!!hasOverride);
-  }, [sticky, hasOverride]);
+    // Keep the input open while editing even if the value becomes empty.
+    // Only auto-open when not editing and an override exists.
+    if (sticky && !editing) setEditing(!!hasOverride);
+  }, [sticky, hasOverride, editing]);
+  React.useEffect(() => {
+    if (editing && inputRef.current) {
+      try {
+        inputRef.current.focus();
+        // Select existing value to allow immediate typing-over
+        inputRef.current.select?.();
+      } catch {}
+    }
+  }, [editing]);
   const show = hasOverride ? overrideVal : defaultVal;
   return !editing ? (
     <TextInput
@@ -138,23 +173,73 @@ function DefaultOverrideRenderer({
   ) : (
     <Input.Wrapper {...common}>
       <Indicator color="red" position="middle-start">
-        <TextInput
-          type={inputType as any}
-          placeholder={placeholder}
-          rightSection={
-            <CloseButton
-              size="sm"
-              onClick={() => {
-                if (curOverrideName)
-                  form.setValue(curOverrideName as any, null, {
-                    shouldDirty: true,
-                  });
-                setEditing(false);
-              }}
-            />
-          }
-          {...form.register(curOverrideName as any)}
-        />
+        {curOverrideName ? (
+          <Controller
+            control={form.control}
+            name={curOverrideName as any}
+            render={({ field: f }) => {
+              const adapter = field.overrideAdapter;
+              const inputValue = adapter
+                ? adapter.toInput(f.value, ctx)
+                : f.value ?? "";
+              return (
+                <TextInput
+                  type={inputType as any}
+                  placeholder={placeholder}
+                  autoFocus
+                  value={inputValue as any}
+                  onChange={(e) => {
+                    const raw = (e.target as HTMLInputElement).value;
+                    const parsed = field.overrideAdapter
+                      ? field.overrideAdapter.fromInput(raw, ctx)
+                      : raw;
+                    f.onChange(parsed as any);
+                  }}
+                  onBlur={(e) => {
+                    f.onBlur();
+                    const cur = form.getValues()[curOverrideName as any];
+                    const empty = cur == null || String(cur) === "";
+                    if (empty) setEditing(false);
+                  }}
+                  ref={(el) => {
+                    inputRef.current = el as any;
+                    const rf = f.ref as any;
+                    if (typeof rf === "function") rf(el);
+                    else if (rf && "current" in rf) rf.current = el;
+                  }}
+                  rightSection={
+                    <CloseButton
+                      size="sm"
+                      onClick={() => {
+                        form.setValue(curOverrideName as any, null, {
+                          shouldDirty: true,
+                        });
+                        setEditing(false);
+                      }}
+                    />
+                  }
+                />
+              );
+            }}
+          />
+        ) : (
+          <TextInput
+            type={inputType as any}
+            placeholder={placeholder}
+            autoFocus
+            ref={(el) => {
+              inputRef.current = el as any;
+            }}
+            rightSection={
+              <CloseButton
+                size="sm"
+                onClick={() => {
+                  setEditing(false);
+                }}
+              />
+            }
+          />
+        )}
       </Indicator>
     </Input.Wrapper>
   );
@@ -612,21 +697,39 @@ export function RenderGroup({
   const visible = list.filter(
     (f) => !(f.hiddenInModes && f.hiddenInModes.includes(mode))
   );
+  const rows: React.ReactNode[] = [];
+  for (let i = 0; i < visible.length; i++) {
+    const field = visible[i];
+    const key =
+      (field.overrideName as string | undefined) || field.name || field.label;
+    const next = visible[i + 1];
+    if (field.inlineWithNext && next) {
+      const key2 =
+        (next.overrideName as string | undefined) || next.name || next.label;
+      rows.push(
+        <Group key={`${key}+${key2}`} gap="xl" align="flex-end" grow>
+          <div style={{ flex: field.flex ?? 1 }}>
+            <RenderField form={form} field={field} mode={mode} ctx={ctx} />
+          </div>
+          <div style={{ flex: next.flex ?? 1 }}>
+            <RenderField form={form} field={next} mode={mode} ctx={ctx} />
+          </div>
+        </Group>
+      );
+      i++; // skip the next, already rendered inline
+    } else {
+      rows.push(
+        <React.Fragment key={key}>
+          <RenderField form={form} field={field} mode={mode} ctx={ctx} />
+        </React.Fragment>
+      );
+    }
+  }
   return (
     <Group gap={0} style={{ width: "100%" }}>
       <div style={{ width: "100%" }}>
         <div style={{ display: "flex", flexDirection: "column", gap }}>
-          {visible.map((field) => {
-            const key =
-              (field.overrideName as string | undefined) ||
-              field.name ||
-              field.label;
-            return (
-              <React.Fragment key={key}>
-                <RenderField form={form} field={field} mode={mode} ctx={ctx} />
-              </React.Fragment>
-            );
-          })}
+          {rows}
         </div>
       </div>
     </Group>

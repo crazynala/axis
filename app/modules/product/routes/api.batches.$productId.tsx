@@ -9,6 +9,5 @@ export async function loader({ params }: LoaderFunctionArgs) {
   console.log("[api.batches] fetching batches for product", { productId: pid });
   const batches = await getBatchesWithComputedQty(pid);
   console.log("[api.batches] found batches", { count: batches.length });
-  console.log("!! batches", batches);
   return json({ batches });
 }

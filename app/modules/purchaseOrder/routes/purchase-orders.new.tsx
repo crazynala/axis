@@ -19,14 +19,29 @@ export default function NewPurchaseOrderRoute() {
   const submit = useSubmit();
   const form = useForm({
     defaultValues: {
-      date: "",
+      date: new Date(),
       status: "",
     },
   });
   const onSubmit = (values: any) => {
+    // Require vendor and consignee
+    const vendorId = values.companyId ?? null;
+    const consigneeId = values.consigneeCompanyId ?? null;
+    if (vendorId == null || consigneeId == null) {
+      alert("Vendor and Consignee are required.");
+      return;
+    }
+    const po = {
+      date: values.date ?? new Date(),
+      status: values.status ?? "DRAFT",
+      companyId: vendorId,
+      consigneeCompanyId: consigneeId,
+      locationId: values.locationId ?? null,
+      memo: values.memo ?? null,
+    };
     const fd = new FormData();
-    if (values.date) fd.set("date", values.date);
-    if (values.status) fd.set("status", values.status);
+    fd.set("_intent", "po.create");
+    fd.set("purchaseOrder", JSON.stringify(po));
     submit(fd, { method: "post" });
   };
   return (
@@ -40,7 +55,16 @@ export default function NewPurchaseOrderRoute() {
           ]}
         />
       </Group>
-      <Form method="post" onSubmit={form.handleSubmit(onSubmit)}>
+      <Form
+        method="post"
+        onSubmit={form.handleSubmit(onSubmit)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            // Prevent Enter from submitting to avoid conflicts with combobox selection UX
+            e.preventDefault();
+          }
+        }}
+      >
         <PurchaseOrderDetailForm mode="create" form={form as any} />
         <Group justify="end" mt="md">
           <Button type="submit" disabled={busy}>

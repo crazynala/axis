@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "@remix-run/react";
-import { useFind } from "../../../base/find/FindContext";
-import { ProductFindModal } from "../../../components/ProductFindModal";
+import { useFind } from "~/base/find/FindContext";
+import { ProductFindModal } from "../components/ProductFindModal";
 
 // Simple Product Find Modal leveraging existing URL param filtering (products loader reads params)
 export function ProductFindManager() {

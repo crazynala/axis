@@ -170,13 +170,20 @@ Note on structure: domain components, form configs, and services now live under 
 
 ## Companies (`/companies`)
 
-- Index
-  - Columns: ID, Name (TBD: type/status)
-  - Search: name (insensitive)
-  - Sort: default ID asc
-  - Actions: navigate to detail; record browser integration
+- Layout (`app/modules/company/routes/companies.tsx`)
+  - Parent loader builds full filtered ID roster + initial window slice (first ~100 rows) with advanced multi-find support and saved view application.
+  - Hydrates `RecordContext` with `idList` + `initialRows`; renders only `<Outlet />` (find manager now lives in index route).
+  - Prevents revalidation on child/detail navigation and non-GET mutations via `shouldRevalidate` factory with watch keys.
+- Index (`app/modules/company/routes/companies._index.tsx`)
+  - Renders `CompanyFindManagerNew` + breadcrumb using `appendHref` from session find state (persisted search filters).
+  - Uses `useHybridWindow` over context `idList`; no longer calls `useRouteLoaderData` or sets `idList` manually.
+  - Infinite scroll hydration; auto-expansion loop ensures selected company row is in window.
+  - Columns: ID, Name, Carrier, Customer, Supplier, Active, Notes.
+  - Sorting controlled via URL `sort` + `dir` params (default id asc).
+  - Saved views ribbon simplified (currently blank) – view persistence still available via parent loader/action.
 - Detail (`/companies/:id`)
-  - Fields: ID, Name, Contacts (TBD), Notes
+  - Sets `currentId` on mount; uses Record Browser for prev/next across filtered roster.
+  - Fields: ID, Name, Notes + flags (Carrier/Customer/Supplier/Inactive) (extensible).
 
 ---
 
@@ -288,16 +295,18 @@ Note on structure: domain components, form configs, and services now live under 
 
 ## Shipments (`/shipments`)
 
-- Layout: provides master list
-- Index
-  - Columns: ID, Date, Type, Ship Type, Status, Tracking, From, To
-  - From/To resolve sender/receiver company names
-  - Pagination and per-page dropdown wired to URL
-- Detail
-  - Editable: date, dateReceived, type, status, tracking, packingSlipCode
-  - Read-only: carrier, sender, receiver, location names
-  - Lines table: id, product, qty, job, location, status (visible)
-  - Record Browser: prev/next across current shipment list
+- Layout (`app/routes/shipments.tsx`)
+  - Parent loader (migrating toward unified pattern) will host filtering logic (currently transitioning from index loader). Hydrates `RecordContext` with roster & initial rows; renders only `<Outlet />` after modernization.
+- Index (`app/routes/shipments._index.tsx`)
+  - Renders `ShipmentFindManager`, breadcrumb with `appendHref`, and virtualized table using `useHybridWindow` + context roster (no direct `useLoaderData` hydration).
+  - Simplified header (no separate saved views component; unify with product/purchase order style). Filter clear button remains.
+  - Columns: ID, Date, Type, Ship Type, Status, Tracking, From (sender name), To (receiver name).
+  - Infinite scroll replaces legacy page/perPage pagination (URL params retained only for sort & potential legacy compatibility).
+  - Auto-selection and window inclusion logic can be added similar to products (pending enhancement).
+- Detail (`/shipments/:id`)
+  - Uses Record Browser for prev/next over full filtered roster.
+  - Editable core fields: date, dateReceived, type, status, tracking, packingSlipCode.
+  - Sender/Receiver/company/location names displayed; lines table includes product, qty, related job/location/status.
 
 ## Expenses (`/expenses`)
 

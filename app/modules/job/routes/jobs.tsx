@@ -27,7 +27,6 @@ export async function loader(_args: LoaderFunctionArgs) {
   const viewName = url.searchParams.get("view");
   if (viewName) {
     const v = views.find((x: any) => x.name === viewName) as any;
-    console.log("!!! found view", v);
     const vp: any = v?.params;
     if (vp?.filters) {
       const savedFilters = vp.filters as any;

@@ -28,6 +28,72 @@ export function ProductDetailForm({
   product,
 }: ProductDetailFormProps) {
   const [tiersOpen, setTiersOpen] = React.useState(false);
+  // Live pricing prefs from the PricingPreviewWidget (qty + customer multiplier)
+  function usePricingPrefsFromWidget() {
+    const [qty, setQty] = React.useState<number>(() => {
+      if (typeof window === "undefined") return 60;
+      const raw = window.sessionStorage.getItem("pricing.qty");
+      const n = raw ? Number(raw) : 60;
+      return Number.isFinite(n) ? n : 60;
+    });
+    const [customerId, setCustomerId] = React.useState<string | null>(() => {
+      if (typeof window === "undefined") return null;
+      return window.sessionStorage.getItem("pricing.customerId");
+    });
+    const [priceMultiplier, setPriceMultiplier] = React.useState<number>(() => {
+      if (typeof window === "undefined") return 1;
+      const raw = window.sessionStorage.getItem("pricing.mult");
+      const n = raw ? Number(raw) : 1;
+      return Number.isFinite(n) ? n : 1;
+    });
+    const [preview, setPreview] = React.useState<any>(() => {
+      if (typeof window === "undefined") return null;
+      try {
+        const raw = window.sessionStorage.getItem("pricing.preview");
+        return raw ? JSON.parse(raw) : null;
+      } catch {}
+      return null;
+    });
+    const [margins, setMargins] = React.useState<
+      | { marginOverride?: number | null; vendorDefaultMargin?: number | null; globalDefaultMargin?: number | null }
+      | null
+    >(() => {
+      if (typeof window === "undefined") return null;
+      try {
+        const raw = window.sessionStorage.getItem("pricing.margins");
+        return raw ? JSON.parse(raw) : null;
+      } catch {}
+      return null;
+    });
+    React.useEffect(() => {
+      if (typeof window === "undefined") return;
+      const handler = (e: any) => {
+        const det = e?.detail || {};
+        if (det.qty != null) {
+          const q = Number(det.qty);
+          setQty(Number.isFinite(q) ? q : 60);
+        }
+        if (det.customerId != null) {
+          setCustomerId(String(det.customerId));
+        }
+        if (det.priceMultiplier != null) {
+          const m = Number(det.priceMultiplier);
+          setPriceMultiplier(Number.isFinite(m) ? m : 1);
+        }
+        if (det.margins != null) {
+          setMargins(det.margins);
+        }
+      };
+      window.addEventListener("pricing:prefs", handler as any);
+      const onPreview = (e: any) => setPreview(e?.detail ?? null);
+      window.addEventListener("pricing:preview", onPreview as any);
+      return () => {
+        window.removeEventListener("pricing:prefs", handler as any);
+        window.removeEventListener("pricing:preview", onPreview as any);
+      };
+    }, []);
+    return { qty, customerId, priceMultiplier, preview, margins } as const;
+  }
   // Local caches for on-demand loaded ranges keyed by group id
   const [salePriceGroupRangesById, setSalePriceGroupRangesById] =
     React.useState<
@@ -152,6 +218,8 @@ export function ProductDetailForm({
     const fetched = cid ? costGroupRangesById[cid] || [] : [];
     return fetched.length > 1;
   }, [product, watchedCostGroupId, costGroupRangesById]);
+  const pricingPrefs = usePricingPrefsFromWidget();
+
   const ctx = React.useMemo(
     () => ({
       hasCostTiers,
@@ -162,9 +230,26 @@ export function ProductDetailForm({
       // Provide dynamic ranges caches for computeDefault and previews
       salePriceGroupRangesById,
       costGroupRangesById,
+      // Live pricing prefs from widget
+      pricingQty: pricingPrefs.qty,
+      priceMultiplier: pricingPrefs.priceMultiplier,
+      pricingPreview: pricingPrefs.preview,
+      pricingCustomerId: pricingPrefs.customerId,
+      pricingMarginDefaults: pricingPrefs.margins,
     }),
-    [hasCostTiers, product, salePriceGroupRangesById, costGroupRangesById]
+    [
+      hasCostTiers,
+      product,
+      salePriceGroupRangesById,
+      costGroupRangesById,
+      pricingPrefs.qty,
+      pricingPrefs.priceMultiplier,
+      pricingPrefs.preview,
+      pricingPrefs.customerId,
+      pricingPrefs.margins,
+    ]
   );
+
   return (
     <Grid>
       <Grid.Col span={{ base: 12, md: 12 }}>
@@ -195,7 +280,7 @@ export function ProductDetailForm({
             {product?.id ? (
               <Card.Section bg="dark.6" py={5} mt="xs">
                 <Center>
-                  <PricingPreviewWidget productId={product.id} />
+                  <PricingPreviewWidget productId={product.id} vendorId={product?.supplierId ?? null} />
                 </Center>
               </Card.Section>
             ) : null}

@@ -1,55 +1,36 @@
 import type { MetaFunction } from "@remix-run/node";
-import {
-  Link,
-  useNavigation,
-  useRouteLoaderData,
-  useNavigate,
-  useSearchParams,
-} from "@remix-run/react";
+import { Link, useNavigate, useSearchParams } from "@remix-run/react";
 import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+} from "~/hooks/useNavLocation";
 import { useEffect } from "react";
 import { BreadcrumbSet } from "../../../../packages/timber/dist";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
-import { useRecordContext } from "../../../base/record/RecordContext";
+import { useRecords } from "../../../base/record/RecordContext";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
+import { CompanyFindManagerNew } from "~/modules/company/findify/CompanyFindManagerNew";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
 export default function CompaniesIndexRoute() {
-  const { idList, idListComplete, initialRows, total, views, activeView } =
-    useRouteLoaderData<{
-      idList: number[];
-      idListComplete: boolean;
-      initialRows: any[];
-      total: number;
-      views?: any[];
-      activeView?: string | null;
-    }>("modules/company/routes/companies") ?? {
-      idList: [],
-      idListComplete: true,
-      initialRows: [],
-      total: 0,
-      views: [],
-      activeView: null,
-    };
-  const nav = useNavigation();
-  const fetching = nav.state !== "idle"; // only reflects URL changes; row fetches are separate
-  const { state, setIdList, addRows, currentId } = useRecordContext();
+  // Persist and restore last path + filters for Companies module
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "companies" });
+  usePersistIndexSearch("/companies");
+  const { state, currentId } = useRecords();
   const navigate = useNavigate();
   const [sp] = useSearchParams();
-  // Seed/override RecordContext with loader-provided idList + initialRows so sorting/filtering take effect
-  useEffect(() => {
-    setIdList("companies", idList, idListComplete);
-    if (initialRows?.length)
-      addRows("companies", initialRows, { updateRecordsArray: true });
-  }, [idList, idListComplete, initialRows, setIdList, addRows]);
+  const appendHref = useFindHrefAppender();
   // useHybridWindow handles window sizing + hydration (records = current window)
   const {
     records,
     fetching: rowFetching,
     requestMore,
     atEnd,
+    total,
   } = useHybridWindow({
     module: "companies",
     rowEndpointPath: "/companies/rows",
@@ -57,6 +38,20 @@ export default function CompaniesIndexRoute() {
     batchIncrement: 100,
     maxPlaceholders: 8,
   });
+  // Ensure selected row inclusion (similar to products)
+  useEffect(() => {
+    if (!state?.currentId) return;
+    const idList = state?.idList || [];
+    const idx = idList.indexOf(state.currentId as any);
+    if (idx === -1) return;
+    if (idx >= records.length) {
+      let safety = 0;
+      while (records.length <= idx && safety < 20) {
+        requestMore();
+        safety++;
+      }
+    }
+  }, [state?.currentId, state?.idList, records.length, requestMore]);
   // Auto ensure currentId inclusion (if selected elsewhere) – simplistic: run once on mount if current exists
   // (Could be refined similar to invoices/products index implementations.)
   const columns = [
@@ -106,9 +101,10 @@ export default function CompaniesIndexRoute() {
   ];
   return (
     <Stack gap="lg">
+      <CompanyFindManagerNew />
       <Group justify="space-between" align="center">
         <BreadcrumbSet
-          breadcrumbs={[{ label: "Companies", href: "/companies" }]}
+          breadcrumbs={[{ label: "Companies", href: appendHref("/companies") }]}
         />
         <Button
           component="a"
@@ -119,19 +115,7 @@ export default function CompaniesIndexRoute() {
           New Company
         </Button>
       </Group>
-      <FindRibbonAuto
-        views={(views as any) || []}
-        activeView={(activeView as any) || null}
-        labelMap={{
-          id: "ID",
-          name: "Name",
-          notes: "Notes",
-          isCarrier: "Carrier",
-          isCustomer: "Customer",
-          isSupplier: "Supplier",
-          isInactive: "Archived",
-        }}
-      />
+      <FindRibbonAuto views={[]} activeView={null} />
       <section>
         <VirtualizedNavDataTable
           records={records as any}

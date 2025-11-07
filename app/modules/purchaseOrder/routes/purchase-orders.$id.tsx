@@ -17,8 +17,11 @@ import {
   Title,
   Table,
   Button,
-  Select,
+  ScrollArea,
+  TextInput,
+  Text,
 } from "@mantine/core";
+import { modals } from "@mantine/modals";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { NumberInput, Modal } from "@mantine/core";
 import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
@@ -29,8 +32,13 @@ import { formatUSD } from "../../../utils/format";
 import { POReceiveModal } from "../../../components/POReceiveModal";
 import { marshallPurchaseOrderToPrisma } from "../helpers/purchaseOrderMarshallers";
 import { ProductPricingService } from "~/modules/product/services/ProductPricingService";
-import { calcPrice } from "~/modules/product/calc/calcPrice";
+// calcPrice no longer used in this route; pricing handled in lines table
 import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/PurchaseOrderLinesTable";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -168,12 +176,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (isNew || intent === "po.create") {
     const raw = String(form.get("purchaseOrder") || "{}");
     const data = marshallPurchaseOrderToPrisma(JSON.parse(raw));
-    const created = await prisma.purchaseOrder.create(data as any);
+    const max = await prisma.purchaseOrder.aggregate({ _max: { id: true } });
+    const nextId = (max._max.id || 0) + 1;
+    const created = await prisma.purchaseOrder.create({
+      data: { id: nextId, ...data, status: (data as any).status ?? "DRAFT" },
+    } as any);
+    return redirect(`/purchase-orders/${created.id}`);
   }
-  1;
+
   if (intent === "po.update") {
     const raw = String(form.get("purchaseOrder") || "{}");
-    const data = marshallPurchaseOrderToPrisma(JSON.parse(raw));
+    let rawObj: any = {};
+    try {
+      rawObj = JSON.parse(raw);
+    } catch {
+      rawObj = {};
+    }
+    const data = marshallPurchaseOrderToPrisma(rawObj);
     const existing = await prisma.purchaseOrder.findUnique({
       where: { id },
       select: { status: true },
@@ -228,6 +247,185 @@ export async function action({ request, params }: ActionFunctionArgs) {
             quantity: ln.quantityOrdered ?? 0,
           },
         });
+      }
+    } else {
+      // Determine the status we should apply line rules against
+      const desiredStatus = nextStatus || prevStatus;
+
+      // When in DRAFT, persist lines from the posted form: create new lines, update existing
+      // and delete removed lines. Product and quantityOrdered are editable in DRAFT.
+      if ((desiredStatus || "DRAFT") === "DRAFT") {
+        const incomingLines: Array<any> = Array.isArray(rawObj?.lines)
+          ? rawObj.lines
+          : [];
+        // Fetch existing lines for this PO
+        const existingLines = await prisma.purchaseOrderLine.findMany({
+          where: { purchaseOrderId: id },
+          select: { id: true },
+        });
+        const existingIdSet = new Set(existingLines.map((l) => l.id));
+
+        // Upsert incoming lines
+        // Create new lines for any incoming that don't match an existing id
+        const toCreate = incomingLines.filter(
+          (l) => !existingIdSet.has(Number(l?.id))
+        );
+        if (toCreate.length) {
+          const max = await prisma.purchaseOrderLine.aggregate({
+            _max: { id: true },
+          });
+          let nextLineId = (max._max.id || 0) + 1;
+          for (const l of toCreate) {
+            const productId = Number(l?.productId);
+            if (!Number.isFinite(productId) || productId <= 0) continue;
+            const quantityOrdered = Number(l?.quantityOrdered || 0) || 0;
+            await prisma.purchaseOrderLine.create({
+              data: {
+                id: nextLineId++,
+                purchaseOrderId: id,
+                productId,
+                quantityOrdered,
+                quantity: 0,
+              },
+            });
+          }
+        }
+
+        // Update existing lines' product/quantityOrdered if present in incoming
+        const incomingById = new Map<number, any>();
+        for (const l of incomingLines) {
+          const lid = Number(l?.id);
+          if (Number.isFinite(lid)) incomingById.set(lid, l);
+        }
+        for (const lid of existingIdSet) {
+          const l = incomingById.get(lid);
+          if (!l) continue;
+          const productId = Number(l?.productId);
+          const quantityOrdered = Number(l?.quantityOrdered ?? 0) || 0;
+          const patch: any = {};
+          if (Number.isFinite(productId) && productId > 0)
+            patch.productId = productId;
+          patch.quantityOrdered = quantityOrdered;
+          await prisma.purchaseOrderLine.update({
+            where: { id: lid },
+            data: patch,
+          });
+        }
+
+        // Delete lines that were removed in the client when in DRAFT
+        const incomingIdSet = new Set(
+          incomingLines
+            .map((l) => Number(l?.id))
+            .filter((n) => Number.isFinite(n)) as number[]
+        );
+        const toDelete = Array.from(existingIdSet).filter(
+          (lid) => !incomingIdSet.has(lid)
+        );
+        if (toDelete.length) {
+          await prisma.purchaseOrderLine.deleteMany({
+            where: { id: { in: toDelete } },
+          });
+        }
+      } else if (desiredStatus && desiredStatus !== "DRAFT") {
+        // Non-finalizing updates when not DRAFT: allow editing of line.actual quantity in FINAL/RECEIVING,
+        // enforce constraints and lock quantities in COMPLETE/CANCELED.
+        // Only process line edits when not draft
+        const incomingLines: Array<any> = Array.isArray(rawObj?.lines)
+          ? rawObj.lines
+          : [];
+        if (incomingLines.length) {
+          const lineIds = incomingLines
+            .map((l) => Number(l?.id))
+            .filter((n) => Number.isFinite(n));
+          if (lineIds.length) {
+            // Fetch current received sums and existing quantities
+            const existingLines = await prisma.purchaseOrderLine.findMany({
+              where: { id: { in: lineIds } },
+              select: {
+                id: true,
+                purchaseOrderId: true,
+                quantity: true,
+                quantityOrdered: true,
+              },
+            });
+            const mls = await prisma.productMovementLine.findMany({
+              where: { purchaseOrderLineId: { in: lineIds } },
+              select: {
+                purchaseOrderLineId: true,
+                quantity: true,
+                movement: { select: { movementType: true } },
+              },
+            });
+            const receivedMap = new Map<number, number>();
+            for (const ml of mls) {
+              const t = (ml.movement?.movementType || "").toLowerCase();
+              if (t !== "po (receive)") continue;
+              const lid = Number(ml.purchaseOrderLineId);
+              receivedMap.set(
+                lid,
+                (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+              );
+            }
+            // Apply updates respecting constraints
+            for (const l of incomingLines) {
+              const lid = Number(l?.id);
+              if (!Number.isFinite(lid)) continue;
+              const exist = existingLines.find((x) => x.id === lid);
+              if (!exist || exist.purchaseOrderId !== id) continue;
+              // Never allow changing quantityOrdered when not draft
+              // Only update actual quantity when allowed
+              if (
+                desiredStatus === "COMPLETE" ||
+                desiredStatus === "CANCELED"
+              ) {
+                continue; // locked
+              }
+              const desired = Number(l?.quantity);
+              if (!Number.isFinite(desired)) continue;
+              const minQty = receivedMap.get(lid) || 0;
+              const finalQty = Math.max(desired, minQty);
+              await prisma.purchaseOrderLine.update({
+                where: { id: lid },
+                data: { quantity: finalQty },
+              });
+            }
+          }
+        }
+      }
+      // Manual transition RECEIVING -> COMPLETE: set quantities == received
+      if (prevStatus === "RECEIVING" && nextStatus === "COMPLETE") {
+        const lines = await prisma.purchaseOrderLine.findMany({
+          where: { purchaseOrderId: id },
+          select: { id: true },
+        });
+        const ids = lines.map((l) => l.id);
+        if (ids.length) {
+          const mls = await prisma.productMovementLine.findMany({
+            where: { purchaseOrderLineId: { in: ids } },
+            select: {
+              purchaseOrderLineId: true,
+              quantity: true,
+              movement: { select: { movementType: true } },
+            },
+          });
+          const receivedMap = new Map<number, number>();
+          for (const ml of mls) {
+            const t = (ml.movement?.movementType || "").toLowerCase();
+            if (t !== "po (receive)") continue;
+            const lid = Number(ml.purchaseOrderLineId);
+            receivedMap.set(
+              lid,
+              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+            );
+          }
+          for (const lid of ids) {
+            const qty = receivedMap.get(lid) || 0;
+            await prisma.purchaseOrderLine.update({
+              where: { id: lid },
+              data: { quantity: qty },
+            });
+          }
+        }
       }
     }
     return redirect(`/purchase-orders/${id}`);
@@ -375,6 +573,66 @@ export async function action({ request, params }: ActionFunctionArgs) {
     } catch (e) {
       console.warn("MV refresh failed (po.receive)", e);
     }
+    // Auto-advance PO status based on received quantities
+    try {
+      const po = await prisma.purchaseOrder.findUnique({
+        where: { id: poId },
+        select: {
+          id: true,
+          status: true,
+          lines: {
+            select: { id: true, quantity: true, quantityOrdered: true },
+          },
+        },
+      });
+      if (po) {
+        const ids = po.lines.map((l) => l.id);
+        let anyReceived = false;
+        let allFilled = false;
+        if (ids.length) {
+          const mls = await prisma.productMovementLine.findMany({
+            where: { purchaseOrderLineId: { in: ids } },
+            select: {
+              purchaseOrderLineId: true,
+              quantity: true,
+              movement: { select: { movementType: true } },
+            },
+          });
+          const receivedMap = new Map<number, number>();
+          for (const ml of mls) {
+            const t = (ml.movement?.movementType || "").toLowerCase();
+            if (t !== "po (receive)") continue;
+            const lid = Number(ml.purchaseOrderLineId);
+            receivedMap.set(
+              lid,
+              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+            );
+          }
+          anyReceived = Array.from(receivedMap.values()).some(
+            (v) => (v || 0) > 0
+          );
+          allFilled = po.lines.every((l) => {
+            const rec = receivedMap.get(l.id) || 0;
+            const target =
+              Number(l.quantity || 0) > 0
+                ? Number(l.quantity || 0)
+                : Number(l.quantityOrdered || 0);
+            return rec >= target && target >= 0;
+          });
+        }
+        let next = po.status;
+        if (po.status === "FINAL" && anyReceived) next = "RECEIVING" as any;
+        if (allFilled) next = "COMPLETE" as any;
+        if (next !== po.status) {
+          await prisma.purchaseOrder.update({
+            where: { id: poId },
+            data: { status: next },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to auto-advance PO status after receive", e);
+    }
     return redirect(`/purchase-orders/${poId}`);
   }
   return redirect(`/purchase-orders/${id}`);
@@ -385,8 +643,11 @@ export default function PurchaseOrderDetailRoute() {
     useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
+  // Persist last visited purchase order path & index filters
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "purchase-orders" });
+  usePersistIndexSearch("/purchase-orders");
 
-  console.log("PO detail", purchaseOrder, totals);
+  // console.log("PO detail", purchaseOrder, totals);
 
   // Register current id in RecordContext
   useEffect(() => {
@@ -395,9 +656,20 @@ export default function PurchaseOrderDetailRoute() {
 
   const form = useForm({ defaultValues: purchaseOrder });
   console.log("PO form", form.getValues());
+  console.log(
+    "PO defaults",
+    form.formState.dirtyFields,
+    form.formState.defaultValues
+  );
 
   // Product cache: id -> enriched product (tiers, tax, manualSalePrice)
   const [productMap, setProductMap] = useState<Record<number, any>>({});
+  const [pricingPrefs, setPricingPrefs] = useState<{
+    marginOverride?: number | null;
+    vendorDefaultMargin?: number | null;
+    globalDefaultMargin?: number | null;
+    priceMultiplier?: number | null;
+  } | null>(null);
   const ensureProducts = async (ids: number[]) => {
     const missing = ids.filter((id) => productMap[id] == null);
     if (!missing.length) return;
@@ -424,20 +696,99 @@ export default function PurchaseOrderDetailRoute() {
     if (!ids.length) return;
     ensureProducts(ids);
   }, [purchaseOrder.id]);
-  useInitGlobalFormContext(form as any, (values: any) => {
-    const fd = new FormData();
-    fd.set("_intent", "po.update");
-    fd.set("purchaseOrder", JSON.stringify(values));
-    submit(fd, { method: "post" });
-  });
+
+  // Fetch customer/vendor pricing prefs (margin overrides) for sell-price calculations
+  useEffect(() => {
+    const vendorId = purchaseOrder.companyId;
+    const customerId = purchaseOrder.consigneeCompanyId;
+    if (!vendorId || !customerId) {
+      setPricingPrefs(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(
+          `/api/customers/${customerId}/pricing?vendorId=${vendorId}`
+        );
+        const js = await resp.json();
+        if (!cancelled) {
+          setPricingPrefs({
+            marginOverride: js.marginOverride ?? null,
+            vendorDefaultMargin: js.vendorDefaultMargin ?? null,
+            globalDefaultMargin: js.globalDefaultMargin ?? null,
+            priceMultiplier: js.priceMultiplier ?? null,
+          });
+        }
+      } catch (e) {
+        console.warn("Failed to fetch pricing prefs", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrder.companyId, purchaseOrder.consigneeCompanyId]);
+
+  // When consignee changes, auto-set locationId to customer's default stockLocationId or fallback to 1
+  // Auto-set location when consignee changes: fetch company row to get default stockLocationId; fallback to 1.
+  // Fix missing refs after introducing nav hooks: use form.watch
+  const consigneeCompanyId = form.watch("consigneeCompanyId");
+  useEffect(() => {
+    if (!consigneeCompanyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/companies/rows?ids=${consigneeCompanyId}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const row = data.rows?.[0];
+        const targetLocationId = row?.stockLocationId || 1;
+        // Only update if different to avoid unnecessary dirty state churn
+        const currentLoc = form.getValues("locationId" as any);
+        if (!cancelled && currentLoc !== targetLocationId) {
+          form.setValue("locationId" as any, targetLocationId, {
+            shouldDirty: true,
+          });
+        }
+      } catch (e) {
+        const currentLoc = form.getValues("locationId" as any);
+        if (!cancelled && currentLoc !== 1) {
+          form.setValue("locationId" as any, 1, { shouldDirty: true });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [consigneeCompanyId, form]);
+  // Wire Save/Discard with Global Form Context: Save posts form values; Discard resets to loader state
+  useInitGlobalFormContext(
+    form as any,
+    (values: any) => {
+      const fd = new FormData();
+      fd.set("_intent", "po.update");
+      fd.set("purchaseOrder", JSON.stringify(values));
+      submit(fd, { method: "post" });
+    },
+    () => {
+      // Discard resets back to last loaded data
+      form.reset(purchaseOrder as any);
+    }
+  );
+
+  // After a successful save (loader re-runs), reset the form to clear dirty state
+  useEffect(() => {
+    form.reset(purchaseOrder as any);
+  }, [purchaseOrder, form]);
 
   // Local state for adding a line
   const [addOpen, setAddOpen] = useState(false);
   const [newProductId, setNewProductId] = useState<number | null>(null);
-  const [newQtyOrdered, setNewQtyOrdered] = useState<number>(1);
+  const [newQtyOrdered, setNewQtyOrdered] = useState<number>(0);
+  const [productPickerKey, setProductPickerKey] = useState<number>(0);
 
   // Client-side add: mutate form state; saving still handled by global form context
-  const doAddLine = async () => {
+  const doAddLine = async (keepOpen: boolean = false) => {
     if (newProductId == null) return;
     // Fetch enriched product to initialize pricing and flags
     console.log("Fetching product details for", newProductId);
@@ -455,8 +806,12 @@ export default function PurchaseOrderDetailRoute() {
     const newLine: any = {
       id: nextId,
       productId: newProductId,
-      product: { sku: prod?.sku ?? null, name: prod?.name ?? null },
-      quantityOrdered: Number(newQtyOrdered || 0),
+      product: {
+        sku: prod?.sku ?? null,
+        name: prod?.name ?? null,
+        purchaseTax: prod?.purchaseTax ?? null,
+      },
+      quantityOrdered: 0,
       quantity: 0,
       // Seed pricing: prefer manualSalePrice; else compute on server already provided as c_sellPrice
       priceCost: prod?.costPrice ?? 0,
@@ -467,15 +822,57 @@ export default function PurchaseOrderDetailRoute() {
       shouldDirty: true,
       shouldValidate: false,
     });
-    setAddOpen(false);
+    if (keepOpen) {
+      // Reset selection and refocus product field
+      setNewProductId(null);
+      setNewQtyOrdered(0);
+      setProductPickerKey((k) => k + 1);
+    } else {
+      setAddOpen(false);
+    }
   };
 
-  const openPrint = () =>
+  const maybeFinalizeFirst = async (): Promise<boolean> => {
+    if (statusValue !== "DRAFT") return false;
+    return new Promise<boolean>((resolve) => {
+      modals.openConfirmModal({
+        title: "Finalize Purchase Order?",
+        children: (
+          <Text size="sm">
+            This purchase order is currently in <strong>Draft</strong>.
+            Finalizing will lock in product lines and pricing before sending or
+            printing. Do you want to finalize now?
+          </Text>
+        ),
+        labels: { confirm: "Finalize", cancel: "Keep Draft" },
+        confirmProps: { color: "blue" },
+        onCancel: () => resolve(false),
+        onConfirm: () => {
+          form.setValue("status" as any, "FINAL", { shouldDirty: true });
+          const fd = new FormData();
+          fd.set("_intent", "po.update");
+          fd.set("purchaseOrder", JSON.stringify(form.getValues()));
+          submit(fd, { method: "post" });
+          resolve(true);
+        },
+      });
+    });
+  };
+
+  const openPrint = async () => {
+    const finalized = await maybeFinalizeFirst();
+    if (finalized) return; // navigation occurred; user can re-click after finalize
     window.open(`/purchase-orders/${purchaseOrder.id}/print`, "_blank");
-  const downloadPdf = () =>
+  };
+  const downloadPdf = async () => {
+    const finalized = await maybeFinalizeFirst();
+    if (finalized) return;
     window.open(`/purchase-orders/${purchaseOrder.id}/pdf`, "_blank");
+  };
 
   const emailDraft = async () => {
+    const finalized = await maybeFinalizeFirst();
+    if (finalized) return;
     const resp = await fetch(`/purchase-orders/${purchaseOrder.id}/pdf`);
     const arr = new Uint8Array(await resp.arrayBuffer());
     let binary = "";
@@ -505,45 +902,30 @@ export default function PurchaseOrderDetailRoute() {
     form.getValues("lines") ||
     [];
 
-  // Compute live prices for a product at a given qty in draft mode
-  const getLivePrices = (productId?: number, qtyOrdered?: number) => {
-    const pid = Number(productId || 0);
-    const prod = productMap[pid];
-    const qty = Number(qtyOrdered || 0) || 0;
-    if (!prod) return { cost: 0, sell: 0 };
-    const cost = Number(prod.costPrice || 0);
-    if (prod.manualSalePrice != null) {
-      return { cost, sell: Number(prod.manualSalePrice || 0) };
-    }
-    const tiers = (prod.costGroup?.costRanges || []).map((t: any) => ({
-      minQty: Number(t.rangeFrom || 0),
-      priceCost: Number(t.costPrice || 0),
-    }));
-    const taxRate = Number(prod.purchaseTax?.value || 0);
-    const out = calcPrice({
-      baseCost: cost,
-      tiers,
-      taxRate,
-      qty: qty > 0 ? qty : 1,
-    });
-    console.log("Live prices", { productId, qtyOrdered, cost, out });
-    return { cost: out.breakdown.baseUnit, sell: out.unitSellPrice };
-  };
+  // getLivePrices is obsolete; pricing moved into PurchaseOrderLinesTable via useMemo
 
   // Prev/Next hotkeys now handled globally in RecordProvider
 
   return (
     <Stack>
       <Group justify="space-between" align="center">
-        <BreadcrumbSet
-          breadcrumbs={[
-            { label: "POs", href: "/purchase-orders" },
-            {
-              label: String(purchaseOrder.id),
-              href: `/purchase-orders/${purchaseOrder.id}`,
-            },
-          ]}
-        />
+        {(() => {
+          const saved = getSavedIndexSearch("/purchase-orders");
+          const hrefPO = saved
+            ? `/purchase-orders${saved}`
+            : "/purchase-orders";
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[
+                { label: "POs", href: hrefPO },
+                {
+                  label: String(purchaseOrder.id),
+                  href: `/purchase-orders/${purchaseOrder.id}`,
+                },
+              ]}
+            />
+          );
+        })()}
         <Group gap="xs">
           <Button size="xs" variant="default" onClick={openPrint}>
             Print
@@ -593,108 +975,123 @@ export default function PurchaseOrderDetailRoute() {
           onClose={() => setAddOpen(false)}
           title="Add PO Line"
           centered
+          size="xl"
         >
           <Stack gap="sm">
             {/* Product select using API-backed search to avoid loading all options */}
             <AsyncProductSearch
+              key={productPickerKey}
               value={newProductId}
               onChange={setNewProductId}
-            />
-            <NumberInput
-              label="Qty Ordered"
-              value={newQtyOrdered as any}
-              onChange={(v) => setNewQtyOrdered(Number(v) || 0)}
-              min={0}
+              autoFocus
             />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAddOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={doAddLine} disabled={newProductId == null}>
+              <Button
+                onClick={() => doAddLine(true)}
+                disabled={newProductId == null}
+              >
+                Add + Next
+              </Button>
+              <Button
+                onClick={() => doAddLine(false)}
+                disabled={newProductId == null}
+              >
                 Add
               </Button>
             </Group>
           </Stack>
         </Modal>
-        <PurchaseOrderLinesTable
-          form={form as any}
-          status={statusValue}
-          productMap={productMap}
-        />
+        <Card.Section>
+          <PurchaseOrderLinesTable
+            form={form as any}
+            status={statusValue}
+            productMap={productMap}
+            pricingPrefs={pricingPrefs}
+          />
+        </Card.Section>
       </Card>
       {/* Related movements tied to this PO */}
-      <Card withBorder padding="md">
+      <Card withBorder padding="md" bg="transparent" mt="xl">
         <Card.Section inheritPadding py="xs">
           <Group justify="space-between" align="center">
             <Title order={5}>PO Receive Movements</Title>
           </Group>
         </Card.Section>
-        <Table withColumnBorders withTableBorder>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Date</Table.Th>
-              <Table.Th>Move ID</Table.Th>
-              <Table.Th>PO Line</Table.Th>
-              <Table.Th>Type</Table.Th>
-              <Table.Th>Product</Table.Th>
-              <Table.Th>Batch</Table.Th>
-              <Table.Th>Qty</Table.Th>
-              <Table.Th>Notes</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {(poMovements || []).flatMap((m: any) => {
-              const dateStr = m.date
-                ? new Date(m.date as any).toLocaleDateString()
-                : "";
-              if (!m.lines?.length) {
-                return [
-                  <Table.Tr key={`m-${m.id}`}>
+        <Card.Section>
+          <Table withColumnBorders>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Date</Table.Th>
+                <Table.Th>Move ID</Table.Th>
+                <Table.Th>PO Line</Table.Th>
+                <Table.Th>Type</Table.Th>
+                <Table.Th>Product</Table.Th>
+                <Table.Th>Batch</Table.Th>
+                <Table.Th>Qty</Table.Th>
+                <Table.Th>Notes</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {(poMovements || []).flatMap((m: any) => {
+                const dateStr = m.date
+                  ? new Date(m.date as any).toLocaleDateString()
+                  : "";
+                if (!m.lines?.length) {
+                  return [
+                    <Table.Tr key={`m-${m.id}`}>
+                      <Table.Td>{dateStr}</Table.Td>
+                      <Table.Td>{m.id}</Table.Td>
+                      <Table.Td>{m.purchaseOrderLineId ?? ""}</Table.Td>
+                      <Table.Td>{m.movementType}</Table.Td>
+                      <Table.Td></Table.Td>
+                      <Table.Td></Table.Td>
+                      <Table.Td>{m.quantity ?? ""}</Table.Td>
+                      <Table.Td>{m.notes ?? ""}</Table.Td>
+                    </Table.Tr>,
+                  ];
+                }
+                return m.lines.map((ln: any) => (
+                  <Table.Tr key={`m-${m.id}-l-${ln.id}`}>
                     <Table.Td>{dateStr}</Table.Td>
                     <Table.Td>{m.id}</Table.Td>
-                    <Table.Td>{m.purchaseOrderLineId ?? ""}</Table.Td>
+                    <Table.Td>
+                      {ln.purchaseOrderLineId ?? m.purchaseOrderLineId ?? ""}
+                    </Table.Td>
                     <Table.Td>{m.movementType}</Table.Td>
-                    <Table.Td></Table.Td>
-                    <Table.Td></Table.Td>
-                    <Table.Td>{m.quantity ?? ""}</Table.Td>
+                    <Table.Td>
+                      {[ln.product?.sku, ln.product?.name]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Table.Td>
+                    <Table.Td>
+                      {ln.batch
+                        ? [
+                            ln.batch.codeSartor,
+                            ln.batch.codeMill,
+                            ln.batch.name,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : ""}
+                    </Table.Td>
+                    <Table.Td>{ln.quantity ?? ""}</Table.Td>
                     <Table.Td>{m.notes ?? ""}</Table.Td>
-                  </Table.Tr>,
-                ];
-              }
-              return m.lines.map((ln: any) => (
-                <Table.Tr key={`m-${m.id}-l-${ln.id}`}>
-                  <Table.Td>{dateStr}</Table.Td>
-                  <Table.Td>{m.id}</Table.Td>
-                  <Table.Td>
-                    {ln.purchaseOrderLineId ?? m.purchaseOrderLineId ?? ""}
+                  </Table.Tr>
+                ));
+              })}
+              {(!poMovements || poMovements.length === 0) && (
+                <Table.Tr>
+                  <Table.Td colSpan={8}>
+                    <em>No related movements yet.</em>
                   </Table.Td>
-                  <Table.Td>{m.movementType}</Table.Td>
-                  <Table.Td>
-                    {[ln.product?.sku, ln.product?.name]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </Table.Td>
-                  <Table.Td>
-                    {ln.batch
-                      ? [ln.batch.codeSartor, ln.batch.codeMill, ln.batch.name]
-                          .filter(Boolean)
-                          .join(" · ")
-                      : ""}
-                  </Table.Td>
-                  <Table.Td>{ln.quantity ?? ""}</Table.Td>
-                  <Table.Td>{m.notes ?? ""}</Table.Td>
                 </Table.Tr>
-              ));
-            })}
-            {(!poMovements || poMovements.length === 0) && (
-              <Table.Tr>
-                <Table.Td colSpan={8}>
-                  <em>No related movements yet.</em>
-                </Table.Td>
-              </Table.Tr>
-            )}
-          </Table.Tbody>
-        </Table>
+              )}
+            </Table.Tbody>
+          </Table>
+        </Card.Section>
       </Card>
       <POReceiveModal
         opened={receiveOpen}
@@ -717,11 +1114,15 @@ export default function PurchaseOrderDetailRoute() {
 function AsyncProductSearch({
   value,
   onChange,
+  autoFocus,
 }: {
   value: number | null;
   onChange: (v: number | null) => void;
+  autoFocus?: boolean;
 }) {
-  const [data, setData] = useState<Array<{ value: string; label: string }>>([]);
+  const [data, setData] = useState<
+    Array<{ value: string; sku?: string | null; name?: string | null }>
+  >([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -740,7 +1141,8 @@ function AsyncProductSearch({
         const js = await resp.json();
         const opts = (js.products || []).map((p: any) => ({
           value: String(p.id),
-          label: [p.sku, p.name].filter(Boolean).join(" · ") || String(p.id),
+          sku: p.sku ?? "",
+          name: p.name ?? "",
         }));
         if (!cancelled) setData(opts);
       } finally {
@@ -754,19 +1156,63 @@ function AsyncProductSearch({
     };
   }, [search]);
 
-  const strVal = value == null ? null : String(value);
+  const handlePick = (val: string) => {
+    const n = Number(val);
+    onChange(Number.isFinite(n) ? n : null);
+  };
+
   return (
-    <Select
-      label="Product"
-      searchable
-      clearable
-      data={data}
-      value={strVal}
-      onChange={(v) => onChange(v == null || v === "" ? null : Number(v))}
-      onSearchChange={setSearch}
-      searchValue={search}
-      placeholder="Search products…"
-      nothingFoundMessage={loading ? "Searching…" : "No products"}
-    />
+    <Stack gap="xs">
+      <TextInput
+        label="Product"
+        placeholder="Search products…"
+        value={search}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          setSearch(e.currentTarget.value)
+        }
+        autoFocus={autoFocus}
+      />
+      <ScrollArea h={360} type="always" offsetScrollbars>
+        {loading && (
+          <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
+            Searching…
+          </div>
+        )}
+        {!loading && !search && (
+          <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
+            Type to search
+          </div>
+        )}
+        {!loading && search && data.length === 0 && (
+          <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
+            No products
+          </div>
+        )}
+        {!loading && data.length > 0 && (
+          <Table>
+            <Table.Tbody>
+              {data.map((opt) => {
+                const selected = value != null && String(value) === opt.value;
+                return (
+                  <Table.Tr
+                    key={opt.value}
+                    onClick={() => handlePick(opt.value)}
+                    style={{
+                      cursor: "pointer",
+                      background: selected
+                        ? "var(--mantine-color-gray-1)"
+                        : "transparent",
+                    }}
+                  >
+                    <Table.Td style={{ width: 160 }}>{opt.sku}</Table.Td>
+                    <Table.Td>{opt.name}</Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        )}
+      </ScrollArea>
+    </Stack>
   );
 }

@@ -13,6 +13,11 @@ import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
@@ -126,6 +131,8 @@ export const meta: MetaFunction = () => [{ title: "Jobs" }];
 // }
 
 export default function JobsIndexRoute() {
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
+  usePersistIndexSearch("/jobs");
   const data = useRouteLoaderData<{
     idList: number[];
     idListComplete: boolean;
@@ -161,10 +168,10 @@ export default function JobsIndexRoute() {
       <Group justify="space-between" align="center">
         {(() => {
           const appendHref = useFindHrefAppender();
+          const saved = getSavedIndexSearch("/jobs");
+          const hrefJobs = saved ? `/jobs${saved}` : appendHref("/jobs");
           return (
-            <BreadcrumbSet
-              breadcrumbs={[{ label: "Jobs", href: appendHref("/jobs") }]}
-            />
+            <BreadcrumbSet breadcrumbs={[{ label: "Jobs", href: hrefJobs }]} />
           );
         })()}
         <Button component="a" href="/jobs/new" variant="filled" color="blue">

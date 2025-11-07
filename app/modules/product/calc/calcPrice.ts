@@ -40,19 +40,18 @@ export function calcPrice(i: PriceInput): PriceOutput {
     return { discounted, unitWithTax };
   };
 
-  // 1) Manual sale price override
+  // 1) Manual sale price override (display "as is" with no tax applied)
   if (i.manualSalePrice != null && Number.isFinite(toNum(i.manualSalePrice))) {
     const manual = toNum(i.manualSalePrice, 0);
-    const { unitWithTax, discounted } = finalize(manual);
     return {
-      unitSellPrice: round(unitWithTax),
-      extendedSell: round(unitWithTax * qty),
-      extendedCost: round(unitWithTax * qty),
+      unitSellPrice: round(manual),
+      extendedSell: round(manual * qty),
+      extendedCost: round(manual * qty),
       breakdown: {
         baseUnit: round(manual),
         inTarget: round(manual),
-        discounted: round(discounted),
-        withTax: round(unitWithTax),
+        discounted: round(manual),
+        withTax: round(manual), // explicitly no tax on manual price
         taxRate,
       },
       meta: { mode: "manual", multiplier: 1 },

@@ -83,7 +83,6 @@ export const productPricingFields: FieldConfig[] = [
       const has = (ctx as any)?.hasCostTiers;
       const open = (ctx as any)?.openCostTiersModal as (() => void) | undefined;
       if (!has || !open) return null;
-      // Lazy import to avoid hard dependency on icon packs if needed
       return (
         // eslint-disable-next-line jsx-a11y/aria-role
         <button
@@ -103,7 +102,6 @@ export const productPricingFields: FieldConfig[] = [
             alignItems: "center",
           }}
         >
-          {/* Simple glyph to avoid adding new imports here */}
           <span style={{ fontWeight: 700 }}>≡</span>
         </button>
       );
@@ -132,9 +130,20 @@ export const productPricingFields: FieldConfig[] = [
     overrideName: "manualSalePrice",
     inputType: "number",
     computeDefault: (values, ctx) => {
+      // Prefer server-computed preview when available (includes vendor/global defaults)
+      // const preview = (ctx as any)?.pricingPreview;
+      // if (
+      //   preview?.unitSellPrice != null &&
+      //   Number(preview.unitSellPrice) > 0 &&
+      //   Number.isFinite(Number(preview.unitSellPrice))
+      // ) {
+      //   return Number(preview.unitSellPrice);
+      // }
+
       const baseCost = Number(values?.costPrice ?? 0) || 0;
-      const qty = Number(values?.defaultCostQty ?? 60) || 60;
-      // tax rate from global options
+      const qty =
+        Number((ctx as any)?.pricingQty ?? values?.defaultCostQty ?? 60) || 60;
+      // tax rate
       let taxRate = 0;
       const taxId = values?.purchaseTaxId ?? null;
       const rates = (ctx as any)?.options?.taxRateById || {};
@@ -143,8 +152,7 @@ export const productPricingFields: FieldConfig[] = [
         const n = Number(rates[key] ?? 0);
         taxRate = Number.isFinite(n) ? n : 0;
       }
-      // sale tiers precedence for interactive pricing:
-      // 1) selected Sale Price Group (live cache) → 2) product's group ranges → 3) product-specific ranges
+      // sale tiers: selected group cache → product group → product
       const saleProduct = ((ctx as any)?.product?.salePriceRanges ||
         []) as any[];
       const saleGroupOnProduct = ((ctx as any)?.product?.salePriceGroup
@@ -155,7 +163,6 @@ export const productPricingFields: FieldConfig[] = [
         values?.salePriceGroupId != null
           ? String(values.salePriceGroupId)
           : null;
-
       let saleTiers: Array<{ minQty: number; unitPrice: number }> = [];
       if (selectedSpgId && cachedMap[selectedSpgId]) {
         saleTiers = (cachedMap[selectedSpgId] || [])
@@ -184,16 +191,62 @@ export const productPricingFields: FieldConfig[] = [
           }))
           .sort((a, b) => a.minQty - b.minQty);
       }
-      // customer-level multiplier if present on ctx (optional)
+      // cost tiers: selected cost group cache → product's cost group
+      const selectedCgId =
+        values?.costGroupId != null ? String(values.costGroupId) : null;
+      const costMap = ((ctx as any)?.costGroupRangesById || {}) as Record<
+        string,
+        Array<{ minQty: number; unitCost: number; unitSellManual: number }>
+      >;
+      const costRanges = selectedCgId
+        ? costMap[selectedCgId] || []
+        : (((ctx as any)?.product?.costGroup?.costRanges || []) as any[]).map(
+            (r: any) => ({
+              minQty: Number(r.rangeFrom) || 0,
+              unitCost: Number(r.costPrice ?? 0) || 0,
+              unitSellManual: Number(r.sellPriceManual ?? 0) || 0,
+            })
+          );
+      const tiers = (costRanges || []).map((r: any) => ({
+        minQty: Number(r.minQty) || 0,
+        priceCost: Number(r.unitCost ?? (r as any).costPrice ?? 0) || 0,
+      }));
       const priceMultiplier =
-        Number((ctx as any)?.customer?.priceMultiplier ?? 1) || 1;
+        Number(
+          (ctx as any)?.priceMultiplier ??
+            (ctx as any)?.customer?.priceMultiplier ??
+            1
+        ) || 1;
+      // Resolve margin precedence for cost+margin mode when no sale tiers apply
+      const manualMarginRaw = (values as any)?.manualMargin;
+      let marginPct: number | undefined = undefined;
+      if (manualMarginRaw != null && String(manualMarginRaw) !== "") {
+        marginPct = Number(manualMarginRaw);
+      } else {
+        const md = (ctx as any)?.pricingMarginDefaults as
+          | {
+              marginOverride?: number | null;
+              vendorDefaultMargin?: number | null;
+              globalDefaultMargin?: number | null;
+            }
+          | undefined;
+        if (md?.marginOverride != null) marginPct = Number(md.marginOverride);
+        else if (md?.vendorDefaultMargin != null)
+          marginPct = Number(md.vendorDefaultMargin);
+        else if (md?.globalDefaultMargin != null)
+          marginPct = Number(md.globalDefaultMargin);
+        else marginPct = undefined; // let calcPrice fall back (e.g., 0.1)
+      }
       const out = calcPrice({
         baseCost,
         qty,
         taxRate,
         saleTiers,
+        tiers,
         priceMultiplier,
+        marginPct,
       });
+      // console.log("!! Computed manualSalePriceOverride default:", out);
       return out.unitSellPrice;
     },
     format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
@@ -214,8 +267,142 @@ export const productPricingFields: FieldConfig[] = [
     hiddenInModes: ["find"],
     overrideName: "manualMargin",
     inputType: "number",
-    computeDefault: () => undefined,
-    format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
+    placeholder: "e.g., 20 for 20%",
+    // Treat 0 as empty so we use the computed/default margin instead of sticking to 0 override
+    overrideIsEmpty: (v) => v == null || v === "" || Number(v) === 0,
+    overrideAdapter: {
+      toInput: (v: any) => {
+        if (v == null || v === "") return "";
+        const n = Number(v);
+        if (!Number.isFinite(n)) return "";
+        const scaled = n * 100;
+        return Number.isInteger(scaled)
+          ? String(scaled)
+          : String(Math.round(scaled * 100) / 100);
+      },
+      fromInput: (raw: any) => {
+        if (raw == null || raw === "") return null;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return null;
+        return n / 100;
+      },
+    },
+    computeDefault: (values, ctx) => {
+      const qty =
+        Number((ctx as any)?.pricingQty ?? values?.defaultCostQty ?? 60) || 60;
+      // tax rate
+      let taxRate = 0;
+      const taxId = values?.purchaseTaxId ?? null;
+      const rates = (ctx as any)?.options?.taxRateById || {};
+      if (taxId != null && rates) {
+        const key = String(taxId);
+        const n = Number(rates[key] ?? 0);
+        taxRate = Number.isFinite(n) ? n : 0;
+      }
+      // Derive implied margin from local calc when sale tiers present; otherwise use cost+margin defaults
+      const saleProduct = ((ctx as any)?.product?.salePriceRanges ||
+        []) as any[];
+      const saleGroupOnProduct = ((ctx as any)?.product?.salePriceGroup
+        ?.saleRanges || []) as any[];
+      const cachedMap = ((ctx as any)?.salePriceGroupRangesById ||
+        {}) as Record<string, Array<{ minQty: number; unitPrice: number }>>;
+      const selectedSpgId =
+        values?.salePriceGroupId != null
+          ? String(values.salePriceGroupId)
+          : null;
+      let saleTiers: Array<{ minQty: number; unitPrice: number }> = [];
+      if (selectedSpgId && cachedMap[selectedSpgId]) {
+        saleTiers = (cachedMap[selectedSpgId] || [])
+          .map((t) => ({
+            minQty: Number(t.minQty) || 0,
+            unitPrice: Number(t.unitPrice) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      } else if (
+        Array.isArray(saleGroupOnProduct) &&
+        saleGroupOnProduct.length
+      ) {
+        saleTiers = saleGroupOnProduct
+          .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+          .map((r: any) => ({
+            minQty: Number(r.rangeFrom) || 0,
+            unitPrice: Number(r.price) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      } else if (Array.isArray(saleProduct) && saleProduct.length) {
+        saleTiers = saleProduct
+          .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+          .map((r: any) => ({
+            minQty: Number(r.rangeFrom) || 0,
+            unitPrice: Number(r.price) || 0,
+          }))
+          .sort((a, b) => a.minQty - b.minQty);
+      }
+      if (!saleTiers.length) {
+        // No sale tiers: we will use cost+margin path's margin precedence
+        const manualMarginRaw = (values as any)?.manualMargin;
+        if (manualMarginRaw != null && String(manualMarginRaw) !== "")
+          return Number(manualMarginRaw);
+        const md = (ctx as any)?.pricingMarginDefaults as
+          | {
+              marginOverride?: number | null;
+              vendorDefaultMargin?: number | null;
+              globalDefaultMargin?: number | null;
+            }
+          | undefined;
+        if (md?.marginOverride != null) return Number(md.marginOverride);
+        if (md?.vendorDefaultMargin != null)
+          return Number(md.vendorDefaultMargin);
+        if (md?.globalDefaultMargin != null)
+          return Number(md.globalDefaultMargin);
+        // Fall back to calcPrice's internal default (0.1); display it to avoid blank
+        return 0.1;
+      }
+      // compute cost at qty
+      const selectedCgId2 =
+        values?.costGroupId != null ? String(values.costGroupId) : null;
+      const costMap2 = ((ctx as any)?.costGroupRangesById || {}) as Record<
+        string,
+        Array<{ minQty: number; unitCost: number; unitSellManual: number }>
+      >;
+      const costRanges2 = selectedCgId2
+        ? costMap2[selectedCgId2] || []
+        : (((ctx as any)?.product?.costGroup?.costRanges || []) as any[]).map(
+            (r: any) => ({
+              minQty: Number(r.rangeFrom) || 0,
+              unitCost: Number(r.costPrice ?? 0) || 0,
+              unitSellManual: Number(r.sellPriceManual ?? 0) || 0,
+            })
+          );
+      let unitCost2 = Number(values?.costPrice ?? 0) || 0;
+      if (costRanges2 && costRanges2.length) {
+        const sorted = [...costRanges2].sort((a, b) => a.minQty - b.minQty);
+        for (const r of sorted) if (qty >= r.minQty) unitCost2 = r.unitCost;
+      }
+      // choose sale tier for qty and multiplier
+      let picked: { minQty: number; unitPrice: number } | null = null;
+      for (const t of saleTiers) if (qty >= t.minQty) picked = t;
+      if (!picked) return undefined;
+      const multiplier =
+        Number(
+          (ctx as any)?.priceMultiplier ??
+            (ctx as any)?.customer?.priceMultiplier ??
+            1
+        ) || 1;
+      const unitPreTax = Number(picked.unitPrice) * multiplier;
+      if (!Number.isFinite(unitCost2) || unitCost2 <= 0) return undefined;
+      const margin = unitPreTax / unitCost2 - 1;
+      return Number.isFinite(margin) ? margin : undefined;
+    },
+    format: (v) => {
+      if (v == null || v === "") return "";
+      const n = Number(v);
+      if (!Number.isFinite(n)) return "";
+      const scaled = n * 100;
+      return Number.isInteger(scaled)
+        ? String(scaled)
+        : String(Math.round(scaled * 100) / 100);
+    },
   },
 
   {
@@ -240,8 +427,6 @@ export const productBomFindFields: FieldConfig[] = [
     findOp: "equals",
   },
 ];
-
-// Future: spec validation hook similar to jobs.
 
 export function allProductFindFields() {
   return [

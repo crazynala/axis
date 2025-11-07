@@ -9,7 +9,6 @@ import {
 import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { useRecords } from "../../../base/record/RecordContext";
-import { CompanyFindManagerNew } from "~/modules/company/findify/CompanyFindManagerNew";
 import { FindRibbon, defaultSummarizeFilters } from "~/base/find/FindRibbon";
 import { listViews, saveView } from "../../../utils/views.server";
 import {
@@ -192,10 +191,5 @@ export default function CompaniesLayout() {
     }
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
 
-  return (
-    <>
-      <CompanyFindManagerNew />
-      <Outlet />
-    </>
-  );
+  return <Outlet />; // Find manager now rendered in index route to match modern pattern
 }

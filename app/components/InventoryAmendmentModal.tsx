@@ -72,7 +72,6 @@ export function InventoryAmendmentModal(props: {
   // Reset the form whenever inputs change (modal can open with different data)
   useEffect(() => {
     if (!opened) return;
-    console.log("!! Resetting InventoryAmendmentModal form", batches);
     const defaults = {
       when: date ?? new Date(),
       scope: "nonzero" as const,
@@ -83,11 +82,6 @@ export function InventoryAmendmentModal(props: {
     form.reset(defaults);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened, mode, date, batch, batches]);
-
-  console.log(
-    "!! InventoryAmendmentModal form defaults:",
-    form.formState.defaultValues
-  );
 
   const when = watch("when");
   const scope = watch("scope");

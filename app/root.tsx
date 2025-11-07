@@ -84,6 +84,12 @@ import {
   IconChartHistogram,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
+import {
+  clearSavedNavLocation,
+  useNavHref,
+  getSavedIndexSearch,
+  useRegisterNavLocation,
+} from "~/hooks/useNavLocation";
 // import { prisma } from "./utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -399,6 +405,8 @@ function AppShellLayout({
   );
   const navigate = useNavigate();
   const location = useLocation();
+  // Register current location globally for per-module restoration
+  useRegisterNavLocation({ includeSearch: true });
 
   // Persist desktop nav toggle per user
   useEffect(() => {
@@ -456,14 +464,27 @@ function AppShellLayout({
         <Stack justify="space-between" style={{ height: "100%" }}>
           <Stack gap="xs">
             {navTopItems.map((item) => {
+              let href = useNavHref(item.to);
+              // If navigating to the index path for a module, include saved index filters in href for a smooth restore
+              if (href === item.to) {
+                const search = getSavedIndexSearch(item.to);
+                if (search) href = `${item.to}${search}`;
+              }
               if (desktopNavOpened) {
                 return (
                   <NavLink
                     component={RemixNavLink}
                     label={item.label}
-                    to={item.to}
+                    to={href}
                     leftSection={item.icon}
                     key={item.to}
+                    onClick={(e: any) => {
+                      if (e.altKey) {
+                        e.preventDefault();
+                        clearSavedNavLocation(item.to);
+                        navigate(item.to);
+                      }
+                    }}
                   />
                 );
               } else {
@@ -472,8 +493,15 @@ function AppShellLayout({
                     px="xs"
                     component={RemixNavLink}
                     label={item.icon}
-                    to={item.to}
+                    to={href}
                     key={item.to}
+                    onClick={(e: any) => {
+                      if (e.altKey) {
+                        e.preventDefault();
+                        clearSavedNavLocation(item.to);
+                        navigate(item.to);
+                      }
+                    }}
                   />
                 );
               }
@@ -481,14 +509,26 @@ function AppShellLayout({
           </Stack>
           <Stack gap="xs">
             {navBottomItems.map((item) => {
+              let href = useNavHref(item.to);
+              if (href === item.to) {
+                const search = getSavedIndexSearch(item.to);
+                if (search) href = `${item.to}${search}`;
+              }
               if (desktopNavOpened) {
                 return (
                   <NavLink
                     component={RemixNavLink}
                     label={item.label}
-                    to={item.to}
+                    to={href}
                     leftSection={item.icon}
                     key={item.to}
+                    onClick={(e: any) => {
+                      if (e.altKey) {
+                        e.preventDefault();
+                        clearSavedNavLocation(item.to);
+                        navigate(item.to);
+                      }
+                    }}
                   />
                 );
               } else {
@@ -496,8 +536,15 @@ function AppShellLayout({
                   <NavLink
                     component={RemixNavLink}
                     label={item.icon}
-                    to={item.to}
+                    to={href}
                     key={item.to}
+                    onClick={(e: any) => {
+                      if (e.altKey) {
+                        e.preventDefault();
+                        clearSavedNavLocation(item.to);
+                        navigate(item.to);
+                      }
+                    }}
                   />
                 );
               }

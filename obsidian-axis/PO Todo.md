@@ -1,0 +1,12 @@
+- [ ] Added a line item, tax was not set
+- [ ] LIs with fixed sell price are not calculating extended cost / sell
+- [ ] Product picker must show only items from the PO supplier
+- [ ] Location is not displayed
+- [ ] Missing fields
+	- [ ] Quantity (check other states)
+	- [ ] Received
+- [ ] PO expenses (e.g. shipping costs for Somelos)
+- [ ] Date not formatted correctly on index
+- [ ] Findify is focussing on first field upon open; don't 
+- [ ] Find not working (doesn't change results)
+- [ ] Only customers with unique locations can be consignees

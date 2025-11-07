@@ -2,7 +2,6 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
-import { ShipmentFindManager } from "../modules/shipment/findify/ShipmentFindManager";
 import { useRecords } from "../base/record/RecordContext";
 import { useEffect } from "react";
 
@@ -50,10 +49,5 @@ export default function ShipmentsLayout() {
     if (data.initialRows?.length)
       addRows("shipments", data.initialRows, { updateRecordsArray: true });
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
-  return (
-    <>
-      <ShipmentFindManager />
-      <Outlet />
-    </>
-  );
+  return <Outlet />; // Find manager now lives in index route per updated pattern
 }

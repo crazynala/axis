@@ -50,6 +50,11 @@ import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
 import * as jobDetail from "~/modules/job/forms/jobDetail";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -260,6 +265,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function JobDetailRoute() {
+  // Persist last visited job path + index filters
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
+  usePersistIndexSearch("/jobs");
   const { job, productsById, customers, productChoices, groupsById } =
     useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
@@ -378,14 +386,7 @@ export default function JobDetailRoute() {
   }, [jobForm]);
 
   const dirtyRef = React.useRef(jobForm.formState.isDirty);
-  console.log("!! [jobs.$id] dirty state", {
-    id: job.id,
-    was: dirtyRef.current,
-    now: jobForm.formState.isDirty,
-    changed: Object.keys(jobForm.formState.dirtyFields || {}),
-  });
-  console.log("!! [jobs.$id] form values", jobForm.getValues());
-  console.log("!! [jobs.$id] default values", jobForm.formState.defaultValues);
+
   useEffect(() => {
     if (jobForm.formState.isDirty !== dirtyRef.current) {
       dirtyRef.current = jobForm.formState.isDirty;
@@ -448,10 +449,12 @@ export default function JobDetailRoute() {
       <Group justify="space-between" align="center">
         {(() => {
           const appendHref = useFindHrefAppender();
+          const saved = getSavedIndexSearch("/jobs");
+          const hrefJobs = saved ? `/jobs${saved}` : appendHref("/jobs");
           return (
             <BreadcrumbSet
               breadcrumbs={[
-                { label: "Jobs", href: appendHref("/jobs") },
+                { label: "Jobs", href: hrefJobs },
                 { label: String(job.id), href: appendHref(`/jobs/${job.id}`) },
               ]}
             />

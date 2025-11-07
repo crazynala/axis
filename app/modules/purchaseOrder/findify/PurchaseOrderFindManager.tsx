@@ -25,6 +25,7 @@ export function PurchaseOrderFindManager() {
     navigate(`?${next.toString()}`);
   };
   const onSearch = (qs: string) => {
+    console.log("PO Find onSearch", qs);
     const url = new URL(window.location.href);
     const produced = new URLSearchParams(qs);
     Array.from(url.searchParams.keys()).forEach((k) => {

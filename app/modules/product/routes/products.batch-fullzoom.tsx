@@ -9,6 +9,7 @@ import * as RDG from "react-datasheet-grid";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { useOptions } from "~/base/options/OptionsContext";
 import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import { useDataGrid } from "~/components/sheets/useDataGrid";
 
 export async function loader({ request }: any) {
   const url = new URL(request.url);
@@ -71,12 +72,42 @@ export default function ProductsBatchCreateFullzoom() {
     mode: "create" | "edit";
     rows: SheetRow[];
   }>();
-  const [rows, setRows] = useState<SheetRow[]>(loaderData?.rows || []);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const originalRef = useRef<SheetRow[]>([]);
+  // Ensure active cell edits are committed before saving
+  const gridRef = useRef<RDG.DataSheetGridRef>(null as any);
   const [mode] = useState<"create" | "edit">(loaderData?.mode || "create");
   const options = useOptions();
+  // Row factory (hoisted via function declaration to allow early use)
+  function createRow(): SheetRow {
+    return {
+      sku: "",
+      name: "",
+      type: "",
+      supplierId: "",
+      categoryId: "",
+      purchaseTaxId: "",
+      costPrice: "",
+      manualSalePrice: "",
+      stockTrackingEnabled: false,
+      batchTrackingEnabled: false,
+    };
+  }
+  // Data grid state & helpers
+  const dataGrid = useDataGrid<SheetRow>({
+    initialData: loaderData?.rows || [],
+    getRowId: (r) => (r as any)?.id,
+    createRow,
+    lockRows: true, // prevent accidental add/delete in batch edit flow
+  });
+
+  // Derived rows used for rendering (padded to minimum rows)
+  const displayRows = useMemo(
+    () => padToMinRows(dataGrid.value, DEFAULT_MIN_ROWS, () => createRow()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataGrid.value]
+  );
 
   type SelectOptions = { choices: Choice[]; disabled?: boolean };
   const MantineSelectCell = useMemo(
@@ -235,33 +266,30 @@ export default function ProductsBatchCreateFullzoom() {
     options?.taxCodeOptions,
   ]);
 
-  const createRow = (): SheetRow => ({
-    sku: "",
-    name: "",
-    type: "",
-    supplierId: "",
-    categoryId: "",
-    purchaseTaxId: "",
-    costPrice: "",
-    manualSalePrice: "",
-    stockTrackingEnabled: false,
-    batchTrackingEnabled: false,
-  });
-
   const reset = useCallback(() => {
-    setRows([createRow(), createRow(), createRow(), createRow(), createRow()]);
+    dataGrid.reset();
     setDirty(false);
     originalRef.current = [];
-  }, []);
+  }, [dataGrid]);
 
   const save = useCallback(async () => {
     setSaving(true);
     try {
+      // Commit any active editor so onChange applies pending edits
+      try {
+        // @ts-ignore - stopEditing signature may vary across versions
+        gridRef.current?.stopEditing?.({ nextRow: false });
+      } catch {}
+      // Allow onChange to propagate state updates (microtask + a frame)
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+      // Use the latest rows snapshot from dataGrid, excluding soft-deleted rows
+      const currentRows = dataGrid.getValues();
       const payload =
         mode === "edit"
-          ? { _intent: "product.batchSaveRows", rows }
-          : { _intent: "product.batchCreate", rows };
-      console.log("!!! payload", payload);
+          ? { _intent: "product.batchSaveRows", rows: currentRows }
+          : { _intent: "product.batchCreate", rows: currentRows };
       const resp = await fetch("/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -269,17 +297,25 @@ export default function ProductsBatchCreateFullzoom() {
       });
       const data = await resp.json().catch(() => null);
       if (resp.ok) {
+        const updatedCount =
+          typeof (data as any)?.updated === "number"
+            ? (data as any).updated
+            : dataGrid.gridState.updatedRowIds.size;
+        const createdCount =
+          typeof (data as any)?.created === "number"
+            ? (data as any).created
+            : 0;
         notifications.show({
           color: "teal",
           title: mode === "edit" ? "Batch save" : "Batch create",
           message:
             mode === "edit"
-              ? `Saved ${data?.updated || 0} updated, ${
-                  data?.created || 0
-                } created`
-              : `Created ${data?.created || 0} products`,
+              ? `Saved ${updatedCount} updated, ${createdCount} created`
+              : `Created ${createdCount} products`,
         });
         setDirty(false);
+        // Mark grid state committed to clear isDirty and delete markers
+        dataGrid.commit();
         navigate("/products?refreshed=1");
       } else {
         notifications.show({
@@ -297,7 +333,7 @@ export default function ProductsBatchCreateFullzoom() {
     } finally {
       setSaving(false);
     }
-  }, [rows, mode, navigate]);
+  }, [dataGrid, mode, navigate]);
 
   const formHandlers = useMemo(
     () => ({
@@ -320,19 +356,20 @@ export default function ProductsBatchCreateFullzoom() {
       right={<SaveCancelHeader />}
     >
       {(gridHeight) => {
-        const displayRows = padToMinRows(rows, DEFAULT_MIN_ROWS, () =>
-          createRow()
-        );
         return (
           <RDG.DataSheetGrid
+            ref={gridRef as any}
             value={displayRows as any}
             onChange={(r: SheetRow[]) => {
-              setRows(r);
-              setDirty(true);
+              console.log("Rows changed", r);
+              dataGrid.onChange(r as any, (arguments as any)[1]);
+              setDirty(dataGrid.gridState.isDirty || true);
             }}
             columns={sheetColumns}
             height={gridHeight}
             createRow={createRow}
+            lockRows={true}
+            rowClassName={dataGrid.rowClassName as any}
           />
         );
       }}

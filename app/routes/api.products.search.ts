@@ -21,16 +21,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const products = await prismaBase.product.findMany({
     where: {
-      OR: [
+      AND: [
         isNum ? { id: asNum as number } : { id: { gt: -1 } },
-        { sku: { contains: q, mode: "insensitive" } },
-        { name: { contains: q, mode: "insensitive" } },
+        {
+          OR: [
+            { sku: { contains: q, mode: "insensitive" } },
+            { name: { contains: q, mode: "insensitive" } },
+          ],
+        },
       ],
     },
     select: { id: true, sku: true, name: true },
     take: limit,
     orderBy: [{ id: "desc" }],
   });
+
+  console.log("!! q", q, "isNum", isNum, "found", products);
 
   return json({ products });
 }

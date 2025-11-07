@@ -4,16 +4,7 @@ import {
   useNavigate,
   useSearchParams,
 } from "@remix-run/react";
-import {
-  Button,
-  Group,
-  Stack,
-  Title,
-  Text,
-  Card,
-  Tooltip,
-  Indicator,
-} from "@mantine/core";
+import { Button, Group, Stack, Text, Card, Indicator } from "@mantine/core";
 import SplitButton from "~/components/SplitButton";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
@@ -33,8 +24,107 @@ import {
 import { formatUSD } from "~/utils/format";
 
 import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
+import { calcPrice } from "../calc/calcPrice";
+import {
+  getSavedNavLocation,
+  usePersistIndexSearch,
+  useRegisterNavLocation,
+} from "~/hooks/useNavLocation";
+
+function usePricingPrefsFromWidget() {
+  const [customerId, setCustomerId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem("pricing.customerId");
+  });
+  const [qty, setQty] = useState<number>(() => {
+    if (typeof window === "undefined") return 60;
+    const raw = window.sessionStorage.getItem("pricing.qty");
+    const n = raw ? Number(raw) : 60;
+    return Number.isFinite(n) ? n : 60;
+  });
+  const [priceMultiplier, setPriceMultiplier] = useState<number>(() => {
+    if (typeof window === "undefined") return 1;
+    const raw = window.sessionStorage.getItem("pricing.mult");
+    const n = raw ? Number(raw) : 1;
+    return Number.isFinite(n) ? n : 1;
+  });
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (!e?.detail) return;
+      const {
+        customerId: cid,
+        qty: q,
+        priceMultiplier: mult,
+      } = e.detail as {
+        customerId: string | null;
+        qty: number;
+        priceMultiplier?: number;
+      };
+      setCustomerId(cid ?? null);
+      const n = Number(q);
+      setQty(Number.isFinite(n) ? n : 60);
+      if (mult != null) {
+        const m = Number(mult);
+        setPriceMultiplier(Number.isFinite(m) ? m : 1);
+      }
+    };
+    window.addEventListener("pricing:prefs", handler as any);
+    return () => window.removeEventListener("pricing:prefs", handler as any);
+  }, []);
+  return { customerId, qty, priceMultiplier } as const;
+}
+
+function PriceCell({
+  row,
+  prefs,
+}: {
+  row: any;
+  prefs: { qty: number; priceMultiplier: number };
+}) {
+  const qty = Number(prefs.qty || 60) || 60;
+  const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
+  const manual = row?.manualSalePrice;
+  const baseCost = Number(row?.costPrice ?? 0) || 0;
+  const taxRate = Number(row?.purchaseTax?.value ?? 0) || 0;
+  const costRanges = Array.isArray(row?.costGroup?.costRanges)
+    ? row.costGroup.costRanges
+        .filter((t: any) => t && t.rangeFrom != null)
+        .map((t: any) => ({
+          minQty: Number(t.rangeFrom) || 0,
+          priceCost: Number(t.costPrice) || 0,
+        }))
+        .sort((a: any, b: any) => a.minQty - b.minQty)
+    : [];
+  const out = calcPrice({
+    baseCost,
+    tiers: costRanges,
+    taxRate,
+    priceMultiplier,
+    qty,
+    manualSalePrice:
+      manual != null && manual !== "" ? Number(manual) : undefined,
+  });
+  return <>{formatUSD(out.unitSellPrice)}</>;
+}
 
 export default function ProductsIndexRoute() {
+  // Register product index navigation (persist search/filter state via existing logic + path)
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "products" });
+  // Persist/restore index search so filters survive leaving and returning
+  usePersistIndexSearch("/products");
+  // If user lands on /products directly and we have a saved subpath, redirect to it for testing
+  const location = useLocation();
+  useEffect(() => {
+    if (location.pathname === "/products") {
+      const saved = getSavedNavLocation("/products");
+      if (saved && saved !== "/products") {
+        // defer until next tick to ensure navigate variable is defined
+        setTimeout(() => navigate(saved, { replace: true }), 0);
+      }
+    }
+    // run on first mount for this route
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const appendHref = useFindHrefAppender();
   // Batch create modal state
   type NewProd = {
@@ -93,45 +183,9 @@ export default function ProductsIndexRoute() {
     stockTrackingEnabled: "",
     batchTrackingEnabled: "",
   });
-  const openSheet = () => {
-    setSaveSummary(null);
-    setRows([createRow(), createRow(), createRow(), createRow(), createRow()]);
-    setDirty(false);
-    setSheetOpen(true);
-  };
-  const saveSheet = async () => {
-    setSaving(true);
-    try {
-      const payload = { _intent: "product.batchCreate", rows };
-      const resp = await fetch("/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await resp.json();
-      setSaveSummary({
-        created: data?.created || 0,
-        errors: data?.errors || [],
-      });
-      if (resp.ok && (data?.created || 0) > 0) {
-        setDirty(false);
-        setSheetOpen(false);
-        // Reload to reflect new rows in id list and table
-        window.location.reload();
-      }
-    } catch (e) {
-      setSaveSummary({
-        created: 0,
-        errors: [{ index: -1, message: "Save failed" }],
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
   const navigate = useNavigate();
   const [sp] = useSearchParams();
-  const location = useLocation();
-  const { state, currentId, setCurrentId } = useRecords();
+  const { state, currentId, setCurrentId, addRows } = useRecords();
   const { records, atEnd, loading, requestMore, total } = useHybridWindow({
     module: "products",
     initialWindow: 100,
@@ -166,6 +220,40 @@ export default function ProductsIndexRoute() {
 
   // Row selection managed by table (multiselect)
   const [selectedIds, setSelectedIds] = useState<Array<number | string>>([]);
+  const pricing = usePricingPrefsFromWidget();
+
+  // Revalidate / refresh current product row on window focus to avoid stale manual price after edits
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (!currentId) return;
+      try {
+        const resp = await fetch(`/products/rows?ids=${currentId}`, {
+          credentials: "same-origin",
+          headers: { Accept: "application/json, */*" },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const rows = Array.isArray(data?.rows) ? data.rows : data;
+        if (rows && rows.length) addRows("products", rows);
+      } catch (e) {
+        // swallow
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [currentId, addRows]);
+
+  async function saveSheet() {
+    setSaving(true);
+    try {
+      setSaveSummary({
+        created: 0,
+        errors: [{ index: -1, message: "Not implemented" }],
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <Stack gap="lg">
@@ -210,7 +298,7 @@ export default function ProductsIndexRoute() {
           onSelectionChange={(ids) => setSelectedIds(ids)}
           bulkActions={[
             {
-              label: "Batch Edit Products",
+              label: "Batch Edit",
               onClick: (ids) =>
                 navigate(`/products/batch-fullzoom?ids=${ids.join(",")}`),
             },
@@ -248,9 +336,15 @@ export default function ProductsIndexRoute() {
                     position="middle-start"
                     offset={-5}
                     size="4"
-                    disabled={!r.c_isSellPriceManual}
+                    disabled={!(r.c_isSellPriceManual ?? !!r.manualSalePrice)}
                   >
-                    {formatUSD(r.c_sellPrice)}
+                    <PriceCell
+                      row={r}
+                      prefs={{
+                        qty: pricing.qty,
+                        priceMultiplier: pricing.priceMultiplier,
+                      }}
+                    />
                   </Indicator>
                   {r.c_hasPriceTiers ? <span title="Has tiers">⋯</span> : ""}
                 </Group>

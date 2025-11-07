@@ -9,6 +9,8 @@ import {
   ActionIcon,
   Anchor,
   TagsInput,
+  Select,
+  SegmentedControl,
   Grid,
   Group,
   Stack,
@@ -59,6 +61,11 @@ import {
   productIdentityFields,
   productPricingFields,
 } from "../forms/productDetail";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 // BOM spreadsheet modal removed; see /products/:id/bom page
 
@@ -215,7 +222,6 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }
     // Fetch stock snapshot from materialized view (single pre-aggregated source)
     const snapshot = await getProductStockSnapshots(id);
-    // console.log("!! snapshot", snapshot);
     // Normalize snapshot to snake_case keys expected by UI
     const stockByLocation = ((snapshot as any)?.byLocation || []).map(
       (l: any) => ({
@@ -353,8 +359,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const data = buildProductData(form);
-    console.log("!! Updating with data:", data);
-    console.log("!! From form:", Object.fromEntries(form.entries()));
     await prismaBase.product.update({ where: { id }, data });
     // Handle tags if provided via global form
     try {
@@ -540,7 +544,43 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/products/${id}`);
 }
 
+// Client-only helper to wire the global form context with stable callbacks
+function GlobalFormInit({
+  form,
+  onSave,
+}: {
+  form: any;
+  onSave: (values: any) => void;
+}) {
+  const resetForm = useCallback(() => form.reset(), [form]);
+  // Call the timber hook with stable callbacks
+  useInitGlobalFormContext(form as any, onSave, resetForm);
+  return null;
+}
+
+function DeferredGlobalFormInit({
+  form,
+  onSave,
+  onReset,
+}: {
+  form: any;
+  onSave: (values: any) => void;
+  onReset: () => void;
+}) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+  if (!ready) return null;
+  // Call the timber hook only after initial mount to avoid HMR timing issues
+  useInitGlobalFormContext(form as any, onSave, onReset);
+  return null;
+}
+
 export default function ProductDetailRoute() {
+  // Persist last visited product detail path for module restoration (include search for tab states)
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "products" });
+  // Keep index search cached; detail route should not overwrite index search so we call persist here only when user returns to index later.
+  // This hook is safe on detail; it only acts if pathname === /products
+  usePersistIndexSearch("/products");
   const {
     product,
     stockByLocation,
@@ -572,13 +612,13 @@ export default function ProductDetailRoute() {
     });
   }, [product]);
 
-  // console.log("!! form values:", editForm.getValues());
-  // console.log(
-  //   "!! form dirty:",
-  //   editForm.formState.isDirty,
-  //   editForm.formState.dirtyFields,
-  //   editForm.formState.defaultValues
-  // );
+  console.log("!! form values:", editForm.getValues());
+  console.log(
+    "!! form dirty:",
+    editForm.formState.isDirty,
+    editForm.formState.dirtyFields,
+    editForm.formState.defaultValues
+  );
 
   // Find modal is handled via ProductFindManager now (no inline find toggle)
 
@@ -591,7 +631,8 @@ export default function ProductDetailRoute() {
     },
     [buildUpdatePayload, submit]
   );
-  useInitGlobalFormContext(editForm as any, saveUpdate, () => editForm.reset());
+  // Defer initialization to avoid HMR race where provider isn't ready yet
+  // useInitGlobalFormContext(editForm as any, saveUpdate, () => editForm.reset());
 
   const [pickerOpen, setPickerOpen] = useState(false);
   // BOM spreadsheet modal removed (now a dedicated full-page route)
@@ -655,7 +696,7 @@ export default function ProductDetailRoute() {
       return scopeOk && locOk;
     });
   }, [stockByBatch, batchScope, batchLocation]);
-  console.log("!! filtered stockByBatch", filteredBatches);
+  // console.log("!! filtered stockByBatch", filteredBatches);
   // Inventory modal state
   const [amendBatchOpen, setAmendBatchOpen] = useState(false);
   const [amendProductOpen, setAmendProductOpen] = useState(false);
@@ -692,10 +733,14 @@ export default function ProductDetailRoute() {
       <Group justify="space-between" align="center">
         {(() => {
           const appendHref = useFindHrefAppender();
+          const saved = getSavedIndexSearch("/products");
+          const hrefProducts = saved
+            ? `/products${saved}`
+            : appendHref("/products");
           return (
             <BreadcrumbSet
               breadcrumbs={[
-                { label: "Products", href: appendHref("/products") },
+                { label: "Products", href: hrefProducts },
                 {
                   label: String(product.id),
                   href: appendHref(`/products/${product.id}`),
@@ -727,6 +772,8 @@ export default function ProductDetailRoute() {
       </Group>
       <ProductFindManager />
       <Form id="product-form" method="post">
+        {/* Isolate global form init into a dedicated child to reduce HMR churn */}
+        <GlobalFormInit form={editForm as any} onSave={saveUpdate} />
         <ProductDetailForm
           mode={"edit" as any}
           form={editForm as any}
@@ -798,18 +845,20 @@ export default function ProductDetailRoute() {
         <Grid.Col span={{ base: 12, md: 5 }}>
           <Stack>
             {/* Stock by Location + Batch (left) */}
-            <Card withBorder padding="md">
+            <Card withBorder padding="md" bg="transparent">
               <Card.Section>
-                <Table withColumnBorders highlightOnHover>
+                <Table highlightOnHover>
                   <Table.Tbody>
                     <Table.Tr>
                       <Table.Td>Total Stock</Table.Td>
                       <Table.Td>
-                        {Number(
-                          (stockByLocation as any[])
-                            .reduce((sum, r) => sum + Number(r.qty || 0), 0)
-                            .toFixed(2)
-                        )}
+                        <Title order={1}>
+                          {Number(
+                            (stockByLocation as any[])
+                              .reduce((sum, r) => sum + Number(r.qty || 0), 0)
+                              .toFixed(2)
+                          )}
+                        </Title>
                       </Table.Td>
                     </Table.Tr>
                     {(stockByLocation || []).map((row: any, i: number) => (
@@ -827,11 +876,29 @@ export default function ProductDetailRoute() {
               </Card.Section>
             </Card>
             {/* Stock by Batch */}
-            <Card withBorder padding="md">
+            <Card withBorder padding="md" bg="transparent">
               <Card.Section inheritPadding py="xs">
                 <Group justify="space-between" align="center" px={8} pb={6}>
                   <Title order={5}>Stock by Batch</Title>
                   <Group gap="sm" wrap="wrap">
+                    <SegmentedControl
+                      size="xs"
+                      data={[
+                        { label: "Current", value: "current" },
+                        { label: "All", value: "all" },
+                      ]}
+                      value={batchScope}
+                      onChange={(v) => setBatchScope(v as any)}
+                    />
+                    <Select
+                      size="xs"
+                      data={batchLocationOptions}
+                      value={batchLocation}
+                      onChange={(v) => setBatchLocation(v || "all")}
+                      searchable
+                      clearable={false}
+                      w={200}
+                    />
                     <Button
                       size="xs"
                       variant="light"
@@ -850,10 +917,10 @@ export default function ProductDetailRoute() {
                         // );
                         // setActiveBatch({ rows });
                         // open amendment modal with all batches
-                        console.log(
-                          "!! amend all with stockByBatch",
-                          stockByBatch
-                        );
+                        // console.log(
+                        //   "!! amend all with stockByBatch",
+                        //   stockByBatch
+                        // );
                         setActiveBatch({ rows: stockByBatch });
                         setAmendProductOpen(true);
                       }}
@@ -1005,7 +1072,7 @@ export default function ProductDetailRoute() {
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 7 }}>
           {/* Product Movements (right) */}
-          <Card withBorder padding="md">
+          <Card withBorder padding="md" bg="transparent">
             <Card.Section inheritPadding py="xs">
               <Group justify="space-between" align="center">
                 <Title order={4}>Product Movements</Title>

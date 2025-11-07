@@ -1,214 +1,27 @@
-import type {
-  LoaderFunctionArgs,
-  MetaFunction,
-  ActionFunctionArgs,
-} from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useSearchParams,
-  useNavigate,
-} from "@remix-run/react";
+import type { MetaFunction } from "@remix-run/node";
+import { Link, useSearchParams, useNavigate } from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title, Text } from "@mantine/core";
-import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
-import { SavedViews } from "../../../components/find/SavedViews";
-import { listViews, saveView } from "../../../utils/views.server";
-import {
-  decodeRequests,
-  buildWhereFromRequests,
-  mergeSimpleAndMulti,
-} from "../../../base/find/multiFind";
-import { parseTableParams, buildPrismaArgs } from "../../../utils/table.server";
-import { prisma } from "../../../utils/prisma.server";
+import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
-import { useRecordContext } from "../../../base/record/RecordContext";
+import { useRecords } from "../../../base/record/RecordContext";
 import { useEffect } from "react";
 import { formatUSD } from "../../../utils/format";
+import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction = () => [{ title: "Purchase Orders" }];
 
-export async function loader(args: LoaderFunctionArgs) {
-  const url = new URL(args.request.url);
-  const params = parseTableParams(args.request.url);
-  const views = await listViews("purchase-orders");
-  const viewName = url.searchParams.get("view");
-  let effective = params;
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName);
-    if (v) {
-      const saved = v.params as any;
-      effective = {
-        page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
-        sort: (url.searchParams.get("sort") || saved.sort || null) as any,
-        dir: (url.searchParams.get("dir") || saved.dir || null) as any,
-        q: (url.searchParams.get("q") || saved.q || null) as any,
-        filters: { ...(saved.filters || {}), ...params.filters },
-      };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
-        url.searchParams.set("findReqs", saved.filters.findReqs);
-    }
-  }
-  const keys = ["id", "vendorName", "consigneeName", "locationName", "date"]; // simple keys (include id)
-  let findWhere: any = null;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
-  if (hasFindIndicators) {
-    const values: Record<string, any> = {};
-    for (const k of keys) {
-      const v = url.searchParams.get(k);
-      if (v) values[k] = v;
-    }
-    const simple: any = {};
-    if (values.id) {
-      const n = Number(values.id);
-      if (Number.isFinite(n)) simple.id = n;
-      else simple.id = values.id; // allow non-numeric id if ever used
-    }
-    if (values.vendorName)
-      simple.company = {
-        name: { contains: values.vendorName, mode: "insensitive" },
-      };
-    if (values.consigneeName)
-      simple.consignee = {
-        name: { contains: values.consigneeName, mode: "insensitive" },
-      };
-    if (values.locationName)
-      simple.location = {
-        name: { contains: values.locationName, mode: "insensitive" },
-      };
-    if (values.date) simple.date = values.date;
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
-    if (multi) {
-      const interpreters: Record<string, (val: any) => any> = {
-        vendorName: (v) => ({
-          company: { name: { contains: v, mode: "insensitive" } },
-        }),
-        consigneeName: (v) => ({
-          consignee: { name: { contains: v, mode: "insensitive" } },
-        }),
-        locationName: (v) => ({
-          location: { name: { contains: v, mode: "insensitive" } },
-        }),
-        date: (v) => ({ date: v }),
-      };
-      const multiWhere = buildWhereFromRequests(multi, interpreters);
-      findWhere = mergeSimpleAndMulti(simple, multiWhere);
-    } else findWhere = simple;
-  }
-  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
-  if (baseParams.filters) {
-    const {
-      findReqs: _omitFindReqs,
-      find: _legacy,
-      ...rest
-    } = baseParams.filters;
-    baseParams = { ...baseParams, filters: rest };
-  }
-  const prismaArgs = buildPrismaArgs<any>(baseParams, {
-    searchableFields: [],
-    filterMappers: {},
-    defaultSort: { field: "id", dir: "asc" },
-  });
-  if (findWhere) prismaArgs.where = findWhere;
-  // Map UI sort keys to Prisma orderBy (handle relational fields)
-  if (baseParams.sort) {
-    const dir = (baseParams.dir as any) || "asc";
-    if (baseParams.sort === "vendorName")
-      prismaArgs.orderBy = { company: { name: dir } } as any;
-    else if (baseParams.sort === "consigneeName")
-      prismaArgs.orderBy = { consignee: { name: dir } } as any;
-    else if (baseParams.sort === "locationName")
-      prismaArgs.orderBy = { location: { name: dir } } as any;
-    else if (baseParams.sort === "totalCost") {
-      // totalCost is computed; fall back to id to avoid Prisma error
-      prismaArgs.orderBy = { id: dir } as any;
-    }
-  }
-  // Hybrid roster subset (similar to companies index pattern)
-  const ID_CAP = 50000;
-  const idRows = await prisma.purchaseOrder.findMany({
-    where: prismaArgs.where,
-    orderBy: prismaArgs.orderBy || { id: "asc" },
-    select: { id: true },
-    take: ID_CAP,
-  });
-  const idList = idRows.map((r) => r.id);
-  const idListComplete = idRows.length < ID_CAP;
-  const INITIAL_COUNT = 100;
-  const initialIds = idList.slice(0, INITIAL_COUNT);
-  let initialRows: any[] = [];
-  if (initialIds.length) {
-    // minimal columns; additional computed columns (vendorName etc.) will be derived client-side on-demand if needed
-    initialRows = await prisma.purchaseOrder.findMany({
-      where: { id: { in: initialIds } },
-      orderBy: { id: "asc" },
-      select: {
-        id: true,
-        date: true,
-        company: { select: { id: true, name: true } },
-        consignee: { select: { id: true, name: true } },
-        location: { select: { id: true, name: true } },
-        lines: { select: { priceCost: true, quantity: true } },
-      },
-    });
-    initialRows = initialRows.map((r: any) => ({
-      ...r,
-      vendorName: r.company?.name || "",
-      consigneeName: r.consignee?.name || "",
-      locationName: r.location?.name || "",
-      totalCost: (r.lines || []).reduce(
-        (sum: number, l: any) => sum + (l.priceCost || 0) * (l.quantity || 0),
-        0
-      ),
-    }));
-  }
-  return json({
-    idList,
-    idListComplete,
-    initialRows,
-    total: idList.length,
-    views,
-    activeView: viewName || null,
-  });
-}
-
-export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
-    if (!name) return redirect("/purchase-orders");
-    const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
-    const page = Number(params.page || 1);
-    const perPage = Number(params.perPage || 20);
-    const sort = (params.sort as any) || null;
-    const dir = (params.dir as any) || null;
-    const q = (params.q as any) || null;
-    const filters: Record<string, any> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
-      filters[k] = v;
-    }
-    if (params.findReqs) filters.findReqs = params.findReqs;
-    await saveView({
-      module: "purchase-orders",
-      name,
-      params: { page, perPage, sort, dir, q, filters },
-    });
-    return redirect(`/purchase-orders?view=${encodeURIComponent(name)}`);
-  }
-  return redirect("/purchase-orders");
-}
-
 export default function PurchaseOrdersIndexRoute() {
-  const { idList, idListComplete, initialRows, total, views, activeView } =
-    useLoaderData<typeof loader>();
-  const { setIdList, addRows } = useRecordContext() as any;
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "purchase-orders" });
+  usePersistIndexSearch("/purchase-orders");
+  const { state, currentId, setCurrentId } = useRecords();
+  const appendHref = useFindHrefAppender();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const sort = sp.get("sort") || "id";
@@ -223,12 +36,8 @@ export default function PurchaseOrdersIndexRoute() {
     next.set("dir", s.direction);
     navigate(`?${next.toString()}`);
   };
-  useEffect(() => {
-    setIdList?.("purchase-orders", idList, idListComplete);
-    if (initialRows?.length)
-      addRows?.("purchase-orders", initialRows, { updateRecordsArray: true });
-  }, [idList, idListComplete, initialRows, setIdList, addRows]);
-  const { records, fetching, requestMore, atEnd } = useHybridWindow({
+  // Hydration handled by parent route loader's effect
+  const { records, fetching, requestMore, atEnd, total } = useHybridWindow({
     module: "purchase-orders",
     rowEndpointPath: "/purchase-orders/rows",
     initialWindow: 100,
@@ -236,12 +45,30 @@ export default function PurchaseOrdersIndexRoute() {
     // Reduce visual blanks beyond hydrated rows
     maxPlaceholders: 8,
   });
-  // Auto-select single record after filtering
+  // Ensure currentId row present similar to products pattern
+  const ensuredRef = (globalThis as any).__poEnsuredRef || { current: false };
+  (globalThis as any).__poEnsuredRef = ensuredRef;
   useEffect(() => {
-    if (records.length === 1 && records[0]?.id != null) {
-      // setCurrentId not used here to avoid pulling from context; selection used mostly for keyboard nav
+    if (!currentId) return;
+    if (ensuredRef.current) return;
+    const idList = state?.idList || [];
+    const idx = idList.indexOf(currentId as any);
+    if (idx === -1) return;
+    if (idx >= records.length) {
+      let safety = 0;
+      while (records.length <= idx && safety < 20) {
+        requestMore();
+        safety++;
+      }
     }
-  }, [records]);
+    ensuredRef.current = true;
+  }, [currentId, state?.idList, records.length, requestMore]);
+  // Auto-select single record when exactly one
+  useEffect(() => {
+    if (records.length === 1 && records[0] && records[0].id != null) {
+      if (currentId !== records[0].id) setCurrentId(records[0].id);
+    }
+  }, [records, currentId, setCurrentId]);
   const columns = [
     {
       accessor: "id",
@@ -266,7 +93,9 @@ export default function PurchaseOrdersIndexRoute() {
       <PurchaseOrderFindManager />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
-          breadcrumbs={[{ label: "Purchase Orders", href: "/purchase-orders" }]}
+          breadcrumbs={[
+            { label: "Purchase Orders", href: appendHref("/purchase-orders") },
+          ]}
         />
         <Button
           component={Link}
@@ -277,15 +106,10 @@ export default function PurchaseOrdersIndexRoute() {
           New
         </Button>
       </Group>
-      <SavedViews views={views as any} activeView={activeView as any} />
-      <Title order={4}>Purchase Orders ({total})</Title>
-      {total === 0 && (
-        <Text c="dimmed" size="sm">
-          No purchase orders match your filters.
-        </Text>
-      )}
+      <FindRibbonAuto views={[]} activeView={null} />
       <VirtualizedNavDataTable
         records={records as any}
+        currentId={currentId as any}
         columns={columns as any}
         sortStatus={sortStatus}
         onSortStatusChange={onSortStatusChange}

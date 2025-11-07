@@ -166,16 +166,21 @@
       "daily-notes:Open today's daily note": false,
       "templates:Insert template": false,
       "command-palette:Open command palette": false,
-      "bases:Create new base": false
+      "bases:Create new base": false,
+      "completed-task-display:Task Hider": false
     }
   },
   "active": "fedf4e8a892c76a5",
   "lastOpenFiles": [
+    "PO Todo.md",
+    "Untitled.base",
+    "Untitled.canvas",
+    "Product Todos.md",
+    "Findify Todos.md",
     "Axis - High Level Use Cases.md",
     "Job-Assembly Todos.md",
     "Job Todos.md",
     "Job-Assembly Requirements.md",
-    "Product Todos.md",
     "Things to Test.md"
   ]
 }

@@ -28,6 +28,6 @@ export function setGlobalOptions(opts: OptionsData) {
 }
 
 export function getGlobalOptions(): OptionsData | null {
-  console.log("Getting global options:", GLOBAL_OPTIONS);
+  // console.log("Getting global options:", GLOBAL_OPTIONS);
   return GLOBAL_OPTIONS;
 }

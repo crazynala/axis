@@ -30,6 +30,11 @@ import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
@@ -174,14 +179,10 @@ export default function CompanyDetailRoute() {
     },
   });
 
-  console.log("!! company form values", form.getValues());
-  console.log("!! company form defaults", form.formState.defaultValues);
-
   // console.log("!! Company form values", form.getValues(), form.formState.defaultValues);
 
   // Reset form when loader data changes (after save or record navigation)
   useEffect(() => {
-    console.log("!! COMPANY CHANGED");
     const next = {
       id: company.id,
       name: company.name || "",
@@ -244,20 +245,24 @@ export default function CompanyDetailRoute() {
   };
 
   useInitGlobalFormContext(form as any, save, () => form.reset());
+  // Track last visited path inside companies module & persist index search filters
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "companies" });
+  usePersistIndexSearch("/companies");
 
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
         {(() => {
           const appendHref = useFindHrefAppender();
+          const saved = getSavedIndexSearch("/companies");
+          const hrefCompanies = saved
+            ? `/companies${saved}`
+            : appendHref("/companies");
           return (
             <BreadcrumbSet
               breadcrumbs={[
-                { label: "Companies", href: appendHref("/companies") },
-                {
-                  label: company.name,
-                  href: "#",
-                },
+                { label: "Companies", href: hrefCompanies },
+                { label: company.name, href: `#` },
               ]}
             />
           );

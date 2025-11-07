@@ -4,12 +4,7 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import {
-  Link,
-  useLoaderData,
-  useNavigate,
-  useSearchParams,
-} from "@remix-run/react";
+import { Link, useNavigate, useSearchParams } from "@remix-run/react";
 import { prismaBase } from "../utils/prisma.server";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
@@ -25,8 +20,8 @@ import {
 } from "../base/find/multiFind";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../base/record/useHybridWindow";
-import { useRecordContext } from "../base/record/RecordContext";
 import { useRecords } from "../base/record/RecordContext";
+import { useFindHrefAppender } from "~/base/find/sessionFindState";
 
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
@@ -217,15 +212,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ShipmentsIndexRoute() {
-  const { idList, idListComplete, initialRows, total, views, activeView } =
-    useLoaderData<typeof loader>();
-  const { setIdList, addRows } = useRecordContext();
   const { currentId, setCurrentId } = useRecords();
-  useEffect(() => {
-    setIdList("shipments", idList, idListComplete);
-    if (initialRows?.length)
-      addRows("shipments", initialRows, { updateRecordsArray: true });
-  }, [idList, idListComplete, initialRows, setIdList, addRows]);
   const navigate = useNavigate();
   const [sp] = useSearchParams();
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
@@ -235,6 +222,7 @@ export default function ShipmentsIndexRoute() {
     batchIncrement: 100,
     maxPlaceholders: 8,
   });
+  const appendHref = useFindHrefAppender();
   const columns = [
     {
       accessor: "id",
@@ -267,7 +255,7 @@ export default function ShipmentsIndexRoute() {
       <ShipmentFindManager />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
-          breadcrumbs={[{ label: "Shipments", href: "/shipments" }]}
+          breadcrumbs={[{ label: "Shipments", href: appendHref("/shipments") }]}
         />
         <Button
           component={Link}
@@ -278,9 +266,9 @@ export default function ShipmentsIndexRoute() {
           New
         </Button>
       </Group>
-      <SavedViews views={views as any} activeView={activeView as any} />
+      {/* Keep views UI minimal; parent loader handles filters; index mirrors products pattern */}
       <Group justify="space-between" align="center" mb="xs">
-        <Title order={4}>Shipments ({total})</Title>
+        {/* Total is shown in table footer; keep header lean like products */}
         {Array.from(sp.keys()).some(
           (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
         ) && (

@@ -31,6 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       isCustomer: true,
       isSupplier: true,
       isInactive: true,
+      stockLocationId: true,
     },
   });
   // Preserve client-requested order for deterministic UI behavior
