@@ -464,8 +464,16 @@ function AppShellLayout({
         <Stack justify="space-between" style={{ height: "100%" }}>
           <Stack gap="xs">
             {navTopItems.map((item) => {
+              // Default to restoring last saved location when coming from another module
               let href = useNavHref(item.to);
-              // If navigating to the index path for a module, include saved index filters in href for a smooth restore
+              // If we're already inside this module, prefer its index instead of restoring deep path
+              const insideModule =
+                location.pathname === item.to ||
+                location.pathname.startsWith(`${item.to}/`);
+              if (insideModule) {
+                href = item.to;
+              }
+              // If targeting the module index, include saved index filters for a smooth restore
               if (href === item.to) {
                 const search = getSavedIndexSearch(item.to);
                 if (search) href = `${item.to}${search}`;
@@ -510,6 +518,13 @@ function AppShellLayout({
           <Stack gap="xs">
             {navBottomItems.map((item) => {
               let href = useNavHref(item.to);
+              // Similar behavior for bottom items: if already within the target section, go to its index
+              const insideModule =
+                location.pathname === item.to ||
+                location.pathname.startsWith(`${item.to}/`);
+              if (insideModule) {
+                href = item.to;
+              }
               if (href === item.to) {
                 const search = getSavedIndexSearch(item.to);
                 if (search) href = `${item.to}${search}`;
