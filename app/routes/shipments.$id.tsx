@@ -39,7 +39,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
       companyCarrier: { select: { id: true } },
       companySender: { select: { id: true } },
       companyReceiver: { select: { id: true } },
-      location: { select: { id: true } },
+      // include name so we can populate read-only locationName in the form defaults
+      location: { select: { id: true, name: true } },
     },
   });
   console.log("Returning shipment:", shipment);
@@ -61,6 +62,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
     const dateRaw = form.get("date") as string | null;
     const dateReceivedRaw = form.get("dateReceived") as string | null;
+    const companyIdReceiverRaw = form.get("companyIdReceiver") as string | null;
+    const contactIdReceiverRaw = form.get("contactIdReceiver") as string | null;
+    const companyIdReceiver = companyIdReceiverRaw
+      ? Number(companyIdReceiverRaw)
+      : null;
+    const contactIdReceiver = contactIdReceiverRaw
+      ? Number(contactIdReceiverRaw)
+      : null;
     const date = dateRaw ? new Date(dateRaw) : null;
     const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
     const max = await prisma.shipment.aggregate({ _max: { id: true } });
@@ -75,6 +84,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         packingSlipCode,
         date,
         dateReceived,
+        companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
+          ? (companyIdReceiver as any)
+          : undefined,
+        contactIdReceiver: Number.isFinite(Number(contactIdReceiver))
+          ? (contactIdReceiver as any)
+          : undefined,
       } as any,
     });
     return redirect(`/shipments/${created.id}`);
@@ -86,11 +101,32 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
     const dateRaw = form.get("date") as string | null;
     const dateReceivedRaw = form.get("dateReceived") as string | null;
+    const companyIdReceiverRaw = form.get("companyIdReceiver") as string | null;
+    const contactIdReceiverRaw = form.get("contactIdReceiver") as string | null;
+    const companyIdReceiver = companyIdReceiverRaw
+      ? Number(companyIdReceiverRaw)
+      : null;
+    const contactIdReceiver = contactIdReceiverRaw
+      ? Number(contactIdReceiverRaw)
+      : null;
     const date = dateRaw ? new Date(dateRaw) : null;
     const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
     await prisma.shipment.update({
       where: { id },
-      data: { status, type, trackingNo, packingSlipCode, date, dateReceived },
+      data: {
+        status,
+        type,
+        trackingNo,
+        packingSlipCode,
+        date,
+        dateReceived,
+        companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
+          ? (companyIdReceiver as any)
+          : undefined,
+        contactIdReceiver: Number.isFinite(Number(contactIdReceiver))
+          ? (contactIdReceiver as any)
+          : undefined,
+      },
     });
     return redirect(`/shipments/${id}`);
   }
@@ -104,20 +140,28 @@ export default function ShipmentDetailRoute() {
   useEffect(() => {
     setCurrentId(shipment.id);
   }, [shipment.id, setCurrentId]);
-  const form = useForm({
-    defaultValues: shipment,
-    // id: shipment.id,
-    // trackingNo: shipment.trackingNo || "",
-    // status: shipment.status || "",
-    // type: shipment.type || "",
-    // packingSlipCode: shipment.packingSlipCode || "",
-    // date: shipment.date
-    //   ? new Date(shipment.date).toISOString().slice(0, 10)
-    //   : "",
-    // dateReceived: shipment.dateReceived
-    //   ? new Date(shipment.dateReceived).toISOString().slice(0, 10)
-    //   : "",
+  // Normalize loader data to match form field names and types used by the UI
+  const toFormDefaults = (s: any) => ({
+    ...s,
+    // Address aliases used by the form
+    addressCity: s.addressCity ?? s.addressTownCity ?? "",
+    addressPostalCode: s.addressPostalCode ?? s.addressZipPostCode ?? "",
+    // Normalize potential nulls to empty strings for text inputs
+    addressName: s.addressName ?? "",
+    addressLine1: s.addressLine1 ?? "",
+    addressLine2: s.addressLine2 ?? "",
+    addressLine3: s.addressLine3 ?? "",
+    addressCountyState: s.addressCountyState ?? "",
+    addressCountry: s.addressCountry ?? "",
+    // Read-only derived display field
+    locationName: s.location?.name ?? "",
   });
+  const formDefaults = toFormDefaults(shipment);
+  const form = useForm({
+    defaultValues: formDefaults,
+  });
+  console.log("!! default values", form.formState.defaultValues);
+  console.log("!! form values", form.getValues());
   useInitGlobalFormContext(form as any, (values: any) => {
     const fd = new FormData();
     fd.set("_intent", "shipment.update");
@@ -127,8 +171,18 @@ export default function ShipmentDetailRoute() {
     fd.set("packingSlipCode", values.packingSlipCode || "");
     fd.set("date", values.date || "");
     fd.set("dateReceived", values.dateReceived || "");
+    if (values.companyIdReceiver != null)
+      fd.set("companyIdReceiver", String(values.companyIdReceiver));
+    if (values.contactIdReceiver != null)
+      fd.set("contactIdReceiver", String(values.contactIdReceiver));
     submit(fd, { method: "post" });
   });
+  // After a successful save (loader re-runs via redirect), reset the form to clear dirty state
+  useEffect(() => {
+    const next = toFormDefaults(shipment);
+    console.log("!! Resetting form to:", next);
+    form.reset(next as any);
+  }, [shipment, form]);
   // Prev/Next hotkeys handled globally in RecordProvider
 
   return (

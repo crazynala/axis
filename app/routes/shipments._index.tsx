@@ -215,7 +215,7 @@ export default function ShipmentsIndexRoute() {
   const { currentId, setCurrentId } = useRecords();
   const navigate = useNavigate();
   const [sp] = useSearchParams();
-  const { records, fetching, requestMore, atEnd } = useHybridWindow({
+  const { records, fetching, requestMore, atEnd, total } = useHybridWindow({
     module: "shipments",
     rowEndpointPath: "/shipments/rows",
     initialWindow: 100,

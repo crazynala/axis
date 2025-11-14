@@ -4,3 +4,6 @@
 
 ### Detail Page
 
+- [ ] Must be able to delete assemblies
+- [ ] Add assambly model should have customer / assembly flags on by default
+

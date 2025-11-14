@@ -22,10 +22,12 @@ export default function NewShipmentRoute() {
       date: "",
       dateReceived: "",
       status: "",
-      type: "",
+      type: "Out",
       shipmentType: "",
       trackingNo: "",
       packingSlipCode: "",
+      companyIdReceiver: null,
+      contactIdReceiver: null,
     },
   });
   const onSubmit = (values: any) => {
@@ -38,6 +40,10 @@ export default function NewShipmentRoute() {
     if (values.trackingNo) fd.set("trackingNo", values.trackingNo);
     if (values.packingSlipCode)
       fd.set("packingSlipCode", values.packingSlipCode);
+    if (values.companyIdReceiver != null)
+      fd.set("companyIdReceiver", String(values.companyIdReceiver));
+    if (values.contactIdReceiver != null)
+      fd.set("contactIdReceiver", String(values.contactIdReceiver));
     submit(fd, { method: "post" });
   };
   return (

@@ -44,7 +44,12 @@ import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services
 import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import { IconLink, IconUnlink } from "@tabler/icons-react";
+import {
+  IconLink,
+  IconUnlink,
+  IconMenu2,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
@@ -66,6 +71,19 @@ export async function loader({ params }: LoaderFunctionArgs) {
     include: { assemblies: true, company: true, assemblyGroups: true },
   });
   if (!job) throw new Response("Not Found", { status: 404 });
+  // Activity counts per assembly (for delete gating)
+  const asmIds = (job.assemblies || [])
+    .map((a: any) => a.id)
+    .filter((n: any) => Number.isFinite(Number(n)));
+  let activityCounts: Record<number, number> = {};
+  if (asmIds.length) {
+    const rows = await prisma.assemblyActivity.groupBy({
+      by: ["assemblyId"],
+      where: { assemblyId: { in: asmIds } },
+      _count: { assemblyId: true },
+    });
+    for (const r of rows) activityCounts[r.assemblyId] = r._count.assemblyId;
+  }
   // Gather product details for assemblies
   const productIds = Array.from(
     new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))
@@ -105,7 +123,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const groupsById: Record<number, any> = Object.fromEntries(
     (job.assemblyGroups || []).map((g: any) => [g.id, g])
   );
-  return json({ job, productsById, customers, productChoices, groupsById });
+  return json({
+    job,
+    productsById,
+    customers,
+    productChoices,
+    groupsById,
+    activityCounts,
+  });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -261,6 +286,40 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${id}`);
   }
+  if (intent === "assembly.delete") {
+    const asmId = Number(form.get("assemblyId"));
+    if (Number.isFinite(asmId)) {
+      // Block if any activities exist
+      const actCount = await prisma.assemblyActivity.count({
+        where: { assemblyId: asmId },
+      });
+      if (actCount > 0) {
+        return redirect(`/jobs/${id}?asmDeleteErr=hasActivity&asmId=${asmId}`);
+      }
+      // Capture group cleanup before deletion
+      const asm = await prisma.assembly.findUnique({
+        where: { id: asmId },
+        select: { assemblyGroupId: true },
+      });
+      await prisma.assembly.delete({ where: { id: asmId } });
+      if (asm?.assemblyGroupId) {
+        const remaining = await prisma.assembly.count({
+          where: { assemblyGroupId: asm.assemblyGroupId },
+        });
+        if (remaining < 2) {
+          // Ungroup remaining (if 1) and remove group record
+          await prisma.assembly.updateMany({
+            where: { assemblyGroupId: asm.assemblyGroupId },
+            data: { assemblyGroupId: null },
+          });
+          await prisma.assemblyGroup.delete({
+            where: { id: asm.assemblyGroupId },
+          });
+        }
+      }
+    }
+    return redirect(`/jobs/${id}`);
+  }
   return redirect(`/jobs/${id}`);
 }
 
@@ -268,8 +327,14 @@ export default function JobDetailRoute() {
   // Persist last visited job path + index filters
   useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
   usePersistIndexSearch("/jobs");
-  const { job, productsById, customers, productChoices, groupsById } =
-    useLoaderData<typeof loader>();
+  const {
+    job,
+    productsById,
+    customers,
+    productChoices,
+    groupsById,
+    activityCounts,
+  } = useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(job.id);
@@ -479,7 +544,11 @@ export default function JobDetailRoute() {
           <Card.Section inheritPadding py="xs">
             <Group justify="space-between" align="center">
               <Title order={4}>Assemblies</Title>
-              <Button variant="light" onClick={() => setProductModalOpen(true)}>
+              <Button
+                variant="light"
+                onClick={() => setProductModalOpen(true)}
+                disabled={jobForm.formState.isDirty}
+              >
                 Add Assembly
               </Button>
             </Group>
@@ -530,14 +599,17 @@ export default function JobDetailRoute() {
                 <Table.Th>Make</Table.Th>
                 <Table.Th>Pack</Table.Th>
                 <Table.Th>Status</Table.Th>
+                <Table.Th style={{ width: 40 }}></Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {(() => {
                 const rows = (job.assemblies || []) as any[];
-                // Build a map of groupId -> comma-delimited member id list for deep-linking
+                // Build a map of groupId -> member id list for deep-linking and grouping
                 const groupMembers = new Map<number, number[]>();
+                const rowById = new Map<number, any>();
                 for (const r of rows) {
+                  rowById.set(Number(r.id), r);
                   const gid = r?.assemblyGroupId ?? null;
                   if (gid != null) {
                     const arr = groupMembers.get(gid) || [];
@@ -550,27 +622,54 @@ export default function JobDetailRoute() {
                   arr.sort((a, b) => a - b);
                   groupMembers.set(gid, arr);
                 }
+                // Build final ordered list: sort by id, but when hitting a grouped id, emit the whole group
+                const sortedIds = Array.from(rowById.keys()).sort(
+                  (a, b) => a - b
+                );
+                const visited = new Set<number>();
+                const finalRows: any[] = [];
+                for (const id of sortedIds) {
+                  if (visited.has(id)) continue;
+                  const r = rowById.get(id);
+                  const gid = r?.assemblyGroupId ?? null;
+                  if (gid == null) {
+                    finalRows.push(r);
+                    visited.add(id);
+                  } else {
+                    const members = groupMembers.get(gid) || [id];
+                    for (const mid of members) {
+                      if (visited.has(mid)) continue;
+                      const mr = rowById.get(mid);
+                      if (mr) {
+                        finalRows.push(mr);
+                        visited.add(mid);
+                      }
+                    }
+                  }
+                }
                 const getPos = (
                   idx: number
                 ): "first" | "middle" | "last" | "solo" | null => {
-                  const cur = rows[idx];
+                  const cur = finalRows[idx];
                   const gid = cur?.assemblyGroupId ?? null;
                   if (!gid) return null;
                   const prevSame =
-                    idx > 0 && (rows[idx - 1]?.assemblyGroupId ?? null) === gid;
+                    idx > 0 &&
+                    (finalRows[idx - 1]?.assemblyGroupId ?? null) === gid;
                   const nextSame =
-                    idx < rows.length - 1 &&
-                    (rows[idx + 1]?.assemblyGroupId ?? null) === gid;
+                    idx < finalRows.length - 1 &&
+                    (finalRows[idx + 1]?.assemblyGroupId ?? null) === gid;
                   if (!prevSame && !nextSame) return "solo";
                   if (!prevSame && nextSame) return "first";
                   if (prevSame && nextSame) return "middle";
                   return "last";
                 };
-                return rows.map((a: any, idx: number) => {
+                return finalRows.map((a: any, idx: number) => {
                   const p = a.productId
                     ? (productsById as any)[a.productId]
                     : null;
                   const pos = getPos(idx);
+                  const canDelete = (activityCounts?.[a.id] || 0) === 0;
                   return (
                     <Table.Tr key={a.id}>
                       <Table.Td
@@ -665,6 +764,14 @@ export default function JobDetailRoute() {
                       <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
                       <Table.Td>{a.status || ""}</Table.Td>
+                      <Table.Td align="center">
+                        <AssemblyRowMenu
+                          assembly={a}
+                          disabled={jobForm.formState.isDirty || !canDelete}
+                          canDelete={canDelete}
+                          submit={submit}
+                        />
+                      </Table.Td>
                     </Table.Tr>
                   );
                 });
@@ -917,5 +1024,84 @@ export default function JobDetailRoute() {
         )}
       </Modal>
     </Stack>
+  );
+}
+
+function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
+  const [open, setOpen] = React.useState(false);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  return (
+    <>
+      <ActionIcon
+        variant="subtle"
+        size="sm"
+        disabled={disabled}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (disabled) return;
+          setOpen((v) => !v);
+        }}
+        title={canDelete ? "Assembly actions" : "Cannot delete (has activity)"}
+      >
+        <IconMenu2 size={16} />
+      </ActionIcon>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 20,
+            background: "white",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+            border: "1px solid #ddd",
+            padding: 4,
+          }}
+        >
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconTrash size={14} />}
+            disabled={!canDelete}
+            onClick={() => {
+              setConfirmOpen(true);
+              setOpen(false);
+            }}
+          >
+            Delete
+          </Button>
+        </div>
+      )}
+      <Modal
+        opened={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        centered
+        title={`Delete Assembly ${assembly.id}?`}
+        size="sm"
+      >
+        <Stack>
+          <Text>
+            This will permanently remove the assembly. Only allowed because it
+            has no activity records.
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              onClick={() => {
+                const fd = new FormData();
+                fd.set("_intent", "assembly.delete");
+                fd.set("assemblyId", String(assembly.id));
+                submit(fd, { method: "post" });
+                setConfirmOpen(false);
+              }}
+            >
+              Delete
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 }

@@ -1,7 +1,15 @@
 import { useEffect, useMemo } from "react";
 import { Controller, useWatch } from "react-hook-form";
 import type { UseFormReturn } from "react-hook-form";
-import { Group, Indicator, NumberInput, Table } from "@mantine/core";
+import {
+  Group,
+  Indicator,
+  NumberInput,
+  Table,
+  ActionIcon,
+  Menu,
+} from "@mantine/core";
+import { IconMenu2 } from "@tabler/icons-react";
 import { calcPrice } from "~/modules/product/calc/calcPrice";
 import { formatUSD } from "~/utils/format";
 
@@ -172,23 +180,23 @@ export function PurchaseOrderLinesTable({
         <Table withColumnBorders>
           {/* Column widths: 7 fixed numeric columns at 9ch each; SKU/Name share remainder 33%/67% */}
           <colgroup>
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "8ch" }} />
             {/* ID */}
-            <col style={{ width: "calc((100% - 63ch) * 0.33)" }} />
+            <col style={{ width: "calc((100% - 80ch) * 0.33)" }} />
             {/* SKU */}
-            <col style={{ width: "calc((100% - 63ch) * 0.67)" }} />
+            <col style={{ width: "calc((100% - 80ch) * 0.67)" }} />
             {/* Name */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Order Qty */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Cost */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Tax */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Ext (Cost) */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Sell */}
-            <col style={{ width: "9ch" }} />
+            <col style={{ width: "12ch" }} />
             {/* Ext (Sell) */}
           </colgroup>
           <Table.Thead>
@@ -202,6 +210,8 @@ export function PurchaseOrderLinesTable({
               <Table.Th>Ext</Table.Th>
               <Table.Th>Sell</Table.Th>
               <Table.Th>Ext</Table.Th>
+              <Table.Th></Table.Th>
+              {/* row actions */}
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -257,6 +267,33 @@ export function PurchaseOrderLinesTable({
                     </Group>
                   </Table.Td>
                   <Table.Td>{formatUSD(lp.extendedSell)}</Table.Td>
+                  <Table.Td>
+                    <Menu withinPortal position="bottom-end" shadow="md">
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="subtle"
+                          size="sm"
+                          aria-label="Row actions"
+                        >
+                          <IconMenu2 size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          color="red"
+                          disabled={isComplete}
+                          onClick={() => {
+                            // Remove line from form state (draft only)
+                            const curr = [...lines];
+                            curr.splice(idx, 1);
+                            form.setValue("lines", curr, { shouldDirty: true });
+                          }}
+                        >
+                          Delete Line
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  </Table.Td>
                 </Table.Tr>
               );
             })}
@@ -301,6 +338,8 @@ export function PurchaseOrderLinesTable({
             {/* Cost */}
             <col style={{ width: "9ch" }} />
             {/* Sell */}
+            <col style={{ width: "6ch" }} />
+            {/* Actions */}
           </colgroup>
           <Table.Thead>
             <Table.Tr>
@@ -313,6 +352,7 @@ export function PurchaseOrderLinesTable({
               <Table.Th>Received</Table.Th>
               <Table.Th>Cost</Table.Th>
               <Table.Th>Sell</Table.Th>
+              <Table.Th></Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -362,6 +402,33 @@ export function PurchaseOrderLinesTable({
                         <span>{formatUSD(lp.sell)}</span>
                       )}
                     </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Menu withinPortal position="bottom-end" shadow="md">
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="subtle"
+                          size="sm"
+                          aria-label="Row actions"
+                        >
+                          <IconMenu2 size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          color="red"
+                          disabled={isComplete || !isDraft}
+                          onClick={() => {
+                            if (!isDraft) return; // Only allow delete in draft
+                            const curr = [...lines];
+                            curr.splice(idx, 1);
+                            form.setValue("lines", curr, { shouldDirty: true });
+                          }}
+                        >
+                          Delete Line
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
                   </Table.Td>
                 </Table.Tr>
               );

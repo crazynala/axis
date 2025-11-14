@@ -53,14 +53,10 @@ export function AssemblyCostingsTable(props: {
   accordionByProduct?: boolean;
   /** Enable verbose logging (or set window.__COSTINGS_DEBUG__ = true in DevTools) */
   debug?: boolean;
-  /** Enable inline editing for costing fields (QPU + Activity). Back-compat: editableQpu */
+  /** Enable inline editing for costing fields (QPU + Activity). */
   editableCosting?: boolean;
-  /** Decide if a specific row is editable (e.g., based on batch tracking or cut totals). Back-compat: canEditQpu */
+  /** Decide if a specific row is editable (e.g., based on batch tracking or cut totals). */
   canEditCosting?: (row: CostingRow) => boolean;
-  /** Deprecated: use editableCosting */
-  editableQpu?: boolean;
-  /** Deprecated: use canEditCosting */
-  canEditQpu?: (row: CostingRow) => boolean;
   /** Controlled values for Qty/Unit, keyed by costing id */
   qpuValueById?: Record<number, number>;
   /** Change handler for Qty/Unit edits */
@@ -82,8 +78,6 @@ export function AssemblyCostingsTable(props: {
     debug = false,
     editableCosting,
     canEditCosting,
-    editableQpu,
-    canEditQpu,
     qpuValueById,
     onChangeQpu,
     fieldNameForQpu,
@@ -92,6 +86,12 @@ export function AssemblyCostingsTable(props: {
     actions,
   } = props;
 
+  console.log(
+    "AssemblyCostingsTable render",
+    common,
+    uncommon,
+    editableCosting
+  );
   const DEBUG = debugEnabled("costingsTable") || !!debug;
 
   const computeSell = (c: CostingRow) => {
@@ -122,8 +122,8 @@ export function AssemblyCostingsTable(props: {
   };
 
   const hasRHF = !!register && !!fieldNameForQpu && !!fieldNameForActivityUsed;
-  const editable = (editableCosting ?? editableQpu ?? false) && hasRHF;
-  const canEditFn = canEditCosting ?? canEditQpu;
+  const editable = (editableCosting ?? false) && hasRHF;
+  const canEditFn = canEditCosting;
   const canEditRow = (row: CostingRow) =>
     Boolean(
       editable &&

@@ -65,20 +65,35 @@ export async function createAssemblyFromProductAndSeedCostings(
         const child = ln.child;
         const qty = Number(ln.quantity ?? 1) || 1;
         const unitCost = Number(ln.unitCost ?? child.costPrice ?? 0) || 0;
+        const act = String(ln.activityUsed || "").toLowerCase();
         return {
           assemblyId: created.id,
           productId: child.id,
           quantityPerUnit: qty,
           unitCost,
+          activityUsed: act ? act : null,
           salePriceGroupId: child.salePriceGroupId ?? null,
           manualSalePrice: child.manualSalePrice ?? null,
           manualMargin: child.manualMargin ?? null,
           notes: null as string | null,
+          flagDefinedInProduct: true,
         } as any;
       });
     if (payloads.length) {
-      await prisma.costing.createMany({ data: payloads });
+      const res = await prisma.costing.createMany({ data: payloads });
+      console.log("[assemblyFromProduct] Seeded costings", {
+        assemblyId: created.id,
+        productId: prod.id,
+        lineCount: lines.length,
+        payloadCount: payloads.length,
+        createdCount: res.count,
+      });
     }
+  } else {
+    console.log("[assemblyFromProduct] No productLines to seed", {
+      productId: prod.id,
+      variantSetId: prod.variantSetId,
+    });
   }
 
   return created.id;

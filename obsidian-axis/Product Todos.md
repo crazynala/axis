@@ -15,3 +15,5 @@
 - [ ] When cost group is set, cost price must not be editable
 - [ ] Cost price must reflect cost tiers / preview widget
 - [ ] User must confirm when deleting product
+- [ ] User must be able to edit batches (eg batch codes)
+- [ ] Sell price override displaying when override is empty, at least when arrow navigating records

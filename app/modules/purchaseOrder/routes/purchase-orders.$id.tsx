@@ -4,7 +4,7 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit } from "@remix-run/react";
+import { useLoaderData, useSubmit, useFetcher } from "@remix-run/react";
 import {
   prisma,
   refreshProductStockSnapshot,
@@ -20,7 +20,10 @@ import {
   ScrollArea,
   TextInput,
   Text,
+  Menu,
+  ActionIcon,
 } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { NumberInput, Modal } from "@mantine/core";
@@ -39,6 +42,7 @@ import {
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
+import { IconMenu2, IconTrash } from "@tabler/icons-react";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -462,7 +466,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Derive PO location from DB to enforce it server-side
     const po = await prisma.purchaseOrder.findUnique({
       where: { id: poId },
-      select: { id: true, locationId: true },
+      select: {
+        id: true,
+        locationId: true,
+        companyId: true,
+        consigneeCompanyId: true,
+      },
     });
     if (!po) return json({ error: "PO not found" }, { status: 404 });
     const enforcedLocationId = po.locationId ?? null;
@@ -487,6 +496,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     try {
       // Execute the receive as a transaction
       await prisma.$transaction(async (tx) => {
+        // Create a Shipment header for this receive (one per request)
+        const maxShip = await tx.shipment.aggregate({ _max: { id: true } });
+        const shipmentId = (maxShip._max.id || 0) + 1;
+        const shipment = await tx.shipment.create({
+          data: {
+            id: shipmentId,
+            date,
+            type: "In",
+            shipmentType: "PO Receive",
+            status: "RECEIVED",
+            locationId: po.locationId ?? undefined,
+            memo: `Auto-created for PO ${poId} receive`,
+          } as any,
+        });
+
+        // Map: productId -> shipping line id (reuse for multiple rows of same product)
+        const shippingLineIds = new Map<number, number>();
+
         for (const row of payload) {
           // Validate line belongs to PO and product matches
           const line = await tx.purchaseOrderLine.findUnique({
@@ -511,10 +538,36 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const qtyOrdered = Number(line.quantityOrdered || 0);
           const alreadyReceived = Number(line.qtyReceived || 0);
           const remaining = Math.max(0, qtyOrdered - alreadyReceived);
-          if (sum > remaining)
-            throw new Error("PO_RECEIVE: Receive exceeds remaining quantity");
+          // Allow over-receive: do not block if sum > remaining; we accept and record movement as-is.
 
-          // Create header per line
+          // Ensure shipment line for product (reuse if multiple movement rows share product)
+          let shipLineId = shippingLineIds.get(row.productId);
+          if (!shipLineId) {
+            const maxSL = await tx.shipmentLine.aggregate({
+              _max: { id: true },
+            });
+            shipLineId = (maxSL._max.id || 0) + 1;
+            const sl = await tx.shipmentLine.create({
+              data: {
+                id: shipLineId,
+                shipmentId: shipment.id,
+                productId: row.productId,
+                quantity: sum,
+                locationId: po.locationId ?? undefined,
+                details: `PO ${poId} receive`,
+                status: "RECEIVED",
+              } as any,
+            });
+            shippingLineIds.set(row.productId, sl.id);
+          } else {
+            // Increment existing shipment line quantity
+            await tx.shipmentLine.update({
+              where: { id: shipLineId },
+              data: { quantity: { increment: sum } as any },
+            });
+          }
+
+          // Create product movement header per row (link to shippingLineId)
           const hdr = await tx.productMovement.create({
             data: {
               movementType: "PO (Receive)",
@@ -524,6 +577,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               locationInId: enforcedLocationId ?? undefined,
               quantity: Math.abs(sum),
               notes: `PO ${poId} receive`,
+              shippingLineId: shipLineId,
             },
           });
 
@@ -538,6 +592,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 codeSartor: b.codeSartor || null,
                 locationId: enforcedLocationId ?? undefined,
                 receivedAt: date,
+                source: String(poId),
                 quantity: qty, // seed fallback
               },
             });
@@ -635,6 +690,191 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/purchase-orders/${poId}`);
   }
+  if (intent === "po.receive.delete") {
+    const poId = Number(form.get("poId"));
+    const movementId = Number(form.get("movementId"));
+    if (!Number.isFinite(poId) || !Number.isFinite(movementId)) {
+      return json({ error: "Invalid ids" }, { status: 400 });
+    }
+    // Validate movement exists and belongs to this PO
+    const mv = await prisma.productMovement.findUnique({
+      where: { id: movementId },
+      select: {
+        id: true,
+        movementType: true,
+        purchaseOrderLineId: true,
+        shippingLineId: true,
+        lines: { select: { id: true, batchId: true } },
+      },
+    });
+    if (!mv || (mv.movementType || "").toLowerCase() !== "po (receive)") {
+      return json({ error: "Not a PO receive movement" }, { status: 400 });
+    }
+    if (!mv.purchaseOrderLineId) {
+      return json(
+        { error: "Movement is not linked to a PO line" },
+        { status: 400 }
+      );
+    }
+    const line = await prisma.purchaseOrderLine.findUnique({
+      where: { id: mv.purchaseOrderLineId },
+      select: { id: true, purchaseOrderId: true },
+    });
+    if (!line || line.purchaseOrderId !== poId) {
+      return json(
+        { error: "Movement does not belong to this PO" },
+        { status: 400 }
+      );
+    }
+    const batchIds = (mv.lines || [])
+      .map((l) => Number(l.batchId))
+      .filter((n) => Number.isFinite(n)) as number[];
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (batchIds.length) {
+          // Server-side safety: ensure these batches have not been moved after creation
+          const links = await tx.productMovementLine.findMany({
+            where: { batchId: { in: batchIds } },
+            select: { batchId: true, movementId: true },
+          });
+          const byBatch = new Map<number, Set<number>>();
+          for (const l of links) {
+            const bid = Number(l.batchId);
+            if (!Number.isFinite(bid)) continue;
+            if (!byBatch.has(bid)) byBatch.set(bid, new Set<number>());
+            byBatch.get(bid)!.add(Number(l.movementId));
+          }
+          for (const bid of batchIds) {
+            const s = byBatch.get(bid) || new Set();
+            if (s.size !== 1 || !s.has(movementId)) {
+              throw new Error(
+                "PO_RECEIVE_DELETE: Batch has other movements and cannot be deleted"
+              );
+            }
+          }
+        }
+        // Delete movement lines for this movement
+        await tx.productMovementLine.deleteMany({
+          where: {
+            OR: [{ movementId: movementId }, { productMovementId: movementId }],
+          },
+        });
+        // Delete batches created by this movement (safe due to validation above)
+        if (batchIds.length) {
+          await tx.batch.deleteMany({ where: { id: { in: batchIds } } });
+        }
+        // Capture shipping line info before deleting header
+        const shippingLineId = Number(mv.shippingLineId || 0) || null;
+        let shipmentId: number | null = null;
+        if (shippingLineId) {
+          const sl = await tx.shipmentLine.findUnique({
+            where: { id: shippingLineId },
+            select: { id: true, shipmentId: true },
+          });
+          shipmentId = sl?.shipmentId ?? null;
+        }
+        // Delete header
+        await tx.productMovement.delete({ where: { id: movementId } });
+        // If a shipping line was associated, delete it if no other movements reference it
+        if (mv.shippingLineId) {
+          const others = await tx.productMovement.count({
+            where: { shippingLineId: mv.shippingLineId },
+          });
+          if (others === 0) {
+            await tx.shipmentLine.delete({
+              where: { id: mv.shippingLineId as number },
+            });
+            // If the shipment now has no lines, delete the shipment
+            if (shipmentId) {
+              const remaining = await tx.shipmentLine.count({
+                where: { shipmentId },
+              });
+              if (remaining === 0) {
+                await tx.shipment.delete({ where: { id: shipmentId } });
+              }
+            }
+          }
+        }
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.startsWith("PO_RECEIVE_DELETE:")) {
+        return json(
+          { error: msg.replace(/^PO_RECEIVE_DELETE:\s*/, "") },
+          { status: 400 }
+        );
+      }
+      throw e;
+    }
+
+    try {
+      await refreshProductStockSnapshot(false);
+    } catch (e) {
+      console.warn("MV refresh failed (po.receive.delete)", e);
+    }
+    // Recompute PO status after deletion
+    try {
+      const po = await prisma.purchaseOrder.findUnique({
+        where: { id: poId },
+        select: {
+          id: true,
+          status: true,
+          lines: {
+            select: { id: true, quantity: true, quantityOrdered: true },
+          },
+        },
+      });
+      if (po) {
+        const ids = po.lines.map((l) => l.id);
+        let anyReceived = false;
+        let allFilled = false;
+        if (ids.length) {
+          const mls = await prisma.productMovementLine.findMany({
+            where: { purchaseOrderLineId: { in: ids } },
+            select: {
+              purchaseOrderLineId: true,
+              quantity: true,
+              movement: { select: { movementType: true } },
+            },
+          });
+          const receivedMap = new Map<number, number>();
+          for (const ml of mls) {
+            const t = (ml.movement?.movementType || "").toLowerCase();
+            if (t !== "po (receive)") continue;
+            const lid = Number(ml.purchaseOrderLineId);
+            receivedMap.set(
+              lid,
+              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+            );
+          }
+          anyReceived = Array.from(receivedMap.values()).some(
+            (v) => (v || 0) > 0
+          );
+          allFilled = po.lines.every((l) => {
+            const rec = receivedMap.get(l.id) || 0;
+            const target =
+              Number(l.quantity || 0) > 0
+                ? Number(l.quantity || 0)
+                : Number(l.quantityOrdered || 0);
+            return rec >= target && target >= 0;
+          });
+        }
+        let next = po.status;
+        if (next === "RECEIVING" && !anyReceived) next = "FINAL" as any;
+        if (next === "COMPLETE" && !allFilled) next = "RECEIVING" as any;
+        if (next !== po.status) {
+          await prisma.purchaseOrder.update({
+            where: { id: poId },
+            data: { status: next },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to adjust PO status after receive delete", e);
+    }
+
+    return redirect(`/purchase-orders/${poId}`);
+  }
   return redirect(`/purchase-orders/${id}`);
 }
 
@@ -643,6 +883,7 @@ export default function PurchaseOrderDetailRoute() {
     useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
+  const deleteFetcher = useFetcher<{ error?: string }>();
   // Persist last visited purchase order path & index filters
   useRegisterNavLocation({ includeSearch: true, moduleKey: "purchase-orders" });
   usePersistIndexSearch("/purchase-orders");
@@ -780,6 +1021,17 @@ export default function PurchaseOrderDetailRoute() {
   useEffect(() => {
     form.reset(purchaseOrder as any);
   }, [purchaseOrder, form]);
+
+  // Surface delete errors via notification
+  useEffect(() => {
+    if (deleteFetcher.state === "idle" && deleteFetcher.data?.error) {
+      notifications.show({
+        title: "Delete blocked",
+        message: deleteFetcher.data.error,
+        color: "red",
+      });
+    }
+  }, [deleteFetcher.state, deleteFetcher.data]);
 
   // Local state for adding a line
   const [addOpen, setAddOpen] = useState(false);
@@ -984,6 +1236,7 @@ export default function PurchaseOrderDetailRoute() {
               value={newProductId}
               onChange={setNewProductId}
               autoFocus
+              supplierId={purchaseOrder.companyId ?? null}
             />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setAddOpen(false)}>
@@ -1032,6 +1285,7 @@ export default function PurchaseOrderDetailRoute() {
                 <Table.Th>Batch</Table.Th>
                 <Table.Th>Qty</Table.Th>
                 <Table.Th>Notes</Table.Th>
+                <Table.Th></Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -1050,6 +1304,19 @@ export default function PurchaseOrderDetailRoute() {
                       <Table.Td></Table.Td>
                       <Table.Td>{m.quantity ?? ""}</Table.Td>
                       <Table.Td>{m.notes ?? ""}</Table.Td>
+                      <Table.Td>
+                        <MovementDeleteMenu
+                          movementId={m.id}
+                          poId={purchaseOrder.id}
+                          onDelete={(mid) => {
+                            const fd = new FormData();
+                            fd.set("_intent", "po.receive.delete");
+                            fd.set("movementId", String(mid));
+                            fd.set("poId", String(purchaseOrder.id));
+                            deleteFetcher.submit(fd, { method: "post" });
+                          }}
+                        />
+                      </Table.Td>
                     </Table.Tr>,
                   ];
                 }
@@ -1079,12 +1346,25 @@ export default function PurchaseOrderDetailRoute() {
                     </Table.Td>
                     <Table.Td>{ln.quantity ?? ""}</Table.Td>
                     <Table.Td>{m.notes ?? ""}</Table.Td>
+                    <Table.Td>
+                      <MovementDeleteMenu
+                        movementId={m.id}
+                        poId={purchaseOrder.id}
+                        onDelete={(mid) => {
+                          const fd = new FormData();
+                          fd.set("_intent", "po.receive.delete");
+                          fd.set("movementId", String(mid));
+                          fd.set("poId", String(purchaseOrder.id));
+                          deleteFetcher.submit(fd, { method: "post" });
+                        }}
+                      />
+                    </Table.Td>
                   </Table.Tr>
                 ));
               })}
               {(!poMovements || poMovements.length === 0) && (
                 <Table.Tr>
-                  <Table.Td colSpan={8}>
+                  <Table.Td colSpan={9}>
                     <em>No related movements yet.</em>
                   </Table.Td>
                 </Table.Tr>
@@ -1111,14 +1391,60 @@ export default function PurchaseOrderDetailRoute() {
   );
 }
 
+function MovementDeleteMenu({
+  movementId,
+  poId,
+  onDelete,
+}: {
+  movementId: number;
+  poId: number;
+  onDelete: (movementId: number) => void;
+}) {
+  return (
+    <Menu withinPortal position="bottom-end" shadow="md">
+      <Menu.Target>
+        <ActionIcon variant="subtle" size="sm" aria-label="Movement actions">
+          <IconMenu2 size={16} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Receive Movement</Menu.Label>
+        <Menu.Item
+          leftSection={<IconTrash size={14} />}
+          color="red"
+          onClick={() => {
+            modals.openConfirmModal({
+              title: "Delete receive movement?",
+              children: (
+                <Text size="sm">
+                  This will delete the movement header, lines, and any batches
+                  that were created solely by this movement. It cannot be
+                  undone.
+                </Text>
+              ),
+              labels: { confirm: "Delete", cancel: "Cancel" },
+              confirmProps: { color: "red" },
+              onConfirm: () => onDelete(movementId),
+            });
+          }}
+        >
+          Delete Movement
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 function AsyncProductSearch({
   value,
   onChange,
   autoFocus,
+  supplierId,
 }: {
   value: number | null;
   onChange: (v: number | null) => void;
   autoFocus?: boolean;
+  supplierId?: number | null;
 }) {
   const [data, setData] = useState<
     Array<{ value: string; sku?: string | null; name?: string | null }>
@@ -1133,10 +1459,17 @@ function AsyncProductSearch({
         setData([]);
         return;
       }
+      // Require a supplierId to scope results; if absent show guidance
+      if (!supplierId) {
+        setData([]);
+        return;
+      }
       setLoading(true);
       try {
         const resp = await fetch(
-          `/api/products/search?q=${encodeURIComponent(search)}&limit=25`
+          `/api/products/search?q=${encodeURIComponent(
+            search
+          )}&limit=25&supplierId=${supplierId}`
         );
         const js = await resp.json();
         const opts = (js.products || []).map((p: any) => ({
@@ -1154,7 +1487,7 @@ function AsyncProductSearch({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [search]);
+  }, [search, supplierId]);
 
   const handlePick = (val: string) => {
     const n = Number(val);
@@ -1178,17 +1511,22 @@ function AsyncProductSearch({
             Searching…
           </div>
         )}
-        {!loading && !search && (
+        {!loading && !supplierId && (
+          <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
+            Select a Vendor first to search products.
+          </div>
+        )}
+        {!loading && supplierId && !search && (
           <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
             Type to search
           </div>
         )}
-        {!loading && search && data.length === 0 && (
+        {!loading && supplierId && search && data.length === 0 && (
           <div style={{ padding: 8, color: "var(--mantine-color-dimmed)" }}>
             No products
           </div>
         )}
-        {!loading && data.length > 0 && (
+        {!loading && supplierId && data.length > 0 && (
           <Table>
             <Table.Tbody>
               {data.map((opt) => {
@@ -1200,7 +1538,7 @@ function AsyncProductSearch({
                     style={{
                       cursor: "pointer",
                       background: selected
-                        ? "var(--mantine-color-gray-1)"
+                        ? "var(--mantine-color-placeholder)"
                         : "transparent",
                     }}
                   >

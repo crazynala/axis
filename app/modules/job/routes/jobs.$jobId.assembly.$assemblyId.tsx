@@ -23,82 +23,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
     .map((s) => Number(s))
     .filter((n) => Number.isFinite(n) && n > 0);
   const isMulti = idList.length > 1;
+  if (!idList.length) throw new Response("Not Found", { status: 404 });
 
-  if (isMulti) {
-    // Multi-assembly view under the same route: fetch all assemblies
-    const assemblies = await prisma.assembly.findMany({
-      where: { id: { in: idList }, jobId },
-      include: {
-        variantSet: true,
-        costings: {
-          include: { product: { select: { id: true, sku: true, name: true } } },
-        },
-      },
-      orderBy: { id: "asc" },
-    });
-    if (!assemblies.length) throw new Response("Not Found", { status: 404 });
-    // Fallback: product variant sets
-    const prodIds = Array.from(
-      new Set(
-        (assemblies as any[])
-          .map((a) => (a as any).productId)
-          .filter((id) => Number.isFinite(Number(id)))
-          .map((n) => Number(n))
-      )
-    );
-    const prodVariantMap = new Map<number, string[]>();
-    if (prodIds.length) {
-      const prods = (await prisma.product.findMany({
-        where: { id: { in: prodIds } },
-        select: { id: true, variantSet: { select: { variants: true } } },
-      })) as Array<{ id: number; variantSet?: { variants: string[] } | null }>;
-      for (const p of prods) {
-        const vars = (p.variantSet?.variants as any) || [];
-        if (Array.isArray(vars) && vars.length) prodVariantMap.set(p.id, vars);
-      }
-    }
-    const quantityItems = assemblies.map((a: any) => {
-      let labels = (a.variantSet?.variants || []) as string[];
-      if ((!labels || labels.length === 0) && (a as any).productId) {
-        const fb = prodVariantMap.get(Number((a as any).productId));
-        if (fb && fb.length) labels = fb as string[];
-      }
-      return {
-        assemblyId: a.id,
-        label: `Assembly ${a.id}`,
-        variants: {
-          labels,
-          numVariants:
-            Number((a as any).c_numVariants || labels.length || 0) || 0,
-        },
-        ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
-        cut: ((a as any).c_qtyCut_Breakdown || []) as number[],
-        make: ((a as any).c_qtyMake_Breakdown || []) as number[],
-        pack: ((a as any).c_qtyPack_Breakdown || []) as number[],
-        totals: {
-          cut: Number((a as any).c_qtyCut || 0),
-          make: Number((a as any).c_qtyMake || 0),
-          pack: Number((a as any).c_qtyPack || 0),
-        },
-      };
-    });
-    const groupMovements = await prisma.productMovement.findMany({
-      where: { assemblyId: { in: idList } },
-      orderBy: { date: "desc" },
-      take: 50,
-    });
-    // Minimal job info
-    const job = await prisma.job.findUnique({
-      where: { id: jobId },
-      select: { id: true, name: true },
-    });
-    return json({ job, assemblies, quantityItems, groupMovements });
-  }
-
-  const assemblyId = idList[0];
-
-  const assembly = await prisma.assembly.findUnique({
-    where: { id: assemblyId },
+  // Fetch all requested assemblies with consistent includes
+  const assemblies = await prisma.assembly.findMany({
+    where: { id: { in: idList }, jobId },
     include: {
       job: {
         include: {
@@ -124,13 +53,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
         },
       },
     },
+    orderBy: { id: "asc" },
   });
-  if (!assembly || assembly.jobId !== jobId)
-    throw new Response("Not Found", { status: 404 });
-  // If assembly is in a group, redirect canonically to the comma-delimited assemblies path
-  if ((assembly as any).assemblyGroupId) {
+  if (!assemblies.length) throw new Response("Not Found", { status: 404 });
+
+  // If a single-assembly path actually belongs to a group, redirect to canonical group path
+  if (!isMulti && (assemblies[0] as any).assemblyGroupId) {
     const grp = await prisma.assemblyGroup.findUnique({
-      where: { id: Number((assembly as any).assemblyGroupId) },
+      where: { id: Number((assemblies[0] as any).assemblyGroupId) },
       include: { assemblies: { select: { id: true }, orderBy: { id: "asc" } } },
     });
     const ids = (grp?.assemblies || []).map((a: any) => a.id);
@@ -138,144 +68,219 @@ export async function loader({ params }: LoaderFunctionArgs) {
       return redirect(`/jobs/${jobId}/assembly/${ids.join(",")}`);
     }
   }
-  let productVariantSet: {
-    id: number;
-    name: string | null;
-    variants: string[];
-  } | null = null;
 
-  console.log("Assembly loader", assembly);
-  if (!assembly.variantSetId && assembly.productId) {
-    const p = await prisma.product.findUnique({
-      where: { id: assembly.productId },
-      select: {
-        variantSet: { select: { id: true, name: true, variants: true } },
-      },
-    });
-    productVariantSet = (p?.variantSet as any) || null;
+  // Fallback: product variant sets per assembly.productId
+  const prodIds = Array.from(
+    new Set(
+      (assemblies as any[])
+        .map((a) => (a as any).productId)
+        .filter((id) => Number.isFinite(Number(id)))
+        .map((n) => Number(n))
+    )
+  );
+  const prodVariantMap = new Map<number, string[]>();
+  if (prodIds.length) {
+    const prods = (await prisma.product.findMany({
+      where: { id: { in: prodIds } },
+      select: { id: true, variantSet: { select: { variants: true } } },
+    })) as Array<{ id: number; variantSet?: { variants: string[] } | null }>;
+    for (const p of prods) {
+      const vars = (p.variantSet?.variants as any) || [];
+      if (Array.isArray(vars) && vars.length) prodVariantMap.set(p.id, vars);
+    }
   }
-  const costings = (assembly as any).costings as any[];
-  const activities = await prisma.assemblyActivity.findMany({
-    where: { assemblyId },
-    include: { job: true },
+
+  const quantityItems = assemblies.map((a: any) => {
+    let labels = (a.variantSet?.variants || []) as string[];
+    if ((!labels || labels.length === 0) && (a as any).productId) {
+      const fb = prodVariantMap.get(Number((a as any).productId));
+      if (fb && fb.length) labels = fb as string[];
+    }
+    return {
+      assemblyId: a.id,
+      label: `Assembly ${a.id}`,
+      variants: {
+        labels,
+        numVariants:
+          Number((a as any).c_numVariants || labels.length || 0) || 0,
+      },
+      ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
+      cut: ((a as any).c_qtyCut_Breakdown || []) as number[],
+      make: ((a as any).c_qtyMake_Breakdown || []) as number[],
+      pack: ((a as any).c_qtyPack_Breakdown || []) as number[],
+      totals: {
+        cut: Number((a as any).c_qtyCut || 0),
+        make: Number((a as any).c_qtyMake || 0),
+        pack: Number((a as any).c_qtyPack || 0),
+      },
+    };
   });
-  const products = await prismaBase.product.findMany({
-    select: { id: true, sku: true, name: true },
-    orderBy: { id: "asc" },
+
+  // Recent movements across the selected assemblies
+  const groupMovements = await prisma.productMovement.findMany({
+    where: { assemblyId: { in: idList } },
+    orderBy: { date: "desc" },
+    take: 50,
   });
-  // Compute per-costing stocks (location and global) and used qty
-  const jobLocId =
-    (assembly.job as any)?.stockLocation?.id ??
-    (assembly.job as any)?.stockLocationId ??
-    null;
+
+  // Minimal job info
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    select: { id: true, name: true },
+  });
+
+  // Compute stock stats for all costings across assemblies
+  const allCostings: any[] = (assemblies as any[]).flatMap(
+    (a: any) => (a.costings || []) as any[]
+  );
   const compIds = Array.from(
     new Set(
-      costings
+      allCostings
         .map((c) => c.product?.id || (c as any).productId || null)
         .filter((x): x is number => Number.isFinite(Number(x)))
         .map((x) => Number(x))
     )
   );
-  const compInfos = new Map<number, { allStock: number; locStock: number }>();
+  const prodStocks = compIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: compIds } },
+        select: { id: true },
+      })
+    : [];
+  // We'll fetch stock metrics individually to match existing computed fields
+  const stockByProduct = new Map<
+    number,
+    {
+      allStock: number;
+      byLocation: Array<{ location_id: number; qty: number }>;
+    }
+  >();
   for (const pid of compIds) {
     const p = await prisma.product.findUnique({ where: { id: pid } });
     const allStock = Number((p as any)?.c_stockQty ?? 0);
-    const locStock = Number(
-      ((p as any)?.c_byLocation || []).find(
-        (r: any) => (r.location_id ?? null) === jobLocId
-      )?.qty ?? 0
-    );
-    compInfos.set(pid, { allStock, locStock });
+    const byLocation = ((p as any)?.c_byLocation || []) as Array<{
+      location_id: number;
+      qty: number;
+    }>;
+    stockByProduct.set(pid, { allStock, byLocation });
   }
-  // Used by costing across this assembly's movements
-  const usedRows = (await prismaBase.$queryRaw`
-    SELECT pm."assemblyActivityId" AS aid, pml."costingId" AS cid,
-           COALESCE(SUM(ABS(pml.quantity)),0)::float AS used
-    FROM "ProductMovementLine" pml
-    JOIN "ProductMovement" pm ON pm.id = pml."movementId"
-    WHERE pm."assemblyId" = ${assemblyId}
-    GROUP BY pm."assemblyActivityId", pml."costingId"
-  `) as Array<{ aid: number | null; cid: number | null; used: number }>;
+
+  // Used quantities by costing across selected assemblies
   const usedByCosting = new Map<number, number>();
-  for (const r of usedRows) {
-    if (r.cid != null) {
+  for (const aid of idList) {
+    const rows = (await prismaBase.$queryRaw`
+      SELECT pml."costingId" AS cid,
+             COALESCE(SUM(ABS(pml.quantity)),0)::float AS used
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pm."assemblyId" = ${aid}
+      GROUP BY pml."costingId"
+    `) as Array<{ cid: number | null; used: number }>;
+    for (const r of rows) {
+      if (r.cid == null) continue;
       usedByCosting.set(
         r.cid,
         (usedByCosting.get(r.cid) || 0) + Number(r.used || 0)
       );
     }
   }
-  // Build activity consumption map for editing (by activity -> costing -> batch)
-  const consRows = (await prismaBase.$queryRaw`
-    SELECT pm."assemblyActivityId" AS aid, pml."costingId" AS cid, pml."batchId" AS bid,
-           COALESCE(SUM(ABS(pml.quantity)),0)::float AS qty
-    FROM "ProductMovementLine" pml
-    JOIN "ProductMovement" pm ON pm.id = pml."movementId"
-    WHERE pm."assemblyId" = ${assemblyId}
-    GROUP BY pm."assemblyActivityId", pml."costingId", pml."batchId"
-  `) as Array<{
-    aid: number | null;
-    cid: number | null;
-    bid: number | null;
-    qty: number;
-  }>;
-  const activityConsumptionMap: Record<
-    number,
-    Record<number, Record<number, number>>
-  > = {};
-  for (const r of consRows) {
-    const aid = r.aid ?? 0;
-    const cid = r.cid ?? 0;
-    const bid = r.bid ?? 0;
-    if (!aid || !cid || !bid) continue;
-    activityConsumptionMap[aid] = activityConsumptionMap[aid] || {};
-    activityConsumptionMap[aid][cid] = activityConsumptionMap[aid][cid] || {};
-    activityConsumptionMap[aid][cid][bid] = Number(r.qty || 0);
-  }
-  // Collect stats keyed by costing id
+
   const costingStats: Record<
     number,
     { allStock: number; locStock: number; used: number }
   > = {};
-  for (const c of costings) {
-    const pid = c.product?.id || (c as any).productId || null;
-    const info = pid ? compInfos.get(Number(pid)) : undefined;
-    costingStats[c.id] = {
-      allStock: info?.allStock ?? 0,
-      locStock: info?.locStock ?? 0,
-      used: usedByCosting.get(c.id) ?? 0,
-    };
+  for (const a of assemblies as any[]) {
+    const jobLocId =
+      a.job?.stockLocation?.id ?? (a.job as any)?.stockLocationId ?? null;
+    for (const c of (a.costings || []) as any[]) {
+      const pid = c.product?.id || (c as any).productId || null;
+      if (!pid) {
+        costingStats[c.id] = {
+          allStock: 0,
+          locStock: 0,
+          used: usedByCosting.get(c.id) ?? 0,
+        };
+        continue;
+      }
+      const stock = stockByProduct.get(Number(pid));
+      const allStock = stock?.allStock ?? 0;
+      const locStock = Number(
+        (stock?.byLocation || []).find(
+          (r: any) => (r.location_id ?? null) === jobLocId
+        )?.qty ?? 0
+      );
+      costingStats[c.id] = {
+        allStock,
+        locStock,
+        used: usedByCosting.get(c.id) ?? 0,
+      };
+    }
   }
-  const quantityItems = [
-    {
-      assemblyId: assembly.id,
-      label: `Assembly ${assembly.id}`,
-      variants: {
-        labels:
-          (assembly.variantSet?.variants?.length
-            ? (assembly.variantSet.variants as any)
-            : (productVariantSet?.variants as any)) || [],
-        numVariants: Number((assembly as any).c_numVariants || 0) || 0,
-      },
-      ordered: ((assembly as any).qtyOrderedBreakdown || []) as number[],
-      cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
-      make: ((assembly as any).c_qtyMake_Breakdown || []) as number[],
-      pack: ((assembly as any).c_qtyPack_Breakdown || []) as number[],
-      totals: {
-        cut: Number((assembly as any).c_qtyCut || 0),
-        make: Number((assembly as any).c_qtyMake || 0),
-        pack: Number((assembly as any).c_qtyPack || 0),
-      },
-    },
-  ];
-  const job = { id: assembly.jobId, name: (assembly.job as any)?.name ?? null };
+
+  // Single-assembly extras: activities, products, and activity consumption map
+  let activities: any[] | undefined = undefined;
+  let activityConsumptionMap:
+    | Record<number, Record<number, Record<number, number>>>
+    | undefined = undefined;
+  let productVariantSet:
+    | { id: number; name: string | null; variants: string[] }
+    | null
+    | undefined = undefined;
+  let products:
+    | Array<{ id: number; sku: string | null; name: string | null }>
+    | undefined = undefined;
+  if (!isMulti) {
+    const assembly = assemblies[0] as any;
+    activities = await prisma.assemblyActivity.findMany({
+      where: { assemblyId: assembly.id },
+      include: { job: true },
+    });
+    products = await prismaBase.product.findMany({
+      select: { id: true, sku: true, name: true },
+      orderBy: { id: "asc" },
+    });
+    if (!assembly.variantSetId && assembly.productId) {
+      const p = await prisma.product.findUnique({
+        where: { id: assembly.productId },
+        select: {
+          variantSet: { select: { id: true, name: true, variants: true } },
+        },
+      });
+      productVariantSet = (p?.variantSet as any) || null;
+    }
+    const consRows = (await prismaBase.$queryRaw`
+      SELECT pm."assemblyActivityId" AS aid, pml."costingId" AS cid, pml."batchId" AS bid,
+             COALESCE(SUM(ABS(pml.quantity)),0)::float AS qty
+      FROM "ProductMovementLine" pml
+      JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+      WHERE pm."assemblyId" = ${assembly.id}
+      GROUP BY pm."assemblyActivityId", pml."costingId", pml."batchId"
+    `) as Array<{
+      aid: number | null;
+      cid: number | null;
+      bid: number | null;
+      qty: number;
+    }>;
+    activityConsumptionMap = {} as any;
+    for (const r of consRows) {
+      const aid = r.aid ?? 0;
+      const cid = r.cid ?? 0;
+      const bid = r.bid ?? 0;
+      if (!aid || !cid || !bid) continue;
+      (activityConsumptionMap as any)[aid] =
+        (activityConsumptionMap as any)[aid] || {};
+      (activityConsumptionMap as any)[aid][cid] =
+        (activityConsumptionMap as any)[aid][cid] || {};
+      (activityConsumptionMap as any)[aid][cid][bid] = Number(r.qty || 0);
+    }
+  }
+
   return json({
     job,
-    assemblies: [assembly],
+    assemblies,
     quantityItems,
-    costings,
     costingStats,
-    activityConsumptionMap,
+    groupMovements,
     activities,
     products,
     productVariantSet,
@@ -349,10 +354,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Propagate edits across shared product costings in the selected assemblies
     // Build product-level intents from any changed costing ids
     const changedCostingIds = Array.from(
-      new Set([
-        ...entries.map(([id]) => id),
-        ...actEntries.map(([id]) => id),
-      ])
+      new Set([...entries.map(([id]) => id), ...actEntries.map(([id]) => id)])
     );
     if (changedCostingIds.length) {
       const changed = await prisma.costing.findMany({
@@ -364,7 +366,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const pid = Number(c.productId || 0) || 0;
         if (!pid) continue;
         const map = byProduct.get(pid) || {};
-        if (qpu[String(c.id)] != null && Number.isFinite(Number(qpu[String(c.id)]))) {
+        if (
+          qpu[String(c.id)] != null &&
+          Number.isFinite(Number(qpu[String(c.id)]))
+        ) {
           map.qpu = Number(qpu[String(c.id)]);
         }
         if (activity[String(c.id)]) {
@@ -715,6 +720,7 @@ export default function JobAssemblyRoute() {
               assemblies={assemblies as any}
               quantityItems={quantityItems as any}
               priceMultiplier={1}
+              costingStats={(data.costingStats || {}) as any}
               saveIntent="group.updateOrderedBreakdown"
               stateChangeIntent="assembly.update.fromGroup"
               groupMovements={(data.groupMovements || []) as any}

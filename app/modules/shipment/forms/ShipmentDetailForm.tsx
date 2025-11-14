@@ -15,8 +15,6 @@ export interface ShipmentDetailFormProps {
 }
 
 export function ShipmentDetailForm({ mode, form }: ShipmentDetailFormProps) {
-  console.log("Form values:", form.getValues());
-
   return (
     <SimpleGrid cols={3}>
       <Card withBorder padding="md">

@@ -1,12 +1,5 @@
-import {
-  Button,
-  Card,
-  Divider,
-  Group,
-  Table,
-  Title,
-  TextInput,
-} from "@mantine/core";
+import { Button, Card, Divider, Group, Table, Title } from "@mantine/core";
+import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
 
 export type VariantInfo = {
@@ -169,20 +162,12 @@ export function AssemblyQuantitiesCard({
                     style={{ padding: editableOrdered ? 0 : undefined }}
                   >
                     {editableOrdered && idx === 0 ? (
-                      <TextInput
+                      <EmbeddedTextInput
                         type="number"
                         value={effectiveOrdered[i] ?? 0}
                         onChange={(e) =>
                           handleChangeCell(i, e.currentTarget.value)
                         }
-                        variant="unstyled"
-                        styles={{
-                          input: {
-                            width: "100%",
-                            textAlign: "center",
-                            padding: 8,
-                          },
-                        }}
                       />
                     ) : (
                       fmt(it.ordered[i])
