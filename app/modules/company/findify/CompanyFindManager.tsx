@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Modal, TextInput, Button, Group, Stack } from "@mantine/core";
+import { TextInput, Button, Group, Stack } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useFind } from "~/base/find/FindContext";
 import { useLocation, useNavigate } from "@remix-run/react";
 

@@ -292,6 +292,15 @@ export const RecordProvider: React.FC<React.PropsWithChildren> = ({
               return true;
             }
           } else if (e.key === "Escape" && isDetail) {
+            // If any modal is currently open, allow it to handle ESC (close) without navigating.
+            // Mantine mounts modal roots with class 'mantine-Modal-root'. We check for presence.
+            const hasOpenModal = !!document.querySelector(
+              ".mantine-Modal-root"
+            );
+            if (hasOpenModal) {
+              // Returning false lets the modal's internal listener run (and our squelch, if active).
+              return false;
+            }
             if (activeId != null) setCurrentId(activeId);
             e.preventDefault();
             navigate(`/${state.module}`);

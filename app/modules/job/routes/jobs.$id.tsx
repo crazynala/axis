@@ -30,7 +30,12 @@ import {
   Badge,
   Tooltip,
   ActionIcon,
+  Menu,
 } from "@mantine/core";
+import {
+  HotkeyAwareModal,
+  HotkeyAwareModalRoot,
+} from "~/base/hotkeys/HotkeyAwareModal";
 import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
@@ -123,6 +128,21 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const groupsById: Record<number, any> = Object.fromEntries(
     (job.assemblyGroups || []).map((g: any) => [g.id, g])
   );
+
+  console.log("[jobs.$id] Loader assemblies data", {
+    jobId: id,
+    assembliesCount: (job.assemblies || []).length,
+    assemblies: (job.assemblies || []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      c_qtyOrdered: a.c_qtyOrdered,
+      c_qtyCut: a.c_qtyCut,
+      hasComputedFields: !!(
+        a.c_qtyOrdered !== undefined || a.c_qtyCut !== undefined
+      ),
+    })),
+  });
+
   return json({
     job,
     productsById,
@@ -235,7 +255,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "assembly.createFromProduct") {
     const productId = Number(form.get("productId"));
     if (Number.isFinite(productId)) {
-      await createAssemblyFromProductAndSeedCostings(id, productId);
+      const assemblyId = await createAssemblyFromProductAndSeedCostings(
+        id,
+        productId
+      );
+      console.log("[jobs.$id] Created assembly", { assemblyId, jobId: id });
     }
     return redirect(`/jobs/${id}`);
   }
@@ -782,7 +806,7 @@ export default function JobDetailRoute() {
       )}
 
       {/* Customer Picker Modal */}
-      <Modal.Root
+      <HotkeyAwareModalRoot
         opened={customerModalOpen}
         onClose={() => setCustomerModalOpen(false)}
         centered
@@ -815,10 +839,10 @@ export default function JobDetailRoute() {
             ))}
           </Modal.Body>
         </Modal.Content>
-      </Modal.Root>
+      </HotkeyAwareModalRoot>
 
       {/* Product Picker Modal for new Assembly */}
-      <Modal
+      <HotkeyAwareModal
         opened={productModalOpen}
         onClose={() => setProductModalOpen(false)}
         title="Add Assembly from Product"
@@ -878,10 +902,10 @@ export default function JobDetailRoute() {
               ))}
           </div>
         </Stack>
-      </Modal>
+      </HotkeyAwareModal>
 
       {/* Edit Ordered Breakdown Modal */}
-      <Modal
+      <HotkeyAwareModal
         opened={qtyModalOpen}
         onClose={() => {
           setQtyModalOpen(false);
@@ -952,10 +976,10 @@ export default function JobDetailRoute() {
             </Group>
           </form>
         )}
-      </Modal>
+      </HotkeyAwareModal>
 
       {/* Edit Cut Breakdown Modal */}
-      <Modal
+      <HotkeyAwareModal
         opened={cutModalOpen}
         onClose={() => {
           setCutModalOpen(false);
@@ -1022,56 +1046,40 @@ export default function JobDetailRoute() {
             </Group>
           </form>
         )}
-      </Modal>
+      </HotkeyAwareModal>
     </Stack>
   );
 }
 
 function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
-  const [open, setOpen] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   return (
     <>
-      <ActionIcon
-        variant="subtle"
-        size="sm"
-        disabled={disabled}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (disabled) return;
-          setOpen((v) => !v);
-        }}
-        title={canDelete ? "Assembly actions" : "Cannot delete (has activity)"}
-      >
-        <IconMenu2 size={16} />
-      </ActionIcon>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            zIndex: 20,
-            background: "white",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-            border: "1px solid #ddd",
-            padding: 4,
-          }}
-        >
-          <Button
-            size="xs"
-            variant="light"
+      <Menu position="bottom-end" withArrow>
+        <Menu.Target>
+          <ActionIcon
+            variant="subtle"
+            size="sm"
+            disabled={disabled}
+            title={
+              canDelete ? "Assembly actions" : "Cannot delete (has activity)"
+            }
+          >
+            <IconMenu2 size={16} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
             leftSection={<IconTrash size={14} />}
             disabled={!canDelete}
-            onClick={() => {
-              setConfirmOpen(true);
-              setOpen(false);
-            }}
+            onClick={() => setConfirmOpen(true)}
+            color={canDelete ? "red" : undefined}
           >
             Delete
-          </Button>
-        </div>
-      )}
-      <Modal
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+      <HotkeyAwareModal
         opened={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         centered
@@ -1101,7 +1109,7 @@ function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
             </Button>
           </Group>
         </Stack>
-      </Modal>
+      </HotkeyAwareModal>
     </>
   );
 }

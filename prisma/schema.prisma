@@ -175,9 +175,8 @@ model Product {
     // Back-relations: Cost ranges (per-product tiered costs)
     productCostRanges     ProductCostRange[]
     salePriceRanges       SalePriceRange[]
-    // Removed: back-relations to assemblies and activities to decouple history
     // Optional inverse for assemblies' primary product relation
-    // primaryAssemblies     Assembly[]            @relation("AssemblyPrimaryProduct")
+    primaryAssemblies     Assembly[]
     // Metadata
     createdBy             String?
     modifiedBy            String?
@@ -314,8 +313,9 @@ model Assembly {
     // Optional grouping of assemblies within a job
     assemblyGroupId     Int?
     assemblyGroup       AssemblyGroup?      @relation(fields: [assemblyGroupId], references: [id])
-    // Link Assembly to original Product by id only (no relation)
+    // Link Assembly to original Product by id and relation
     productId           Int?
+    product             Product?            @relation(fields: [productId], references: [id])
     // Optional link to a Variant Set (may mirror the Product's variant set)
     variantSetId        Int?
     variantSet          VariantSet?         @relation(fields: [variantSetId], references: [id])

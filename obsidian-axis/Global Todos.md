@@ -1,1 +1,2 @@
 - [ ] If user navigates to a detail record that is not found, forward to index (happens when a record is deleted from another page)
+- [ ] Streamline Esc processing

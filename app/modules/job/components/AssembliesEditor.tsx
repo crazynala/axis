@@ -11,10 +11,11 @@ import {
   Title,
   Modal,
 } from "@mantine/core";
+import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useSubmit } from "@remix-run/react";
+import { useSubmit, useLocation } from "@remix-run/react";
 import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
 import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
 import { Link } from "@remix-run/react";
@@ -101,6 +102,7 @@ export function AssembliesEditor(props: {
     orderedByAssembly: Record<string, number[]>;
     qpu: Record<string, number>;
     activity: Record<string, string>;
+    names: Record<string, string>;
   }>({
     defaultValues: {
       orderedByAssembly: Object.fromEntries(
@@ -121,6 +123,9 @@ export function AssembliesEditor(props: {
             String(c.id),
             String(c.activityUsed ?? "").toLowerCase(),
           ])
+      ) as any,
+      names: Object.fromEntries(
+        (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
       ) as any,
     },
   });
@@ -148,6 +153,9 @@ export function AssembliesEditor(props: {
               String(c.id),
               String(c.activityUsed ?? "").toLowerCase(),
             ])
+        ) as any,
+        names: Object.fromEntries(
+          (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
         ) as any,
       },
       { keepDirty: false }
@@ -243,9 +251,38 @@ export function AssembliesEditor(props: {
               <Grid.Col span={5}>
                 <Card withBorder padding="md">
                   <TextInput
-                    readOnly
-                    value={a.name || ""}
                     label="Name"
+                    value={editForm.watch(`names.${a.id}` as const) || ""}
+                    onChange={(e) =>
+                      editForm.setValue(
+                        `names.${a.id}` as const,
+                        e.currentTarget.value,
+                        { shouldDirty: true, shouldTouch: true }
+                      )
+                    }
+                    onBlur={() => {
+                      const fd = new FormData();
+                      fd.set("_intent", "assembly.update");
+                      fd.set("assemblyId", String(a.id));
+                      fd.set(
+                        "name",
+                        editForm.getValues().names[String(a.id)] || ""
+                      );
+                      // Preserve status to avoid clearing it when not included
+                      fd.set("status", String((a as any).status || ""));
+                      // Redirect back to current path (supports group page)
+                      fd.set(
+                        "returnTo",
+                        window.location.pathname + window.location.search
+                      );
+                      submit(fd, { method: "post" });
+                    }}
+                    mod="data-autosize"
+                  />
+                  <TextInput
+                    readOnly
+                    value={((a as any).product?.name as string) || ""}
+                    label="Product"
                     mod="data-autosize"
                   />
                   <TextInput
@@ -598,7 +635,7 @@ function AddCostingButton({
       </Button>
       <Card withBorder padding={0} style={{ display: "none" }} />
       <Text style={{ display: "none" }} />
-      <Modal.Root
+      <HotkeyAwareModalRoot
         opened={opened}
         onClose={() => setOpened(false)}
         centered
@@ -664,7 +701,7 @@ function AddCostingButton({
             </Stack>
           </Modal.Body>
         </Modal.Content>
-      </Modal.Root>
+      </HotkeyAwareModalRoot>
     </>
   );
 }

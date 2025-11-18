@@ -35,6 +35,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
           company: { select: { id: true, priceMultiplier: true } },
         },
       },
+      product: { select: { id: true, sku: true, name: true } },
       variantSet: true,
       costings: {
         include: {
@@ -407,6 +408,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       where: { id: assemblyId },
       data: { name, status },
     });
+    const returnTo = form.get("returnTo");
+    if (typeof returnTo === "string" && returnTo.startsWith("/")) {
+      return redirect(returnTo);
+    }
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
   if (intent === "costing.create") {
@@ -733,8 +738,11 @@ export default function JobAssemblyRoute() {
   }
 
   const assembly = assemblies[0] as any;
+  // Single assembly view previously tried to destructure a top-level `costings` that
+  // the loader never provided (loader only returns `assemblies` with nested `costings`).
+  // This caused the costings table to render empty for single assembly while group view worked.
+  // Treat single assembly as a degenerate group: rely on `assembly.costings` like group mode.
   const {
-    costings,
     costingStats,
     activityConsumptionMap,
     activities,
@@ -763,7 +771,8 @@ export default function JobAssemblyRoute() {
           [
             {
               ...assembly,
-              costings: costings as any,
+              // Pull nested costings directly off the assembly (loader includes them)
+              costings: ((assembly as any).costings || []) as any,
               qtyOrderedBreakdown: (assembly as any).qtyOrderedBreakdown || [],
               c_qtyOrdered: (assembly as any).c_qtyOrdered ?? 0,
               c_qtyCut: (assembly as any).c_qtyCut ?? 0,

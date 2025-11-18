@@ -3,13 +3,13 @@ import {
   Accordion,
   Button,
   Group,
-  Modal,
   Stack,
   Table,
   Text,
   TextInput,
   Title,
 } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { DatePickerInput } from "@mantine/dates";
 import { useSubmit } from "@remix-run/react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";

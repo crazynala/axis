@@ -1,9 +1,22 @@
-- [ ] When order quantity is changed in Quantities table, the save/cancel header must show (via the globalformcontext, triggered by RHF dirty state). It currently has it's own save/cancel button, which is not our UX pattern
-- [ ] The "add" button for the Costings card is no longer present (regression issue) -- note there is an unused AddCostingButton function in the route
+- [x] When order quantity is changed in Quantities table, the save/cancel header must show (via the globalformcontext, triggered by RHF dirty state). It currently has it's own save/cancel button, which is not our UX pattern
+- [x] The "add" button for the Costings card is no longer present (regression issue) -- note there is an unused AddCostingButton function in the route
+- [ ] Support editing of Assembly name
+- [ ] No states show in state transition button
+- [ ] Assemblies must be in same state to group
+- [ ] Show single state button for groups
+- [ ] Add Costing Modal
+	- [ ] Typing into Search products... does nothing
+	- [ ] Default results different for single- vs multi-assembly
+	- [ ] Remove "Qty / Unit" and Unit Cost from Add Costing modal
+	- [ ] Flag for customer-specific products
 - [x] Move ID to bottom of card
 - [x] Quantities table must be centered
 - [x] The recordcontext must show the number of assemblies, not the number of jobs. The job becomes the "parent". Remove extraneous Prev/Next buttons
 - [ ] Hitting Esc on job/assembly must take us back to job detail (not all the way back to job index)
 - [ ] Add record make
 - [ ] Add record ship
+- [ ] Add record defect
+	- [ ] Support defect for Cut or Sew
+- [ ] Form still dirty after saving (e.g. after updating order qty)
+- [ ] Assembly must have type (prod | SMS | PP | Keep)
 

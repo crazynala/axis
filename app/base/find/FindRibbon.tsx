@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Group,
-  Modal,
   Paper,
   Tabs,
   Text,
@@ -12,6 +11,7 @@ import {
   rem,
   ScrollArea,
 } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { CloseButton } from "@mantine/core";
 
 export type FilterChip = {

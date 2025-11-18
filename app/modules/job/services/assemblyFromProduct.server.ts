@@ -58,28 +58,57 @@ export async function createAssemblyFromProductAndSeedCostings(
   const created = await prisma.assembly.create({ data: asmData });
 
   const lines = (prod as any).productLines || [];
+  console.log("[assemblyFromProduct] Product loaded", {
+    productId: prod.id,
+    name: prod.name,
+    hasLines: Array.isArray(lines),
+    linesCount: lines.length,
+    lines: lines.map((l: any) => ({
+      id: l.id,
+      quantity: l.quantity,
+      childId: l.child?.id,
+      childName: l.child?.name,
+      activityUsed: l.activityUsed,
+    })),
+  });
+
   if (Array.isArray(lines) && lines.length) {
-    const payloads = lines
-      .filter((ln: any) => ln?.child?.id != null)
-      .map((ln: any) => {
-        const child = ln.child;
-        const qty = Number(ln.quantity ?? 1) || 1;
-        const unitCost = Number(ln.unitCost ?? child.costPrice ?? 0) || 0;
-        const act = String(ln.activityUsed || "").toLowerCase();
-        return {
-          assemblyId: created.id,
-          productId: child.id,
-          quantityPerUnit: qty,
-          unitCost,
-          activityUsed: act ? act : null,
-          salePriceGroupId: child.salePriceGroupId ?? null,
-          manualSalePrice: child.manualSalePrice ?? null,
-          manualMargin: child.manualMargin ?? null,
-          notes: null as string | null,
-          flagDefinedInProduct: true,
-        } as any;
-      });
+    const filtered = lines.filter((ln: any) => ln?.child?.id != null);
+    console.log("[assemblyFromProduct] Filtered lines", {
+      originalCount: lines.length,
+      filteredCount: filtered.length,
+      filtered: filtered.map((l: any) => ({ id: l.id, childId: l.child.id })),
+    });
+
+    const payloads = filtered.map((ln: any) => {
+      const child = ln.child;
+      const qty = Number(ln.quantity ?? 1) || 1;
+      const unitCost = Number(ln.unitCost ?? child.costPrice ?? 0) || 0;
+      const act = String(ln.activityUsed || "").toLowerCase();
+      return {
+        assemblyId: created.id,
+        productId: child.id,
+        quantityPerUnit: qty,
+        unitCost,
+        activityUsed: act ? act : null,
+        salePriceGroupId: child.salePriceGroupId ?? null,
+        manualSalePrice: child.manualSalePrice ?? null,
+        manualMargin: child.manualMargin ?? null,
+        notes: null as string | null,
+        flagDefinedInProduct: true,
+      } as any;
+    });
+
     if (payloads.length) {
+      console.log("[assemblyFromProduct] Creating costings", {
+        assemblyId: created.id,
+        payloads: payloads.map((p) => ({
+          productId: p.productId,
+          quantityPerUnit: p.quantityPerUnit,
+          unitCost: p.unitCost,
+          activityUsed: p.activityUsed,
+        })),
+      });
       const res = await prisma.costing.createMany({ data: payloads });
       console.log("[assemblyFromProduct] Seeded costings", {
         assemblyId: created.id,
@@ -88,11 +117,15 @@ export async function createAssemblyFromProductAndSeedCostings(
         payloadCount: payloads.length,
         createdCount: res.count,
       });
+    } else {
+      console.log("[assemblyFromProduct] No valid payloads to create");
     }
   } else {
     console.log("[assemblyFromProduct] No productLines to seed", {
       productId: prod.id,
       variantSetId: prod.variantSetId,
+      linesType: typeof lines,
+      linesLength: Array.isArray(lines) ? lines.length : "not array",
     });
   }
 

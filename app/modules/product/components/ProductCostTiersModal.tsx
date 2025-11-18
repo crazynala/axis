@@ -1,5 +1,6 @@
 import React from "react";
-import { Modal, Table, Text, Group, Badge } from "@mantine/core";
+import { Table, Text, Group, Badge } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useFetcher } from "@remix-run/react";
 
 type Tier = {

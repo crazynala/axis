@@ -4,13 +4,19 @@ import {
   Group,
   Table,
   Title,
-  Modal,
   Text,
   TextInput,
   NativeSelect,
   Tooltip,
   ActionIcon,
+  Anchor,
+  Badge,
+  Button,
+  HoverCard,
+  NumberInput,
+  Stack,
 } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useState, type ReactNode } from "react";
 import { calcPrice } from "~/modules/product/calc/calcPrice";
 import { ExternalLink } from "~/components/ExternalLink";
@@ -71,10 +77,10 @@ export function AssemblyCostingsTable(props: {
   actions?: ReactNode | ReactNode[];
 }) {
   const {
-    title = "Costings",
+    title,
     common,
-    uncommon,
-    accordionByProduct = true,
+    uncommon = [],
+    accordionByProduct,
     debug = false,
     editableCosting,
     canEditCosting,
@@ -85,13 +91,6 @@ export function AssemblyCostingsTable(props: {
     fieldNameForActivityUsed,
     actions,
   } = props;
-
-  console.log(
-    "AssemblyCostingsTable render",
-    common,
-    uncommon,
-    editableCosting
-  );
   const DEBUG = debugEnabled("costingsTable") || !!debug;
 
   const computeSell = (c: CostingRow) => {

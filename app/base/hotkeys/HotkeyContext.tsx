@@ -41,7 +41,16 @@ export const HotkeyProvider: React.FC<
       try {
         const handled = arr[i](e);
         if (handled) {
-          // If handler returned true, treat as handled and stop propagation chain
+          // If handler returned true, treat as handled: prevent default and stop propagation
+          try {
+            e.preventDefault();
+            // @ts-expect-error: stopImmediatePropagation exists on DOM events
+            if (typeof (e as any).stopImmediatePropagation === "function") {
+              (e as any).stopImmediatePropagation();
+            } else {
+              e.stopPropagation();
+            }
+          } catch {}
           break;
         }
       } catch {

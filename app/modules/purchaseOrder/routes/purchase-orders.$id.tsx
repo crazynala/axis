@@ -26,7 +26,8 @@ import {
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { Controller, useForm, useWatch } from "react-hook-form";
-import { NumberInput, Modal } from "@mantine/core";
+import { NumberInput } from "@mantine/core";
+import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
 // Using an async product search in this route instead of the shared ProductSelect
 import { useState, useEffect } from "react";
