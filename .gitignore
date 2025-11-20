@@ -36,3 +36,7 @@ public/build/
 # Temp
 tmp/
 .turbo/
+
+# Obsidian
+.obsidian/workspace.json
+**/.obsidian/workspace.json
