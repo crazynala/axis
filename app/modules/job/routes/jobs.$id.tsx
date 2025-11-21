@@ -13,6 +13,7 @@ import {
   useSearchParams,
   useNavigate,
 } from "@remix-run/react";
+import { notifications } from "@mantine/notifications";
 import {
   Stack,
   Title,
@@ -31,6 +32,7 @@ import {
   Tooltip,
   ActionIcon,
   Menu,
+  Select,
 } from "@mantine/core";
 import {
   HotkeyAwareModal,
@@ -49,22 +51,23 @@ import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services
 import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import {
-  IconLink,
-  IconUnlink,
-  IconMenu2,
-  IconTrash,
-} from "@tabler/icons-react";
+import { IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
 import * as jobDetail from "~/modules/job/forms/jobDetail";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
 import {
+  applyJobStateTransition,
+  JobStateError,
+  syncJobStateFromAssemblies,
+} from "~/modules/job/services/JobStateService";
+import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
+import { assemblyStateConfig } from "~/base/state/configs";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -202,13 +205,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const fields = [
       "projectCode",
       "name",
-      "status",
       "jobType",
       "endCustomerName",
       "customerPoNum",
+      "statusWhiteboard",
     ];
     for (const f of fields)
       if (form.has(f)) data[f] = (form.get(f) as string) || null;
+    let nextStatus: string | null = null;
+    if (form.has("status")) {
+      const rawStatus = String(form.get("status") ?? "").trim();
+      nextStatus = rawStatus ? rawStatus : null;
+    }
     if (form.has("companyId")) {
       const raw = String(form.get("companyId") ?? "");
       if (raw === "") {
@@ -247,9 +255,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const v = form.get(df) as string;
         data[df] = v ? new Date(v) : null;
       }
-    console.log("[jobs.$id] job.update", { id, data });
-    await prisma.job.update({ where: { id }, data });
-    console.log("[jobs.$id] updated");
+    try {
+      if (Object.keys(data).length) {
+        await prisma.job.update({ where: { id }, data });
+      }
+      if (nextStatus) {
+        await applyJobStateTransition(prisma, id, nextStatus);
+      }
+    } catch (err) {
+      if (err instanceof JobStateError) {
+        return redirect(`/jobs/${id}?jobStateErr=${err.code}`);
+      }
+      throw err;
+    }
     return redirect(`/jobs/${id}`);
   }
   if (intent === "assembly.createFromProduct") {
@@ -344,6 +362,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${id}`);
   }
+  if (intent === "assembly.state") {
+    const asmId = Number(form.get("assemblyId"));
+    if (Number.isFinite(asmId)) {
+      const statusValue = String(form.get("status") ?? "").trim();
+      const data: any = {};
+      if (statusValue) data.status = statusValue;
+      if (form.has("statusWhiteboard")) {
+        const note = String(form.get("statusWhiteboard") ?? "");
+        data.statusWhiteboard = note || null;
+      }
+      if (Object.keys(data).length) {
+        await prisma.assembly.update({ where: { id: asmId }, data });
+        await syncJobStateFromAssemblies(prisma, id);
+      }
+    }
+    return redirect(`/jobs/${id}`);
+  }
   return redirect(`/jobs/${id}`);
 }
 
@@ -363,6 +398,25 @@ export default function JobDetailRoute() {
   useEffect(() => {
     setCurrentId(job.id);
   }, [job.id, setCurrentId]);
+  useEffect(() => {
+    const code = sp.get("jobStateErr");
+    if (!code) return;
+    const messages: Record<string, { title: string; message: string }> = {
+      JOB_CANCEL_BLOCKED: {
+        title: "Unable to cancel job",
+        message:
+          "At least one assembly already has recorded activity, so the job cannot be canceled.",
+      },
+    };
+    const meta =
+      messages[code] ||
+      ({
+        title: "Job state update blocked",
+        message: "The requested job state transition could not be applied.",
+      } as const);
+    notifications.show({ color: "red", ...meta });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
   const nav = useNavigation();
   const submit = useSubmit();
   const [sp] = useSearchParams();
@@ -388,6 +442,7 @@ export default function JobDetailRoute() {
     jobType: j.jobType || "",
     endCustomerName: j.endCustomerName || "",
     customerPoNum: j.customerPoNum || "",
+    statusWhiteboard: j.statusWhiteboard || "",
     // Normalize to empty string so form value matches defaults and isn't marked dirty
     companyId: (j.companyId ?? j.company?.id ?? "") as any,
     // Consolidated stock location (prefer new field; fallback to legacy locationInId)
@@ -411,6 +466,7 @@ export default function JobDetailRoute() {
       "jobType",
       "endCustomerName",
       "customerPoNum",
+      "statusWhiteboard",
     ];
     simple.forEach((k) => {
       if (values[k] != null) fd.set(k, values[k]);
@@ -500,6 +556,25 @@ export default function JobDetailRoute() {
       ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
     );
   }, [productChoices, productSearch]);
+  const assemblyStatusOptions = useMemo(
+    () =>
+      Object.entries(assemblyStateConfig.states).map(([value, meta]) => ({
+        value,
+        label: meta.label,
+      })),
+    []
+  );
+  const handleAssemblyStatusChange = useCallback(
+    (asmId: number, next: string | null) => {
+      if (!next) return;
+      const fd = new FormData();
+      fd.set("_intent", "assembly.state");
+      fd.set("assemblyId", String(asmId));
+      fd.set("status", next);
+      submit(fd, { method: "post" });
+    },
+    [submit]
+  );
 
   useEffect(() => {
     if (!qtyAsm) return;
@@ -623,6 +698,7 @@ export default function JobDetailRoute() {
                 <Table.Th>Make</Table.Th>
                 <Table.Th>Pack</Table.Th>
                 <Table.Th>Status</Table.Th>
+                <Table.Th>Status Note</Table.Th>
                 <Table.Th style={{ width: 40 }}></Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -787,7 +863,28 @@ export default function JobDetailRoute() {
                       </Table.Td>
                       <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
-                      <Table.Td>{a.status || ""}</Table.Td>
+                      <Table.Td>
+                        <Select
+                          size="xs"
+                          data={assemblyStatusOptions}
+                          value={a.status || null}
+                          disabled={jobForm.formState.isDirty}
+                          onChange={(value) =>
+                            handleAssemblyStatusChange(a.id, value)
+                          }
+                          placeholder="Status"
+                          withinPortal
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <Text
+                          size="sm"
+                          c={a.statusWhiteboard ? undefined : "dimmed"}
+                          lineClamp={2}
+                        >
+                          {a.statusWhiteboard || "—"}
+                        </Text>
+                      </Table.Td>
                       <Table.Td align="center">
                         <AssemblyRowMenu
                           assembly={a}

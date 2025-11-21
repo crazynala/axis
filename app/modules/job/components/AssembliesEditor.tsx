@@ -8,6 +8,7 @@ import {
   Table,
   Text,
   TextInput,
+  Textarea,
   Title,
   Modal,
 } from "@mantine/core";
@@ -53,6 +54,7 @@ export function AssembliesEditor(props: {
       qtyOrderedBreakdown?: number[] | null;
       name?: string | null;
       status?: string | null;
+      statusWhiteboard?: string | null;
       job?: { name?: string | null } | null;
       variantSet?: { variants?: string[] | null } | null;
     }
@@ -103,6 +105,7 @@ export function AssembliesEditor(props: {
     qpu: Record<string, number>;
     activity: Record<string, string>;
     names: Record<string, string>;
+    statusNotes: Record<string, string>;
   }>({
     defaultValues: {
       orderedByAssembly: Object.fromEntries(
@@ -126,6 +129,12 @@ export function AssembliesEditor(props: {
       ) as any,
       names: Object.fromEntries(
         (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
+      ) as any,
+      statusNotes: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          String((a as any).statusWhiteboard || ""),
+        ])
       ) as any,
     },
   });
@@ -156,6 +165,12 @@ export function AssembliesEditor(props: {
         ) as any,
         names: Object.fromEntries(
           (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
+        ) as any,
+        statusNotes: Object.fromEntries(
+          (assemblies || []).map((a) => [
+            String(a.id),
+            String((a as any).statusWhiteboard || ""),
+          ])
         ) as any,
       },
       { keepDirty: false }
@@ -201,8 +216,38 @@ export function AssembliesEditor(props: {
             String(c.activityUsed ?? "").toLowerCase(),
           ])
       ) as any,
+      statusNotes: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          String((a as any).statusWhiteboard || ""),
+        ])
+      ) as any,
     })
   );
+
+  const sendAssemblyUpdate = (
+    assemblyId: number,
+    payload: Record<string, string | null | undefined>,
+    intentOverride?: string
+  ) => {
+    const fd = new FormData();
+    fd.set(
+      "_intent",
+      intentOverride ||
+        stateChangeIntent ||
+        (isGroup ? "assembly.update.fromGroup" : "assembly.update")
+    );
+    fd.set("assemblyId", String(assemblyId));
+    Object.entries(payload).forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        fd.set(key, val);
+      }
+    });
+    if (typeof window !== "undefined") {
+      fd.set("returnTo", window.location.pathname + window.location.search);
+    }
+    submit(fd, { method: "post" });
+  };
 
   return (
     <>
@@ -216,21 +261,9 @@ export function AssembliesEditor(props: {
                 <StateChangeButton
                   value={(a as any).status || "DRAFT"}
                   defaultValue={(a as any).status || "DRAFT"}
-                  onChange={(v) => {
-                    const fd = new FormData();
-                    fd.set(
-                      "_intent",
-                      stateChangeIntent ||
-                        (isGroup
-                          ? "assembly.update.fromGroup"
-                          : "assembly.update")
-                    );
-                    fd.set("assemblyId", String(a.id));
-                    if ((a as any).name)
-                      fd.set("name", String((a as any).name));
-                    fd.set("status", v);
-                    submit(fd, { method: "post" });
-                  }}
+                  onChange={(v) =>
+                    sendAssemblyUpdate(a.id, { status: v as string })
+                  }
                   config={assemblyStateConfig}
                 />
               </Group>
@@ -261,22 +294,30 @@ export function AssembliesEditor(props: {
                       )
                     }
                     onBlur={() => {
-                      const fd = new FormData();
-                      fd.set("_intent", "assembly.update");
-                      fd.set("assemblyId", String(a.id));
-                      fd.set(
-                        "name",
-                        editForm.getValues().names[String(a.id)] || ""
-                      );
-                      // Preserve status to avoid clearing it when not included
-                      fd.set("status", String((a as any).status || ""));
-                      // Redirect back to current path (supports group page)
-                      fd.set(
-                        "returnTo",
-                        window.location.pathname + window.location.search
-                      );
-                      submit(fd, { method: "post" });
+                      sendAssemblyUpdate(a.id, {
+                        name: editForm.getValues().names[String(a.id)] || "",
+                      });
                     }}
+                    mod="data-autosize"
+                  />
+                  <Textarea
+                    label="Status Whiteboard"
+                    autosize
+                    minRows={2}
+                    value={editForm.watch(`statusNotes.${a.id}` as const) || ""}
+                    onChange={(e) =>
+                      editForm.setValue(
+                        `statusNotes.${a.id}` as const,
+                        e.currentTarget.value,
+                        { shouldDirty: true, shouldTouch: true }
+                      )
+                    }
+                    onBlur={() =>
+                      sendAssemblyUpdate(a.id, {
+                        statusWhiteboard:
+                          editForm.getValues().statusNotes[String(a.id)] || "",
+                      })
+                    }
                     mod="data-autosize"
                   />
                   <TextInput

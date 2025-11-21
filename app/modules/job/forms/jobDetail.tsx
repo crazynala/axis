@@ -54,6 +54,13 @@ export const jobOverviewFields: FieldConfig[] = [
   { name: "projectCode", label: "Project Code", findOp: "contains" },
   { name: "name", label: "Name", findOp: "contains" },
   {
+    name: "statusWhiteboard",
+    label: "Status Whiteboard",
+    widget: "textarea",
+    props: { minRows: 2 },
+    findOp: "contains",
+  },
+  {
     name: "companyId",
     label: "Customer",
     widget: "select",

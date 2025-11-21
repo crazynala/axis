@@ -306,6 +306,7 @@ model Assembly {
     // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
     qtyOrderedBreakdown Int[]               @default([])
     notes               String?
+    statusWhiteboard    String?
     // Removed: per-assembly Variant linkage; Variant model dropped
     // Removed direct Batch relation; batches are independent of assemblies
     job                 Job?                @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
@@ -513,6 +514,7 @@ model Job {
     jobType                 String?
     isActive                Boolean?
     notes                   String?
+    statusWhiteboard        String?
     endCustomerName         String?
     companyId               Int?
     company                 Company?            @relation(fields: [companyId], references: [id])

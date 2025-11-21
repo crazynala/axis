@@ -12,6 +12,7 @@ import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { createCutActivity } from "../../../utils/activity.server";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
+import { syncJobStateFromAssemblies } from "~/modules/job/services/JobStateService";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -401,18 +402,36 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
-  if (intent === "assembly.update") {
-    const name = (form.get("name") as string) || null;
-    const status = (form.get("status") as string) || null;
-    await prisma.assembly.update({
-      where: { id: assemblyId },
-      data: { name, status },
-    });
+  if (intent === "assembly.update" || intent === "assembly.update.fromGroup") {
+    const overrideId = Number(form.get("assemblyId"));
+    const targetAssemblyId = Number.isFinite(overrideId)
+      ? overrideId
+      : assemblyId;
+    const data: any = {};
+    if (form.has("name")) {
+      data.name = ((form.get("name") as string) || "").trim() || null;
+    }
+    let statusChanged = false;
+    if (form.has("status")) {
+      const statusVal = String(form.get("status") ?? "").trim();
+      data.status = statusVal || null;
+      statusChanged = true;
+    }
+    if (form.has("statusWhiteboard")) {
+      const noteVal = String(form.get("statusWhiteboard") ?? "");
+      data.statusWhiteboard = noteVal || null;
+    }
+    if (Object.keys(data).length) {
+      await prisma.assembly.update({ where: { id: targetAssemblyId }, data });
+      if (statusChanged) {
+        await syncJobStateFromAssemblies(prisma, jobId);
+      }
+    }
     const returnTo = form.get("returnTo");
     if (typeof returnTo === "string" && returnTo.startsWith("/")) {
       return redirect(returnTo);
     }
-    return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+    return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
   if (intent === "costing.create") {
     // Accept both productId (new) and componentId (legacy) keys
