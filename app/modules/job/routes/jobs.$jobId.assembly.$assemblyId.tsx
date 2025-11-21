@@ -13,6 +13,7 @@ import { useRecordContext } from "../../../base/record/RecordContext";
 import { createCutActivity } from "../../../utils/activity.server";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
 import { syncJobStateFromAssemblies } from "~/modules/job/services/JobStateService";
+import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -301,6 +302,58 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const form = await request.formData();
   console.log("form", form);
   const intent = form.get("_intent");
+  const parseStatusMap = (
+    rawValue: FormDataEntryValue | null
+  ): Map<number, string> => {
+    const map = new Map<number, string>();
+    if (!rawValue || typeof rawValue !== "string") return map;
+    if (!rawValue.trim()) return map;
+    try {
+      const obj = JSON.parse(rawValue);
+      if (!obj || typeof obj !== "object") return map;
+      for (const [key, val] of Object.entries(obj)) {
+        const idNum = Number(key);
+        if (!Number.isFinite(idNum)) continue;
+        const normalized = normalizeAssemblyState(
+          typeof val === "string" ? val : String(val ?? "")
+        );
+        if (!normalized) continue;
+        map.set(idNum, normalized);
+      }
+    } catch {
+      return map;
+    }
+    return map;
+  };
+  const applyStatusUpdates = async (
+    statusMap: Map<number, string>
+  ): Promise<boolean> => {
+    if (!statusMap.size) return false;
+    const targetIds = Array.from(statusMap.keys());
+    const assemblies = await prisma.assembly.findMany({
+      where: { id: { in: targetIds }, jobId },
+      select: { id: true, status: true },
+    });
+    const updates = assemblies
+      .map((asm) => {
+        const next = statusMap.get(asm.id);
+        const current = normalizeAssemblyState(asm.status as string | null);
+        if (!next || next === current) return null;
+        return { id: asm.id, status: next };
+      })
+      .filter(Boolean) as Array<{ id: number; status: string }>;
+    for (const update of updates) {
+      await prisma.assembly.update({
+        where: { id: update.id },
+        data: { status: update.status },
+      });
+    }
+    if (updates.length) {
+      await syncJobStateFromAssemblies(prisma, jobId);
+      return true;
+    }
+    return false;
+  };
   if (intent === "group.updateOrderedBreakdown") {
     const orderedStr = String(form.get("orderedArr") || "{}");
     const qpuStr = String(form.get("qpu") || "{}");
@@ -400,6 +453,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
     }
+    await applyStatusUpdates(parseStatusMap(form.get("statuses")));
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
   if (intent === "assembly.update" || intent === "assembly.update.fromGroup") {
@@ -413,7 +467,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     let statusChanged = false;
     if (form.has("status")) {
-      const statusVal = String(form.get("status") ?? "").trim();
+      const statusVal = normalizeAssemblyState(
+        String(form.get("status") ?? "").trim()
+      );
       data.status = statusVal || null;
       statusChanged = true;
     }
@@ -682,6 +738,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         data: { activityUsed: val },
       });
     }
+    await applyStatusUpdates(parseStatusMap(form.get("statuses")));
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
   return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);

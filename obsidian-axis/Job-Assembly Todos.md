@@ -1,8 +1,8 @@
 - [x] When order quantity is changed in Quantities table, the save/cancel header must show (via the globalformcontext, triggered by RHF dirty state). It currently has it's own save/cancel button, which is not our UX pattern
 - [x] The "add" button for the Costings card is no longer present (regression issue) -- note there is an unused AddCostingButton function in the route
 - [x] Support editing of Assembly name
-- [ ] No states show in state transition button
-- [ ] Assemblies must be in same state to group
+- [x] No states show in state transition button
+
 - [ ] Show single state button for groups
 - [ ] Add Costing Modal
 	- [ ] Typing into Search products... does nothing

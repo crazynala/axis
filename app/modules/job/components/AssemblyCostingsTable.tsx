@@ -24,6 +24,7 @@ import type { Column } from "~/components/AccordionTable";
 import { debugEnabled } from "~/utils/debugFlags";
 import type { UseFormRegister } from "react-hook-form";
 import { IconLink } from "@tabler/icons-react";
+import { formatUSD } from "~/utils/format";
 
 export type CostingRow = {
   id: number;
@@ -31,6 +32,7 @@ export type CostingRow = {
   assemblyId?: number | null;
   isMaster?: boolean;
   isChild?: boolean;
+  isSingle?: boolean;
   sku?: string | null;
   name?: string | null;
   /** Per-activity usage type: "cut" or "make" */
@@ -122,270 +124,137 @@ export function AssemblyCostingsTable(props: {
   const hasRHF = !!register && !!fieldNameForQpu && !!fieldNameForActivityUsed;
   const editable = (editableCosting ?? false) && hasRHF;
   const canEditFn = canEditCosting;
-  const canEditRow = (row: CostingRow) =>
-    Boolean(
-      editable &&
-        !row.isChild &&
-        typeof canEditFn === "function" &&
-        canEditFn(row)
-    );
+  const canEditBaseRow = (row: CostingRow) =>
+    Boolean(editable && typeof canEditFn === "function" && canEditFn(row));
+
+  const isChildRow = (row: CostingRow) => Boolean((row as any).isChild);
+  const isMasterRow = (row: CostingRow) => Boolean((row as any).isMaster);
+  const isSingleRow = (row: CostingRow) => Boolean((row as any).isSingle);
+
+  const activityEditable = (row: CostingRow) =>
+    hasRHF && canEditBaseRow(row) && !isChildRow(row);
+
+  const qpuEditable = (row: CostingRow, grouped: boolean) => {
+    if (!hasRHF || !canEditBaseRow(row)) return false;
+    if (!grouped) return true;
+    if (isChildRow(row)) return true;
+    if (isSingleRow(row)) return true;
+    return false;
+  };
+
+  const compactColumnWidth = "8ch";
+  const skuColumnWidth = "18ch";
+  const nameColumnWidth = "32ch";
 
   const renderFlatRows = (rows: CostingRow[]) =>
-    rows.map((c) => (
-      <Table.Tr key={`c-${c.id}`}>
-        <Table.Td>{c.assemblyId ? `A${c.assemblyId}` : ""}</Table.Td>
-        <Table.Td>
-          {c.productId ? (
-            <ExternalLink href={`/products/${c.productId}`}>
-              {c.productId}
-            </ExternalLink>
-          ) : (
-            c.id
-          )}
-        </Table.Td>
-        <Table.Td>{c.sku || ""}</Table.Td>
-        <Table.Td>{c.name || c.productId || ""}</Table.Td>
-        {/* Activity (per-activity usage) */}
-        <Table.Td
-          align="center"
-          style={{
-            padding: editable && !(c as any).isChild ? 0 : undefined,
-          }}
-        >
-          {hasRHF ? (
-            <NativeSelect
-              data={[
-                { value: "cut", label: "Cut" },
-                { value: "make", label: "Make" },
-              ]}
-              disabled={!canEditRow(c)}
-              variant="unstyled"
-              {...(hasRHF ? register!(fieldNameForActivityUsed!(c)) : {})}
-              rightSectionWidth={0}
-              styles={{
-                input: {
-                  width: "100%",
-                  textAlignLast: "center",
-                },
-              }}
-            />
-          ) : (
-            <Text>
-              {c.activityUsed === "cut"
-                ? "Cut"
-                : c.activityUsed === "make"
-                ? "Make"
-                : ""}
-            </Text>
-          )}
-        </Table.Td>
-        <Table.Td
-          align="center"
-          style={{
-            padding: editable && !(c as any).isChild ? 0 : undefined,
-          }}
-        >
-          {hasRHF ? (
-            <TextInput
-              key={`qpu-${c.id}`}
-              type="number"
-              readOnly={!canEditRow(c)}
-              variant="unstyled"
-              {...(hasRHF
-                ? register!(fieldNameForQpu!(c), { valueAsNumber: true })
-                : {})}
-              styles={{
-                input: {
-                  width: "100%",
-                  textAlign: "center",
-                  padding: 8,
-                },
-              }}
-            />
-          ) : (
-            <Text>{c.quantityPerUnit ?? ""}</Text>
-          )}
-        </Table.Td>
-        <Table.Td align="center">{c.required ?? ""}</Table.Td>
-        <Table.Td align="center">
-          {c.stockTrackingEnabled ? c.stats?.locStock ?? 0 : "-"}
-        </Table.Td>
-        <Table.Td align="center">
-          {c.stockTrackingEnabled ? c.stats?.allStock ?? 0 : "-"}
-        </Table.Td>
-        <Table.Td align="center">{c.stats?.used ?? 0}</Table.Td>
-        <Table.Td align="center">{c.unitCost ?? ""}</Table.Td>
-        {(() => {
-          const out = computeSell(c);
-          const showButton =
-            out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
-          return (
-            <Table.Td align="center">
-              <Group gap={6} justify="center">
-                <span>{out?.unitSellPrice ?? ""}</span>
-                {showButton ? (
-                  <PriceTiersButton
-                    tiers={(c.saleTiers || [])
-                      .slice()
-                      .sort((a, b) => a.minQty - b.minQty)}
-                    picked={out.meta?.tier}
-                  />
-                ) : null}
-              </Group>
-            </Table.Td>
-          );
-        })()}
-      </Table.Tr>
-    ));
-
-  let columns: Column<CostingRow>[] = [
-    {
-      key: "assembly",
-      header: "Assembly",
-      width: 100,
-      render: (c) => (c.isMaster ? "" : c.assemblyId ? `A${c.assemblyId}` : ""),
-    },
-    {
-      key: "id",
-      header: "ID",
-      width: 100,
-      render: (c) =>
-        c.productId ? (
-          <ExternalLink href={`/products/${c.productId}`}>
-            {c.productId}
-          </ExternalLink>
-        ) : (
-          c.id
-        ),
-    },
-    { key: "sku", header: "SKU", width: 140, render: (c) => c.sku || "" },
-    { key: "name", header: "Name", render: (c) => c.name || c.productId || "" },
-    {
-      key: "act",
-      header: "Activity",
-      width: 100,
-      align: "center",
-      render: (c) => {
-        // In accordion (group) view, allow editing on child rows
-        if (hasRHF && (c as any).isChild) {
-          return (
-            <NativeSelect
-              data={[
-                { value: "cut", label: "Cut" },
-                { value: "make", label: "Make" },
-              ]}
-              disabled={!canEditRow(c)}
-              variant="unstyled"
-              {...(hasRHF ? register!(fieldNameForActivityUsed!(c)) : {})}
-              rightSectionWidth={0}
-              styles={{
-                input: {
-                  width: "100%",
-                  textAlignLast: "center",
-                },
-              }}
-            />
-          );
-        }
-        return (c as any).isChild
-          ? ""
-          : c.activityUsed === "cut"
-          ? "Cut"
-          : c.activityUsed === "make"
-          ? "Make"
-          : "";
-      },
-    },
-    {
-      key: "qpu",
-      header: "Qty/Unit",
-      width: 100,
-      align: "center",
-      render: (c) => {
-        // In accordion (group) view, allow editing on child rows
-        if (hasRHF && (c as any).isChild) {
-          return (
-            <TextInput
-              key={`qpu-${c.id}`}
-              type="number"
-              readOnly={!canEditRow(c)}
-              variant="unstyled"
-              {...(hasRHF
-                ? register!(fieldNameForQpu!(c), { valueAsNumber: true })
-                : {})}
-              styles={{
-                input: {
-                  width: "100%",
-                  textAlign: "center",
-                  padding: 8,
-                },
-              }}
-            />
-          );
-        }
-        return c.quantityPerUnit ?? "";
-      },
-    },
-    {
-      key: "req",
-      header: "Required",
-      width: 100,
-      align: "center",
-      render: (c) => c.required ?? "",
-    },
-    {
-      key: "loc",
-      header: "Loc Stock",
-      width: 100,
-      align: "center",
-      render: (c) => (c.isChild ? "" : c.stats?.locStock ?? 0),
-    },
-    {
-      key: "all",
-      header: "All Stock",
-      width: 100,
-      align: "center",
-      render: (c) => (c.isChild ? "" : c.stats?.allStock ?? 0),
-    },
-    {
-      key: "used",
-      header: "Used",
-      width: 100,
-      align: "center",
-      render: (c) => (c.isChild ? "" : c.stats?.used ?? 0),
-    },
-    {
-      key: "unit",
-      header: "Unit Cost",
-      width: 120,
-      align: "center",
-      render: (c) => (c.isChild ? "" : c.unitCost ?? ""),
-    },
-    {
-      key: "sell",
-      header: "Sell Price",
-      width: 140,
-      align: "center",
-      render: (c) => {
-        const out = computeSell(c);
-        const showButton =
-          out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
-        return (
-          <Group gap={6} justify="center">
-            <span>{out?.unitSellPrice ?? ""}</span>
-            {showButton ? (
-              <PriceTiersButton
-                tiers={(c.saleTiers || [])
-                  .slice()
-                  .sort((a, b) => a.minQty - b.minQty)}
-                picked={out.meta?.tier}
+    rows.map((c) => {
+      const showActivityInput = activityEditable(c);
+      const showQpuInput = qpuEditable(c, false);
+      return (
+        <Table.Tr key={`c-${c.id}`}>
+          <Table.Td>{c.assemblyId ? `A${c.assemblyId}` : ""}</Table.Td>
+          <Table.Td>
+            {c.productId ? (
+              <ExternalLink href={`/products/${c.productId}`}>
+                {c.productId}
+              </ExternalLink>
+            ) : (
+              c.id
+            )}
+          </Table.Td>
+          <Table.Td>{c.sku || ""}</Table.Td>
+          <Table.Td>{c.name || c.productId || ""}</Table.Td>
+          {/* Activity (per-activity usage) */}
+          <Table.Td
+            align="center"
+            style={{
+              padding: showActivityInput ? 0 : undefined,
+            }}
+          >
+            {showActivityInput ? (
+              <NativeSelect
+                data={[
+                  { value: "cut", label: "Cut" },
+                  { value: "make", label: "Make" },
+                ]}
+                variant="unstyled"
+                {...register!(fieldNameForActivityUsed!(c))}
+                rightSectionWidth={0}
+                styles={{
+                  input: {
+                    width: "100%",
+                    textAlignLast: "center",
+                  },
+                }}
               />
-            ) : null}
-          </Group>
-        );
-      },
-    },
-  ];
+            ) : (
+              <Text>
+                {c.activityUsed === "cut"
+                  ? "Cut"
+                  : c.activityUsed === "make"
+                  ? "Make"
+                  : ""}
+              </Text>
+            )}
+          </Table.Td>
+          <Table.Td
+            align="center"
+            style={{
+              padding: showQpuInput ? 0 : undefined,
+            }}
+          >
+            {showQpuInput ? (
+              <TextInput
+                key={`qpu-${c.id}`}
+                type="number"
+                variant="unstyled"
+                {...register!(fieldNameForQpu!(c), { valueAsNumber: true })}
+                styles={{
+                  input: {
+                    width: "100%",
+                    textAlign: "center",
+                    padding: 8,
+                  },
+                }}
+              />
+            ) : (
+              <Text>{c.quantityPerUnit ?? ""}</Text>
+            )}
+          </Table.Td>
+          <Table.Td align="center">{c.required ?? ""}</Table.Td>
+          <Table.Td align="center">
+            {c.stockTrackingEnabled ? c.stats?.locStock ?? 0 : "-"}
+          </Table.Td>
+          <Table.Td align="center">
+            {c.stockTrackingEnabled ? c.stats?.allStock ?? 0 : "-"}
+          </Table.Td>
+          <Table.Td align="center">{c.stats?.used ?? 0}</Table.Td>
+          <Table.Td align="center">{formatUSD(c.unitCost)}</Table.Td>
+          {(() => {
+            const out = computeSell(c);
+            const showButton =
+              out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
+            return (
+              <Table.Td align="center">
+                <Group gap={6} justify="center">
+                  <span>{formatUSD(out?.unitSellPrice)}</span>
+                  {showButton ? (
+                    <PriceTiersButton
+                      tiers={(c.saleTiers || [])
+                        .slice()
+                        .sort((a, b) => a.minQty - b.minQty)}
+                      picked={out.meta?.tier}
+                    />
+                  ) : null}
+                </Group>
+              </Table.Td>
+            );
+          })()}
+        </Table.Tr>
+      );
+    });
+
+  let columns: Column<CostingRow>[] = [];
 
   function PriceTiersButton({
     tiers,
@@ -492,6 +361,228 @@ export function AssemblyCostingsTable(props: {
     groups && Array.from(groups.values()).some((arr) => arr.length > 1)
   );
 
+  const tableData = showAccordion
+    ? Array.from(groups!.values()).map((arr) => {
+        if (arr.length === 1) {
+          return { ...arr[0], isSingle: true } as CostingRow;
+        }
+        const first = arr[0];
+        const requiredSum = arr.reduce(
+          (sum, row) =>
+            sum +
+            (Number.isFinite(Number(row.required)) ? Number(row.required) : 0),
+          0
+        );
+        return {
+          ...first,
+          required: requiredSum,
+          quantityPerUnit: hasQpuVariance(arr)
+            ? ("*" as any)
+            : (first.quantityPerUnit as any),
+          isMaster: true,
+        } as CostingRow;
+      })
+    : common;
+
+  const tableRowId = (row: CostingRow) => {
+    const base =
+      row.productId != null ? `product-${row.productId}` : `custom-${row.id}`;
+    if (isMasterRow(row)) return `${base}-master`;
+    if (isSingleRow(row)) return `${base}-single-${row.id}`;
+    return `${base}-row-${row.assemblyId ?? row.id}`;
+  };
+
+  const getSubrowsForMaster = (master: CostingRow) => {
+    if (!showAccordion) return [];
+    const key = String(master.productId ?? `custom-${master.id}`);
+    const arr = groups!.get(key) || [];
+    if (arr.length <= 1) return [];
+    const marked = arr.map((row, index, all) => ({
+      ...row,
+      isChild: true,
+      _groupPos:
+        index === 0
+          ? ("first" as const)
+          : index === all.length - 1
+          ? ("last" as const)
+          : ("middle" as const),
+      _groupSize: all.length,
+    }));
+    if (DEBUG) {
+      console.debug("[CostingsTable] getSubrows", {
+        key,
+        arrLen: arr.length,
+        hasRequiredVariance: hasRequiredVariance(arr),
+        hasQpuVariance: hasQpuVariance(arr),
+        returning: marked.length,
+      });
+    }
+    return marked as CostingRow[];
+  };
+
+  columns = [
+    {
+      key: "assembly",
+      header: "Assembly",
+      width: compactColumnWidth,
+      render: (c) =>
+        isMasterRow(c) ? "" : c.assemblyId ? `A${c.assemblyId}` : "",
+    },
+    {
+      key: "id",
+      header: "ID",
+      width: compactColumnWidth,
+      render: (c) =>
+        c.productId ? (
+          <ExternalLink href={`/products/${c.productId}`}>
+            {c.productId}
+          </ExternalLink>
+        ) : (
+          c.id
+        ),
+    },
+    {
+      key: "sku",
+      header: "SKU",
+      width: skuColumnWidth,
+      render: (c) => c.sku || "",
+    },
+    {
+      key: "name",
+      header: "Name",
+      width: nameColumnWidth,
+      render: (c) => c.name || c.productId || "",
+    },
+    {
+      key: "act",
+      header: "Activity",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => {
+        if (activityEditable(c)) {
+          return (
+            <NativeSelect
+              data={[
+                { value: "cut", label: "Cut" },
+                { value: "make", label: "Make" },
+              ]}
+              variant="unstyled"
+              {...register!(fieldNameForActivityUsed!(c))}
+              rightSectionWidth={0}
+              styles={{
+                input: {
+                  width: "100%",
+                  textAlignLast: "center",
+                },
+              }}
+            />
+          );
+        }
+        if (isChildRow(c)) return "";
+        return c.activityUsed === "cut"
+          ? "Cut"
+          : c.activityUsed === "make"
+          ? "Make"
+          : "";
+      },
+    },
+    {
+      key: "qpu",
+      header: "Qty/Unit",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => {
+        if (qpuEditable(c, showAccordion)) {
+          return (
+            <TextInput
+              key={`qpu-${c.id}`}
+              type="number"
+              variant="unstyled"
+              {...register!(fieldNameForQpu!(c), { valueAsNumber: true })}
+              styles={{
+                input: {
+                  width: "100%",
+                  textAlign: "center",
+                  padding: 8,
+                },
+              }}
+            />
+          );
+        }
+        return c.quantityPerUnit ?? "";
+      },
+    },
+    {
+      key: "req",
+      header: "Required",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => c.required ?? "",
+    },
+    {
+      key: "loc",
+      header: "Loc Stock",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) =>
+        isChildRow(c)
+          ? ""
+          : c.stockTrackingEnabled
+          ? c.stats?.locStock ?? 0
+          : "-",
+    },
+    {
+      key: "all",
+      header: "All Stock",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) =>
+        isChildRow(c)
+          ? ""
+          : c.stockTrackingEnabled
+          ? c.stats?.allStock ?? 0
+          : "-",
+    },
+    {
+      key: "used",
+      header: "Used",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => (isChildRow(c) ? "" : c.stats?.used ?? 0),
+    },
+    {
+      key: "unit",
+      header: "Unit Cost",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => (isChildRow(c) ? "" : formatUSD(c.unitCost)),
+    },
+    {
+      key: "sell",
+      header: "Sell Price",
+      width: compactColumnWidth,
+      align: "center",
+      render: (c) => {
+        const out = computeSell(c);
+        const showButton =
+          out?.meta?.mode === "saleTier" && (c.saleTiers?.length || 0) > 0;
+        return (
+          <Group gap={6} justify="center">
+            <span>{formatUSD(out?.unitSellPrice)}</span>
+            {showButton ? (
+              <PriceTiersButton
+                tiers={(c.saleTiers || [])
+                  .slice()
+                  .sort((a, b) => a.minQty - b.minQty)}
+                picked={out.meta?.tier}
+              />
+            ) : null}
+          </Group>
+        );
+      },
+    },
+  ];
+
   if (DEBUG) {
     console.groupCollapsed("[CostingsTable] input & grouping", {
       rows: common.length,
@@ -517,7 +608,7 @@ export function AssemblyCostingsTable(props: {
             )
           )
         );
-        const willExpand = arr.length > 1 && qpuSet.length > 1;
+        const willExpand = arr.length > 1;
         console.debug(" group", k, {
           count: arr.length,
           requiredValues: reqSet,
@@ -543,194 +634,17 @@ export function AssemblyCostingsTable(props: {
           ) : null}
         </Group>
       </Card.Section>
-      {!showAccordion ? (
-        <Table withTableBorder withColumnBorders highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              {columns.map((c) => (
-                <Table.Th
-                  key={c.key}
-                  style={{ width: c.width, textAlign: c.align || "left" }}
-                >
-                  {c.header}
-                </Table.Th>
-              ))}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {common.map((c) => (
-              <Table.Tr key={`c-${c.id}`}>
-                <Table.Td>{c.assemblyId ? `A${c.assemblyId}` : ""}</Table.Td>
-                <Table.Td>
-                  {c.productId ? (
-                    <ExternalLink href={`/products/${c.productId}`}>
-                      {c.productId}
-                    </ExternalLink>
-                  ) : (
-                    c.id
-                  )}
-                </Table.Td>
-                <Table.Td>{c.sku || ""}</Table.Td>
-                <Table.Td>{c.name || c.productId || ""}</Table.Td>
-                {/* Activity (per-activity usage) */}
-                <Table.Td
-                  align="center"
-                  style={{
-                    padding: editable && !(c as any).isChild ? 0 : undefined,
-                  }}
-                >
-                  {hasRHF ? (
-                    <NativeSelect
-                      data={[
-                        { value: "cut", label: "Cut" },
-                        { value: "make", label: "Make" },
-                      ]}
-                      disabled={!canEditRow(c)}
-                      variant="unstyled"
-                      {...(hasRHF
-                        ? register!(fieldNameForActivityUsed!(c))
-                        : {})}
-                      rightSectionWidth={0}
-                      styles={{
-                        input: {
-                          width: "100%",
-                          textAlignLast: "center",
-                        },
-                      }}
-                    />
-                  ) : (
-                    <Text>
-                      {c.activityUsed === "cut"
-                        ? "Cut"
-                        : c.activityUsed === "make"
-                        ? "Make"
-                        : ""}
-                    </Text>
-                  )}
-                </Table.Td>
-                <Table.Td
-                  align="center"
-                  style={{
-                    padding: editable && !(c as any).isChild ? 0 : undefined,
-                  }}
-                >
-                  {hasRHF ? (
-                    <TextInput
-                      key={`qpu-${c.id}`}
-                      type="number"
-                      readOnly={!canEditRow(c)}
-                      variant="unstyled"
-                      {...(hasRHF
-                        ? register!(fieldNameForQpu!(c), {
-                            valueAsNumber: true,
-                          })
-                        : {})}
-                      styles={{
-                        input: {
-                          width: "100%",
-                          textAlign: "center",
-                          padding: 8,
-                        },
-                      }}
-                    />
-                  ) : (
-                    <Text>{c.quantityPerUnit ?? ""}</Text>
-                  )}
-                </Table.Td>
-                <Table.Td align="center">{c.required ?? ""}</Table.Td>
-                <Table.Td align="center">
-                  {c.stockTrackingEnabled ? c.stats?.locStock ?? 0 : "-"}
-                </Table.Td>
-                <Table.Td align="center">
-                  {c.stockTrackingEnabled ? c.stats?.allStock ?? 0 : "-"}
-                </Table.Td>
-                <Table.Td align="center">{c.stats?.used ?? 0}</Table.Td>
-                <Table.Td align="center">{c.unitCost ?? ""}</Table.Td>
-                {(() => {
-                  const out = computeSell(c);
-                  const showButton =
-                    out?.meta?.mode === "saleTier" &&
-                    (c.saleTiers?.length || 0) > 0;
-                  return (
-                    <Table.Td align="center">
-                      <Group gap={6} justify="center">
-                        <span>{out?.unitSellPrice ?? ""}</span>
-                        {showButton ? (
-                          <PriceTiersButton
-                            tiers={(c.saleTiers || [])
-                              .slice()
-                              .sort((a, b) => a.minQty - b.minQty)}
-                            picked={out.meta?.tier}
-                          />
-                        ) : null}
-                      </Group>
-                    </Table.Td>
-                  );
-                })()}
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      ) : (
-        <AccordionTable<CostingRow>
-          columns={columns}
-          data={Array.from(groups!.values()).map((arr) => {
-            if (arr.length === 1) return arr[0];
-            const first = arr[0];
-            const requiredSum = arr.reduce(
-              (s, r) =>
-                s +
-                (Number.isFinite(Number(r.required)) ? Number(r.required) : 0),
-              0
-            );
-            // Master row: aggregate 'required'; if no variance, it will render as a plain row (no caret)
-            return {
-              ...first,
-              id: first.id,
-              required: requiredSum,
-              // If QPU differs among children, show '*' on master to indicate mixed values
-              quantityPerUnit: hasQpuVariance(arr)
-                ? ("*" as any)
-                : (first.quantityPerUnit as any),
-              isMaster: true,
-            } as CostingRow;
-          })}
-          getRowId={(r) => `${r.productId ?? `custom-${r.id}`}`}
-          withCaret
-          caretInFirstColumn
-          hideCaretWhenEmpty
-          size="sm"
-          striped
-          // Child rows: show all entries for the group if more than 1 and variance exists
-          getSubrows={(master) => {
-            const key = String(master.productId ?? `custom-${master.id}`);
-            const arr = groups!.get(key) || [];
-            // Always show children when group has more than one row so they can be edited per-assembly
-            const children = arr.length > 1 ? arr : [];
-            const marked = children.map((r, i) => ({
-              ...r,
-              isChild: true,
-              _groupPos:
-                i === 0
-                  ? ("first" as const)
-                  : i === children.length - 1
-                  ? ("last" as const)
-                  : ("middle" as const),
-              _groupSize: children.length,
-            }));
-            if (DEBUG) {
-              console.debug("[CostingsTable] getSubrows", {
-                key,
-                arrLen: arr.length,
-                hasRequiredVariance: hasRequiredVariance(arr),
-                hasQpuVariance: hasQpuVariance(arr),
-                returning: marked.length,
-              });
-            }
-            return marked as any;
-          }}
-        />
-      )}
+      <AccordionTable<CostingRow>
+        columns={columns}
+        data={tableData}
+        getRowId={(row) => tableRowId(row)}
+        withCaret={showAccordion}
+        caretInFirstColumn={showAccordion}
+        hideCaretWhenEmpty
+        size="sm"
+        striped
+        getSubrows={showAccordion ? getSubrowsForMaster : undefined}
+      />
       {!!(uncommon && uncommon.length) && (
         <div style={{ marginTop: 16 }}>
           {uncommon!.map((g, i) => (

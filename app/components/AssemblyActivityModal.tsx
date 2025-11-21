@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Accordion,
   Button,
@@ -21,6 +21,7 @@ type Costing = {
   usageType: string | null;
   quantityPerUnit: number | null;
   component?: { id: number; sku: string | null; name: string | null } | null;
+  product?: { id: number; sku: string | null; name: string | null } | null;
 };
 
 type BatchRow = {
@@ -31,6 +32,26 @@ type BatchRow = {
   quantity: number | null;
   location?: { id: number; name: string | null } | null;
 };
+
+function mapConsumptionToStrings(
+  input?: Record<number, Record<number, number>> | null
+): Record<number, Record<number, string>> {
+  if (!input) return {};
+  const result: Record<number, Record<number, string>> = {};
+  for (const [cidKey, batches] of Object.entries(input)) {
+    const cid = Number(cidKey);
+    if (!Number.isFinite(cid)) continue;
+    const nextBatches: Record<number, string> = {};
+    for (const [bidKey, qty] of Object.entries(batches || {})) {
+      const bid = Number(bidKey);
+      if (!Number.isFinite(bid)) continue;
+      nextBatches[bid] =
+        qty === undefined || qty === null ? "" : String(qty ?? 0);
+    }
+    result[cid] = nextBatches;
+  }
+  return result;
+}
 
 export function AssemblyActivityModal(props: {
   opened: boolean;
@@ -147,8 +168,9 @@ export function AssemblyActivityModal(props: {
 
   const form = useForm<{
     activityDate: Date | null;
-    qtyBreakdown: { value: number }[]; // single-assembly path
-    qtyGroup?: Array<{ assemblyId: number; qtyBreakdown: { value: number }[] }>; // group path
+    qtyBreakdown: { value: string }[]; // single-assembly path
+    qtyGroup?: Array<{ assemblyId: number; qtyBreakdown: { value: string }[] }>; // group path
+    consumption: Record<string, Record<string, string>>;
   }>({
     defaultValues: (() => {
       if (groupDefaults && groupDefaults.length > 0) {
@@ -157,8 +179,11 @@ export function AssemblyActivityModal(props: {
           qtyBreakdown: [],
           qtyGroup: groupDefaults.map((g) => ({
             assemblyId: g.assemblyId,
-            qtyBreakdown: g.defaultBreakdown.map((n) => ({ value: n || 0 })),
+            qtyBreakdown: g.defaultBreakdown.map((n) => ({
+              value: String(n || 0),
+            })),
           })),
+          consumption: {},
         };
       }
       return {
@@ -166,11 +191,12 @@ export function AssemblyActivityModal(props: {
         qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
           ? initialBreakdown
           : defaultBreakdown
-        ).map((n) => ({ value: n || 0 })),
+        ).map((n) => ({ value: String(n || 0) })),
+        consumption: {},
       };
     })(),
   });
-  const { control, handleSubmit, reset, watch, setValue } = form;
+  const { control, handleSubmit, reset, watch, setValue, getValues } = form;
   const qtyArray = useFieldArray({ control, name: "qtyBreakdown" });
   const qtyGroupArray = useFieldArray({ control, name: "qtyGroup" as const });
   const [openedCostings, setOpenedCostings] = useState<string[]>([]);
@@ -180,40 +206,67 @@ export function AssemblyActivityModal(props: {
   const [loadingCosting, setLoadingCosting] = useState<Record<number, boolean>>(
     {}
   );
-  const [consumption, setConsumption] = useState<
-    Record<number, Record<number, number>>
-  >({}); // costingId -> batchId -> qty
   const [batchScope, setBatchScope] = useState<"all" | "current">("current");
   const [batchLocScope, setBatchLocScope] = useState<"all" | "job">(
     (props.assembly?.job?.locationInId ?? null) != null ? "job" : "all"
   );
+  const consumption = watch("consumption") || {};
+  const setConsumptionValue = useCallback(
+    (cid: number, bid: number, value: string) => {
+      const path = `consumption.${cid}.${bid}` as const;
+      setValue(path as any, value, { shouldDirty: true, shouldTouch: true });
+    },
+    [setValue]
+  );
+  const clampConsumptionEntry = useCallback(
+    (cid: number, bid: number, maxQty: number) => {
+      const path = `consumption.${cid}.${bid}` as const;
+      const raw = getValues(path as any);
+      if (raw == null || raw === "") return;
+      const num = Number(raw);
+      if (!Number.isFinite(num)) {
+        setValue(path as any, "", { shouldDirty: true });
+        return;
+      }
+      const clamped = Math.max(0, Math.min(num, maxQty));
+      const nextVal = String(clamped);
+      if (nextVal === raw) return;
+      setValue(path as any, nextVal, { shouldDirty: true });
+    },
+    [getValues, setValue]
+  );
 
   useEffect(() => {
     if (!opened) return;
+    const base = {
+      activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+      consumption:
+        mode === "edit" && initialConsumption
+          ? mapConsumptionToStrings(initialConsumption)
+          : {},
+    };
     if (groupDefaults && groupDefaults.length > 0) {
       reset({
-        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+        ...base,
         qtyBreakdown: [],
         qtyGroup: groupDefaults.map((g) => ({
           assemblyId: g.assemblyId,
-          qtyBreakdown: g.defaultBreakdown.map((n) => ({ value: n || 0 })),
+          qtyBreakdown: g.defaultBreakdown.map((n) => ({
+            value: String(n || 0),
+          })),
         })),
       });
     } else {
       reset({
-        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
+        ...base,
         qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
           ? initialBreakdown
           : defaultBreakdown
-        ).map((n) => ({ value: n || 0 })),
+        ).map((n) => ({ value: String(n || 0) })),
       });
     }
-    if (mode === "edit" && initialConsumption) {
-      setConsumption(initialConsumption);
-    }
-    // Only re-run when modal opens or activity target changes to avoid loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, activityId, groupDefaults]);
+  }, [opened, activityId]);
 
   const eligibleCostings = useMemo(() => {
     const eligibleCostings = (costings || []).filter(
@@ -274,7 +327,10 @@ export function AssemblyActivityModal(props: {
       if (!Number.isFinite(cid)) continue;
       if (!batchesByCosting[cid]) {
         const cost = eligibleCostings.find((x) => x.id === cid);
-        if (cost) void loadBatchesForCosting(cid, cost.product?.id ?? null);
+        if (cost) {
+          const productId = cost.product?.id ?? cost.component?.id ?? null;
+          void loadBatchesForCosting(cid, productId);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -323,18 +379,26 @@ export function AssemblyActivityModal(props: {
             (x) => Number(x?.value || 0) | 0
           );
           fd.set("qtyBreakdown", JSON.stringify(qb));
-          const consumptionsArr = Object.keys(consumption)
+          const consumptionValues = values.consumption || {};
+          const consumptionsArr = Object.keys(consumptionValues)
             .map((k) => Number(k))
-            .filter((cid) => Object.keys(consumption[cid] || {}).length > 0)
-            .map((cid: number) => ({
-              costingId: cid,
-              lines: Object.entries(consumption[cid] || {}).map(
-                ([batchId, q]) => ({
+            .reduce<
+              Array<{
+                costingId: number;
+                lines: Array<{ batchId: number; qty: number }>;
+              }>
+            >((acc, cid) => {
+              const lines = Object.entries(consumptionValues[cid] || {})
+                .map(([batchId, q]) => ({
                   batchId: Number(batchId),
                   qty: Number(q) || 0,
-                })
-              ),
-            }));
+                }))
+                .filter((line) => line.qty > 0);
+              if (lines.length > 0) {
+                acc.push({ costingId: cid, lines });
+              }
+              return acc;
+            }, []);
           fd.set("consumptions", JSON.stringify(consumptionsArr));
           submit(fd, { method: "post" });
           onClose();
@@ -421,16 +485,11 @@ export function AssemblyActivityModal(props: {
                                           outline: "none",
                                         },
                                       }}
-                                      value={field.value ?? 0}
-                                      onChange={(e) => {
-                                        const raw = e.currentTarget.value;
-                                        const v = raw === "" ? 0 : Number(raw);
-                                        field.onChange(
-                                          Number.isFinite(v)
-                                            ? (v as number) | 0
-                                            : 0
-                                        );
-                                      }}
+                                      inputMode="numeric"
+                                      value={field.value ?? ""}
+                                      onChange={(e) =>
+                                        field.onChange(e.currentTarget.value)
+                                      }
                                     />
                                   )}
                                 />
@@ -477,7 +536,6 @@ export function AssemblyActivityModal(props: {
                           name={`qtyBreakdown.${i}.value` as const}
                           render={({ field }) => (
                             <TextInput
-                              type="number"
                               variant="unstyled"
                               styles={{
                                 input: {
@@ -489,14 +547,12 @@ export function AssemblyActivityModal(props: {
                                   outline: "none",
                                 },
                               }}
-                              value={field.value ?? 0}
-                              onChange={(e) => {
-                                const raw = e.currentTarget.value;
-                                const v = raw === "" ? 0 : Number(raw);
-                                field.onChange(
-                                  Number.isFinite(v) ? (v as number) | 0 : 0
-                                );
-                              }}
+                              type="number"
+                              inputMode="numeric"
+                              value={field.value ?? ""}
+                              onChange={(e) =>
+                                field.onChange(e.currentTarget.value)
+                              }
                             />
                           )}
                         />
@@ -665,13 +721,11 @@ export function AssemblyActivityModal(props: {
                                         onClick={() => {
                                           const q =
                                             Number(b.quantity ?? 0) || 0;
-                                          setConsumption((prev) => ({
-                                            ...prev,
-                                            [cid]: {
-                                              ...(prev[cid] || {}),
-                                              [b.id]: q,
-                                            },
-                                          }));
+                                          setConsumptionValue(
+                                            cid,
+                                            b.id,
+                                            q ? String(q) : ""
+                                          );
                                         }}
                                       >
                                         {b.quantity ?? 0}
@@ -681,27 +735,22 @@ export function AssemblyActivityModal(props: {
                                       <TextInput
                                         w={100}
                                         type="number"
+                                        inputMode="decimal"
                                         value={consumption[cid]?.[b.id] ?? ""}
-                                        onChange={(e) => {
-                                          const raw = e.currentTarget.value;
-                                          const v =
-                                            raw === "" ? 0 : Number(raw);
-                                          const max =
-                                            Number(b.quantity ?? 0) || 0;
-                                          const clamped = Number.isFinite(v)
-                                            ? Math.max(
-                                                0,
-                                                Math.min(v as number, max)
-                                              )
-                                            : 0;
-                                          setConsumption((prev) => ({
-                                            ...prev,
-                                            [cid]: {
-                                              ...(prev[cid] || {}),
-                                              [b.id]: clamped,
-                                            },
-                                          }));
-                                        }}
+                                        onChange={(e) =>
+                                          setConsumptionValue(
+                                            cid,
+                                            b.id,
+                                            e.currentTarget.value
+                                          )
+                                        }
+                                        onBlur={() =>
+                                          clampConsumptionEntry(
+                                            cid,
+                                            b.id,
+                                            Number(b.quantity ?? 0) || 0
+                                          )
+                                        }
                                       />
                                     </Table.Td>
                                   </Table.Tr>

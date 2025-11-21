@@ -32,7 +32,6 @@ import {
   Tooltip,
   ActionIcon,
   Menu,
-  Select,
 } from "@mantine/core";
 import {
   HotkeyAwareModal,
@@ -47,11 +46,12 @@ import { useInitGlobalFormContext } from "@aa/timber";
 // useJobFindify removed (modal-based find standard)
 import { prisma } from "../../../utils/prisma.server";
 import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services/assemblyFromProduct.server";
+import { duplicateAssembly } from "~/modules/job/services/duplicateAssembly.server";
 // Legacy jobSearchSchema/buildWhere replaced by config-driven builder
 import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import { IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
+import { IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
@@ -63,11 +63,16 @@ import {
   syncJobStateFromAssemblies,
 } from "~/modules/job/services/JobStateService";
 import {
+  normalizeAssemblyState,
+  normalizeJobState,
+} from "~/modules/job/stateUtils";
+import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
-import { assemblyStateConfig } from "~/base/state/configs";
+import { StateChangeButton } from "~/base/state/StateChangeButton";
+import { assemblyStateConfig, jobStateConfig } from "~/base/state/configs";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -255,12 +260,96 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const v = form.get(df) as string;
         data[df] = v ? new Date(v) : null;
       }
+    const assemblyStatusMap = new Map<number, string>();
+    if (form.has("assemblyStatuses")) {
+      const rawStatuses = String(form.get("assemblyStatuses") || "{}");
+      try {
+        const obj = JSON.parse(rawStatuses);
+        if (obj && typeof obj === "object") {
+          for (const [key, val] of Object.entries(obj)) {
+            const asmId = Number(key);
+            if (!Number.isFinite(asmId)) continue;
+            const normalized = normalizeAssemblyState(
+              typeof val === "string" ? val : String(val ?? "")
+            );
+            if (!normalized) continue;
+            assemblyStatusMap.set(asmId, normalized);
+          }
+        }
+      } catch {}
+    }
+    const assemblyWhiteboardMap = new Map<number, string>();
+    if (form.has("assemblyWhiteboards")) {
+      const rawNotes = String(form.get("assemblyWhiteboards") || "{}");
+      try {
+        const obj = JSON.parse(rawNotes);
+        if (obj && typeof obj === "object") {
+          for (const [key, val] of Object.entries(obj)) {
+            const asmId = Number(key);
+            if (!Number.isFinite(asmId)) continue;
+            assemblyWhiteboardMap.set(
+              asmId,
+              typeof val === "string" ? val : String(val ?? "")
+            );
+          }
+        }
+      } catch {}
+    }
     try {
       if (Object.keys(data).length) {
         await prisma.job.update({ where: { id }, data });
       }
       if (nextStatus) {
         await applyJobStateTransition(prisma, id, nextStatus);
+      }
+      if (assemblyStatusMap.size || assemblyWhiteboardMap.size) {
+        const asmIds = Array.from(
+          new Set([
+            ...assemblyStatusMap.keys(),
+            ...assemblyWhiteboardMap.keys(),
+          ])
+        );
+        const assemblies = await prisma.assembly.findMany({
+          where: { id: { in: asmIds }, jobId: id },
+          select: { id: true, status: true, statusWhiteboard: true },
+        });
+        let statusUpdates = 0;
+        const updates = assemblies
+          .map((asm) => {
+            const data: Record<string, any> = {};
+            const nextStatus = assemblyStatusMap.get(asm.id);
+            const currentStatus = normalizeAssemblyState(
+              asm.status as string | null
+            );
+            if (nextStatus && nextStatus !== currentStatus) {
+              data.status = nextStatus;
+              statusUpdates += 1;
+            }
+            if (assemblyWhiteboardMap.has(asm.id)) {
+              const rawNote = assemblyWhiteboardMap.get(asm.id) ?? "";
+              const nextNote = rawNote === "" ? null : rawNote;
+              const currentNote = (asm.statusWhiteboard || null) as
+                | string
+                | null;
+              if (nextNote !== currentNote) {
+                data.statusWhiteboard = nextNote;
+              }
+            }
+            if (Object.keys(data).length) {
+              return { id: asm.id, data };
+            }
+            return null;
+          })
+          .filter(Boolean) as Array<{ id: number; data: Record<string, any> }>;
+        for (const update of updates) {
+          await prisma.assembly.update({
+            where: { id: update.id },
+            data: update.data,
+          });
+        }
+        if (statusUpdates > 0 && !nextStatus) {
+          await syncJobStateFromAssemblies(prisma, id);
+        }
       }
     } catch (err) {
       if (err instanceof JobStateError) {
@@ -306,6 +395,29 @@ export async function action({ request, params }: ActionFunctionArgs) {
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n));
     if (ids.length >= 2) {
+      const assemblies = await prisma.assembly.findMany({
+        where: { id: { in: ids }, jobId: id },
+        select: { id: true, status: true },
+      });
+      const normalizedStatuses = new Set(
+        assemblies.map((asm) => {
+          return normalizeAssemblyState(asm.status as string | null) || "DRAFT";
+        })
+      );
+      const activityRows = await prisma.assemblyActivity.groupBy({
+        by: ["assemblyId"],
+        where: { assemblyId: { in: ids } },
+        _count: { assemblyId: true },
+      });
+      const issueCodes: string[] = [];
+      if (assemblies.length !== ids.length) issueCodes.push("missing");
+      if (normalizedStatuses.size > 1) issueCodes.push("status");
+      if (activityRows.length > 0) issueCodes.push("activity");
+      if (issueCodes.length > 0) {
+        const search = new URLSearchParams();
+        search.set("asmGroupErr", issueCodes.join(","));
+        return redirect(`/jobs/${id}?${search.toString()}`);
+      }
       // Create group and assign assemblies. Ensure they belong to this job.
       const created = await prisma.assemblyGroup.create({
         data: { jobId: id, name: name || undefined },
@@ -314,6 +426,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
         where: { id: { in: ids }, jobId: id },
         data: { assemblyGroupId: created.id },
       });
+    }
+    return redirect(`/jobs/${id}`);
+  }
+  if (intent === "assembly.duplicate") {
+    const asmId = Number(form.get("assemblyId"));
+    if (Number.isFinite(asmId)) {
+      const newAsmId = await duplicateAssembly(prisma, id, asmId);
+      if (newAsmId) {
+        console.log("[jobs.$id] Duplicated assembly", {
+          jobId: id,
+          sourceAssemblyId: asmId,
+          newAssemblyId: newAsmId,
+        });
+      }
     }
     return redirect(`/jobs/${id}`);
   }
@@ -365,7 +491,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "assembly.state") {
     const asmId = Number(form.get("assemblyId"));
     if (Number.isFinite(asmId)) {
-      const statusValue = String(form.get("status") ?? "").trim();
+      const statusValue = normalizeAssemblyState(
+        String(form.get("status") ?? "").trim()
+      );
       const data: any = {};
       if (statusValue) data.status = statusValue;
       if (form.has("statusWhiteboard")) {
@@ -395,6 +523,8 @@ export default function JobDetailRoute() {
     activityCounts,
   } = useLoaderData<typeof loader>();
   const { setCurrentId } = useRecordContext();
+  const [sp] = useSearchParams();
+  const navigate = useNavigate();
   useEffect(() => {
     setCurrentId(job.id);
   }, [job.id, setCurrentId]);
@@ -417,10 +547,35 @@ export default function JobDetailRoute() {
     notifications.show({ color: "red", ...meta });
     navigate(`/jobs/${job.id}`, { replace: true });
   }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const groupErr = sp.get("asmGroupErr");
+    if (!groupErr) return;
+    const codes = groupErr
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    const reasons: string[] = [];
+    if (codes.includes("status")) {
+      reasons.push("Selected assemblies must share the same status.");
+    }
+    if (codes.includes("activity")) {
+      reasons.push("Assemblies with recorded activity cannot be grouped.");
+    }
+    if (codes.includes("missing")) {
+      reasons.push("One or more assemblies could not be found.");
+    }
+    setGroupGuardMessage(
+      [
+        "Assemblies can only be grouped when they share the same state and have no activity.",
+        reasons.join(" "),
+      ]
+        .join(" ")
+        .trim()
+    );
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
   const nav = useNavigation();
   const submit = useSubmit();
-  const [sp] = useSearchParams();
-  const navigate = useNavigate();
   const busy = nav.state !== "idle";
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -428,6 +583,9 @@ export default function JobDetailRoute() {
   const [qtyAsm, setQtyAsm] = useState<any>(null);
   const [qtyLabels, setQtyLabels] = useState<string[]>([]);
   const [orderedArr, setOrderedArr] = useState<number[]>([]);
+  const [groupGuardMessage, setGroupGuardMessage] = useState<string | null>(
+    null
+  );
   // Cut modal state
   const [cutModalOpen, setCutModalOpen] = useState(false);
   const [cutAsm, setCutAsm] = useState<any>(null);
@@ -451,6 +609,18 @@ export default function JobDetailRoute() {
     targetDate: j.targetDate?.slice?.(0, 10) || "",
     dropDeadDate: j.dropDeadDate?.slice?.(0, 10) || "",
     cutSubmissionDate: j.cutSubmissionDate?.slice?.(0, 10) || "",
+    assemblyStatuses: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [
+        String(a.id),
+        normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+      ])
+    ),
+    assemblyWhiteboards: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [
+        String(a.id),
+        String(a.statusWhiteboard || ""),
+      ])
+    ),
   });
   const jobForm = useForm<any>({
     defaultValues: jobToDefaults(job),
@@ -505,6 +675,15 @@ export default function JobDetailRoute() {
         fd.set(df, toDateString(values[df]));
       }
     });
+    if (values.assemblyStatuses) {
+      fd.set("assemblyStatuses", JSON.stringify(values.assemblyStatuses || {}));
+    }
+    if (values.assemblyWhiteboards) {
+      fd.set(
+        "assemblyWhiteboards",
+        JSON.stringify(values.assemblyWhiteboards || {})
+      );
+    }
     submit(fd, { method: "post" });
   };
   useInitGlobalFormContext(jobForm as any, save, () => {
@@ -547,8 +726,8 @@ export default function JobDetailRoute() {
     );
   }, [customers, customerSearch]);
   const [productSearch, setProductSearch] = useState("");
-  const [customerFilter, setCustomerFilter] = useState(false);
-  const [assemblyOnly, setAssemblyOnly] = useState(false);
+  const [customerFilter, setCustomerFilter] = useState(true);
+  const [assemblyOnly, setAssemblyOnly] = useState(true);
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
     if (!q) return productChoices;
@@ -556,24 +735,31 @@ export default function JobDetailRoute() {
       ((p.sku || "") + " " + (p.name || "")).toLowerCase().includes(q)
     );
   }, [productChoices, productSearch]);
-  const assemblyStatusOptions = useMemo(
-    () =>
-      Object.entries(assemblyStateConfig.states).map(([value, meta]) => ({
-        value,
-        label: meta.label,
-      })),
-    []
-  );
+  const assembliesById = useMemo(() => {
+    const map = new Map<number, any>();
+    (job.assemblies || []).forEach((asm: any) => {
+      if (asm?.id != null) map.set(Number(asm.id), asm);
+    });
+    return map;
+  }, [job.assemblies]);
   const handleAssemblyStatusChange = useCallback(
     (asmId: number, next: string | null) => {
       if (!next) return;
-      const fd = new FormData();
-      fd.set("_intent", "assembly.state");
-      fd.set("assemblyId", String(asmId));
-      fd.set("status", next);
-      submit(fd, { method: "post" });
+      jobForm.setValue(`assemblyStatuses.${asmId}` as any, next, {
+        shouldDirty: true,
+        shouldTouch: true,
+      });
     },
-    [submit]
+    [jobForm]
+  );
+  const handleAssemblyWhiteboardChange = useCallback(
+    (asmId: number, next: string) => {
+      jobForm.setValue(`assemblyWhiteboards.${asmId}` as any, next, {
+        shouldDirty: true,
+        shouldTouch: true,
+      });
+    },
+    [jobForm]
   );
 
   useEffect(() => {
@@ -606,11 +792,61 @@ export default function JobDetailRoute() {
       return prev;
     });
   }, []);
+  const handleGroupSubmit = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      if (selectedAsmIds.length < 2) return;
+      const statuses = new Set<string>();
+      const idsWithActivity: number[] = [];
+      const missing: number[] = [];
+      for (const asmId of selectedAsmIds) {
+        const asm = assembliesById.get(asmId);
+        if (!asm) {
+          missing.push(asmId);
+          continue;
+        }
+        const normalized =
+          normalizeAssemblyState(asm.status as string | null) ?? "DRAFT";
+        statuses.add(normalized);
+        if ((activityCounts?.[asmId] || 0) > 0) {
+          idsWithActivity.push(asmId);
+        }
+      }
+      const issues: string[] = [];
+      if (statuses.size > 1) {
+        const label = Array.from(statuses).join(", ");
+        issues.push(`Selected assemblies are in different states (${label}).`);
+      }
+      if (idsWithActivity.length > 0) {
+        issues.push(
+          `Assemblies ${idsWithActivity.join(", ")} have recorded activity.`
+        );
+      }
+      if (missing.length > 0) {
+        issues.push(`Assemblies ${missing.join(", ")} could not be found.`);
+      }
+      if (issues.length > 0) {
+        event.preventDefault();
+        setGroupGuardMessage(
+          [
+            "Assemblies can only be grouped when they share the same state and have no activity.",
+            issues.join(" "),
+          ]
+            .join(" ")
+            .trim()
+        );
+      }
+    },
+    [selectedAsmIds, assembliesById, activityCounts]
+  );
+
+  const jobStatusValue =
+    normalizeJobState(jobForm.watch("status") ?? job.status) ?? "DRAFT";
+  const jobWhiteboardValue = jobForm.watch("statusWhiteboard") ?? "";
 
   // returnUrl no longer used (find handled externally)
   return (
     <Stack gap="lg">
-      <Group justify="space-between" align="center">
+      <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
         {(() => {
           const appendHref = useFindHrefAppender();
           const saved = getSavedIndexSearch("/jobs");
@@ -624,7 +860,31 @@ export default function JobDetailRoute() {
             />
           );
         })()}
-        <Group gap="xs"></Group>
+        <Group gap="sm" align="center">
+          <TextInput
+            placeholder="Whiteboard"
+            aria-label="Job status whiteboard"
+            value={jobWhiteboardValue}
+            onChange={(e) =>
+              jobForm.setValue("statusWhiteboard", e.currentTarget.value, {
+                shouldDirty: true,
+                shouldTouch: true,
+              })
+            }
+            style={{ minWidth: 220 }}
+          />
+          <StateChangeButton
+            value={jobStatusValue}
+            defaultValue={jobStatusValue}
+            onChange={(v) =>
+              jobForm.setValue("status", v, {
+                shouldDirty: true,
+                shouldTouch: true,
+              })
+            }
+            config={jobStateConfig}
+          />
+        </Group>
       </Group>
 
       <div>
@@ -645,7 +905,11 @@ export default function JobDetailRoute() {
               <Title order={4}>Assemblies</Title>
               <Button
                 variant="light"
-                onClick={() => setProductModalOpen(true)}
+                onClick={() => {
+                  setCustomerFilter(true);
+                  setAssemblyOnly(true);
+                  setProductModalOpen(true);
+                }}
                 disabled={jobForm.formState.isDirty}
               >
                 Add Assembly
@@ -660,7 +924,7 @@ export default function JobDetailRoute() {
               <span> </span>
             )}
             <Group gap="xs">
-              <Form method="post">
+              <Form method="post" onSubmit={handleGroupSubmit}>
                 <input type="hidden" name="_intent" value="assembly.group" />
                 <input
                   type="hidden"
@@ -698,7 +962,7 @@ export default function JobDetailRoute() {
                 <Table.Th>Make</Table.Th>
                 <Table.Th>Pack</Table.Th>
                 <Table.Th>Status</Table.Th>
-                <Table.Th>Status Note</Table.Th>
+                <Table.Th>Whiteboard</Table.Th>
                 <Table.Th style={{ width: 40 }}></Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -770,6 +1034,18 @@ export default function JobDetailRoute() {
                     : null;
                   const pos = getPos(idx);
                   const canDelete = (activityCounts?.[a.id] || 0) === 0;
+                  const statusField = `assemblyStatuses.${a.id}` as const;
+                  const statusValue = jobForm.watch(statusField);
+                  const resolvedStatus =
+                    normalizeAssemblyState(
+                      (statusValue as string | null) ??
+                        (a.status as string | null)
+                    ) ?? "DRAFT";
+                  const whiteboardField =
+                    `assemblyWhiteboards.${a.id}` as const;
+                  const whiteboardValue =
+                    jobForm.watch(whiteboardField) ??
+                    (a.statusWhiteboard || "");
                   return (
                     <Table.Tr key={a.id}>
                       <Table.Td
@@ -864,31 +1140,33 @@ export default function JobDetailRoute() {
                       <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
                       <Table.Td>
-                        <Select
-                          size="xs"
-                          data={assemblyStatusOptions}
-                          value={a.status || null}
-                          disabled={jobForm.formState.isDirty}
+                        <StateChangeButton
+                          value={resolvedStatus}
+                          defaultValue={resolvedStatus}
                           onChange={(value) =>
-                            handleAssemblyStatusChange(a.id, value)
+                            handleAssemblyStatusChange(a.id, value as string)
                           }
-                          placeholder="Status"
-                          withinPortal
+                          disabled={busy}
+                          config={assemblyStateConfig}
                         />
                       </Table.Td>
                       <Table.Td>
-                        <Text
-                          size="sm"
-                          c={a.statusWhiteboard ? undefined : "dimmed"}
-                          lineClamp={2}
-                        >
-                          {a.statusWhiteboard || "—"}
-                        </Text>
+                        <TextInput
+                          size="xs"
+                          placeholder="Whiteboard"
+                          value={whiteboardValue}
+                          onChange={(e) =>
+                            handleAssemblyWhiteboardChange(
+                              a.id,
+                              e.currentTarget.value
+                            )
+                          }
+                        />
                       </Table.Td>
                       <Table.Td align="center">
                         <AssemblyRowMenu
                           assembly={a}
-                          disabled={jobForm.formState.isDirty || !canDelete}
+                          disabled={jobForm.formState.isDirty}
                           canDelete={canDelete}
                           submit={submit}
                         />
@@ -1144,6 +1422,24 @@ export default function JobDetailRoute() {
           </form>
         )}
       </HotkeyAwareModal>
+
+      <HotkeyAwareModal
+        opened={Boolean(groupGuardMessage)}
+        onClose={() => setGroupGuardMessage(null)}
+        title="Cannot Group Assemblies"
+        size="sm"
+        centered
+      >
+        <Stack>
+          <Text>
+            {groupGuardMessage ||
+              "Assemblies must share the same state and have no activity before grouping."}
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button onClick={() => setGroupGuardMessage(null)}>OK</Button>
+          </Group>
+        </Stack>
+      </HotkeyAwareModal>
     </Stack>
   );
 }
@@ -1159,7 +1455,9 @@ function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
             size="sm"
             disabled={disabled}
             title={
-              canDelete ? "Assembly actions" : "Cannot delete (has activity)"
+              disabled
+                ? "Assembly actions are disabled while edits are pending"
+                : "Assembly actions"
             }
           >
             <IconMenu2 size={16} />
@@ -1167,10 +1465,27 @@ function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
         </Menu.Target>
         <Menu.Dropdown>
           <Menu.Item
+            leftSection={<IconCopy size={14} />}
+            disabled={disabled}
+            onClick={() => {
+              const fd = new FormData();
+              fd.set("_intent", "assembly.duplicate");
+              fd.set("assemblyId", String(assembly.id));
+              submit(fd, { method: "post" });
+            }}
+          >
+            Duplicate
+          </Menu.Item>
+          <Menu.Item
             leftSection={<IconTrash size={14} />}
             disabled={!canDelete}
             onClick={() => setConfirmOpen(true)}
             color={canDelete ? "red" : undefined}
+            title={
+              canDelete
+                ? undefined
+                : "Assemblies with recorded activity cannot be deleted"
+            }
           >
             Delete
           </Menu.Item>

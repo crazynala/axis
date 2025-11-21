@@ -1,63 +1,20 @@
 import type { PrismaClient } from "@prisma/client";
-import { assemblyStateKeys, jobStateKeys } from "~/base/state/configs";
-
-export type AssemblyState = (typeof assemblyStateKeys)[number];
-export type JobState = (typeof jobStateKeys)[number];
+import {
+  assemblyStateOptions,
+  matchVariants,
+  normalizeAssemblyState,
+  normalizeJobState,
+  type AssemblyState,
+  type JobState,
+} from "~/modules/job/stateUtils";
 
 type AssemblySummary = { id: number; status: string | null };
-
-const ASSEMBLY_STATE_SET = new Set<AssemblyState>(assemblyStateKeys);
-const JOB_STATE_SET = new Set<JobState>(jobStateKeys);
-
-const LEGACY_ASSEMBLY_MAP: Record<string, AssemblyState> = {
-  WIP: "CUT_PLANNED",
-};
-const LEGACY_JOB_MAP: Record<string, JobState> = {
-  ACTIVE: "IN_WORK",
-  WIP: "IN_WORK",
-};
-
-const matchVariants = (state: string) => {
-  const upper = state.toUpperCase();
-  const human = upper
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (m) => m.toUpperCase());
-  return Array.from(new Set([upper, human, human.toLowerCase(), state]));
-};
 
 export class JobStateError extends Error {
   constructor(public code: string, message: string) {
     super(message);
     this.name = "JobStateError";
   }
-}
-
-export const assemblyStateOptions = assemblyStateKeys.map((key) => ({
-  value: key,
-  label:
-    key
-      .toLowerCase()
-      .replace(/_/g, " ")
-      .replace(/\b\w/g, (m) => m.toUpperCase()) || key,
-}));
-
-export function normalizeAssemblyState(value: string | null | undefined) {
-  if (!value) return null;
-  const upper = value.toUpperCase().replace(/\s+/g, "_");
-  if (LEGACY_ASSEMBLY_MAP[upper]) return LEGACY_ASSEMBLY_MAP[upper];
-  if (ASSEMBLY_STATE_SET.has(upper as AssemblyState)) {
-    return upper as AssemblyState;
-  }
-  return null;
-}
-
-export function normalizeJobState(value: string | null | undefined) {
-  if (!value) return null;
-  const upper = value.toUpperCase().replace(/\s+/g, "_");
-  if (LEGACY_JOB_MAP[upper]) return LEGACY_JOB_MAP[upper];
-  if (JOB_STATE_SET.has(upper as JobState)) return upper as JobState;
-  return null;
 }
 
 const inWorkStates = new Set<AssemblyState>([
@@ -133,7 +90,14 @@ const jobTransitionRules = [
       from === "DRAFT" && to === "NEW",
     effect: async (prisma: PrismaClient, jobId: number) => {
       await prisma.assembly.updateMany({
-        where: { jobId, status: { in: matchVariants("DRAFT") } },
+        where: {
+          jobId,
+          OR: [
+            { status: { in: matchVariants("DRAFT") } },
+            { status: null },
+            { status: "" },
+          ],
+        },
         data: { status: "NEW" },
       });
     },
@@ -163,7 +127,14 @@ const jobTransitionRules = [
     match: (_from: JobState | null, to: JobState) => to === "ON_HOLD",
     effect: async (prisma: PrismaClient, jobId: number) => {
       await prisma.assembly.updateMany({
-        where: { jobId, status: { notIn: matchVariants("CANCELED") } },
+        where: {
+          jobId,
+          OR: [
+            { status: null },
+            { status: "" },
+            { status: { notIn: matchVariants("CANCELED") } },
+          ],
+        },
         data: { status: "ON_HOLD" },
       });
     },
@@ -172,7 +143,14 @@ const jobTransitionRules = [
     match: (_from: JobState | null, to: JobState) => to === "COMPLETE",
     effect: async (prisma: PrismaClient, jobId: number) => {
       await prisma.assembly.updateMany({
-        where: { jobId, status: { notIn: matchVariants("CANCELED") } },
+        where: {
+          jobId,
+          OR: [
+            { status: null },
+            { status: "" },
+            { status: { notIn: matchVariants("CANCELED") } },
+          ],
+        },
         data: { status: "COMPLETE" },
       });
     },

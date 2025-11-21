@@ -91,6 +91,15 @@ enum UsageType {
     make
 }
 
+enum ValueListType {
+    Tax
+    Category
+    ProductType
+    JobType
+    Currency
+    ShippingMethod
+}
+
 // --- Tagging ---
 enum TagScope {
     GLOBAL
@@ -283,7 +292,10 @@ model ValueList {
     code                String?
     label               String?
     value               Decimal?      @db.Decimal(14, 4)
-    type                String?
+    type                ValueListType
+    parentId            Int?
+    parent              ValueList?    @relation("ValueListHierarchy", fields: [parentId], references: [id])
+    children            ValueList[]   @relation("ValueListHierarchy")
     productsTax         Product[]     @relation("Tax")
     productsCategory    Product[]     @relation("Category")
     // Back-relations

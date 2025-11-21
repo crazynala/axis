@@ -19,11 +19,9 @@ export default function AdminIndex() {
               Value Lists: Product Type
             </Link>
             <Link to="/admin/value-lists/JobType">Value Lists: Job Type</Link>
-            <Link to="/admin/value-lists/JobStatus">
-              Value Lists: Job Status
-            </Link>
-            <Link to="/admin/value-lists/Subcategory">
-              Value Lists: Subcategory
+            <Link to="/admin/value-lists/Currency">Value Lists: Currency</Link>
+            <Link to="/admin/value-lists/ShippingMethod">
+              Value Lists: Shipping Method
             </Link>
             <Link to="/admin/forex/USD/TRY">Forex: USD → TRY</Link>
             <Link to="/admin/dhl-records">DHL Records</Link>

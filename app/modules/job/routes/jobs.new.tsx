@@ -10,11 +10,15 @@ import {
   Card,
   Divider,
   SimpleGrid,
+  Select,
 } from "@mantine/core";
 import { Controller, useForm } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
 import { prisma } from "../../../utils/prisma.server";
 import { DatePickerInput } from "@mantine/dates";
+import { useMemo } from "react";
+import { useOptions } from "~/base/options/OptionsContext";
+import { normalizeJobState } from "~/modules/job/stateUtils";
 
 export const meta: MetaFunction = () => [{ title: "New Job" }];
 
@@ -26,6 +30,12 @@ export async function action({ request }: ActionFunctionArgs) {
     status: (form.get("status") as string) || null,
     jobType: (form.get("jobType") as string) || null,
     endCustomerName: (form.get("endCustomerName") as string) || null,
+    companyId: (() => {
+      const raw = (form.get("companyId") as string) || "";
+      if (!raw) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    })(),
   };
   const dateFields = [
     "customerOrderDate",
@@ -49,6 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
       {}
     ),
   });
+  payload.status = normalizeJobState(payload.status) ?? "DRAFT";
   const created = await prisma.job.create({ data: payload });
   console.log("[jobs.new] created job", { id: created.id });
   return redirect(`/jobs/${created.id}`);
@@ -57,6 +68,7 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function NewJobRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const options = useOptions();
   const form = useForm({
     defaultValues: {
       projectCode: "",
@@ -68,8 +80,13 @@ export default function NewJobRoute() {
       targetDate: null as Date | null,
       dropDeadDate: null as Date | null,
       cutSubmissionDate: null as Date | null,
+      companyId: "",
     },
   });
+  const customerOptions = useMemo(
+    () => options?.customerOptions ?? [],
+    [options?.customerOptions]
+  );
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="center">
@@ -94,6 +111,21 @@ export default function NewJobRoute() {
                 {...form.register("projectCode")}
               />
               <TextInput label="Name" {...form.register("name")} />
+              <Controller
+                control={form.control}
+                name="companyId"
+                render={({ field }) => (
+                  <Select
+                    label="Customer"
+                    data={customerOptions}
+                    searchable
+                    clearable
+                    nothingFoundMessage="No matches"
+                    value={field.value || null}
+                    onChange={(value) => field.onChange(value ?? "")}
+                  />
+                )}
+              />
             </Stack>
           </Card>
           <Card withBorder padding="md">

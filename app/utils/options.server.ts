@@ -1,3 +1,4 @@
+import { ValueListType } from "@prisma/client";
 import { prisma } from "./prisma.server";
 
 export type Option = { value: string; label: string };
@@ -32,6 +33,11 @@ function isFresh(entry: CacheEntry<any> | null) {
   return Date.now() - entry.at < TTL_MS;
 }
 
+function formatLabel(label: string | null | undefined, id: number) {
+  const trimmed = label?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : `#${id}`;
+}
+
 export async function loadOptions(): Promise<OptionsData> {
   if (isFresh(optionsCache)) {
     try {
@@ -60,7 +66,6 @@ export async function loadOptions(): Promise<OptionsData> {
 
   const [
     categories,
-    subcategories,
     taxes,
     companies_all,
     customers,
@@ -69,7 +74,6 @@ export async function loadOptions(): Promise<OptionsData> {
     suppliers_all,
     productTypesVL,
     jobTypesVL,
-    jobStatusesVL,
     carriers,
     locations,
     variantSets,
@@ -77,17 +81,12 @@ export async function loadOptions(): Promise<OptionsData> {
     costGroups,
   ] = await Promise.all([
     prisma.valueList.findMany({
-      where: { type: "Category" },
-      orderBy: { label: "asc" },
-      select: { id: true, label: true },
+      where: { type: ValueListType.Category },
+      orderBy: [{ parentId: "asc" }, { label: "asc" }],
+      select: { id: true, label: true, parentId: true },
     }),
     prisma.valueList.findMany({
-      where: { type: "Subcategory" },
-      orderBy: { label: "asc" },
-      select: { id: true, label: true },
-    }),
-    prisma.valueList.findMany({
-      where: { type: "Tax" },
+      where: { type: ValueListType.Tax },
       orderBy: { label: "asc" },
       select: { id: true, label: true, value: true },
     }),
@@ -127,17 +126,12 @@ export async function loadOptions(): Promise<OptionsData> {
       take: 2000,
     }),
     prisma.valueList.findMany({
-      where: { type: "ProductType" },
+      where: { type: ValueListType.ProductType },
       orderBy: { label: "asc" },
       select: { code: true, label: true },
     }),
     prisma.valueList.findMany({
-      where: { type: "JobType" },
-      orderBy: { label: "asc" },
-      select: { code: true, label: true },
-    }),
-    prisma.valueList.findMany({
-      where: { type: "JobStatus" },
+      where: { type: ValueListType.JobType },
       orderBy: { label: "asc" },
       select: { code: true, label: true },
     }),
@@ -174,6 +168,13 @@ export async function loadOptions(): Promise<OptionsData> {
     ? productTypesVL.map((pt) => pt.code || pt.label || "")
     : ["CMT", "Fabric", "Finished", "Trim", "Service"];
 
+  const parentLabelById = new Map<number, string>();
+  categories.forEach((cat) => {
+    parentLabelById.set(cat.id, formatLabel(cat.label, cat.id));
+  });
+  const rootCategories = categories.filter((cat) => !cat.parentId);
+  const subcategoryList = categories.filter((cat) => cat.parentId);
+
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
   const customersAllList =
     customers_all.length > 0 ? customers_all : companies_all;
@@ -185,14 +186,20 @@ export async function loadOptions(): Promise<OptionsData> {
 
   // Build base value object
   const value: OptionsData = {
-    categoryOptions: categories.map((c) => ({
+    categoryOptions: rootCategories.map((c) => ({
       value: String(c.id),
-      label: c.label ?? String(c.id),
+      label: parentLabelById.get(c.id) ?? formatLabel(c.label, c.id),
     })),
-    subcategoryOptions: subcategories.map((s) => ({
-      value: String(s.id),
-      label: s.label ?? String(s.id),
-    })),
+    subcategoryOptions: subcategoryList.map((s) => {
+      const label = formatLabel(s.label, s.id);
+      const parentLabel = s.parentId
+        ? parentLabelById.get(s.parentId) || `#${s.parentId}`
+        : null;
+      return {
+        value: String(s.id),
+        label: parentLabel ? `${parentLabel} – ${label}` : label,
+      };
+    }),
     taxCodeOptions: taxes.map((t) => ({
       value: String(t.id),
       label: t.label ?? String(t.id),
@@ -236,10 +243,7 @@ export async function loadOptions(): Promise<OptionsData> {
       value: String(jt.code || jt.label || ""),
       label: String(jt.label || jt.code || ""),
     })),
-    jobStatusOptions: jobStatusesVL.map((js) => ({
-      value: String(js.code || js.label || ""),
-      label: String(js.label || js.code || ""),
-    })),
+    jobStatusOptions: [],
     variantSetOptions: variantSets.map((vs) => ({
       value: String(vs.id),
       label: vs.name ?? String(vs.id),

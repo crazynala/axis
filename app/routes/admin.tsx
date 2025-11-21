@@ -9,8 +9,11 @@ const items = [
   { to: "/admin/value-lists/Category", label: "Value Lists: Category" },
   { to: "/admin/value-lists/ProductType", label: "Value Lists: Product Type" },
   { to: "/admin/value-lists/JobType", label: "Value Lists: Job Type" },
-  { to: "/admin/value-lists/JobStatus", label: "Value Lists: Job Status" },
-  { to: "/admin/value-lists/Subcategory", label: "Value Lists: Subcategory" },
+  { to: "/admin/value-lists/Currency", label: "Value Lists: Currency" },
+  {
+    to: "/admin/value-lists/ShippingMethod",
+    label: "Value Lists: Shipping Method",
+  },
   { to: "/admin/cost-groups", label: "Cost Groups" },
   { to: "/admin/cost-ranges", label: "Cost Ranges" },
   { to: "/admin/sale-price-groups", label: "Sale Price Groups" },

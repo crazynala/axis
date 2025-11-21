@@ -51,7 +51,7 @@ export async function createAssemblyFromProductAndSeedCostings(
     productId: prod.id,
     jobId,
     qtyOrderedBreakdown: ordered as any,
-    status: "new",
+    status: "DRAFT",
   };
   if (prod.variantSetId != null) asmData.variantSetId = prod.variantSetId;
 

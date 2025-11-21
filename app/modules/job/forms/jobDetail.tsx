@@ -59,6 +59,7 @@ export const jobOverviewFields: FieldConfig[] = [
     widget: "textarea",
     props: { minRows: 2 },
     findOp: "contains",
+    hiddenInModes: ["edit"],
   },
   {
     name: "companyId",

@@ -14,7 +14,7 @@ import {
 } from "@mantine/core";
 import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { useSubmit, useLocation } from "@remix-run/react";
 import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
@@ -26,6 +26,7 @@ import {
 } from "~/modules/job/services/costingsView";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
+import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
 
 export type QuantityItem = {
@@ -106,6 +107,7 @@ export function AssembliesEditor(props: {
     activity: Record<string, string>;
     names: Record<string, string>;
     statusNotes: Record<string, string>;
+    statuses: Record<string, string>;
   }>({
     defaultValues: {
       orderedByAssembly: Object.fromEntries(
@@ -136,8 +138,35 @@ export function AssembliesEditor(props: {
           String((a as any).statusWhiteboard || ""),
         ])
       ) as any,
+      statuses: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+        ])
+      ) as any,
     },
   });
+  const assembliesResetKey = useMemo(
+    () =>
+      (assemblies || [])
+        .map((a) =>
+          [
+            a.id,
+            a.status,
+            a.name,
+            (a as any).statusWhiteboard,
+            (a.qtyOrderedBreakdown || []).join(","),
+            (a.costings || [])
+              .map(
+                (c: any) =>
+                  `${c.id}:${c.quantityPerUnit ?? ""}:${c.activityUsed ?? ""}`
+              )
+              .join("|"),
+          ].join("::")
+        )
+        .join("##"),
+    [assemblies]
+  );
   useEffect(() => {
     editForm.reset(
       {
@@ -172,11 +201,17 @@ export function AssembliesEditor(props: {
             String((a as any).statusWhiteboard || ""),
           ])
         ) as any,
+        statuses: Object.fromEntries(
+          (assemblies || []).map((a) => [
+            String(a.id),
+            normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+          ])
+        ) as any,
       },
       { keepDirty: false }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assemblies?.map((a) => a.id).join(",")]);
+  }, [assembliesResetKey]);
 
   const saveUpdate = () => {
     const fd = new FormData();
@@ -193,6 +228,7 @@ export function AssembliesEditor(props: {
     }
     fd.set("qpu", JSON.stringify(editForm.getValues("qpu")));
     fd.set("activity", JSON.stringify(editForm.getValues("activity")));
+    fd.set("statuses", JSON.stringify(editForm.getValues("statuses")));
     submit(fd, { method: "post" });
   };
   useInitGlobalFormContext(editForm as any, saveUpdate, () =>
@@ -220,6 +256,12 @@ export function AssembliesEditor(props: {
         (assemblies || []).map((a) => [
           String(a.id),
           String((a as any).statusWhiteboard || ""),
+        ])
+      ) as any,
+      statuses: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
         ])
       ) as any,
     })
@@ -255,19 +297,31 @@ export function AssembliesEditor(props: {
       <Card withBorder padding="sm" mb="md">
         <Group justify="space-between" align="center">
           <Group wrap="wrap" gap="sm">
-            {(assemblies as any[]).map((a) => (
-              <Group key={`ctrl-${a.id}`} gap="xs" align="center">
-                <Title order={6}>A{a.id}</Title>
-                <StateChangeButton
-                  value={(a as any).status || "DRAFT"}
-                  defaultValue={(a as any).status || "DRAFT"}
-                  onChange={(v) =>
-                    sendAssemblyUpdate(a.id, { status: v as string })
-                  }
-                  config={assemblyStateConfig}
-                />
-              </Group>
-            ))}
+            {(assemblies as any[]).map((a) => {
+              const fieldName = `statuses.${a.id}` as const;
+              return (
+                <Group key={`ctrl-${a.id}`} gap="xs" align="center">
+                  <Title order={6}>A{a.id}</Title>
+                  <Controller
+                    key={`status-${a.id}`}
+                    control={editForm.control}
+                    name={fieldName}
+                    render={({ field }) => {
+                      const normalizedStatus =
+                        normalizeAssemblyState(field.value) ?? "DRAFT";
+                      return (
+                        <StateChangeButton
+                          value={normalizedStatus}
+                          defaultValue={normalizedStatus}
+                          onChange={(v) => field.onChange(v)}
+                          config={assemblyStateConfig}
+                        />
+                      );
+                    }}
+                  />
+                </Group>
+              );
+            })}
           </Group>
           <Button size="xs" variant="light" onClick={() => setCutOpen(true)}>
             {isGroup ? "Record Group Cut" : "Record Cut"}
@@ -279,6 +333,14 @@ export function AssembliesEditor(props: {
         {(assemblies || []).map((a) => {
           const item = (quantityItems || []).find((i) => i.assemblyId === a.id);
           if (!item) return null;
+          const statusField = `statuses.${a.id}` as const;
+          const normalizedStatus =
+            normalizeAssemblyState(
+              editForm.watch(statusField) ?? (a.status as string | null)
+            ) ?? "DRAFT";
+          const statusLabel =
+            assemblyStateConfig.states[normalizedStatus]?.label ||
+            normalizedStatus;
           return (
             <>
               <Grid.Col span={5}>
@@ -328,7 +390,7 @@ export function AssembliesEditor(props: {
                   />
                   <TextInput
                     readOnly
-                    value={a.status || ""}
+                    value={statusLabel}
                     label="Status"
                     mod="data-autosize"
                   />

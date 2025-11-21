@@ -7,11 +7,8 @@ import {
   Stack,
   Title,
   Group,
-  Badge,
 } from "@mantine/core";
 import { RenderField } from "~/base/forms/fieldConfigShared";
-import { StateChangeButton } from "~/base/state/StateChangeButton";
-import { jobStateConfig } from "~/base/state/configs";
 import * as jobDetailCfg from "./jobDetail";
 // options are injected via OptionsProvider and consumed in RenderField
 import type { UseFormReturn } from "react-hook-form";
@@ -38,7 +35,6 @@ export function JobDetailForm({
         },
       ]
     : [];
-  const statusValue = (form.getValues() as any)?.status || "DRAFT";
   return (
     <Grid>
       <Grid.Col span={{ base: 12, md: 5 }}>
@@ -46,16 +42,6 @@ export function JobDetailForm({
           <Card.Section inheritPadding py="xs">
             <Group justify="space-between" align="center">
               <Title order={4}>Job</Title>
-              {mode === "edit" && (
-                <StateChangeButton
-                  value={statusValue}
-                  defaultValue={statusValue}
-                  onChange={(v) =>
-                    form.setValue("status" as any, v, { shouldDirty: true })
-                  }
-                  config={jobStateConfig}
-                />
-              )}
             </Group>
           </Card.Section>
           <Divider my="xs" />
