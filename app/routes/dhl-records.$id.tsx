@@ -21,7 +21,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
   if (!Number.isFinite(id)) throw new Response("Invalid id", { status: 400 });
   const row = await prisma.dHLReportLine.findUnique({ where: { id } });
-  if (!row) throw new Response("Not found", { status: 404 });
+  if (!row) return redirect("/admin/dhl-records");
   return json({ row });
 }
 

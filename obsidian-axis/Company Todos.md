@@ -1,0 +1,2 @@
+- [ ] cmd-F for findify is not working in company>detail
+- [ ] Searching for name=TEDDY gave no results

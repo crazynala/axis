@@ -1,4 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import { prisma } from "../../../utils/prisma.server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
@@ -18,7 +19,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       location: true,
     },
   });
-  if (!purchaseOrder) throw new Response("Not found", { status: 404 });
+  if (!purchaseOrder) return redirect("/purchase-orders");
 
   const subtotal = (purchaseOrder.lines || []).reduce((acc: number, l: any) => {
     const qty = Number(l.quantityOrdered ?? l.quantity ?? 0);

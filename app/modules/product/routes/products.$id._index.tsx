@@ -18,6 +18,7 @@ import {
   Text,
   TextInput,
   Title,
+  Modal,
 } from "@mantine/core";
 import { IconMenu2 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
@@ -34,7 +35,7 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Controller } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -68,6 +69,8 @@ import {
 } from "~/hooks/useNavLocation";
 
 // BOM spreadsheet modal removed; see /products/:id/bom page
+
+const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const { runWithDbActivity, prismaBase } = await import(
@@ -190,7 +193,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       }),
       salePriceGroupsPromise.then((r) => r),
     ]);
-    if (!product) throw new Response("Not found", { status: 404 });
+    if (!product) return redirect("/products");
 
     // Resolve location names for in/out in one query (lines + headers)
     const locIdSet = new Set<number>();
@@ -254,7 +257,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { prismaBase } = await import("~/utils/prisma.server");
+  const { prismaBase, refreshProductStockSnapshot } = await import(
+    "~/utils/prisma.server"
+  );
   const idRaw = params.id;
   const isNew = idRaw === "new";
   const id =
@@ -433,9 +438,72 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/products/${id}`);
   }
+  if (intent === "batch.editMeta") {
+    if (!Number.isFinite(id))
+      return json(
+        { intent: "batch.editMeta", error: "Invalid product id" },
+        { status: 400 }
+      );
+    const f = form || (await request.formData());
+    const batchId = Number(f.get("batchId"));
+    if (!Number.isFinite(batchId))
+      return json(
+        { intent: "batch.editMeta", error: "Invalid batch id" },
+        { status: 400 }
+      );
+    const normalize = (value: unknown) => {
+      if (value == null) return null;
+      const trimmed = String(value).trim();
+      return trimmed === "" ? null : trimmed;
+    };
+    const data: {
+      name: string | null;
+      codeMill: string | null;
+      codeSartor: string | null;
+    } = {
+      name: normalize(f.get("name")),
+      codeMill: normalize(f.get("codeMill")),
+      codeSartor: normalize(f.get("codeSartor")),
+    };
+    const result = await prismaBase.batch.updateMany({
+      where: { id: batchId, productId: id },
+      data,
+    });
+    if (result.count === 0) {
+      return json(
+        {
+          intent: "batch.editMeta",
+          error: "Batch not found for this product.",
+        },
+        { status: 404 }
+      );
+    }
+    try {
+      // Keep snapshot-driven batch metadata in sync for the revalidated loader.
+      await refreshProductStockSnapshot(false);
+    } catch (err) {
+      console.warn("Failed to refresh stock snapshot", err);
+    }
+    return json({ ok: true });
+  }
   if (intent === "delete") {
     if (!Number.isFinite(id))
-      return json({ error: "Invalid product id" }, { status: 400 });
+      return json(
+        { error: "Invalid product id", intent: "delete" },
+        { status: 400 }
+      );
+    const f = form || (await request.formData());
+    const confirmationRaw = String(f.get("confirmDelete") || "");
+    const normalized = confirmationRaw.replace(/\u2019/g, "'").trim();
+    if (normalized !== PRODUCT_DELETE_PHRASE) {
+      return json(
+        {
+          intent: "delete",
+          error: `Type ${PRODUCT_DELETE_PHRASE} to confirm deletion.`,
+        },
+        { status: 400 }
+      );
+    }
     await prismaBase.product.delete({ where: { id } });
     return redirect("/products");
   }
@@ -645,6 +713,10 @@ export default function ProductDetailRoute() {
     // Collapse when navigating to a different product
     setShowAllMovements(false);
   }, [product.id]);
+  useEffect(() => {
+    setDeleteConfirmation("");
+    setDeleteModalOpen(false);
+  }, [product.id]);
   // Tags handled via global editForm (TagsInput in header)
   // Fetcher-based refresh for MV
   const refreshFetcher = useFetcher<{ ok?: boolean; error?: string }>();
@@ -696,12 +768,92 @@ export default function ProductDetailRoute() {
       return scopeOk && locOk;
     });
   }, [stockByBatch, batchScope, batchLocation]);
+  const filteredBatchRowsLite = useMemo<BatchRowLite[]>(() => {
+    return filteredBatches.map((row: any) => ({
+      batchId: Number(row.batch_id) || 0,
+      locationId:
+        row.location_id == null || row.location_id === ""
+          ? null
+          : Number(row.location_id),
+      locationName:
+        row.location_name ||
+        (row.location_id ? String(row.location_id) : "(none)"),
+      name: row.batch_name ?? null,
+      codeMill: row.code_mill ?? null,
+      codeSartor: row.code_sartor ?? null,
+      qty: Number(row.qty || 0),
+    }));
+  }, [filteredBatches]);
   // console.log("!! filtered stockByBatch", filteredBatches);
   // Inventory modal state
   const [amendBatchOpen, setAmendBatchOpen] = useState(false);
   const [amendProductOpen, setAmendProductOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [activeBatch, setActiveBatch] = useState<any | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [batchEdit, setBatchEdit] = useState<{
+    batchId: number;
+    name?: string | null;
+    codeMill?: string | null;
+    codeSartor?: string | null;
+  } | null>(null);
+  const batchEditForm = useForm<{
+    name: string;
+    codeMill: string;
+    codeSartor: string;
+  }>({
+    defaultValues: {
+      name: "",
+      codeMill: "",
+      codeSartor: "",
+    },
+  });
+  const batchEditFetcher = useFetcher<{
+    ok?: boolean;
+    error?: string;
+    intent?: string;
+  }>();
+  const [batchEditSubmissionId, setBatchEditSubmissionId] = useState<
+    number | null
+  >(null);
+  const [batchEditError, setBatchEditError] = useState<string | null>(null);
+  const closeBatchEdit = useCallback(() => {
+    setBatchEdit(null);
+    batchEditForm.reset({ name: "", codeMill: "", codeSartor: "" });
+    setBatchEditError(null);
+    setBatchEditSubmissionId(null);
+  }, [batchEditForm]);
+  useEffect(() => {
+    if (!batchEdit) return;
+    batchEditForm.reset({
+      name: batchEdit.name || "",
+      codeMill: batchEdit.codeMill || "",
+      codeSartor: batchEdit.codeSartor || "",
+    });
+    setBatchEditError(null);
+  }, [batchEdit, batchEditForm]);
+  useEffect(() => {
+    if (batchEditSubmissionId == null) return;
+    if (batchEditFetcher.state !== "idle") return;
+    const data = batchEditFetcher.data;
+    if (data?.ok) {
+      closeBatchEdit();
+      revalidate();
+    } else if (data?.intent === "batch.editMeta") {
+      setBatchEditError(data.error || "Unable to update batch.");
+    }
+    setBatchEditSubmissionId(null);
+  }, [
+    batchEditSubmissionId,
+    batchEditFetcher.state,
+    batchEditFetcher.data,
+    closeBatchEdit,
+    revalidate,
+  ]);
+  useEffect(() => {
+    closeBatchEdit();
+  }, [product.id, closeBatchEdit]);
   const filtered = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     let arr = productChoices as any[];
@@ -713,12 +865,37 @@ export default function ProductDetailRoute() {
       arr = arr.filter((p) => (p._count?.productLines ?? 0) === 0);
     return arr;
   }, [productChoices, pickerSearch, assemblyItemOnly]);
+  const handleBatchEditSubmit = batchEditForm.handleSubmit((values) => {
+    if (!batchEdit) return;
+    const fd = new FormData();
+    fd.set("_intent", "batch.editMeta");
+    fd.set("batchId", String(batchEdit.batchId));
+    fd.set("name", values.name ?? "");
+    fd.set("codeMill", values.codeMill ?? "");
+    fd.set("codeSartor", values.codeSartor ?? "");
+    setBatchEditError(null);
+    setBatchEditSubmissionId(Date.now());
+    batchEditFetcher.submit(fd, { method: "post" });
+  });
+  const batchEditBusy = batchEditFetcher.state !== "idle";
 
   // Normalize arrays/records for safe rendering across loader branches
   const lines = useMemo(
     () => ((movements as any[]) || []).filter(Boolean),
     [movements]
   );
+  const deletePhrase = PRODUCT_DELETE_PHRASE;
+  const normalizedDeleteInput = deleteConfirmation
+    .replace(/\u2019/g, "'")
+    .trim();
+  const deleteReady = normalizedDeleteInput === deletePhrase;
+  const deleteActionResult =
+    actionData &&
+    typeof actionData === "object" &&
+    (actionData as any).intent === "delete"
+      ? (actionData as { intent: string; error?: string })
+      : null;
+  const deleteError = deleteActionResult?.error;
   const headers = useMemo(
     () => ((movementHeaders as any[]) || []).filter(Boolean),
     [movementHeaders]
@@ -903,25 +1080,10 @@ export default function ProductDetailRoute() {
                       size="xs"
                       variant="light"
                       onClick={() => {
-                        // open product-level amendment using current filtered batch snapshot
-                        // const rows: BatchRowLite[] = filteredBatches.map(
-                        //   (r: any) => ({
-                        //     batchId: r.batch_id,
-                        //     locationId: r.location_id,
-                        //     locationName: r.location_name,
-                        //     name: r.batch_name,
-                        //     codeMill: r.code_mill,
-                        //     codeSartor: r.code_sartor,
-                        //     qty: Number(r.qty || 0),
-                        //   })
-                        // );
-                        // setActiveBatch({ rows });
-                        // open amendment modal with all batches
-                        // console.log(
-                        //   "!! amend all with stockByBatch",
-                        //   stockByBatch
-                        // );
-                        setActiveBatch({ rows: stockByBatch });
+                        const rows: BatchRowLite[] = filteredBatchRowsLite.map(
+                          (r) => ({ ...r })
+                        );
+                        setActiveBatch({ rows });
                         setAmendProductOpen(true);
                       }}
                     >
@@ -990,6 +1152,20 @@ export default function ProductDetailRoute() {
                             </Menu.Target>
                             <Menu.Dropdown>
                               <Menu.Item
+                                disabled={row.batch_id == null}
+                                onClick={() => {
+                                  if (row.batch_id == null) return;
+                                  setBatchEdit({
+                                    batchId: Number(row.batch_id),
+                                    name: row.batch_name ?? "",
+                                    codeMill: row.code_mill ?? "",
+                                    codeSartor: row.code_sartor ?? "",
+                                  });
+                                }}
+                              >
+                                Edit details
+                              </Menu.Item>
+                              <Menu.Item
                                 onClick={() => {
                                   setActiveBatch(row);
                                   setAmendBatchOpen(true);
@@ -1015,6 +1191,110 @@ export default function ProductDetailRoute() {
               </Card.Section>
             </Card>
             {/* Modals */}
+            <Modal
+              opened={deleteModalOpen}
+              onClose={() => {
+                setDeleteModalOpen(false);
+                setDeleteConfirmation("");
+              }}
+              title="Delete Product"
+              centered
+            >
+              <Form method="post">
+                <Stack gap="sm">
+                  <input type="hidden" name="_intent" value="delete" />
+                  <Text size="sm" c="dimmed">
+                    This action cannot be undone. Type the confirmation phrase
+                    to proceed.
+                  </Text>
+                  <TextInput
+                    name="confirmDelete"
+                    label={`Type ${deletePhrase}`}
+                    placeholder={deletePhrase}
+                    value={deleteConfirmation}
+                    onChange={(e) =>
+                      setDeleteConfirmation(e.currentTarget.value)
+                    }
+                    autoComplete="off"
+                  />
+                  {deleteError ? (
+                    <Text size="sm" c="red">
+                      {deleteError}
+                    </Text>
+                  ) : null}
+                  <Group justify="flex-end" gap="sm">
+                    <Button
+                      variant="default"
+                      type="button"
+                      onClick={() => {
+                        setDeleteModalOpen(false);
+                        setDeleteConfirmation("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      color="red"
+                      type="submit"
+                      disabled={!deleteReady || busy}
+                      loading={busy}
+                    >
+                      Delete
+                    </Button>
+                  </Group>
+                </Stack>
+              </Form>
+            </Modal>
+            <Modal
+              opened={!!batchEdit}
+              onClose={closeBatchEdit}
+              title="Edit Batch Details"
+              centered
+              size="sm"
+            >
+              {batchEdit ? (
+                <form onSubmit={handleBatchEditSubmit}>
+                  <Stack gap="sm">
+                    <TextInput
+                      label="Batch name"
+                      placeholder="Optional display name"
+                      {...batchEditForm.register("name")}
+                    />
+                    <TextInput
+                      label="Mill code"
+                      placeholder="Enter mill code"
+                      {...batchEditForm.register("codeMill")}
+                    />
+                    <TextInput
+                      label="Sartor code"
+                      placeholder="Enter Sartor code"
+                      {...batchEditForm.register("codeSartor")}
+                    />
+                    {batchEditError ? (
+                      <Text size="sm" c="red">
+                        {batchEditError}
+                      </Text>
+                    ) : null}
+                    <Group justify="flex-end" gap="sm">
+                      <Button
+                        variant="default"
+                        type="button"
+                        onClick={closeBatchEdit}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        loading={batchEditBusy}
+                        disabled={batchEditBusy}
+                      >
+                        Save
+                      </Button>
+                    </Group>
+                  </Stack>
+                </form>
+              ) : null}
+            </Modal>
             <InventoryAmendmentModal
               opened={amendBatchOpen}
               onClose={() => setAmendBatchOpen(false)}
@@ -1230,13 +1510,17 @@ export default function ProductDetailRoute() {
           </div>
         </Stack>
       </HotkeyAwareModal>
-      <Group justify="space-between" align="center">
-        <Form method="post">
-          <input type="hidden" name="_intent" value="delete" />
-          <Button color="red" variant="light" type="submit" disabled={busy}>
-            {busy ? "Deleting..." : "Delete product"}
-          </Button>
-        </Form>
+      <Group justify="space-between" align="flex-start">
+        <Button
+          color="red"
+          variant="light"
+          onClick={() => {
+            setDeleteConfirmation("");
+            setDeleteModalOpen(true);
+          }}
+        >
+          Delete product
+        </Button>
         <refreshFetcher.Form method="post">
           <input type="hidden" name="_intent" value="stock.refresh" />
           <Button

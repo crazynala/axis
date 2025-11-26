@@ -20,6 +20,14 @@ export const companyMainFields: FieldConfig[] = [
     findOp: "equals",
   },
   {
+    name: "isConsignee",
+    label: "Consignee",
+    widget: "triBool",
+    findOp: "equals",
+    showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
+    hiddenInModes: ["find"],
+  },
+  {
     name: "isSupplier",
     label: "Supplier",
     widget: "triBool",

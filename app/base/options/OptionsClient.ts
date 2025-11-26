@@ -9,6 +9,8 @@ export type OptionsData = {
   companyAllOptions?: Option[];
   customerOptions: Option[];
   customerAllOptions?: Option[];
+  consigneeOptions?: Option[];
+  consigneeAllOptions?: Option[];
   supplierOptions: Option[];
   supplierAllOptions?: Option[];
   carrierOptions: Option[];

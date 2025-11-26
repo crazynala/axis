@@ -1,4 +1,5 @@
-import { prisma } from "./prisma.server";
+import type { Prisma } from "@prisma/client";
+import { prisma, refreshProductStockSnapshot } from "./prisma.server";
 
 type CutConsumptionLine = {
   batchId: number;
@@ -11,18 +12,42 @@ type CutConsumption = {
   lines: CutConsumptionLine[];
 };
 
-export async function createCutActivity(options: { assemblyId: number; jobId: number; activityDate: Date; qtyBreakdown: number[]; notes?: string | null; consumptions: CutConsumption[] }) {
-  const { assemblyId, jobId, activityDate, qtyBreakdown, notes, consumptions } = options;
-  const totalCut = (qtyBreakdown || []).reduce((t, n) => (Number.isFinite(n) ? t + (n as number) : t), 0);
+export async function createCutActivity(options: {
+  assemblyId: number;
+  jobId: number;
+  activityDate: Date;
+  qtyBreakdown: number[];
+  notes?: string | null;
+  consumptions: CutConsumption[];
+  groupKey?: string | null;
+  refreshStockSnapshot?: boolean;
+}) {
+  const {
+    assemblyId,
+    jobId,
+    activityDate,
+    qtyBreakdown,
+    notes,
+    consumptions,
+    groupKey,
+    refreshStockSnapshot = true,
+  } = options;
+  const totalCut = (qtyBreakdown || []).reduce(
+    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
+    0
+  );
   console.log("[activity] createCutActivity begin", {
     assemblyId,
     jobId,
     activityDate: activityDate?.toISOString?.() || activityDate,
     totalCut,
-    lines: (consumptions || []).reduce((t, c) => t + (c?.lines?.length || 0), 0),
+    lines: (consumptions || []).reduce(
+      (t, c) => t + (c?.lines?.length || 0),
+      0
+    ),
   });
 
-  return await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     // Create the assembly activity first
     const activity = await tx.assemblyActivity.create({
       data: {
@@ -34,12 +59,15 @@ export async function createCutActivity(options: { assemblyId: number; jobId: nu
         qtyBreakdown: qtyBreakdown as any,
         quantity: totalCut,
         notes: notes ?? null,
+        groupKey: groupKey ?? null,
       },
     });
 
     // For each costing selection, create ProductMovements grouped by batch location
     for (const cons of consumptions || []) {
-      const rawLines = (cons?.lines || []).filter((l) => Number(l.qty) > 0 && Number.isFinite(Number(l.qty)));
+      const rawLines = (cons?.lines || []).filter(
+        (l) => Number(l.qty) > 0 && Number.isFinite(Number(l.qty))
+      );
       if (!rawLines.length) continue;
 
       // Fetch costing to determine the productId for the header
@@ -75,9 +103,15 @@ export async function createCutActivity(options: { assemblyId: number; jobId: nu
       }
 
       for (const [locId, lines] of byLocation.entries()) {
-        const totalQty = lines.reduce((t, l) => t + Math.abs(Number(l.qty) || 0), 0);
+        const totalQty = lines.reduce(
+          (t, l) => t + Math.abs(Number(l.qty) || 0),
+          0
+        );
         // Prefer costing.productId; fallback to first line's productId
-        const headerProductId = costing?.productId ?? lines.find((l) => l.productId != null)?.productId ?? undefined;
+        const headerProductId =
+          costing?.productId ??
+          lines.find((l) => l.productId != null)?.productId ??
+          undefined;
         const movement = await tx.productMovement.create({
           data: {
             movementType: "Assembly",
@@ -97,7 +131,9 @@ export async function createCutActivity(options: { assemblyId: number; jobId: nu
             data: {
               movementId: movement.id,
               productMovementId: movement.id,
-              productId: (line.productId ?? headerProductId) as number | undefined,
+              productId: (line.productId ?? headerProductId) as
+                | number
+                | undefined,
               batchId: line.batchId,
               costingId: cons.costingId,
               quantity: -Math.abs(Number(line.qty)),
@@ -110,4 +146,184 @@ export async function createCutActivity(options: { assemblyId: number; jobId: nu
 
     return activity;
   });
+
+  if (refreshStockSnapshot) {
+    await refreshProductStockSnapshot();
+  }
+  return result;
+}
+
+type MakeInventoryParams = {
+  activityId: number;
+  assemblyId: number;
+  jobId: number;
+  qtyBreakdown: number[];
+  activityDate: Date;
+  groupKey?: string | null;
+};
+
+export async function ensureMakeInventoryArtifacts(
+  tx: Prisma.TransactionClient,
+  params: MakeInventoryParams
+) {
+  const {
+    activityId,
+    assemblyId,
+    jobId,
+    qtyBreakdown,
+    activityDate,
+    groupKey,
+  } = params;
+  const totalMake = (qtyBreakdown || []).reduce(
+    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
+    0
+  );
+  if (totalMake <= 0) return;
+
+  const [assembly, job] = await Promise.all([
+    tx.assembly.findUnique({
+      where: { id: assemblyId },
+      select: { id: true, name: true, productId: true },
+    }),
+    tx.job.findUnique({
+      where: { id: jobId },
+      select: {
+        id: true,
+        name: true,
+        projectCode: true,
+        stockLocationId: true,
+      },
+    }),
+  ]);
+  if (!assembly || !assembly.productId || !job) {
+    console.warn(
+      "[activity.make] Missing assembly/job/product context; skipping inventory movement",
+      { activityId, assemblyId, jobId }
+    );
+    return;
+  }
+
+  const identifier = (job.projectCode || "").trim() || `Job ${job.id}`;
+  const jobName = (job.name || "").trim();
+  const assemblyName = (assembly.name || `Assembly ${assembly.id}`).trim();
+  const batchName = [identifier, jobName, assemblyName]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  let batch = await tx.batch.findFirst({
+    where: {
+      productId: assembly.productId,
+      jobId: job.id,
+      assemblyId: assembly.id,
+      name: batchName,
+    },
+  });
+  if (!batch) {
+    batch = await tx.batch.create({
+      data: {
+        productId: assembly.productId,
+        jobId: job.id,
+        assemblyId: assembly.id,
+        locationId: job.stockLocationId ?? undefined,
+        name: batchName,
+        receivedAt: activityDate,
+        source: "Assembly Make",
+      },
+    });
+  } else {
+    const updates: Record<string, unknown> = {};
+    if ((batch.name || "") !== batchName) updates.name = batchName;
+    if ((batch.locationId ?? null) !== (job.stockLocationId ?? null)) {
+      updates.locationId = job.stockLocationId ?? null;
+    }
+    if (Object.keys(updates).length) {
+      batch = await tx.batch.update({ where: { id: batch.id }, data: updates });
+    }
+  }
+
+  const movement = await tx.productMovement.create({
+    data: {
+      movementType: "Assembly",
+      date: activityDate,
+      jobId: job.id,
+      assemblyId: assembly.id,
+      assemblyActivityId: activityId,
+      productId: assembly.productId,
+      locationInId: job.stockLocationId ?? undefined,
+      quantity: totalMake,
+      notes: "Assembly make output",
+      groupKey: groupKey ?? null,
+    },
+  });
+
+  await tx.productMovementLine.create({
+    data: {
+      movementId: movement.id,
+      productMovementId: movement.id,
+      productId: assembly.productId,
+      batchId: batch.id,
+      quantity: Math.abs(totalMake),
+      notes: "Assembly make output",
+    },
+  });
+}
+
+export async function createMakeActivity(options: {
+  assemblyId: number;
+  jobId: number;
+  activityDate: Date;
+  qtyBreakdown: number[];
+  notes?: string | null;
+  groupKey?: string | null;
+  refreshStockSnapshot?: boolean;
+}) {
+  const {
+    assemblyId,
+    jobId,
+    activityDate,
+    qtyBreakdown,
+    notes,
+    groupKey,
+    refreshStockSnapshot = true,
+  } = options;
+  const totalMake = (qtyBreakdown || []).reduce(
+    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
+    0
+  );
+  console.log("[activity] createMakeActivity begin", {
+    assemblyId,
+    jobId,
+    activityDate: activityDate?.toISOString?.() || activityDate,
+    totalMake,
+  });
+  const activity = await prisma.$transaction(async (tx) => {
+    const created = await tx.assemblyActivity.create({
+      data: {
+        assemblyId,
+        jobId,
+        name: "Make",
+        activityType: "make",
+        activityDate,
+        qtyBreakdown: qtyBreakdown as any,
+        quantity: totalMake,
+        notes: notes ?? null,
+        groupKey: groupKey ?? null,
+      },
+    });
+    await ensureMakeInventoryArtifacts(tx, {
+      activityId: created.id,
+      assemblyId,
+      jobId,
+      qtyBreakdown,
+      activityDate,
+      groupKey,
+    });
+    return created;
+  });
+  if (refreshStockSnapshot) {
+    await refreshProductStockSnapshot();
+  }
+  return activity;
 }

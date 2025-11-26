@@ -287,6 +287,14 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
   },
 });
 
+type NavLinkItem = { to: string; label: string; icon?: ReactNode };
+type NavDividerItem = { kind: "divider"; key: string };
+type NavMenuItem = NavLinkItem | NavDividerItem;
+
+function isNavDividerItem(item: NavMenuItem): item is NavDividerItem {
+  return (item as NavDividerItem).kind === "divider";
+}
+
 export default function App() {
   const data = useLoaderData<typeof loader>();
   const colorScheme = data.colorScheme;
@@ -298,7 +306,7 @@ export default function App() {
   const isAdmin = location.pathname.startsWith("/admin");
   const isSuppressAppShell = location.pathname.includes("fullzoom");
 
-  const navTopItems = [
+  const navTopItems: NavMenuItem[] = [
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
     { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
@@ -308,13 +316,14 @@ export default function App() {
       icon: <IconBasketDollar />,
       label: "Purchase Orders",
     },
-    { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/shipments", icon: <IconTruck />, label: "Shipments" },
+    { kind: "divider", key: "nav-top-after-shipments" },
+    { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
     { to: "/analytics", icon: <IconChartHistogram />, label: "Analytics" },
     // Admin-only tools have moved under /admin
   ];
-  const navBottomItems = [
+  const navBottomItems: NavLinkItem[] = [
     {
       to: "/admin/value-lists/Category",
       icon: <IconSettings />,
@@ -394,8 +403,8 @@ function AppShellLayout({
   disabled,
 }: {
   desktopNavOpenedInitial: boolean;
-  navTopItems: { to: string; label: string; icon?: ReactNode }[];
-  navBottomItems: { to: string; label: string; icon?: ReactNode }[];
+  navTopItems: NavMenuItem[];
+  navBottomItems: NavLinkItem[];
   disabled?: boolean;
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
@@ -421,6 +430,49 @@ function AppShellLayout({
   }, [desktopNavOpened]);
 
   // Color scheme toggle moved to settings page
+  const renderNavLinkItem = (item: NavLinkItem) => {
+    let href = useNavHref(item.to);
+    const insideModule =
+      location.pathname === item.to ||
+      location.pathname.startsWith(`${item.to}/`);
+    if (insideModule) {
+      href = item.to;
+    }
+    if (href === item.to) {
+      const search = getSavedIndexSearch(item.to);
+      if (search) href = `${item.to}${search}`;
+    }
+    const onClick = (e: any) => {
+      if (e.altKey) {
+        e.preventDefault();
+        clearSavedNavLocation(item.to);
+        navigate(item.to);
+      }
+    };
+    if (desktopNavOpened) {
+      return (
+        <NavLink
+          component={RemixNavLink}
+          label={item.label}
+          to={href}
+          leftSection={item.icon}
+          key={item.to}
+          onClick={onClick}
+        />
+      );
+    }
+    return (
+      <NavLink
+        px="xs"
+        component={RemixNavLink}
+        label={item.icon}
+        to={href}
+        key={item.to}
+        onClick={onClick}
+      />
+    );
+  };
+
   return (
     <AppShell
       disabled={disabled}
@@ -463,106 +515,20 @@ function AppShellLayout({
         <Stack justify="space-between" style={{ height: "100%" }}>
           <Stack gap="xs">
             {navTopItems.map((item) => {
-              // Default to restoring last saved location when coming from another module
-              let href = useNavHref(item.to);
-              // If we're already inside this module, prefer its index instead of restoring deep path
-              const insideModule =
-                location.pathname === item.to ||
-                location.pathname.startsWith(`${item.to}/`);
-              if (insideModule) {
-                href = item.to;
-              }
-              // If targeting the module index, include saved index filters for a smooth restore
-              if (href === item.to) {
-                const search = getSavedIndexSearch(item.to);
-                if (search) href = `${item.to}${search}`;
-              }
-              if (desktopNavOpened) {
+              if (isNavDividerItem(item)) {
                 return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.label}
-                    to={href}
-                    leftSection={item.icon}
-                    key={item.to}
-                    onClick={(e: any) => {
-                      if (e.altKey) {
-                        e.preventDefault();
-                        clearSavedNavLocation(item.to);
-                        navigate(item.to);
-                      }
-                    }}
-                  />
-                );
-              } else {
-                return (
-                  <NavLink
-                    px="xs"
-                    component={RemixNavLink}
-                    label={item.icon}
-                    to={href}
-                    key={item.to}
-                    onClick={(e: any) => {
-                      if (e.altKey) {
-                        e.preventDefault();
-                        clearSavedNavLocation(item.to);
-                        navigate(item.to);
-                      }
-                    }}
+                  <Divider
+                    key={item.key}
+                    my="xs"
+                    mx={desktopNavOpened ? undefined : "xs"}
                   />
                 );
               }
+              return renderNavLinkItem(item);
             })}
           </Stack>
           <Stack gap="xs">
-            {navBottomItems.map((item) => {
-              let href = useNavHref(item.to);
-              // Similar behavior for bottom items: if already within the target section, go to its index
-              const insideModule =
-                location.pathname === item.to ||
-                location.pathname.startsWith(`${item.to}/`);
-              if (insideModule) {
-                href = item.to;
-              }
-              if (href === item.to) {
-                const search = getSavedIndexSearch(item.to);
-                if (search) href = `${item.to}${search}`;
-              }
-              if (desktopNavOpened) {
-                return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.label}
-                    to={href}
-                    leftSection={item.icon}
-                    key={item.to}
-                    onClick={(e: any) => {
-                      if (e.altKey) {
-                        e.preventDefault();
-                        clearSavedNavLocation(item.to);
-                        navigate(item.to);
-                      }
-                    }}
-                  />
-                );
-              } else {
-                return (
-                  <NavLink
-                    component={RemixNavLink}
-                    label={item.icon}
-                    to={href}
-                    key={item.to}
-                    onClick={(e: any) => {
-                      if (e.altKey) {
-                        e.preventDefault();
-                        clearSavedNavLocation(item.to);
-                        navigate(item.to);
-                      }
-                    }}
-                  />
-                );
-              }
-            })}
+            {navBottomItems.map((item) => renderNavLinkItem(item))}
             <Divider />
             <Form method="post" action="/logout">
               <button

@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
 import { useRecordContext } from "../base/record/RecordContext";
@@ -12,9 +12,9 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/contacts");
   const company = await prisma.company.findUnique({ where: { id } });
-  if (!company) throw new Response("Not Found", { status: 404 });
+  if (!company) return redirect("/contacts");
   return json({ company });
 }
 

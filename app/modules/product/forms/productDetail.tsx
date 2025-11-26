@@ -79,31 +79,46 @@ export const productPricingFields: FieldConfig[] = [
     label: "Cost Price",
     widget: "numberRange",
     findOp: "range",
+    readOnlyIf: ({ mode, ctx }) => {
+      if (mode === "find") return false;
+      return Boolean((ctx as any)?.costPriceLocked);
+    },
     rightSection: ({ ctx }) => {
       const has = (ctx as any)?.hasCostTiers;
       const open = (ctx as any)?.openCostTiersModal as (() => void) | undefined;
-      if (!has || !open) return null;
+      const locked = Boolean((ctx as any)?.costPriceLocked);
+      if (!has && !locked) return null;
       return (
-        // eslint-disable-next-line jsx-a11y/aria-role
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            open();
-          }}
-          title="View cost tiers"
+        <div
           style={{
-            background: "transparent",
-            border: 0,
-            cursor: "pointer",
-            padding: 0,
             display: "flex",
             alignItems: "center",
+            gap: 6,
           }}
         >
-          <span style={{ fontWeight: 700 }}>≡</span>
-        </button>
+          {has && open ? (
+            // eslint-disable-next-line jsx-a11y/aria-role
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                open();
+              }}
+              title="View cost tiers"
+              style={{
+                background: "transparent",
+                border: 0,
+                cursor: "pointer",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>≡</span>
+            </button>
+          ) : null}
+        </div>
       );
     },
   },

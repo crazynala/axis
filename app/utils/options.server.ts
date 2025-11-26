@@ -11,6 +11,8 @@ export type OptionsData = {
   companyAllOptions: Option[];
   customerOptions: Option[];
   customerAllOptions: Option[];
+  consigneeOptions?: Option[];
+  consigneeAllOptions?: Option[];
   supplierOptions: Option[];
   supplierAllOptions: Option[];
   carrierOptions: Option[];
@@ -51,6 +53,7 @@ export async function loadOptions(): Promise<OptionsData> {
         tax: v.taxCodeOptions.length,
         productType: v.productTypeOptions.length,
         customers: v.customerOptions.length,
+        consignees: v.consigneeOptions?.length ?? 0,
         suppliers: v.supplierOptions.length,
         carriers: v.carrierOptions.length,
         locations: v.locationOptions.length,
@@ -70,6 +73,8 @@ export async function loadOptions(): Promise<OptionsData> {
     companies_all,
     customers,
     customers_all,
+    consignees,
+    consignees_all,
     suppliers,
     suppliers_all,
     productTypesVL,
@@ -106,6 +111,21 @@ export async function loadOptions(): Promise<OptionsData> {
     }),
     prisma.company.findMany({
       where: { isCustomer: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.company.findMany({
+      where: {
+        isConsignee: true,
+        OR: [{ isInactive: false }, { isInactive: null }],
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.company.findMany({
+      where: { isConsignee: true },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
@@ -178,6 +198,9 @@ export async function loadOptions(): Promise<OptionsData> {
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
   const customersAllList =
     customers_all.length > 0 ? customers_all : companies_all;
+  const consigneesAllList =
+    consignees_all.length > 0 ? consignees_all : consignees;
+  const consigneesList = consignees.length > 0 ? consignees : consigneesAllList;
   const suppliersAllList =
     suppliers_all.length > 0 ? suppliers_all : companies_all;
   const customersList = customers.length > 0 ? customers : customersAllList;
@@ -222,6 +245,14 @@ export async function loadOptions(): Promise<OptionsData> {
     customerAllOptions: customersAllList.map((s) => ({
       value: String(s.id),
       label: s.name ?? String(s.id),
+    })),
+    consigneeOptions: consigneesList.map((c) => ({
+      value: String(c.id),
+      label: c.name ?? String(c.id),
+    })),
+    consigneeAllOptions: consigneesAllList.map((c) => ({
+      value: String(c.id),
+      label: c.name ?? String(c.id),
     })),
     supplierOptions: suppliersList.map((s) => ({
       value: String(s.id),
@@ -339,6 +370,7 @@ export async function loadOptions(): Promise<OptionsData> {
     tax: value.taxCodeOptions.length,
     productType: value.productTypeOptions.length,
     customers: value.customerOptions.length,
+    consignees: value.consigneeOptions?.length ?? 0,
     suppliers: value.supplierOptions.length,
     carriers: value.carrierOptions.length,
     locations: value.locationOptions.length,

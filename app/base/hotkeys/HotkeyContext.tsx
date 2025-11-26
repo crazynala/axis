@@ -15,6 +15,31 @@ interface HotkeyApi {
 
 const HotkeyContext = createContext<HotkeyApi | null>(null);
 
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    const inputType = ((target as HTMLInputElement).type || "").toLowerCase();
+    return !NON_TEXT_INPUT_TYPES.has(inputType);
+  }
+  return false;
+}
+
 export const HotkeyProvider: React.FC<
   React.PropsWithChildren<{ disabled?: boolean }>
 > = ({ children, disabled }) => {
@@ -36,6 +61,7 @@ export const HotkeyProvider: React.FC<
     []
   );
   const handleKeydown = useCallback((e: KeyboardEvent) => {
+    if (isEditableTarget(e.target)) return;
     const arr = stackRef.current;
     for (let i = arr.length - 1; i >= 0; i--) {
       try {

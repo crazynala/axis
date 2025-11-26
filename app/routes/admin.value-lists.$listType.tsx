@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import type { ValueListType } from "@prisma/client";
 import {
@@ -51,10 +51,10 @@ const listTypeLabels: Record<ValueListType, string> = {
 };
 
 function parseListType(raw?: string | null): ValueListType {
-  if (!raw) throw new Response("Not Found", { status: 404 });
+  if (!raw) throw redirect("/admin/value-lists");
   const normalized = raw.toLowerCase();
   const match = LIST_TYPES.find((value) => value.toLowerCase() === normalized);
-  if (!match) throw new Response("Not Found", { status: 404 });
+  if (!match) throw redirect("/admin/value-lists");
   return match;
 }
 

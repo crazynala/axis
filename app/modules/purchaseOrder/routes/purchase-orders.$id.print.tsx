@@ -1,6 +1,6 @@
 import { formatMoney, formatQuantity } from "../../../utils/format";
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { prisma } from "../../../utils/prisma.server";
 
@@ -20,7 +20,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       location: true,
     },
   });
-  if (!purchaseOrder) throw new Response("Not found", { status: 404 });
+  if (!purchaseOrder) return redirect("/purchase-orders");
 
   const subtotal = (purchaseOrder.lines || []).reduce((acc: number, l: any) => {
     const qty = Number(l.quantityOrdered ?? l.quantity ?? 0);

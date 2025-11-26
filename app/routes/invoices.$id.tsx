@@ -45,7 +45,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       company: { select: { id: true, name: true } },
     },
   });
-  if (!invoice) throw new Response("Not found", { status: 404 });
+  if (!invoice) return redirect("/invoices");
 
   // Totals
   const totals = (invoice.lines || []).reduce(

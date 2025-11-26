@@ -10,10 +10,12 @@ import {
   TextInput,
   Title,
   SegmentedControl,
+  Select,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useSubmit } from "@remix-run/react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { useOptions } from "~/base/options/OptionsContext";
 
 export type BatchRowLite = {
   batchId: number;
@@ -40,6 +42,8 @@ export function InventoryAmendmentModal(props: {
 }) {
   const { opened, onClose, productId, mode, date, batch, batches } = props;
   const submit = useSubmit();
+  const options = useOptions();
+  const locationOptions = options?.locationOptions || [];
   type CreateRow = {
     name?: string;
     codeMill?: string;
@@ -50,7 +54,7 @@ export function InventoryAmendmentModal(props: {
 
   const form = useForm<{
     when: Date | null;
-    scope: "all" | "nonzero";
+    scope: "all" | "nonzero" | "adjusted";
     newQty: number | ""; // batch mode
     rows: BulkRow[]; // product mode existing batches
     newRows: CreateRow[]; // product mode creations
@@ -68,6 +72,20 @@ export function InventoryAmendmentModal(props: {
   const { control, handleSubmit, watch } = form;
   const rowsFA = useFieldArray({ control, name: "rows" });
   const newRowsFA = useFieldArray({ control, name: "newRows" });
+
+  const renderBatchCodes = (src?: {
+    codeMill?: string | null;
+    codeSartor?: string | null;
+    name?: string | null;
+    batchId?: number;
+  }) => {
+    if (!src) return "";
+    const parts = [src.codeMill, src.codeSartor]
+      .map((v) => (v ?? "").toString().trim())
+      .filter((v) => v.length);
+    if (parts.length) return parts.join(" | ");
+    return src.name || String(src.batchId ?? "");
+  };
 
   // Reset the form whenever inputs change (modal can open with different data)
   useEffect(() => {
@@ -123,7 +141,7 @@ export function InventoryAmendmentModal(props: {
       opened={opened}
       onClose={onClose}
       title={mode === "batch" ? "Amend Batch Quantity" : "Amend Product Stock"}
-      size={mode === "batch" ? "md" : "lg"}
+      size={mode === "batch" ? "lg" : "xl"}
       centered
     >
       {mode === "batch" && batch && (
@@ -179,12 +197,7 @@ export function InventoryAmendmentModal(props: {
             </Table.Thead>
             <Table.Tbody>
               <Table.Tr>
-                <Table.Td>
-                  {batch.name ||
-                    batch.codeMill ||
-                    batch.codeSartor ||
-                    batch.batchId}
-                </Table.Td>
+                <Table.Td>{renderBatchCodes(batch)}</Table.Td>
                 <Table.Td>
                   {batch.locationName || batch.locationId || ""}
                 </Table.Td>
@@ -300,9 +313,7 @@ export function InventoryAmendmentModal(props: {
             <Table.Tbody>
               {filteredRows.map(({ row, idx }) => (
                 <Table.Tr key={row.batchId}>
-                  <Table.Td>
-                    {row.name || row.codeMill || row.codeSartor || row.batchId}
-                  </Table.Td>
+                  <Table.Td>{renderBatchCodes(row)}</Table.Td>
                   <Table.Td>
                     {row.locationName || row.locationId || ""}
                   </Table.Td>
@@ -336,7 +347,7 @@ export function InventoryAmendmentModal(props: {
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Mill</Table.Th>
                 <Table.Th>Sartor</Table.Th>
-                <Table.Th>Location ID</Table.Th>
+                <Table.Th>Location</Table.Th>
                 <Table.Th>Qty</Table.Th>
                 <Table.Th></Table.Th>
               </Table.Tr>
@@ -375,18 +386,41 @@ export function InventoryAmendmentModal(props: {
                     <Controller
                       control={control}
                       name={`newRows.${idx}.locationId` as const}
-                      render={({ field }) => (
-                        <NumberInput
-                          value={(field.value as any) ?? null}
-                          onChange={(v) =>
-                            field.onChange(
-                              v === "" || v == null ? null : (Number(v) as any)
-                            )
-                          }
-                          hideControls
-                          w={100}
-                        />
-                      )}
+                      render={({ field }) =>
+                        locationOptions.length ? (
+                          <Select
+                            data={locationOptions}
+                            searchable
+                            clearable
+                            placeholder="Select location"
+                            value={
+                              field.value == null || field.value === ""
+                                ? null
+                                : String(field.value)
+                            }
+                            onChange={(val) =>
+                              field.onChange(
+                                val == null || val === "" ? null : Number(val)
+                              )
+                            }
+                            nothingFoundMessage="No locations"
+                            comboboxProps={{ withinPortal: false }}
+                          />
+                        ) : (
+                          <NumberInput
+                            value={(field.value as any) ?? null}
+                            onChange={(v) =>
+                              field.onChange(
+                                v === "" || v == null
+                                  ? null
+                                  : (Number(v) as any)
+                              )
+                            }
+                            hideControls
+                            w={100}
+                          />
+                        )
+                      }
                     />
                   </Table.Td>
                   <Table.Td>

@@ -44,7 +44,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     },
   });
   console.log("Returning shipment:", shipment);
-  if (!shipment) throw new Response("Not found", { status: 404 });
+  if (!shipment) return redirect("/shipments");
   return json({ shipment });
 }
 

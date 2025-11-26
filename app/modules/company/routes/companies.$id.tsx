@@ -42,9 +42,9 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/companies");
   const company = await prisma.company.findUnique({ where: { id } });
-  if (!company) throw new Response("Not Found", { status: 404 });
+  if (!company) return redirect("/companies");
   // Load vendor/customer mappings if this company is a customer
   const mappings = await prisma.vendorCustomerPricing.findMany({
     where: { customerId: id },
@@ -71,6 +71,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       name: (form.get("name") as string) || null,
       isCarrier: form.get("isCarrier") === "on",
       isCustomer: form.get("isCustomer") === "on",
+      isConsignee: form.get("isConsignee") === "on",
       isSupplier: form.get("isSupplier") === "on",
       isInactive: form.get("isInactive") === "on",
       notes: (form.get("notes") as string) || null,
@@ -153,6 +154,7 @@ export default function CompanyDetailRoute() {
     notes: string;
     isCarrier: boolean;
     isCustomer: boolean;
+    isConsignee: boolean;
     isSupplier: boolean;
     isInactive: boolean;
     defaultMarginOverride?: string | number | null;
@@ -165,6 +167,7 @@ export default function CompanyDetailRoute() {
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,
       isCustomer: !!company.isCustomer,
+      isConsignee: !!company.isConsignee,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
       defaultMarginOverride:
@@ -189,6 +192,7 @@ export default function CompanyDetailRoute() {
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,
       isCustomer: !!company.isCustomer,
+      isConsignee: !!company.isConsignee,
       isSupplier: !!company.isSupplier,
       isInactive: !!company.isInactive,
       defaultMarginOverride:
@@ -211,6 +215,7 @@ export default function CompanyDetailRoute() {
     notes: string;
     isCarrier: boolean;
     isCustomer: boolean;
+    isConsignee: boolean;
     isSupplier: boolean;
     isInactive: boolean;
     defaultMarginOverride?: string | number | null;
@@ -224,6 +229,7 @@ export default function CompanyDetailRoute() {
     if (values.notes) fd.set("notes", values.notes);
     if (values.isCarrier) fd.set("isCarrier", "on");
     if (values.isCustomer) fd.set("isCustomer", "on");
+    if (values.isConsignee) fd.set("isConsignee", "on");
     if (values.isSupplier) fd.set("isSupplier", "on");
     if (values.isInactive) fd.set("isInactive", "on");
     if (

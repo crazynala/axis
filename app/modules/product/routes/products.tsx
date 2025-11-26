@@ -53,6 +53,7 @@ export async function loader(args: LoaderFunctionArgs) {
     import("~/utils/table.server"),
     import("~/utils/views.server"),
   ]);
+  console.log("!! Product master loader");
   return runWithDbActivity("products.index", async () => {
     const url = new URL(args.request.url);
     const q = url.searchParams;
@@ -104,6 +105,21 @@ export async function loader(args: LoaderFunctionArgs) {
         : String(s)
             .normalize("NFD")
             .replace(/[\u0300-\u036f]/g, "");
+    const tokenize = (value: string | null) =>
+      (value || "")
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter(Boolean);
+    const buildTokenizedClause = (
+      value: string | null,
+      builder: (token: string) => Record<string, any>
+    ) => {
+      if (!value) return null;
+      const tokens = tokenize(value);
+      if (!tokens.length) return null;
+      if (tokens.length === 1) return builder(tokens[0]);
+      return { AND: tokens.map((token) => builder(token)) };
+    };
     const findKeys = PRODUCT_FIND_PARAM_KEYS.filter(
       (k) => !["view", "sort", "dir", "perPage", "q", "findReqs"].includes(k)
     );
@@ -149,17 +165,17 @@ export async function loader(args: LoaderFunctionArgs) {
       const simpleClauses: any[] = [];
       if (simpleBase && Object.keys(simpleBase).length > 0)
         simpleClauses.push(simpleBase);
-      if (values.name)
-        simpleClauses.push({
-          nameUnaccented: {
-            contains: unaccent(values.name),
-            mode: "insensitive",
-          },
-        });
-      if (values.sku)
-        simpleClauses.push({
-          sku: { contains: values.sku, mode: "insensitive" },
-        });
+      const nameClause = buildTokenizedClause(values.name || null, (token) => ({
+        nameUnaccented: {
+          contains: unaccent(token),
+          mode: "insensitive",
+        },
+      }));
+      if (nameClause) simpleClauses.push(nameClause);
+      const skuClause = buildTokenizedClause(values.sku || null, (token) => ({
+        sku: { contains: token, mode: "insensitive" },
+      }));
+      if (skuClause) simpleClauses.push(skuClause);
       if (values.description)
         simpleClauses.push({
           descriptionUnaccented: {
@@ -176,10 +192,17 @@ export async function loader(args: LoaderFunctionArgs) {
       const multi = decodeRequests(q.get("findReqs"));
       if (multi) {
         const interpreters: Record<string, (val: any) => any> = {
-          sku: (v) => ({ sku: { contains: v, mode: "insensitive" } }),
-          name: (v) => ({
-            nameUnaccented: { contains: unaccent(v), mode: "insensitive" },
-          }),
+          sku: (v) =>
+            buildTokenizedClause(String(v), (token) => ({
+              sku: { contains: token, mode: "insensitive" },
+            })),
+          name: (v) =>
+            buildTokenizedClause(String(v), (token) => ({
+              nameUnaccented: {
+                contains: unaccent(token),
+                mode: "insensitive",
+              },
+            })),
           description: (v) => ({
             descriptionUnaccented: {
               contains: unaccent(v),
@@ -332,7 +355,7 @@ export const shouldRevalidate = makeModuleShouldRevalidate(
   {
     // Block revalidation on child/detail routes and after non-GET mutations
     blockOnChild: true,
-    blockOnMutation: true,
+    blockOnMutation: false,
   }
 );
 

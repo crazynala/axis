@@ -3,7 +3,7 @@
 - [x] Support editing of Assembly name
 - [x] No states show in state transition button
 
-- [ ] Show single state button for groups
+- [x] Show single state button for groups
 - [ ] Add Costing Modal
 	- [ ] Typing into Search products... does nothing
 	- [ ] Default results different for single- vs multi-assembly
@@ -13,10 +13,10 @@
 - [x] Quantities table must be centered
 - [x] The recordcontext must show the number of assemblies, not the number of jobs. The job becomes the "parent". Remove extraneous Prev/Next buttons
 - [ ] Hitting Esc on job/assembly must take us back to job detail (not all the way back to job index)
-- [ ] Add record make
+- [x] Add record make
 - [ ] Add record ship
 - [ ] Add record defect
 	- [ ] Support defect for Cut or Sew
 - [ ] Form still dirty after saving (e.g. after updating order qty)
 - [ ] Assembly must have type (prod | SMS | PP | Keep)
-
+- [ ] Don't add the "Assembly make output" note to batches created from assembly

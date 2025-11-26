@@ -7,7 +7,7 @@ import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataT
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecords } from "../../../base/record/RecordContext";
 import { useEffect } from "react";
-import { formatUSD } from "../../../utils/format";
+import { formatShortDate, formatUSD } from "../../../utils/format";
 import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
@@ -76,7 +76,12 @@ export default function PurchaseOrdersIndexRoute() {
       width: 70,
       render: (r: any) => <Link to={`/purchase-orders/${r.id}`}>{r.id}</Link>,
     },
-    { accessor: "date", title: "Date", sortable: true },
+    {
+      accessor: "date",
+      title: "Date",
+      sortable: true,
+      render: (r: any) => formatShortDate(r.date),
+    },
     { accessor: "vendorName", title: "Vendor", sortable: true },
     { accessor: "consigneeName", title: "Consignee", sortable: true },
     { accessor: "locationName", title: "Location", sortable: true },

@@ -475,6 +475,8 @@ export async function getBatchesWithComputedQty(productId: number) {
     .map((b) => ({
       id: b.batchId,
       name: b.batchName || null,
+      codeSartor: b.codeSartor || null,
+      codeMill: b.codeMill || null,
       location:
         b.locationId != null
           ? { id: b.locationId, name: b.locationName || "" }

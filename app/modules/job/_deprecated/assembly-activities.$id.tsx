@@ -27,12 +27,12 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/assembly-activities");
   const activity = await prisma.assemblyActivity.findUnique({
     where: { id },
     include: { assembly: true, job: true },
   });
-  if (!activity) throw new Response("Not Found", { status: 404 });
+  if (!activity) return redirect("/assembly-activities");
   const assemblies = await prisma.assembly.findMany({
     select: { id: true, name: true },
   });

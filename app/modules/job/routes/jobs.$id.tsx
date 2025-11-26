@@ -78,12 +78,12 @@ export const meta: MetaFunction = () => [{ title: "Job" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/jobs");
   const job = await prisma.job.findUnique({
     where: { id },
     include: { assemblies: true, company: true, assemblyGroups: true },
   });
-  if (!job) throw new Response("Not Found", { status: 404 });
+  if (!job) return redirect("/jobs");
   // Activity counts per assembly (for delete gating)
   const asmIds = (job.assemblies || [])
     .map((a: any) => a.id)
@@ -95,7 +95,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
       where: { assemblyId: { in: asmIds } },
       _count: { assemblyId: true },
     });
-    for (const r of rows) activityCounts[r.assemblyId] = r._count.assemblyId;
+    for (const r of rows) {
+      const asmId = Number(r.assemblyId) || 0;
+      if (!asmId) continue;
+      activityCounts[asmId] = r._count.assemblyId;
+    }
   }
   // Gather product details for assemblies
   const productIds = Array.from(
@@ -163,7 +167,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/jobs");
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   if (intent === "find") {
@@ -728,6 +732,7 @@ export default function JobDetailRoute() {
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(true);
   const [assemblyOnly, setAssemblyOnly] = useState(true);
+  const [hoverGroupId, setHoverGroupId] = useState<number | null>(null);
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
     if (!q) return productChoices;
@@ -742,25 +747,65 @@ export default function JobDetailRoute() {
     });
     return map;
   }, [job.assemblies]);
+  const assemblyStatusMap =
+    (jobForm.watch("assemblyStatuses") as Record<string, string | undefined>) ||
+    {};
+  const assemblyWhiteboardMap =
+    (jobForm.watch("assemblyWhiteboards") as Record<
+      string,
+      string | undefined
+    >) || {};
   const handleAssemblyStatusChange = useCallback(
-    (asmId: number, next: string | null) => {
+    (asmIds: number | number[], next: string | null) => {
       if (!next) return;
-      jobForm.setValue(`assemblyStatuses.${asmId}` as any, next, {
-        shouldDirty: true,
-        shouldTouch: true,
+      const targets = Array.isArray(asmIds) ? asmIds : [asmIds];
+      targets.forEach((asmId) => {
+        jobForm.setValue(`assemblyStatuses.${asmId}` as any, next, {
+          shouldDirty: true,
+          shouldTouch: true,
+        });
       });
     },
     [jobForm]
   );
   const handleAssemblyWhiteboardChange = useCallback(
-    (asmId: number, next: string) => {
-      jobForm.setValue(`assemblyWhiteboards.${asmId}` as any, next, {
-        shouldDirty: true,
-        shouldTouch: true,
+    (asmIds: number | number[], next: string) => {
+      const targets = Array.isArray(asmIds) ? asmIds : [asmIds];
+      targets.forEach((asmId) => {
+        jobForm.setValue(`assemblyWhiteboards.${asmId}` as any, next, {
+          shouldDirty: true,
+          shouldTouch: true,
+        });
       });
     },
     [jobForm]
   );
+  const getAssemblyStatusValue = (asmId: number) => {
+    const raw =
+      assemblyStatusMap[String(asmId)] ??
+      (assembliesById.get(asmId)?.status as string | null);
+    return normalizeAssemblyState(raw ?? null) ?? "DRAFT";
+  };
+  const getGroupStatusValue = (asmIds: number[]) => {
+    const values = asmIds.map(getAssemblyStatusValue);
+    return { value: values[0], mixed: values.some((v) => v !== values[0]) };
+  };
+  const getMergedWhiteboardValue = (asmIds: number[]) => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    asmIds.forEach((asmId) => {
+      const rawValue =
+        assemblyWhiteboardMap[String(asmId)] ??
+        (assembliesById.get(asmId)?.statusWhiteboard as string | null) ??
+        "";
+      const key = rawValue.trim();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        merged.push(rawValue);
+      }
+    });
+    return merged.join(" | ");
+  };
 
   useEffect(() => {
     if (!qtyAsm) return;
@@ -1034,20 +1079,46 @@ export default function JobDetailRoute() {
                     : null;
                   const pos = getPos(idx);
                   const canDelete = (activityCounts?.[a.id] || 0) === 0;
-                  const statusField = `assemblyStatuses.${a.id}` as const;
-                  const statusValue = jobForm.watch(statusField);
-                  const resolvedStatus =
-                    normalizeAssemblyState(
-                      (statusValue as string | null) ??
-                        (a.status as string | null)
-                    ) ?? "DRAFT";
-                  const whiteboardField =
-                    `assemblyWhiteboards.${a.id}` as const;
-                  const whiteboardValue =
-                    jobForm.watch(whiteboardField) ??
+                  const groupMemberList =
+                    typeof a.assemblyGroupId === "number"
+                      ? groupMembers.get(a.assemblyGroupId)
+                      : null;
+                  const memberIds =
+                    groupMemberList && groupMemberList.length > 0
+                      ? groupMemberList
+                      : [a.id];
+                  const isGroupedRow = memberIds.length > 1;
+                  const isGroupLeader = isGroupedRow && pos === "first";
+                  const singleWhiteboardValue =
+                    assemblyWhiteboardMap[String(a.id)] ??
                     (a.statusWhiteboard || "");
+                  const statusSummary = isGroupedRow
+                    ? getGroupStatusValue(memberIds)
+                    : { value: getAssemblyStatusValue(a.id), mixed: false };
+                  const whiteboardSummary = isGroupedRow
+                    ? getMergedWhiteboardValue(memberIds)
+                    : singleWhiteboardValue;
+                  const isHovered =
+                    isGroupedRow &&
+                    hoverGroupId != null &&
+                    hoverGroupId === a.assemblyGroupId;
+                  const rowClassName =
+                    [
+                      isGroupedRow ? "asm-row-group" : "",
+                      isHovered ? "is-group-hovered" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                      .trim() || undefined;
                   return (
-                    <Table.Tr key={a.id}>
+                    <Table.Tr
+                      key={a.id}
+                      className={rowClassName}
+                      onMouseEnter={() =>
+                        setHoverGroupId(a.assemblyGroupId ?? null)
+                      }
+                      onMouseLeave={() => setHoverGroupId(null)}
+                    >
                       <Table.Td
                         align="center"
                         className={`asm-rail-cell ${pos ? "is-in-group" : ""} ${
@@ -1140,28 +1211,35 @@ export default function JobDetailRoute() {
                       <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
                       <Table.Td>
-                        <StateChangeButton
-                          value={resolvedStatus}
-                          defaultValue={resolvedStatus}
-                          onChange={(value) =>
-                            handleAssemblyStatusChange(a.id, value as string)
-                          }
-                          disabled={busy}
-                          config={assemblyStateConfig}
-                        />
+                        {(!isGroupedRow || isGroupLeader) && (
+                          <StateChangeButton
+                            value={statusSummary.value}
+                            defaultValue={statusSummary.value}
+                            onChange={(value) =>
+                              handleAssemblyStatusChange(
+                                isGroupedRow ? memberIds : a.id,
+                                value as string
+                              )
+                            }
+                            disabled={busy}
+                            config={assemblyStateConfig}
+                          />
+                        )}
                       </Table.Td>
                       <Table.Td>
-                        <TextInput
-                          size="xs"
-                          placeholder="Whiteboard"
-                          value={whiteboardValue}
-                          onChange={(e) =>
-                            handleAssemblyWhiteboardChange(
-                              a.id,
-                              e.currentTarget.value
-                            )
-                          }
-                        />
+                        {(!isGroupedRow || isGroupLeader) && (
+                          <TextInput
+                            size="xs"
+                            placeholder="Whiteboard"
+                            value={whiteboardSummary}
+                            onChange={(e) =>
+                              handleAssemblyWhiteboardChange(
+                                isGroupedRow ? memberIds : a.id,
+                                e.currentTarget.value
+                              )
+                            }
+                          />
+                        )}
                       </Table.Td>
                       <Table.Td align="center">
                         <AssemblyRowMenu

@@ -21,7 +21,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
   if (!Number.isFinite(id)) throw new Response("Invalid id", { status: 400 });
   const expense = await prisma.expense.findUnique({ where: { id } });
-  if (!expense) throw new Response("Not found", { status: 404 });
+  if (!expense) return redirect("/expenses");
   return json({ expense });
 }
 

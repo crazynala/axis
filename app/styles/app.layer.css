@@ -120,4 +120,11 @@
     border-bottom: 2px solid var(--rail-color);
     border-bottom-left-radius: 6px;
   }
+  .asm-rail-table tr.asm-row-group.is-group-hovered td:not(.asm-rail-cell) {
+    background-color: rgba(82, 146, 247, 0.12);
+  }
+  .asm-rail-table tr.asm-row-group.is-group-hovered .asm-rail-cell {
+    --rail-color: #528ff7;
+    background-color: rgba(82, 146, 247, 0.2);
+  }
 }

@@ -10,31 +10,34 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") || "").trim();
-  const limit = Math.min(
-    50,
-    Math.max(1, Number(url.searchParams.get("limit") || 20))
-  );
+  const limitParam = Number(url.searchParams.get("limit"));
+  const limit = Number.isFinite(limitParam)
+    ? Math.min(50, Math.max(1, limitParam))
+    : 50;
   const supplierIdRaw = url.searchParams.get("supplierId");
   const supplierId = supplierIdRaw ? Number(supplierIdRaw) : NaN;
-  if (!q) return json({ products: [] });
+  const tokens = q
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
 
-  const asNum = Number(q);
-  const isNum = Number.isFinite(asNum as any);
-
-  const andClauses: any[] = [
-    isNum ? { id: asNum as number } : { id: { gt: -1 } },
-    {
-      OR: [
-        { sku: { contains: q, mode: "insensitive" } },
-        { name: { contains: q, mode: "insensitive" } },
-      ],
-    },
-  ];
+  const andClauses: any[] = [];
   if (Number.isFinite(supplierId) && supplierId > 0) {
     andClauses.push({ supplierId });
   }
+  if (tokens.length) {
+    andClauses.push(
+      ...tokens.map((token) => ({
+        OR: [
+          { sku: { contains: token, mode: "insensitive" } },
+          { name: { contains: token, mode: "insensitive" } },
+          { description: { contains: token, mode: "insensitive" } },
+        ],
+      }))
+    );
+  }
   const products = await prismaBase.product.findMany({
-    where: { AND: andClauses },
+    where: andClauses.length ? { AND: andClauses } : undefined,
     select: { id: true, sku: true, name: true },
     take: limit,
     orderBy: [{ id: "desc" }],
@@ -43,7 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   console.debug("[api.products.search]", {
     q,
     supplierId: Number.isFinite(supplierId) ? supplierId : null,
-    isNum,
+    tokens: tokens.length,
     count: products.length,
   });
 

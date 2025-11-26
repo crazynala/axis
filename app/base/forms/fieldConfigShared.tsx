@@ -36,6 +36,12 @@ export type FieldConfig = {
   hiddenInModes?: FieldMode[];
   editable?: boolean;
   readOnly?: boolean;
+  readOnlyIf?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
   findPlaceholder?: string;
   options?: { value: string; label: string }[];
   optionsKey?: string; // maps to ctx.fieldOptions[key]
@@ -258,6 +264,12 @@ export function renderField(
   if (field.render) return field.render({ form, mode, field, ctx });
   const widget = field.widget || (field.type === "date" ? "date" : "text");
   const common: any = { label: field.label, mod: "data-autosize" };
+  const dynamicReadOnly = field.readOnlyIf
+    ? field.readOnlyIf({ form, mode, field, ctx })
+    : false;
+  const resolvedReadOnly =
+    dynamicReadOnly ||
+    (mode === "edit" && (field.editable === false || field.readOnly));
 
   const getSelectOptions = () => {
     // Always return an object with primary/fallback arrays
@@ -418,6 +430,7 @@ export function renderField(
               onDropdownClose: () => combobox.resetSelectedOption(),
             });
             const [search, setSearch] = React.useState<string>("");
+            const clickedByMouseRef = React.useRef(false);
 
             const baseList =
               primary && primary.length ? primary : fallback || [];
@@ -469,9 +482,18 @@ export function renderField(
                   <TextInput
                     {...common}
                     value={combobox.dropdownOpened ? search : selectedLabel}
+                    onMouseDown={() => {
+                      clickedByMouseRef.current = true;
+                    }}
                     onFocus={(event) => {
                       setSearch(selectedLabel);
-                      combobox.openDropdown();
+                      if (clickedByMouseRef.current) {
+                        combobox.openDropdown();
+                        combobox.updateSelectedOptionIndex();
+                      } else {
+                        combobox.closeDropdown();
+                      }
+                      clickedByMouseRef.current = false;
                       event.currentTarget.select();
                     }}
                     onChange={(event) => {
@@ -481,6 +503,8 @@ export function renderField(
                     }}
                     onBlur={(e) => {
                       f.onBlur();
+                      combobox.closeDropdown();
+                      clickedByMouseRef.current = false;
                     }}
                     rightSection={
                       valueStr != null ||
@@ -593,6 +617,7 @@ export function renderField(
         <TextInput
           {...common}
           type="number"
+          readOnly={resolvedReadOnly}
           rightSection={
             field.rightSection
               ? field.rightSection({ form, mode, field, ctx })
@@ -623,9 +648,7 @@ export function renderField(
               : undefined
           }
           {...form.register(field.name as any)}
-          readOnly={
-            mode === "edit" && (field.editable === false || field.readOnly)
-          }
+          readOnly={resolvedReadOnly}
         />
       );
     }
@@ -660,6 +683,8 @@ export function RenderField({
         variantSet: map(options?.variantSetOptions),
         customer: map(options?.customerOptions),
         customerAll: map(options?.customerAllOptions),
+        consignee: map(options?.consigneeOptions),
+        consigneeAll: map(options?.consigneeAllOptions),
         supplier: map(options?.supplierOptions),
         supplierAll: map(options?.supplierAllOptions),
         companyAll: map(options?.companyAllOptions),

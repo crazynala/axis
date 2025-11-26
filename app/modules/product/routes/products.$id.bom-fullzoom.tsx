@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useParams } from "@remix-run/react";
 import ProductBomSpreadsheet from "../components/ProductBomSpreadsheet";
 import type { BOMRow } from "../components/ProductBomSpreadsheet";
@@ -34,7 +34,7 @@ export async function loader({ params }: any) {
       },
     },
   });
-  if (!product) throw new Response("Not found", { status: 404 });
+  if (!product) return redirect("/products");
   const rows: BOMRow[] = (product.productLines || []).map((pl: any) => ({
     id: pl.id,
     childSku: pl.child?.sku || "",

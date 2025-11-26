@@ -54,10 +54,11 @@ export function ProductDetailForm({
       } catch {}
       return null;
     });
-    const [margins, setMargins] = React.useState<
-      | { marginOverride?: number | null; vendorDefaultMargin?: number | null; globalDefaultMargin?: number | null }
-      | null
-    >(() => {
+    const [margins, setMargins] = React.useState<{
+      marginOverride?: number | null;
+      vendorDefaultMargin?: number | null;
+      globalDefaultMargin?: number | null;
+    } | null>(() => {
       if (typeof window === "undefined") return null;
       try {
         const raw = window.sessionStorage.getItem("pricing.margins");
@@ -155,6 +156,17 @@ export function ProductDetailForm({
     | number
     | string
     | undefined;
+  const costPriceLocked = React.useMemo(() => {
+    if (mode === "find") return false;
+    const raw =
+      watchedCostGroupId != null && watchedCostGroupId !== ""
+        ? watchedCostGroupId
+        : product?.costGroupId;
+    if (raw == null || raw === "") return false;
+    const num = Number(raw);
+    if (Number.isFinite(num)) return num > 0;
+    return true;
+  }, [mode, watchedCostGroupId, product?.costGroupId]);
 
   React.useEffect(() => {
     const id = watchedSaleGroupId != null ? Number(watchedSaleGroupId) : NaN;
@@ -236,6 +248,7 @@ export function ProductDetailForm({
       pricingPreview: pricingPrefs.preview,
       pricingCustomerId: pricingPrefs.customerId,
       pricingMarginDefaults: pricingPrefs.margins,
+      costPriceLocked,
     }),
     [
       hasCostTiers,
@@ -247,6 +260,7 @@ export function ProductDetailForm({
       pricingPrefs.preview,
       pricingPrefs.customerId,
       pricingPrefs.margins,
+      costPriceLocked,
     ]
   );
 
@@ -280,7 +294,10 @@ export function ProductDetailForm({
             {product?.id ? (
               <Card.Section bg="dark.6" py={5} mt="xs">
                 <Center>
-                  <PricingPreviewWidget productId={product.id} vendorId={product?.supplierId ?? null} />
+                  <PricingPreviewWidget
+                    productId={product.id}
+                    vendorId={product?.supplierId ?? null}
+                  />
                 </Center>
               </Card.Section>
             ) : null}

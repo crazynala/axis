@@ -3,6 +3,7 @@ import {
   Accordion,
   Button,
   Group,
+  SegmentedControl,
   Stack,
   Table,
   Text,
@@ -12,9 +13,15 @@ import {
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { DatePickerInput } from "@mantine/dates";
 import { useSubmit } from "@remix-run/react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { ExternalLink } from "./ExternalLink";
-import { SegmentedControl } from "@mantine/core";
+import {
+  buildAssemblyActivityDefaultValues,
+  calculateConsumptionTotals,
+  calculateUnitsInCut,
+  serializeAssemblyActivityValues,
+} from "~/modules/job/forms/jobAssemblyActivityMarshaller";
+import type { AssemblyActivityFormValues } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
 
 type Costing = {
   id: number;
@@ -33,25 +40,14 @@ type BatchRow = {
   location?: { id: number; name: string | null } | null;
 };
 
-function mapConsumptionToStrings(
-  input?: Record<number, Record<number, number>> | null
-): Record<number, Record<number, string>> {
-  if (!input) return {};
-  const result: Record<number, Record<number, string>> = {};
-  for (const [cidKey, batches] of Object.entries(input)) {
-    const cid = Number(cidKey);
-    if (!Number.isFinite(cid)) continue;
-    const nextBatches: Record<number, string> = {};
-    for (const [bidKey, qty] of Object.entries(batches || {})) {
-      const bid = Number(bidKey);
-      if (!Number.isFinite(bid)) continue;
-      nextBatches[bid] =
-        qty === undefined || qty === null ? "" : String(qty ?? 0);
-    }
-    result[cid] = nextBatches;
-  }
-  return result;
-}
+const formatBatchCodes = (batch?: BatchRow | null) => {
+  if (!batch) return "";
+  const parts = [batch.codeMill, batch.codeSartor]
+    .map((v) => (v ?? "").toString().trim())
+    .filter((v) => v.length);
+  if (parts.length) return parts.join(" | ");
+  return batch.name || String(batch.id ?? "");
+};
 
 export function AssemblyActivityModal(props: {
   opened: boolean;
@@ -122,12 +118,17 @@ export function AssemblyActivityModal(props: {
     (((assembly as any).c_qtyLeftToCut_Breakdown || []) as number[]) || [];
   const defaultBreakdown = useMemo(() => {
     const len = labels.length; // strictly respect effective variant columns
+    if (activityType === "make") {
+      return Array.from({ length: len }, (_, i) =>
+        Math.max(0, Number(alreadyCut[i] || 0) || 0)
+      );
+    }
     return Array.from({ length: len }, (_, i) => {
       const ext = leftToCutExt[i];
       if (Number.isFinite(ext)) return Math.max(0, Number(ext));
       return Math.max(0, (ordered[i] || 0) - (alreadyCut[i] || 0));
     });
-  }, [labels, ordered, alreadyCut, leftToCutExt]);
+  }, [activityType, labels, ordered, alreadyCut, leftToCutExt]);
 
   // Group-assembly defaults prepared from provided groupQtyItems
   const groupDefaults = useMemo(() => {
@@ -153,6 +154,9 @@ export function AssemblyActivityModal(props: {
       );
       const labels = rawLabels.slice(0, effectiveLen);
       const def = Array.from({ length: effectiveLen }, (_, i) => {
+        if (activityType === "make") {
+          return Math.max(0, Number(g.cut?.[i] || 0) || 0);
+        }
         const ord = Number(g.ordered?.[i] || 0) || 0;
         const cut = Number(g.cut?.[i] || 0) || 0;
         const left = Math.max(0, ord - cut);
@@ -164,40 +168,88 @@ export function AssemblyActivityModal(props: {
         defaultBreakdown: def,
       };
     });
-  }, [props.groupQtyItems]);
+  }, [activityType, props.groupQtyItems]);
+  const groupDefaultsResetKey = useMemo(() => {
+    if (!groupDefaults || groupDefaults.length === 0) return "none";
+    return groupDefaults
+      .map((g) => `${g.assemblyId}:${g.defaultBreakdown.join(",")}`)
+      .join("|");
+  }, [groupDefaults]);
+  const defaultBreakdownResetKey = useMemo(
+    () => defaultBreakdown.join(","),
+    [defaultBreakdown]
+  );
+  const initialBreakdownResetKey = useMemo(
+    () => (initialBreakdown ? initialBreakdown.join(",") : "none"),
+    [initialBreakdown]
+  );
+  const initialConsumptionResetKey = useMemo(() => {
+    if (!initialConsumption) return "none";
+    return Object.entries(initialConsumption)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([cid, inner]) => {
+        if (!inner) return `${cid}:none`;
+        return `${cid}:${Object.entries(inner)
+          .sort((a, b) => Number(a[0]) - Number(b[0]))
+          .map(([bid, value]) => `${bid}:${value}`)
+          .join(",")}`;
+      })
+      .join("|");
+  }, [initialConsumption]);
 
-  const form = useForm<{
-    activityDate: Date | null;
-    qtyBreakdown: { value: string }[]; // single-assembly path
-    qtyGroup?: Array<{ assemblyId: number; qtyBreakdown: { value: string }[] }>; // group path
-    consumption: Record<string, Record<string, string>>;
-  }>({
-    defaultValues: (() => {
-      if (groupDefaults && groupDefaults.length > 0) {
-        return {
-          activityDate: initialDate ? new Date(initialDate as any) : new Date(),
-          qtyBreakdown: [],
-          qtyGroup: groupDefaults.map((g) => ({
-            assemblyId: g.assemblyId,
-            qtyBreakdown: g.defaultBreakdown.map((n) => ({
-              value: String(n || 0),
-            })),
-          })),
-          consumption: {},
-        };
-      }
-      return {
-        activityDate: initialDate ? new Date(initialDate as any) : new Date(),
-        qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
-          ? initialBreakdown
-          : defaultBreakdown
-        ).map((n) => ({ value: String(n || 0) })),
-        consumption: {},
-      };
-    })(),
+  const defaultValues = useMemo(
+    () =>
+      buildAssemblyActivityDefaultValues({
+        mode,
+        initialDate,
+        initialBreakdown,
+        defaultBreakdown,
+        groupDefaults: groupDefaults?.map(
+          ({ assemblyId, defaultBreakdown }) => ({
+            assemblyId,
+            defaultBreakdown,
+          })
+        ),
+        initialConsumption,
+      }),
+    [
+      mode,
+      initialDate,
+      initialBreakdown,
+      defaultBreakdown,
+      groupDefaults,
+      initialConsumption,
+    ]
+  );
+  const defaultsResetKey = useMemo(() => {
+    const dateKey = initialDate
+      ? new Date(initialDate as any).toISOString()
+      : "none";
+    return [
+      mode,
+      activityType,
+      activityId ?? "new",
+      dateKey,
+      defaultBreakdownResetKey,
+      groupDefaultsResetKey,
+      initialBreakdownResetKey,
+      initialConsumptionResetKey,
+    ].join("|");
+  }, [
+    mode,
+    activityType,
+    activityId,
+    initialDate,
+    defaultBreakdownResetKey,
+    groupDefaultsResetKey,
+    initialBreakdownResetKey,
+    initialConsumptionResetKey,
+  ]);
+
+  const form = useForm<AssemblyActivityFormValues>({
+    defaultValues,
   });
-  const { control, handleSubmit, reset, watch, setValue, getValues } = form;
-  const qtyArray = useFieldArray({ control, name: "qtyBreakdown" });
+  const { control, handleSubmit, reset, setValue, register, getValues } = form;
   const qtyGroupArray = useFieldArray({ control, name: "qtyGroup" as const });
   const [openedCostings, setOpenedCostings] = useState<string[]>([]);
   const [batchesByCosting, setBatchesByCosting] = useState<
@@ -210,7 +262,38 @@ export function AssemblyActivityModal(props: {
   const [batchLocScope, setBatchLocScope] = useState<"all" | "job">(
     (props.assembly?.job?.locationInId ?? null) != null ? "job" : "all"
   );
-  const consumption = watch("consumption") || {};
+  const qtyBreakdownValues = useWatch({ control, name: "qtyBreakdown" }) ?? [];
+  const qtyGroupValues =
+    (useWatch({ control, name: "qtyGroup" }) as
+      | AssemblyActivityFormValues["qtyGroup"]
+      | undefined) ?? [];
+  const consumption =
+    useWatch({ control, name: "consumption" }) ||
+    ({} as Record<string, Record<string, string>>);
+  const consumptionTotals = useMemo(
+    () => calculateConsumptionTotals(consumption),
+    [consumption]
+  );
+  const previouslyConsumedByCosting = useMemo(() => {
+    if (!initialConsumption)
+      return {} as Record<number, Record<number, number>>;
+    const map: Record<number, Record<number, number>> = {};
+    for (const [cidRaw, batches] of Object.entries(initialConsumption)) {
+      const cid = Number(cidRaw);
+      if (!Number.isFinite(cid)) continue;
+      map[cid] = {};
+      for (const [bidRaw, qty] of Object.entries(batches || {})) {
+        const bid = Number(bidRaw);
+        if (!Number.isFinite(bid)) continue;
+        map[cid][bid] = Number(qty) || 0;
+      }
+    }
+    return map;
+  }, [initialConsumption]);
+  const unitsInCut = useMemo(
+    () => calculateUnitsInCut(qtyBreakdownValues, qtyGroupValues || undefined),
+    [qtyBreakdownValues, qtyGroupValues]
+  );
   const setConsumptionValue = useCallback(
     (cid: number, bid: number, value: string) => {
       const path = `consumption.${cid}.${bid}` as const;
@@ -238,35 +321,23 @@ export function AssemblyActivityModal(props: {
 
   useEffect(() => {
     if (!opened) return;
-    const base = {
-      activityDate: initialDate ? new Date(initialDate as any) : new Date(),
-      consumption:
-        mode === "edit" && initialConsumption
-          ? mapConsumptionToStrings(initialConsumption)
-          : {},
-    };
-    if (groupDefaults && groupDefaults.length > 0) {
-      reset({
-        ...base,
-        qtyBreakdown: [],
-        qtyGroup: groupDefaults.map((g) => ({
-          assemblyId: g.assemblyId,
-          qtyBreakdown: g.defaultBreakdown.map((n) => ({
-            value: String(n || 0),
-          })),
-        })),
-      });
-    } else {
-      reset({
-        ...base,
-        qtyBreakdown: (initialBreakdown && Array.isArray(initialBreakdown)
-          ? initialBreakdown
-          : defaultBreakdown
-        ).map((n) => ({ value: String(n || 0) })),
-      });
-    }
+    reset(
+      buildAssemblyActivityDefaultValues({
+        mode,
+        initialDate,
+        initialBreakdown,
+        defaultBreakdown,
+        groupDefaults: groupDefaults?.map(
+          ({ assemblyId, defaultBreakdown }) => ({
+            assemblyId,
+            defaultBreakdown,
+          })
+        ),
+        initialConsumption,
+      })
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, activityId]);
+  }, [opened, defaultsResetKey, reset]);
 
   const eligibleCostings = useMemo(() => {
     const eligibleCostings = (costings || []).filter(
@@ -336,6 +407,18 @@ export function AssemblyActivityModal(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openedCostings]);
 
+  const onSubmit = handleSubmit((values) => {
+    const fd = serializeAssemblyActivityValues(values, {
+      mode,
+      activityType,
+      activityId,
+      extraFields,
+      overrideIntent,
+    });
+    submit(fd, { method: "post" });
+    onClose();
+  });
+
   return (
     <Modal
       opened={opened}
@@ -347,64 +430,15 @@ export function AssemblyActivityModal(props: {
           ? "Edit Activity"
           : activityType === "cut"
           ? "Record Cut"
+          : activityType === "make"
+          ? "Record Make"
           : "Record Activity"
       }
       size="xxl"
       centered
     >
-      <form
-        onSubmit={handleSubmit((values) => {
-          const fd = new FormData();
-          if (mode === "edit") {
-            fd.set("_intent", "activity.update");
-            if (activityId != null) fd.set("activityId", String(activityId));
-          } else {
-            fd.set(
-              "_intent",
-              overrideIntent
-                ? overrideIntent
-                : `activity.create.${activityType}`
-            );
-          }
-          if (extraFields) {
-            for (const [k, v] of Object.entries(extraFields)) {
-              fd.set(k, String(v));
-            }
-          }
-          const date = values.activityDate
-            ? new Date(values.activityDate)
-            : null;
-          if (date) fd.set("activityDate", date.toISOString().slice(0, 10));
-          const qb = (values.qtyBreakdown || []).map(
-            (x) => Number(x?.value || 0) | 0
-          );
-          fd.set("qtyBreakdown", JSON.stringify(qb));
-          const consumptionValues = values.consumption || {};
-          const consumptionsArr = Object.keys(consumptionValues)
-            .map((k) => Number(k))
-            .reduce<
-              Array<{
-                costingId: number;
-                lines: Array<{ batchId: number; qty: number }>;
-              }>
-            >((acc, cid) => {
-              const lines = Object.entries(consumptionValues[cid] || {})
-                .map(([batchId, q]) => ({
-                  batchId: Number(batchId),
-                  qty: Number(q) || 0,
-                }))
-                .filter((line) => line.qty > 0);
-              if (lines.length > 0) {
-                acc.push({ costingId: cid, lines });
-              }
-              return acc;
-            }, []);
-          fd.set("consumptions", JSON.stringify(consumptionsArr));
-          submit(fd, { method: "post" });
-          onClose();
-        })}
-      >
-        <Stack p="lg">
+      <form onSubmit={onSubmit}>
+        <Stack p="lg" gap="lg">
           <Group align="flex-end" justify="space-between">
             <Controller
               control={control}
@@ -413,7 +447,7 @@ export function AssemblyActivityModal(props: {
                 <DatePickerInput
                   label="Date"
                   value={field.value}
-                  onChange={(v: any) => field.onChange((v as any) ?? null)}
+                  onChange={(value) => field.onChange(value ?? null)}
                   valueFormat="YYYY-MM-DD"
                   required
                 />
@@ -423,16 +457,22 @@ export function AssemblyActivityModal(props: {
               Save
             </Button>
           </Group>
-          <Stack>
+
+          <Stack gap="md">
             {groupDefaults && groupDefaults.length > 0 ? (
-              <Stack>
-                {(qtyGroupArray.fields || []).map((fg, gi) => {
-                  const gDef = groupDefaults![gi];
-                  const glabels = gDef?.labels || [];
+              <Stack gap="md">
+                {(qtyGroupArray.fields || []).map((field, groupIndex) => {
+                  const gDef =
+                    groupDefaults.find(
+                      (g) => g.assemblyId === field.assemblyId
+                    ) || groupDefaults[groupIndex];
+                  const glabels = gDef?.labels || labels;
                   return (
-                    <Stack key={`g-${fg.id || gi}`}>
+                    <Stack key={field.id || groupIndex} gap="xs">
                       <Group justify="space-between" align="center">
-                        <Title order={6}>Assembly A{gDef.assemblyId}</Title>
+                        <Title order={6}>
+                          Assembly A{gDef?.assemblyId ?? field.assemblyId}
+                        </Title>
                       </Group>
                       <Table
                         withColumnBorders
@@ -442,39 +482,40 @@ export function AssemblyActivityModal(props: {
                       >
                         <Table.Thead>
                           <Table.Tr>
-                            {glabels.map((label: string, i: number) => (
-                              <Table.Th
-                                key={`gh-${gi}-${i}`}
-                                ta="center"
-                                py={2}
-                                fz="xs"
-                                style={{
-                                  width: 56,
-                                }}
-                              >
-                                {label || `${i + 1}`}
-                              </Table.Th>
-                            ))}
+                            {glabels.map(
+                              (label: string, labelIndex: number) => (
+                                <Table.Th
+                                  key={`group-head-${groupIndex}-${labelIndex}`}
+                                  ta="center"
+                                  py={2}
+                                  fz="xs"
+                                  style={{ width: 56 }}
+                                >
+                                  {label || `${labelIndex + 1}`}
+                                </Table.Th>
+                              )
+                            )}
                           </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
                           <Table.Tr>
-                            {glabels.map((_label: string, i: number) => (
-                              <Table.Td
-                                key={`gqty-${gi}-${i}`}
-                                p={0}
-                                ta="center"
-                                style={{ position: "relative", width: 56 }}
-                              >
-                                <Controller
-                                  control={control}
-                                  name={
-                                    `qtyGroup.${gi}.qtyBreakdown.${i}.value` as const
-                                  }
-                                  render={({ field }) => (
+                            {glabels.map(
+                              (_label: string, labelIndex: number) => {
+                                const registration = register(
+                                  `qtyGroup.${groupIndex}.qtyBreakdown.${labelIndex}.value` as const
+                                );
+                                return (
+                                  <Table.Td
+                                    key={`group-cell-${groupIndex}-${labelIndex}`}
+                                    p={0}
+                                    ta="center"
+                                    style={{ position: "relative", width: 56 }}
+                                  >
                                     <TextInput
                                       type="number"
                                       variant="unstyled"
+                                      inputMode="numeric"
+                                      {...registration}
                                       styles={{
                                         input: {
                                           width: "100%",
@@ -485,16 +526,11 @@ export function AssemblyActivityModal(props: {
                                           outline: "none",
                                         },
                                       }}
-                                      inputMode="numeric"
-                                      value={field.value ?? ""}
-                                      onChange={(e) =>
-                                        field.onChange(e.currentTarget.value)
-                                      }
                                     />
-                                  )}
-                                />
-                              </Table.Td>
-                            ))}
+                                  </Table.Td>
+                                );
+                              }
+                            )}
                           </Table.Tr>
                         </Table.Tbody>
                       </Table>
@@ -511,259 +547,272 @@ export function AssemblyActivityModal(props: {
               >
                 <Table.Thead>
                   <Table.Tr>
-                    {labels.map((label: string, i: number) => (
+                    {labels.map((label: string, index: number) => (
                       <Table.Th
-                        key={`h-${i}`}
+                        key={`single-head-${index}`}
                         ta="center"
                         style={{ width: 56 }}
                       >
-                        {label || `${i + 1}`}
+                        {label || `${index + 1}`}
                       </Table.Th>
                     ))}
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   <Table.Tr>
-                    {labels.map((_label: string, i: number) => (
-                      <Table.Td
-                        key={`qty-${i}`}
-                        p={0}
-                        ta="center"
-                        style={{ position: "relative", width: 56 }}
-                      >
-                        <Controller
-                          control={control}
-                          name={`qtyBreakdown.${i}.value` as const}
-                          render={({ field }) => (
-                            <TextInput
-                              variant="unstyled"
-                              styles={{
-                                input: {
-                                  width: "100%",
-                                  height: "100%",
-                                  textAlign: "center",
-                                  padding: 0,
-                                  margin: 0,
-                                  outline: "none",
-                                },
-                              }}
-                              type="number"
-                              inputMode="numeric"
-                              value={field.value ?? ""}
-                              onChange={(e) =>
-                                field.onChange(e.currentTarget.value)
-                              }
-                            />
-                          )}
-                        />
-                      </Table.Td>
-                    ))}
+                    {labels.map((_label: string, index: number) => {
+                      const registration = register(
+                        `qtyBreakdown.${index}.value` as const
+                      );
+                      return (
+                        <Table.Td
+                          key={`single-cell-${index}`}
+                          p={0}
+                          ta="center"
+                          style={{ position: "relative", width: 56 }}
+                        >
+                          <TextInput
+                            type="number"
+                            variant="unstyled"
+                            inputMode="numeric"
+                            {...registration}
+                            styles={{
+                              input: {
+                                width: "100%",
+                                height: "100%",
+                                textAlign: "center",
+                                padding: 0,
+                                margin: 0,
+                                outline: "none",
+                              },
+                            }}
+                          />
+                        </Table.Td>
+                      );
+                    })}
                   </Table.Tr>
                 </Table.Tbody>
               </Table>
             )}
           </Stack>
 
-          <Stack>
-            <Title order={6}>Material Consumption</Title>
+          <Stack gap="md">
             <Group justify="space-between" align="center">
-              <Group gap={8} align="center">
-                <SegmentedControl
-                  data={[
-                    { label: "All", value: "all" },
-                    { label: "Current", value: "current" },
-                  ]}
-                  size="xs"
-                  value={batchScope}
-                  onChange={(v) => setBatchScope(v as any)}
-                />
-                <SegmentedControl
-                  data={(() => {
-                    const locName = (
-                      assembly?.job?.locationIn?.name || ""
-                    ).trim();
-                    const label = locName ? locName : "Job location";
-                    return [
-                      { label: "All", value: "all" },
-                      { label, value: "job" },
-                    ];
-                  })()}
-                  size="xs"
-                  value={batchLocScope}
-                  onChange={(v) => setBatchLocScope(v as any)}
-                />
-              </Group>
+              <Title order={6}>Material Consumption</Title>
+              <Text size="sm" c="dimmed">
+                Units recorded: {unitsInCut}
+              </Text>
             </Group>
-            {(() => {
-              const qbSingle = watch("qtyBreakdown") || [];
-              const qg = (watch("qtyGroup") || []) as any[];
-              const unitsInCut =
-                (qg.length
-                  ? qg.reduce((t, g) => {
-                      const arr = (g?.qtyBreakdown || []) as any[];
-                      return (
-                        t +
-                        arr.reduce(
-                          (tt: number, x: any) =>
-                            tt + (Number(x?.value ?? 0) || 0),
-                          0
-                        )
+            <Group gap={12} align="center" wrap="wrap">
+              <SegmentedControl
+                data={[
+                  { label: "All", value: "all" },
+                  { label: "Current", value: "current" },
+                ]}
+                size="xs"
+                value={batchScope}
+                onChange={(value) => setBatchScope(value as "all" | "current")}
+              />
+              <SegmentedControl
+                data={(() => {
+                  const locName = (
+                    assembly?.job?.locationIn?.name || ""
+                  ).trim();
+                  const jobLabel = locName || "Job location";
+                  return [
+                    { label: "All", value: "all" },
+                    { label: jobLabel, value: "job" },
+                  ];
+                })()}
+                size="xs"
+                value={batchLocScope}
+                onChange={(value) => setBatchLocScope(value as "all" | "job")}
+              />
+            </Group>
+
+            {eligibleCostings.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                No material costings are configured for this activity type.
+              </Text>
+            ) : (
+              <Accordion
+                multiple
+                variant="contained"
+                value={openedCostings}
+                onChange={(values) => setOpenedCostings(values as string[])}
+              >
+                {eligibleCostings.map((costing) => {
+                  const cid = costing.id;
+                  const comp = costing.product ?? costing.component ?? null;
+                  const compId = comp?.id ?? null;
+                  const compSku = comp?.sku ?? "";
+                  const compName = comp?.name ?? "";
+                  const consumed = consumptionTotals[cid] ?? 0;
+                  const expected = (costing.quantityPerUnit || 0) * unitsInCut;
+                  const costingBatches = batchesByCosting[cid] || [];
+                  const jobLocId = (assembly?.job?.stockLocationId ?? null) as
+                    | number
+                    | null;
+                  const batchInfos = costingBatches
+                    .map((batch) => {
+                      const batchId = Number(batch.id);
+                      const consumedPreviously =
+                        previouslyConsumedByCosting[cid]?.[batchId] ?? 0;
+                      const effectiveAvailable = Math.max(
+                        0,
+                        (Number(batch.quantity ?? 0) || 0) + consumedPreviously
                       );
-                    }, 0)
-                  : qbSingle.reduce(
-                      (t: number, x: any) => t + (Number(x?.value ?? 0) || 0),
-                      0
-                    )) || 0;
-              return (
-                <Accordion
-                  multiple
-                  value={openedCostings}
-                  onChange={(vals) => setOpenedCostings(vals as string[])}
-                  variant="contained"
-                >
-                  {eligibleCostings.map((c) => {
-                    const cid = c.id;
-                    const compId = c.product?.id ?? null;
-                    const compSku = c.product?.sku ?? "";
-                    const compName = c.product?.name ?? "";
-                    const consumed = Object.values(
-                      consumption[cid] || {}
-                    ).reduce((t, n) => t + (Number(n) || 0), 0);
-                    const expected = (c.quantityPerUnit || 0) * unitsInCut;
-                    const headerLeft = (
-                      <Group gap={8} wrap="nowrap" align="center">
-                        {compId ? (
-                          <ExternalLink href={`/products/${compId}`}>
-                            {compId}
-                          </ExternalLink>
-                        ) : (
-                          <Text c="dimmed">?</Text>
-                        )}
-                        <Text style={{ whiteSpace: "nowrap" }}>
-                          [{compSku || ""}]
-                        </Text>
-                        <Text inherit>{compName || ""}</Text>
-                      </Group>
-                    );
-                    const headerRight = (
-                      <Group gap={4} wrap="nowrap" align="center" ml="auto">
-                        <Text inherit>{consumed}</Text>
-                        <Text c="dimmed">/</Text>
-                        <Text inherit>{expected}</Text>
-                      </Group>
-                    );
-                    return (
-                      <Accordion.Item key={cid} value={String(cid)}>
-                        <Accordion.Control>
-                          <Group
-                            justify="space-between"
-                            wrap="nowrap"
-                            align="center"
-                          >
-                            {headerLeft}
-                            {headerRight}
-                          </Group>
-                        </Accordion.Control>
-                        <Accordion.Panel>
-                          <Group gap={8} mb={4}>
-                            <Text size="sm" fw={600}>
-                              Batches
-                            </Text>
-                            {loadingCosting[cid] && (
-                              <Text size="xs" c="dimmed">
-                                Loading...
-                              </Text>
+                      const consumeValue =
+                        consumption[cid]?.[batchId] ??
+                        (consumedPreviously ? String(consumedPreviously) : "");
+                      const passesScope =
+                        batchScope === "current"
+                          ? effectiveAvailable > 0 || consumeValue !== ""
+                          : true;
+                      const passesLocation =
+                        batchLocScope === "all" ||
+                        consumeValue !== "" ||
+                        !jobLocId
+                          ? true
+                          : (batch.location?.id ?? null) === jobLocId;
+                      return {
+                        batch,
+                        batchId,
+                        effectiveAvailable,
+                        consumeValue,
+                        passesScope,
+                        passesLocation,
+                      };
+                    })
+                    .filter((info) => info.passesScope && info.passesLocation);
+
+                  return (
+                    <Accordion.Item key={cid} value={String(cid)}>
+                      <Accordion.Control>
+                        <Group
+                          justify="space-between"
+                          wrap="nowrap"
+                          align="center"
+                        >
+                          <Group gap={8} wrap="nowrap" align="center">
+                            {compId ? (
+                              <ExternalLink href={`/products/${compId}`}>
+                                {compId}
+                              </ExternalLink>
+                            ) : (
+                              <Text c="dimmed">?</Text>
                             )}
+                            <Text style={{ whiteSpace: "nowrap" }}>
+                              [{compSku || ""}]
+                            </Text>
+                            <Text inherit>{compName || ""}</Text>
                           </Group>
-                          <Table withTableBorder withColumnBorders striped>
-                            <Table.Thead>
+                          <Group gap={4} wrap="nowrap" align="center" ml="auto">
+                            <Text inherit>{consumed}</Text>
+                            <Text c="dimmed">/</Text>
+                            <Text inherit>{expected}</Text>
+                          </Group>
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <Group gap={8} mb={4} align="center">
+                          <Text size="sm" fw={600}>
+                            Batches
+                          </Text>
+                          {loadingCosting[cid] && (
+                            <Text size="xs" c="dimmed">
+                              Loading...
+                            </Text>
+                          )}
+                        </Group>
+                        <Table withTableBorder withColumnBorders striped>
+                          <Table.Thead>
+                            <Table.Tr>
+                              <Table.Th>ID</Table.Th>
+                              <Table.Th>Batch</Table.Th>
+                              <Table.Th>Location</Table.Th>
+                              <Table.Th>Available</Table.Th>
+                              <Table.Th>Consume</Table.Th>
+                            </Table.Tr>
+                          </Table.Thead>
+                          <Table.Tbody>
+                            {batchInfos.length === 0 ? (
                               <Table.Tr>
-                                <Table.Th>ID</Table.Th>
-                                <Table.Th>Batch</Table.Th>
-                                <Table.Th>Location</Table.Th>
-                                <Table.Th>Available</Table.Th>
-                                <Table.Th>Consume</Table.Th>
+                                <Table.Td colSpan={5}>
+                                  <Text size="sm" c="dimmed">
+                                    {loadingCosting[cid]
+                                      ? "Fetching batches..."
+                                      : "No batches match the current filters."}
+                                  </Text>
+                                </Table.Td>
                               </Table.Tr>
-                            </Table.Thead>
-                            <Table.Tbody>
-                              {(batchesByCosting[cid] || [])
-                                .filter((b) =>
-                                  batchScope === "current"
-                                    ? (b.quantity ?? 0) > 0
-                                    : true
-                                )
-                                .filter((b) => {
-                                  if (batchLocScope === "all") return true;
-                                  const jobLocId = (assembly?.job
-                                    ?.stockLocationId ?? null) as number | null;
-                                  if (!jobLocId) return true;
-                                  return (b.location?.id ?? null) === jobLocId;
-                                })
-                                .map((b) => (
-                                  <Table.Tr key={b.id}>
-                                    <Table.Td>
-                                      <ExternalLink href={`/batches/${b.id}`}>
-                                        {b.id}
-                                      </ExternalLink>
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {b.name ||
-                                        b.codeMill ||
-                                        b.codeSartor ||
-                                        "(unnamed)"}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {b.location?.name || ""}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      <Text
-                                        style={{ cursor: "pointer" }}
-                                        onClick={() => {
-                                          const q =
-                                            Number(b.quantity ?? 0) || 0;
-                                          setConsumptionValue(
-                                            cid,
-                                            b.id,
-                                            q ? String(q) : ""
-                                          );
-                                        }}
-                                      >
-                                        {b.quantity ?? 0}
-                                      </Text>
-                                    </Table.Td>
-                                    <Table.Td>
-                                      <TextInput
-                                        w={100}
-                                        type="number"
-                                        inputMode="decimal"
-                                        value={consumption[cid]?.[b.id] ?? ""}
-                                        onChange={(e) =>
-                                          setConsumptionValue(
-                                            cid,
-                                            b.id,
-                                            e.currentTarget.value
-                                          )
-                                        }
-                                        onBlur={() =>
-                                          clampConsumptionEntry(
-                                            cid,
-                                            b.id,
-                                            Number(b.quantity ?? 0) || 0
-                                          )
-                                        }
-                                      />
-                                    </Table.Td>
-                                  </Table.Tr>
-                                ))}
-                            </Table.Tbody>
-                          </Table>
-                        </Accordion.Panel>
-                      </Accordion.Item>
-                    );
-                  })}
-                </Accordion>
-              );
-            })()}
+                            ) : (
+                              batchInfos.map((info) => (
+                                <Table.Tr key={info.batch.id}>
+                                  <Table.Td>
+                                    <ExternalLink
+                                      href={`/batches/${info.batch.id}`}
+                                    >
+                                      {info.batch.id}
+                                    </ExternalLink>
+                                  </Table.Td>
+                                  <Table.Td>
+                                    {formatBatchCodes(info.batch) ||
+                                      "(unnamed)"}
+                                  </Table.Td>
+                                  <Table.Td>
+                                    {info.batch.location?.name || ""}
+                                  </Table.Td>
+                                  <Table.Td>
+                                    <Text
+                                      style={{ cursor: "pointer" }}
+                                      onClick={() => {
+                                        const qString = String(
+                                          info.effectiveAvailable || 0
+                                        );
+                                        setConsumptionValue(
+                                          cid,
+                                          info.batchId,
+                                          qString
+                                        );
+                                      }}
+                                    >
+                                      {info.effectiveAvailable}
+                                    </Text>
+                                  </Table.Td>
+                                  <Table.Td>
+                                    <TextInput
+                                      w={100}
+                                      type="number"
+                                      inputMode="decimal"
+                                      value={info.consumeValue}
+                                      onChange={(event) =>
+                                        setConsumptionValue(
+                                          cid,
+                                          info.batchId,
+                                          event.currentTarget.value
+                                        )
+                                      }
+                                      onBlur={() =>
+                                        clampConsumptionEntry(
+                                          cid,
+                                          info.batchId,
+                                          info.effectiveAvailable
+                                        )
+                                      }
+                                    />
+                                  </Table.Td>
+                                </Table.Tr>
+                              ))
+                            )}
+                          </Table.Tbody>
+                        </Table>
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  );
+                })}
+              </Accordion>
+            )}
           </Stack>
         </Stack>
       </form>

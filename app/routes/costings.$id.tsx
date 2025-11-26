@@ -26,12 +26,12 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
-  if (!id) throw new Response("Not Found", { status: 404 });
+  if (!id) return redirect("/costings");
   const costing = await prisma.costing.findUnique({
     where: { id },
     include: { assembly: true, product: true, salePriceGroup: true },
   });
-  if (!costing) throw new Response("Not Found", { status: 404 });
+  if (!costing) return redirect("/costings");
   const products = await prisma.product.findMany({
     select: { id: true, sku: true, name: true },
     orderBy: { id: "asc" },

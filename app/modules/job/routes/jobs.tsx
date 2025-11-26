@@ -23,6 +23,21 @@ export async function loader(_args: LoaderFunctionArgs) {
       : String(s)
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "");
+  const tokenize = (value: string | null) =>
+    (value || "")
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+  const buildTokenizedClause = (
+    value: string | null,
+    builder: (token: string) => Record<string, any>
+  ) => {
+    if (!value) return null;
+    const tokens = tokenize(value);
+    if (!tokens.length) return null;
+    if (tokens.length === 1) return builder(tokens[0]);
+    return { AND: tokens.map((token) => builder(token)) };
+  };
   const views = await listViews("jobs");
   const viewName = url.searchParams.get("view");
   if (viewName) {
@@ -94,18 +109,24 @@ export async function loader(_args: LoaderFunctionArgs) {
     ].forEach(pass);
     const valuesForSchema = { ...values };
     delete valuesForSchema.name;
+    delete valuesForSchema.projectCode;
     delete valuesForSchema.description;
     const simpleBase = buildWhere(valuesForSchema, jobSearchSchema);
     const simpleClauses: any[] = [];
     if (simpleBase && Object.keys(simpleBase).length > 0)
       simpleClauses.push(simpleBase);
-    if (values.name)
-      simpleClauses.push({
-        nameUnaccented: {
-          contains: unaccent(values.name),
-          mode: "insensitive",
-        },
-      });
+    const projectCodeClause = buildTokenizedClause(
+      values.projectCode || null,
+      (token) => ({ projectCode: { contains: token, mode: "insensitive" } })
+    );
+    if (projectCodeClause) simpleClauses.push(projectCodeClause);
+    const nameClause = buildTokenizedClause(values.name || null, (token) => ({
+      nameUnaccented: {
+        contains: unaccent(token),
+        mode: "insensitive",
+      },
+    }));
+    if (nameClause) simpleClauses.push(nameClause);
     if (values.description)
       simpleClauses.push({
         descriptionUnaccented: {
@@ -123,12 +144,14 @@ export async function loader(_args: LoaderFunctionArgs) {
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         id: (v) => ({ id: Number(v) }),
-        projectCode: (v) => ({
-          projectCode: { contains: v, mode: "insensitive" },
-        }),
-        name: (v) => ({
-          nameUnaccented: { contains: unaccent(v), mode: "insensitive" },
-        }),
+        projectCode: (v) =>
+          buildTokenizedClause(String(v), (token) => ({
+            projectCode: { contains: token, mode: "insensitive" },
+          })),
+        name: (v) =>
+          buildTokenizedClause(String(v), (token) => ({
+            nameUnaccented: { contains: unaccent(token), mode: "insensitive" },
+          })),
         description: (v) => ({
           descriptionUnaccented: { contains: unaccent(v), mode: "insensitive" },
         }),

@@ -30,3 +30,17 @@ See `docs/find-pattern.md` for the authoritative specification and extension gui
 - All index tables now use `app/components/VirtualizedNavDataTable.tsx` with spacer-row virtualization and staged hydration via `useHybridWindow`.
 - Hydration endpoints accept repeated `ids` and comma-separated lists and always return JSON in the requested order.
 - Legacy table components `NavDataTable` and `RefactoredNavDataTable` were removed to eliminate inline style injection that caused SSR hydration mismatches. If you see missing imports, migrate to `VirtualizedNavDataTable`.
+
+## Record Activity Modal Guidelines
+
+- Prefer `form.register` over `Controller` for Mantine inputs that already forward refs (TextInput, SegmentedControl, etc.); reserve `Controller` for components that cannot be registered directly (e.g., DatePickerInput).
+- Keep data-munging and `FormData` construction out of JSX; create dedicated marshal/unmarshal helpers and reference them from event handlers or effects.
+- Modal save/cancel buttons may mirror `saveCancelHeader`, but they must still trigger `form.handleSubmit` explicitly instead of relying on the native `<form>` submit event.
+- Centralize loader-to-form default mapping in a `buildAssemblyActivityDefaults` helper and form-to-payload logic in `serializeAssemblyActivityValues` so future changes remain discoverable.
+- Consumption rollups should be computed via a helper (e.g., `calculateConsumptionTotals`) so the JSX only renders pre-digested numbers.
+
+## Module Form Marshallers
+
+- Assemblies live under the Job module; shared helpers for the assembly modal now reside in `app/modules/job/forms/jobAssemblyActivityMarshaller.ts`.
+- For every module/form pair, add a `{moduleOrSubmodule}{FormName}Marshaller.ts` file inside that module's `forms/` directory to house marshal/unmarshal helpers, calculators, and serialization logic (e.g., `jobAssemblyActivityMarshaller.ts`).
+- Only marshaler files should touch loader data translation (`build...Defaults`) and payload serialization (`serialize...Values`); components import and call those helpers rather than reimplementing bespoke logic.

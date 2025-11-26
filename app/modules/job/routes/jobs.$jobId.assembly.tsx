@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Outlet } from "@remix-run/react";
 import { prisma } from "../../../utils/prisma.server";
 import { useEffect, useMemo } from "react";
@@ -9,7 +9,7 @@ export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const jobId = Number(params.jobId);
-  if (!jobId) throw new Response("Not Found", { status: 404 });
+  if (!jobId) return redirect("/jobs");
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     include: {
@@ -26,7 +26,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       },
     },
   });
-  if (!job) throw new Response("Not Found", { status: 404 });
+  if (!job) return redirect("/jobs");
   return json({
     job: { id: job.id, name: job.name },
     assemblies: job.assemblies,

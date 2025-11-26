@@ -1,22 +1,30 @@
 import {
+  ActionIcon,
   Button,
   Card,
   Divider,
   Grid,
   Group,
+  Menu,
+  Modal,
   Stack,
   Table,
   Text,
   TextInput,
-  Textarea,
   Title,
-  Modal,
 } from "@mantine/core";
+import { IconMenu2 } from "@tabler/icons-react";
 import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useSubmit, useLocation } from "@remix-run/react";
+import { useSubmit } from "@remix-run/react";
 import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
 import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
 import { Link } from "@remix-run/react";
@@ -43,8 +51,9 @@ type MinimalCosting = Parameters<
   typeof buildCostingRows
 >[0]["costings"][number];
 
+type ActivityModalType = "cut" | "make" | "pack";
+
 export function AssembliesEditor(props: {
-  mode?: "assembly" | "group";
   job?: { id: number; name?: string | null } | null;
   assemblies: Array<
     any & {
@@ -76,12 +85,13 @@ export function AssembliesEditor(props: {
     Record<number, Record<number, number>>
   >;
   activityVariantLabels?: string[]; // optional override of variant labels for activity table columns
-  // Group-only extras
-  groupMovements?: any[];
   groupContext?: { jobId: number; groupId: number } | null;
+  renderStatusBar?: (args: {
+    statusControls: ReactNode;
+    whiteboardControl: ReactNode | null;
+  }) => ReactNode;
 }) {
   const {
-    mode = "assembly",
     job,
     assemblies,
     quantityItems,
@@ -93,14 +103,22 @@ export function AssembliesEditor(props: {
     activities,
     activityConsumptionMap,
     activityVariantLabels,
-    groupMovements,
     groupContext,
+    renderStatusBar,
   } = props;
   const submit = useSubmit();
-  const isGroup = mode === "group" || assemblies.length > 1;
+  const isGroup = (assemblies?.length ?? 0) > 1;
   const firstAssembly = assemblies[0];
-  const [cutOpen, setCutOpen] = useState(false);
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
+  const [createActivityType, setCreateActivityType] =
+    useState<ActivityModalType>("cut");
   const [editActivity, setEditActivity] = useState<null | any>(null);
+  const [modalAssemblyId, setModalAssemblyId] = useState<number | null>(
+    firstAssembly?.id ?? null
+  );
+  const [deleteActivity, setDeleteActivity] = useState<any | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const deleteRequiredPhrase = "I AM SO SURE";
   const editForm = useForm<{
     orderedByAssembly: Record<string, number[]>;
     qpu: Record<string, number>;
@@ -146,6 +164,230 @@ export function AssembliesEditor(props: {
       ) as any,
     },
   });
+  const assembliesById = useMemo(() => {
+    const map = new Map<number, any>();
+    (assemblies || []).forEach((asm) => {
+      if (asm?.id != null) {
+        map.set(Number(asm.id), asm);
+      }
+    });
+    return map;
+  }, [assemblies]);
+  const modalAssembly =
+    (modalAssemblyId != null && assembliesById.get(modalAssemblyId)) ||
+    firstAssembly;
+  const quantityItemsByAssemblyId = useMemo(() => {
+    const map = new Map<number, QuantityItem>();
+    (quantityItems || []).forEach((item) => {
+      if (item?.assemblyId != null) {
+        map.set(Number(item.assemblyId), item);
+      }
+    });
+    return map;
+  }, [quantityItems]);
+  const getVariantLabelsForAssembly = (assemblyId: number): string[] => {
+    const asm = assembliesById.get(assemblyId);
+    if (asm?.variantSet?.variants?.length) {
+      return (asm.variantSet.variants as string[]) || [];
+    }
+    const qtyItem = quantityItemsByAssemblyId.get(assemblyId);
+    if (qtyItem?.variants?.labels?.length) {
+      return qtyItem.variants.labels;
+    }
+    return activityVariantLabels || [];
+  };
+  const trimVariantLabels = (labels: string[]): string[] => {
+    let last = -1;
+    for (let i = labels.length - 1; i >= 0; i--) {
+      const value = (labels[i] || "").toString().trim();
+      if (value) {
+        last = i;
+        break;
+      }
+    }
+    if (last === -1) return [];
+    return labels.slice(0, last + 1);
+  };
+  const resolveActivityTimestamp = (activity: any): number => {
+    const rawDate = activity?.activityDate ?? activity?.endTime;
+    if (!rawDate) return 0;
+    const value = new Date(rawDate as any).getTime();
+    return Number.isFinite(value) ? value : 0;
+  };
+  const groupQtyItemsPayload = useMemo(() => {
+    if (!isGroup) return undefined;
+    return (assemblies as any[]).map((a: any) => {
+      const it = (quantityItems as any[]).find((i) => i.assemblyId === a.id);
+      return {
+        assemblyId: a.id,
+        variants: { labels: it?.variants?.labels || [] },
+        ordered: it?.ordered || [],
+        cut: it?.cut || [],
+      };
+    });
+  }, [assemblies, isGroup, quantityItems]);
+  const activityRows = activities || [];
+  const modalVariantLabels = modalAssembly?.id
+    ? getVariantLabelsForAssembly(modalAssembly.id)
+    : activityVariantLabels || [];
+  const modalCostings = useMemo(() => {
+    const raw = ((modalAssembly as any)?.costings || []) as any[];
+    return raw.map((c: any) => ({
+      ...c,
+      component: c.product ?? c.component ?? null,
+    }));
+  }, [modalAssembly]);
+  const groupAssemblyIds = useMemo(
+    () => (assemblies || []).map((a) => a.id),
+    [assemblies]
+  );
+  const baseActivityVariantLabels = useMemo(() => {
+    if (activityVariantLabels?.length) {
+      return trimVariantLabels(activityVariantLabels);
+    }
+    for (const assemblyId of groupAssemblyIds) {
+      const labels = trimVariantLabels(getVariantLabelsForAssembly(assemblyId));
+      if (labels.length) return labels;
+    }
+    return [];
+  }, [
+    activityVariantLabels,
+    groupAssemblyIds,
+    assembliesById,
+    quantityItemsByAssemblyId,
+  ]);
+  const activityVariantHeaders = useMemo(() => {
+    const longestBreakdown = activityRows.reduce(
+      (len: number, activity: any) => {
+        const breakdownLength = Array.isArray(activity?.qtyBreakdown)
+          ? activity.qtyBreakdown.length
+          : 0;
+        return Math.max(len, breakdownLength);
+      },
+      0
+    );
+    const columnCount = Math.max(
+      baseActivityVariantLabels.length,
+      longestBreakdown
+    );
+    if (!columnCount) return [] as string[];
+    return Array.from({ length: columnCount }, (_, idx) => {
+      const raw = baseActivityVariantLabels[idx];
+      return raw && raw.trim() ? raw : `Variant ${idx + 1}`;
+    });
+  }, [activityRows, baseActivityVariantLabels]);
+  const groupedActivities = useMemo(() => {
+    const buckets = new Map<string, any[]>();
+    for (const activity of activityRows) {
+      const rawKey = activity?.groupKey && String(activity.groupKey).trim();
+      const key = rawKey
+        ? `group:${String(activity.groupKey)}`
+        : `activity:${activity.id}`;
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(activity);
+      buckets.set(key, bucket);
+    }
+    const rows = Array.from(buckets.entries()).map(([key, items]) => {
+      const sorted = items
+        .slice()
+        .sort(
+          (a, b) => resolveActivityTimestamp(b) - resolveActivityTimestamp(a)
+        );
+      const representative = sorted[0];
+      const assemblyIds = Array.from(
+        new Set(
+          sorted
+            .map((act) => Number(act?.assemblyId))
+            .filter((id) => Number.isFinite(id))
+        )
+      ) as number[];
+      const longestBreakdown = sorted.reduce(
+        (len, act) =>
+          Math.max(
+            len,
+            Array.isArray(act?.qtyBreakdown) ? act.qtyBreakdown.length : 0
+          ),
+        0
+      );
+      const breakdown = Array.from({ length: longestBreakdown }, (_, idx) =>
+        sorted.reduce((sum, act) => {
+          const value = Array.isArray(act?.qtyBreakdown)
+            ? Number(act.qtyBreakdown[idx]) || 0
+            : 0;
+          return sum + value;
+        }, 0)
+      );
+      return {
+        key,
+        representative,
+        breakdown,
+        assemblyIds,
+      };
+    });
+    return rows.sort(
+      (a, b) =>
+        resolveActivityTimestamp(b.representative) -
+        resolveActivityTimestamp(a.representative)
+    );
+  }, [activityRows]);
+  useEffect(() => {
+    setModalAssemblyId(firstAssembly?.id ?? null);
+  }, [firstAssembly?.id]);
+  const watchedStatuses =
+    (editForm.watch("statuses") as Record<string, string | undefined>) || {};
+  const watchedStatusNotes =
+    (editForm.watch("statusNotes") as Record<string, string | undefined>) || {};
+  const resolveStatusValue = (asmId: number) =>
+    normalizeAssemblyState(
+      watchedStatuses[String(asmId)] ??
+        (assembliesById.get(asmId)?.status as string | null)
+    ) ?? "DRAFT";
+  const resolveStatusNoteValue = (asmId: number) =>
+    watchedStatusNotes[String(asmId)] ??
+    (assembliesById.get(asmId)?.statusWhiteboard as string | null) ??
+    "";
+  const applyGroupStatusValue = (value: string) => {
+    groupAssemblyIds.forEach((id) => {
+      editForm.setValue(`statuses.${id}` as const, value, {
+        shouldDirty: true,
+        shouldTouch: true,
+      });
+    });
+  };
+  const applyGroupStatusNotes = (value: string) => {
+    groupAssemblyIds.forEach((id) => {
+      editForm.setValue(`statusNotes.${id}` as const, value, {
+        shouldDirty: true,
+        shouldTouch: true,
+      });
+    });
+  };
+  const groupStatusValue =
+    isGroup && groupAssemblyIds.length > 0
+      ? resolveStatusValue(groupAssemblyIds[0])
+      : null;
+  const groupWhiteboardValue = isGroup
+    ? (() => {
+        const seen = new Set<string>();
+        const merged: string[] = [];
+        groupAssemblyIds.forEach((id) => {
+          const rawValue = resolveStatusNoteValue(id) || "";
+          const key = rawValue.trim();
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            merged.push(rawValue);
+          }
+        });
+        return merged.join(" | ");
+      })()
+    : "";
+  const canRecordMakeForAssembly = (assemblyId: number) => {
+    const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
+    if (!totals) return false;
+    const cut = Number(totals.cut ?? 0) || 0;
+    const make = Number(totals.make ?? 0) || 0;
+    return cut > make;
+  };
   const assembliesResetKey = useMemo(
     () =>
       (assemblies || [])
@@ -290,61 +532,168 @@ export function AssembliesEditor(props: {
     }
     submit(fd, { method: "post" });
   };
+  const sendGroupStateUpdate = (
+    payload: Record<string, string | null | undefined>,
+    intentOverride?: string
+  ) => {
+    if (!groupAssemblyIds.length) return;
+    const fd = new FormData();
+    fd.set("_intent", intentOverride || "assembly.groupState");
+    fd.set("assemblyIds", groupAssemblyIds.join(","));
+    Object.entries(payload).forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        fd.set(key, val);
+      }
+    });
+    if (typeof window !== "undefined") {
+      fd.set("returnTo", window.location.pathname + window.location.search);
+    }
+    submit(fd, { method: "post" });
+  };
+
+  const resolveActivityType = (activity: any | null): ActivityModalType => {
+    const raw = String(
+      activity?.activityType || activity?.name || ""
+    ).toLowerCase();
+    if (raw.includes("make")) return "make";
+    if (raw.includes("pack")) return "pack";
+    return "cut";
+  };
+
+  const modalActivityType = editActivity
+    ? resolveActivityType(editActivity)
+    : createActivityType;
+
+  const closeDeleteModal = () => {
+    setDeleteActivity(null);
+    setDeleteConfirmation("");
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteActivity || deleteConfirmation !== deleteRequiredPhrase) return;
+    const fd = new FormData();
+    fd.set("_intent", "activity.delete");
+    fd.set("id", String(deleteActivity.id));
+    submit(fd, { method: "post" });
+    closeDeleteModal();
+  };
+
+  const handleRecordCut = (assemblyId: number) => {
+    setModalAssemblyId(assemblyId ?? firstAssembly?.id ?? null);
+    setCreateActivityType("cut");
+    setEditActivity(null);
+    setActivityModalOpen(true);
+  };
+
+  const handleRecordMake = (assemblyId: number) => {
+    if (!canRecordMakeForAssembly(assemblyId)) return;
+    setModalAssemblyId(assemblyId ?? firstAssembly?.id ?? null);
+    setCreateActivityType("make");
+    setEditActivity(null);
+    setActivityModalOpen(true);
+  };
+
+  const statusControlElements = isGroup
+    ? [
+        <StateChangeButton
+          key="group-status"
+          value={groupStatusValue ?? "DRAFT"}
+          defaultValue={groupStatusValue ?? "DRAFT"}
+          onChange={(v) => applyGroupStatusValue(v)}
+          config={assemblyStateConfig}
+        />,
+      ]
+    : (assemblies as any[]).map((a) => {
+        const fieldName = `statuses.${a.id}` as const;
+        return (
+          <Controller
+            key={`status-${a.id}`}
+            control={editForm.control}
+            name={fieldName}
+            render={({ field }) => {
+              const normalizedStatus =
+                normalizeAssemblyState(field.value) ?? "DRAFT";
+              return (
+                <StateChangeButton
+                  value={normalizedStatus}
+                  defaultValue={normalizedStatus}
+                  onChange={(v) => field.onChange(v)}
+                  config={assemblyStateConfig}
+                />
+              );
+            }}
+          />
+        );
+      });
+
+  const statusControlsNode = (
+    <Group gap="xs" align="center" wrap="wrap">
+      {statusControlElements}
+    </Group>
+  );
+
+  const whiteboardControl = firstAssembly ? (
+    <TextInput
+      placeholder="Whiteboard"
+      aria-label="Assembly status whiteboard"
+      value={
+        isGroup
+          ? groupWhiteboardValue
+          : resolveStatusNoteValue(firstAssembly.id)
+      }
+      onChange={(e) => {
+        const next = e.currentTarget.value;
+        if (isGroup) applyGroupStatusNotes(next);
+        else {
+          editForm.setValue(`statusNotes.${firstAssembly.id}` as const, next, {
+            shouldDirty: true,
+            shouldTouch: true,
+          });
+        }
+      }}
+      onBlur={(e) => {
+        const next = e.currentTarget.value;
+        if (isGroup) {
+          sendGroupStateUpdate({ statusWhiteboard: next });
+        } else if (firstAssembly) {
+          sendAssemblyUpdate(firstAssembly.id, {
+            statusWhiteboard: next || null,
+          });
+        }
+      }}
+      style={{ minWidth: 220 }}
+    />
+  ) : null;
+
+  const statusBarContent = renderStatusBar?.({
+    statusControls: statusControlsNode,
+    whiteboardControl,
+  }) ?? (
+    <Card withBorder padding="sm" mb="md">
+      <Stack gap="sm">
+        {statusControlsNode}
+        {whiteboardControl}
+      </Stack>
+    </Card>
+  );
 
   return (
     <>
-      {/* Top controls: per-assembly state and record cut */}
-      <Card withBorder padding="sm" mb="md">
-        <Group justify="space-between" align="center">
-          <Group wrap="wrap" gap="sm">
-            {(assemblies as any[]).map((a) => {
-              const fieldName = `statuses.${a.id}` as const;
-              return (
-                <Group key={`ctrl-${a.id}`} gap="xs" align="center">
-                  <Title order={6}>A{a.id}</Title>
-                  <Controller
-                    key={`status-${a.id}`}
-                    control={editForm.control}
-                    name={fieldName}
-                    render={({ field }) => {
-                      const normalizedStatus =
-                        normalizeAssemblyState(field.value) ?? "DRAFT";
-                      return (
-                        <StateChangeButton
-                          value={normalizedStatus}
-                          defaultValue={normalizedStatus}
-                          onChange={(v) => field.onChange(v)}
-                          config={assemblyStateConfig}
-                        />
-                      );
-                    }}
-                  />
-                </Group>
-              );
-            })}
-          </Group>
-          <Button size="xs" variant="light" onClick={() => setCutOpen(true)}>
-            {isGroup ? "Record Group Cut" : "Record Cut"}
-          </Button>
-        </Group>
-      </Card>
+      {statusBarContent}
 
       <Grid>
         {(assemblies || []).map((a) => {
           const item = (quantityItems || []).find((i) => i.assemblyId === a.id);
           if (!item) return null;
-          const statusField = `statuses.${a.id}` as const;
-          const normalizedStatus =
-            normalizeAssemblyState(
-              editForm.watch(statusField) ?? (a.status as string | null)
-            ) ?? "DRAFT";
+          const normalizedStatus = resolveStatusValue(a.id);
+          const statusNoteValue = resolveStatusNoteValue(a.id);
           const statusLabel =
             assemblyStateConfig.states[normalizedStatus]?.label ||
             normalizedStatus;
           return (
             <>
               <Grid.Col span={5}>
-                <Card withBorder padding="md">
+                <Card bg="transparent" padding="md">
                   <TextInput
                     label="Name"
                     value={editForm.watch(`names.${a.id}` as const) || ""}
@@ -362,36 +711,10 @@ export function AssembliesEditor(props: {
                     }}
                     mod="data-autosize"
                   />
-                  <Textarea
-                    label="Status Whiteboard"
-                    autosize
-                    minRows={2}
-                    value={editForm.watch(`statusNotes.${a.id}` as const) || ""}
-                    onChange={(e) =>
-                      editForm.setValue(
-                        `statusNotes.${a.id}` as const,
-                        e.currentTarget.value,
-                        { shouldDirty: true, shouldTouch: true }
-                      )
-                    }
-                    onBlur={() =>
-                      sendAssemblyUpdate(a.id, {
-                        statusWhiteboard:
-                          editForm.getValues().statusNotes[String(a.id)] || "",
-                      })
-                    }
-                    mod="data-autosize"
-                  />
                   <TextInput
                     readOnly
                     value={((a as any).product?.name as string) || ""}
                     label="Product"
-                    mod="data-autosize"
-                  />
-                  <TextInput
-                    readOnly
-                    value={statusLabel}
-                    label="Status"
                     mod="data-autosize"
                   />
                   <TextInput
@@ -427,14 +750,19 @@ export function AssembliesEditor(props: {
                       shouldTouch: true,
                     })
                   }
+                  actionColumn={{
+                    onRecordCut: () => handleRecordCut(a.id),
+                    onRecordMake: () => handleRecordMake(a.id),
+                    recordMakeDisabled: !canRecordMakeForAssembly(a.id),
+                  }}
                 />
               </Grid.Col>
             </>
           );
         })}
-        <Grid.Col span={12}>
+        <Grid.Col span={12} mt="lg">
           <AssemblyCostingsTable
-            title={isGroup ? "Costings (Group)" : "Costings"}
+            title="Costings"
             actions={[
               <AddCostingButton
                 products={products || []}
@@ -483,177 +811,137 @@ export function AssembliesEditor(props: {
           />
         </Grid.Col>
         {/* Activity section */}
-        {!isGroup ? (
-          <Grid.Col span={12}>
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
+        <Grid.Col span={12} mt="lg">
+          <Card withBorder bg="transparent" padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
                 <Title order={4}>Activity History</Title>
-              </Card.Section>
-              <Divider my="xs" />
-              <Table striped withTableBorder withColumnBorders highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>ID</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Job</Table.Th>
-                    <Table.Th>End</Table.Th>
-                    {(() => {
-                      const raw =
-                        (firstAssembly?.variantSet?.variants?.length
-                          ? (firstAssembly?.variantSet?.variants as any)
-                          : activityVariantLabels) || [];
-                      let last = -1;
-                      for (let i = raw.length - 1; i >= 0; i--) {
-                        const s = (raw[i] || "").toString().trim();
-                        if (s) {
-                          last = i;
-                          break;
-                        }
-                      }
-                      const cnum = (firstAssembly as any)?.c_numVariants as
-                        | number
-                        | undefined;
-                      const effectiveLen = Math.max(
-                        0,
-                        Math.min(
-                          typeof cnum === "number" && cnum > 0
-                            ? cnum
-                            : raw.length,
-                          last + 1
+              </Group>
+            </Card.Section>
+            <Card.Section>
+              {groupedActivities.length ? (
+                <Table withColumnBorders>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>ID</Table.Th>
+                      <Table.Th>Date</Table.Th>
+                      <Table.Th>Activity</Table.Th>
+                      <Table.Th>Assembly</Table.Th>
+                      {activityVariantHeaders.map(
+                        (label: string, idx: number) => (
+                          <Table.Th ta="center" key={`group-vcol-${idx}`}>
+                            {label || `${idx + 1}`}
+                          </Table.Th>
                         )
-                      );
-                      const cols = raw.slice(0, effectiveLen);
-                      const headers = cols.length
-                        ? cols
-                        : (
-                            (activities || []).find((a: any) =>
-                              Array.isArray(a.qtyBreakdown)
-                            )?.qtyBreakdown || []
-                          ).map((_x: any, i: number) => `${i + 1}`);
-                      return headers.map((label: string, idx: number) => (
-                        <Table.Th key={`vcol-${idx}`}>
-                          {label || `${idx + 1}`}
-                        </Table.Th>
-                      ));
-                    })()}
-                    <Table.Th>Notes</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {(activities || []).map((a: any) => {
-                    const raw =
-                      (firstAssembly?.variantSet?.variants?.length
-                        ? (firstAssembly?.variantSet?.variants as any)
-                        : activityVariantLabels) || [];
-                    let last = -1;
-                    for (let i = raw.length - 1; i >= 0; i--) {
-                      const s = (raw[i] || "").toString().trim();
-                      if (s) {
-                        last = i;
-                        break;
-                      }
-                    }
-                    const cnum = (firstAssembly as any)?.c_numVariants as
-                      | number
-                      | undefined;
-                    const effectiveLen = Math.max(
-                      0,
-                      Math.min(
-                        typeof cnum === "number" && cnum > 0
-                          ? cnum
-                          : raw.length,
-                        last + 1
-                      )
-                    );
-                    const labels = raw.slice(0, effectiveLen);
-                    const breakdown = (a.qtyBreakdown || []) as number[];
-                    const cols = labels.length
-                      ? labels
-                      : breakdown.map((_x: any, i: number) => `${i + 1}`);
-                    return (
-                      <Table.Tr
-                        key={a.id}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => {
-                          setEditActivity(a);
-                          setCutOpen(true);
-                        }}
-                      >
-                        <Table.Td>{a.id}</Table.Td>
-                        <Table.Td>{a.name}</Table.Td>
-                        <Table.Td>{a.job?.name || a.jobId}</Table.Td>
-                        <Table.Td>
-                          {a.endTime
-                            ? new Date(a.endTime).toLocaleString()
-                            : ""}
-                        </Table.Td>
-                        {cols.map((_label: string, idx: number) => (
-                          <Table.Td key={`${a.id}-qty-${idx}`}>
-                            {breakdown[idx] ? breakdown[idx] : ""}
+                      )}
+                      <Table.Th>Actions</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {groupedActivities.map((group) => {
+                      const { representative, breakdown, assemblyIds, key } =
+                        group;
+                      const assemblyLabel = assemblyIds.length
+                        ? assemblyIds.map((id) => `A${id}`).join(", ")
+                        : "—";
+                      return (
+                        <Table.Tr key={key}>
+                          <Table.Td>{representative?.id}</Table.Td>
+                          <Table.Td>
+                            {representative?.activityDate
+                              ? new Date(
+                                  representative.activityDate
+                                ).toLocaleString()
+                              : representative?.endTime
+                              ? new Date(
+                                  representative.endTime
+                                ).toLocaleString()
+                              : ""}
                           </Table.Td>
-                        ))}
-                        <Table.Td>{a.notes}</Table.Td>
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </Card>
-          </Grid.Col>
-        ) : (
-          <Grid.Col span={12}>
-            <Card withBorder padding="md">
-              <Card.Section inheritPadding py="xs">
-                <Title order={4}>Group Activity & Movements (read-only)</Title>
-              </Card.Section>
-              <Divider my="xs" />
-              <div>
-                {!(groupMovements || []).length ? (
-                  <div style={{ padding: 8 }}>
-                    No group-level movements yet.
-                  </div>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 16 }}>
-                    {(groupMovements || []).map((m: any) => (
-                      <li key={m.id}>
-                        {new Date(m.date).toLocaleString()} —{" "}
-                        {m.movementType || "Movement"} — Qty{" "}
-                        {String(m.quantity || "")}{" "}
-                        {m.groupKey ? `(key ${m.groupKey})` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </Card>
-          </Grid.Col>
-        )}
+                          <Table.Td>
+                            {representative?.activityType
+                              ? String(
+                                  representative.activityType
+                                ).toUpperCase()
+                              : representative?.name || "Activity"}
+                          </Table.Td>
+                          <Table.Td>{assemblyLabel}</Table.Td>
+                          {activityVariantHeaders.map(
+                            (_label: string, idx: number) => (
+                              <Table.Td ta="center" key={`${key}-qty-${idx}`}>
+                                {breakdown[idx] ? breakdown[idx] : ""}
+                              </Table.Td>
+                            )
+                          )}
+                          <Table.Td width={60}>
+                            <Menu
+                              withinPortal
+                              position="bottom-end"
+                              shadow="sm"
+                            >
+                              <Menu.Target>
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label="Activity actions"
+                                >
+                                  <IconMenu2 size={16} />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item
+                                  onClick={() => {
+                                    const targetAssemblyId =
+                                      assemblyIds[0] ||
+                                      Number(representative?.assemblyId) ||
+                                      firstAssembly?.id ||
+                                      null;
+                                    setModalAssemblyId(targetAssemblyId);
+                                    setEditActivity(representative);
+                                    setActivityModalOpen(true);
+                                  }}
+                                >
+                                  Edit
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="red"
+                                  onClick={() => {
+                                    setDeleteActivity(representative);
+                                    setDeleteConfirmation("");
+                                  }}
+                                >
+                                  Delete
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              ) : (
+                <Text c="dimmed">No activities recorded yet.</Text>
+              )}
+            </Card.Section>
+          </Card>
+        </Grid.Col>
       </Grid>
 
       {/* Activity Modals */}
-      {!isGroup ? (
+      {modalAssembly && (
         <AssemblyActivityModal
-          opened={cutOpen}
+          opened={activityModalOpen}
           onClose={() => {
-            setCutOpen(false);
+            setActivityModalOpen(false);
             setEditActivity(null);
           }}
-          assembly={firstAssembly}
-          productVariantSet={{ variants: activityVariantLabels || [] } as any}
-          costings={(firstAssembly?.costings || []) as any}
-          activityType={
-            editActivity &&
-            String(editActivity?.activityType || editActivity?.name || "")
-              .toLowerCase()
-              .includes("make")
-              ? "make"
-              : editActivity &&
-                String(editActivity?.activityType || editActivity?.name || "")
-                  .toLowerCase()
-                  .includes("pack")
-              ? "pack"
-              : "cut"
+          assembly={modalAssembly}
+          productVariantSet={{ variants: modalVariantLabels } as any}
+          groupQtyItems={
+            !editActivity && isGroup ? (groupQtyItemsPayload as any) : undefined
           }
+          costings={modalCostings as any}
+          activityType={modalActivityType}
           mode={editActivity ? "edit" : "create"}
           activityId={editActivity?.id ?? undefined}
           initialDate={
@@ -665,47 +953,55 @@ export function AssembliesEditor(props: {
               ? activityConsumptionMap?.[editActivity.id] || {}
               : undefined
           }
+          overrideIntent={
+            !editActivity && isGroup
+              ? modalActivityType === "make"
+                ? "group.activity.create.make"
+                : "group.activity.create.cut"
+              : undefined
+          }
+          extraFields={
+            !editActivity && isGroup
+              ? {
+                  activityType: modalActivityType,
+                  assemblyIds: groupAssemblyIds.join(","),
+                  groupId: groupContext?.groupId || 0,
+                  jobId: groupContext?.jobId || 0,
+                }
+              : undefined
+          }
         />
-      ) : (
-        firstAssembly && (
-          <AssemblyActivityModal
-            opened={cutOpen}
-            onClose={() => setCutOpen(false)}
-            assembly={firstAssembly}
-            productVariantSet={
-              {
-                variants:
-                  (quantityItems.find((i) => i.assemblyId === firstAssembly.id)
-                    ?.variants?.labels as any) || [],
-              } as any
-            }
-            groupQtyItems={(assemblies as any[]).map((a: any) => {
-              const it = (quantityItems as any[]).find(
-                (i) => i.assemblyId === a.id
-              );
-              return {
-                assemblyId: a.id,
-                variants: { labels: it?.variants?.labels || [] },
-                ordered: it?.ordered || [],
-                cut: it?.cut || [],
-              };
-            })}
-            costings={
-              ((firstAssembly as any).costings || []).map((c: any) => ({
-                ...c,
-                component: c.product ?? null,
-              })) as any
-            }
-            activityType="cut"
-            mode="create"
-            overrideIntent="group.activity.create.cut"
-            extraFields={{
-              groupId: groupContext?.groupId || 0,
-              jobId: groupContext?.jobId || 0,
-            }}
-          />
-        )
       )}
+      <Modal
+        opened={!!deleteActivity}
+        onClose={closeDeleteModal}
+        title="Delete Activity"
+        centered
+      >
+        <Stack gap="sm">
+          <Text>
+            To permanently delete activity {deleteActivity?.id}, type{" "}
+            <strong>{deleteRequiredPhrase}</strong> below.
+          </Text>
+          <TextInput
+            placeholder={deleteRequiredPhrase}
+            value={deleteConfirmation}
+            onChange={(e) => setDeleteConfirmation(e.currentTarget.value)}
+          />
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={closeDeleteModal}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              disabled={deleteConfirmation !== deleteRequiredPhrase}
+              onClick={handleConfirmDelete}
+            >
+              Delete
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
   );
 }

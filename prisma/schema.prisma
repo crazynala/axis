@@ -222,6 +222,7 @@ model Company {
     // isActive                  Boolean?
     isCarrier                       Boolean?
     isCustomer                      Boolean?
+    isConsignee                     Boolean?
     isSupplier                      Boolean?
     isInactive                      Boolean?
     // Optional default margin override for this vendor (used when computing sale prices)

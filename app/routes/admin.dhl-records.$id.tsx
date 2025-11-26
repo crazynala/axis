@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
@@ -17,7 +17,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
   if (!Number.isFinite(id)) throw new Response("Invalid id", { status: 400 });
   const row = await prisma.dHLReportLine.findUnique({ where: { id } });
-  if (!row) throw new Response("Not found", { status: 404 });
+  if (!row) return redirect("/admin/dhl-records");
   return json({ row });
 }
 

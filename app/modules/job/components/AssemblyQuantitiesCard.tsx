@@ -1,6 +1,15 @@
-import { Button, Card, Divider, Group, Table, Title } from "@mantine/core";
+import {
+  ActionIcon,
+  Card,
+  Divider,
+  Group,
+  Table,
+  Title,
+  Tooltip,
+} from "@mantine/core";
 import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
+import { IconScissors, IconSettings } from "@tabler/icons-react";
 
 export type VariantInfo = {
   labels: string[];
@@ -26,6 +35,7 @@ export function AssemblyQuantitiesCard({
   orderedValue,
   onChangeOrdered,
   hideInlineActions,
+  actionColumn,
 }: {
   title?: string;
   variants: VariantInfo;
@@ -40,9 +50,17 @@ export function AssemblyQuantitiesCard({
   onChangeOrdered?: (ordered: number[]) => void;
   /** Hide inline Save/Cancel buttons (use global form header instead) */
   hideInlineActions?: boolean;
+  actionColumn?: {
+    onRecordCut?: () => void;
+    onRecordMake?: () => void;
+    recordMakeDisabled?: boolean;
+  };
 }) {
   const fmt = (n: number | undefined) =>
     n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "∙" : n;
+  const hasActionColumn = Boolean(
+    actionColumn && (actionColumn.onRecordCut || actionColumn.onRecordMake)
+  );
   const rawLabels = variants.labels;
   // Determine if labels include any non-empty values and where the last non-empty is
   const lastNonEmpty = (() => {
@@ -128,95 +146,166 @@ export function AssemblyQuantitiesCard({
 
   return (
     <Card withBorder padding="md">
-      {items.map((it, idx) => (
-        <div
-          key={`q-${idx}`}
-          style={{ marginBottom: idx < items.length - 1 ? 16 : 0 }}
-        >
-          {items.length > 1 && (
-            <Group justify="space-between" mb="xs">
-              <Title order={6}>{it.label}</Title>
-            </Group>
-          )}
-          <Table withTableBorder withColumnBorders>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Type</Table.Th>
-                {cols.map((l: string, i: number) => (
-                  <Table.Th
-                    key={`qcol-${idx}-${i}`}
-                    style={{ textAlign: "center" }}
-                  >
-                    {l || `${i + 1}`}
-                  </Table.Th>
-                ))}
-                <Table.Th>Total</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              <Table.Tr>
-                <Table.Td>Ordered</Table.Td>
-                {cols.map((_l, i) => (
+      <Card.Section>
+        {items.map((it, idx) => (
+          <div
+            key={`q-${idx}`}
+            style={{ marginBottom: idx < items.length - 1 ? 16 : 0 }}
+          >
+            {items.length > 1 && (
+              <Group justify="space-between" mb="xs">
+                <Title order={6}>{it.label}</Title>
+              </Group>
+            )}
+            <Table withTableBorder withColumnBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Type</Table.Th>
+                  {cols.map((l: string, i: number) => (
+                    <Table.Th
+                      key={`qcol-${idx}-${i}`}
+                      style={{ textAlign: "center" }}
+                    >
+                      {l || `${i + 1}`}
+                    </Table.Th>
+                  ))}
+                  <Table.Th>Total</Table.Th>
+                  {hasActionColumn && (
+                    <Table.Th style={{ width: 30, textAlign: "center" }} />
+                  )}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Td>Ordered</Table.Td>
+                  {cols.map((_l, i) => (
+                    <Table.Td
+                      key={`ord-${idx}-${i}`}
+                      style={{ padding: editableOrdered ? 0 : undefined }}
+                    >
+                      {editableOrdered && idx === 0 ? (
+                        <EmbeddedTextInput
+                          type="number"
+                          value={effectiveOrdered[i] ?? 0}
+                          onChange={(e) =>
+                            handleChangeCell(i, e.currentTarget.value)
+                          }
+                        />
+                      ) : (
+                        fmt(it.ordered[i])
+                      )}
+                    </Table.Td>
+                  ))}
                   <Table.Td
-                    key={`ord-${idx}-${i}`}
-                    style={{ padding: editableOrdered ? 0 : undefined }}
+                    align="center"
+                    style={{ verticalAlign: "baseline" }}
                   >
-                    {editableOrdered && idx === 0 ? (
-                      <EmbeddedTextInput
-                        type="number"
-                        value={effectiveOrdered[i] ?? 0}
-                        onChange={(e) =>
-                          handleChangeCell(i, e.currentTarget.value)
-                        }
-                      />
-                    ) : (
-                      fmt(it.ordered[i])
-                    )}
+                    {editableOrdered && idx === 0
+                      ? fmt(totalOrdered)
+                      : fmt(sum(it.ordered))}
                   </Table.Td>
-                ))}
-                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
-                  {editableOrdered && idx === 0
-                    ? fmt(totalOrdered)
-                    : fmt(sum(it.ordered))}
-                </Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td>Cut</Table.Td>
-                {cols.map((_l, i) => (
-                  <Table.Td key={`cut-${idx}-${i}`} align="center">
-                    {fmt(it.cut[i])}
+                  {hasActionColumn && (
+                    <Table.Td
+                      align="center"
+                      style={{ verticalAlign: "middle" }}
+                    >
+                      {/* Ordered row has no actions */}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Cut</Table.Td>
+                  {cols.map((_l, i) => (
+                    <Table.Td key={`cut-${idx}-${i}`} align="center">
+                      {fmt(it.cut[i])}
+                    </Table.Td>
+                  ))}
+                  <Table.Td
+                    align="center"
+                    style={{ verticalAlign: "baseline" }}
+                  >
+                    {fmt(it.totals.cut)}
                   </Table.Td>
-                ))}
-                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
-                  {fmt(it.totals.cut)}
-                </Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td>Make</Table.Td>
-                {cols.map((_l, i) => (
-                  <Table.Td key={`make-${idx}-${i}`} align="center">
-                    {fmt(it.make[i])}
+                  {hasActionColumn && (
+                    <Table.Td
+                      mx={0}
+                      align="center"
+                      style={{ verticalAlign: "middle" }}
+                    >
+                      {idx === 0 && actionColumn.onRecordCut ? (
+                        <Tooltip label="Record Cut" withArrow>
+                          <ActionIcon
+                            variant="subtle"
+                            aria-label="Record cut"
+                            onClick={actionColumn.onRecordCut}
+                          >
+                            <IconScissors size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      ) : null}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Make</Table.Td>
+                  {cols.map((_l, i) => (
+                    <Table.Td key={`make-${idx}-${i}`} align="center">
+                      {fmt(it.make[i])}
+                    </Table.Td>
+                  ))}
+                  <Table.Td
+                    align="center"
+                    style={{ verticalAlign: "baseline" }}
+                  >
+                    {fmt(it.totals.make)}
                   </Table.Td>
-                ))}
-                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
-                  {fmt(it.totals.make)}
-                </Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td>Pack</Table.Td>
-                {cols.map((_l, i) => (
-                  <Table.Td key={`pack-${idx}-${i}`} align="center">
-                    {fmt(it.pack[i])}
+                  {hasActionColumn && (
+                    <Table.Td
+                      align="center"
+                      style={{ verticalAlign: "middle" }}
+                    >
+                      {idx === 0 && actionColumn.onRecordMake ? (
+                        <Tooltip label="Record Make" withArrow>
+                          <ActionIcon
+                            variant="subtle"
+                            aria-label="Record make"
+                            onClick={actionColumn.onRecordMake}
+                            disabled={actionColumn.recordMakeDisabled}
+                          >
+                            <IconSettings size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      ) : null}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Pack</Table.Td>
+                  {cols.map((_l, i) => (
+                    <Table.Td key={`pack-${idx}-${i}`} align="center">
+                      {fmt(it.pack[i])}
+                    </Table.Td>
+                  ))}
+                  <Table.Td
+                    align="center"
+                    style={{ verticalAlign: "baseline" }}
+                  >
+                    {fmt(it.totals.pack)}
                   </Table.Td>
-                ))}
-                <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
-                  {fmt(it.totals.pack)}
-                </Table.Td>
-              </Table.Tr>
-            </Table.Tbody>
-          </Table>
-        </div>
-      ))}
+                  {hasActionColumn && (
+                    <Table.Td
+                      align="center"
+                      style={{ verticalAlign: "middle" }}
+                    >
+                      {/* Pack row has no actions */}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          </div>
+        ))}
+      </Card.Section>
     </Card>
   );
 }
