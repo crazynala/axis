@@ -52,8 +52,8 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
     const resolvedName = rawName
       ? rawName
       : productId != null
-        ? productNameById.get(productId) ?? null
-        : null;
+      ? productNameById.get(productId) ?? null
+      : null;
     const data: any = {
       id,
       name: resolvedName,
