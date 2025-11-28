@@ -6,8 +6,9 @@ import type {
 import { json, redirect } from "@remix-run/node";
 import {
   Link,
-  useLoaderData,
+  Outlet,
   useNavigation,
+  useRouteLoaderData,
   useSubmit,
 } from "@remix-run/react";
 import { useInitGlobalFormContext } from "@aa/timber";
@@ -30,11 +31,7 @@ import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
-import {
-  useRegisterNavLocation,
-  usePersistIndexSearch,
-  getSavedIndexSearch,
-} from "~/hooks/useNavLocation";
+import { getSavedIndexSearch } from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
@@ -137,8 +134,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/companies/${id}`);
 }
 
-export default function CompanyDetailRoute() {
-  const { company, mappings, vendors } = useLoaderData<typeof loader>();
+export function CompanyDetailView() {
+  const { company, mappings, vendors } = useRouteLoaderData<typeof loader>(
+    "modules/company/routes/companies.$id"
+  )!;
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
@@ -251,10 +250,6 @@ export default function CompanyDetailRoute() {
   };
 
   useInitGlobalFormContext(form as any, save, () => form.reset());
-  // Track last visited path inside companies module & persist index search filters
-  useRegisterNavLocation({ includeSearch: true, moduleKey: "companies" });
-  usePersistIndexSearch("/companies");
-
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
@@ -377,4 +372,8 @@ export default function CompanyDetailRoute() {
       </Text>
     </Stack>
   );
+}
+
+export default function CompanyDetailLayout() {
+  return <Outlet />;
 }

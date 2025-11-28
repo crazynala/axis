@@ -21,7 +21,7 @@ export default function NewShipmentRoute() {
     defaultValues: {
       date: "",
       dateReceived: "",
-      status: "",
+      status: "In Progress",
       type: "Out",
       shipmentType: "",
       trackingNo: "",
@@ -34,7 +34,7 @@ export default function NewShipmentRoute() {
     const fd = new FormData();
     if (values.date) fd.set("date", values.date);
     if (values.dateReceived) fd.set("dateReceived", values.dateReceived);
-    if (values.status) fd.set("status", values.status);
+    fd.set("status", "In Progress");
     if (values.type) fd.set("type", values.type);
     if (values.shipmentType) fd.set("shipmentType", values.shipmentType);
     if (values.trackingNo) fd.set("trackingNo", values.trackingNo);
@@ -58,7 +58,7 @@ export default function NewShipmentRoute() {
         />
       </Group>
       <Form method="post" onSubmit={form.handleSubmit(onSubmit)}>
-        <ShipmentDetailForm mode="edit" form={form as any} />
+        <ShipmentDetailForm mode="create" form={form as any} />
         <Group justify="end" mt="md">
           <Button type="submit" disabled={busy}>
             {busy ? "Saving..." : "Create Shipment"}

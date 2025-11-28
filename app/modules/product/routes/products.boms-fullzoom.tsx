@@ -1,15 +1,28 @@
 import { json } from "@remix-run/node";
-import { AppShell, Group, Text, Stack, Button, Card } from "@mantine/core";
+import { AppShell, Group, Text, Stack, Card } from "@mantine/core";
 import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
-import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
+import { useInitGlobalFormContext } from "@aa/timber";
 import { useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
 import * as RDG from "react-datasheet-grid";
 import { useDataSheetController } from "react-datasheet-grid";
 import type { Column } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lookupProductsBySkus } from "~/modules/product/utils/productLookup.client";
-import { IconLogout2 } from "@tabler/icons-react";
-import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import {
+  guardColumnsWithDisableControls,
+  padRowsWithDisableControls,
+} from "~/components/sheets/disableControls";
+import {
+  SheetExitButton,
+  SheetSaveButton,
+  useSheetDirtyPrompt,
+} from "~/components/sheets/SheetControls";
+import {
+  UsageSelectCell,
+  normalizeUsageValue,
+  type UsageValue,
+} from "~/components/sheets/UsageSelectCell";
 
 type MultiBOMRow = {
   productId: number;
@@ -23,6 +36,7 @@ type MultiBOMRow = {
   supplier: string;
   quantity: number | string;
   groupStart?: boolean; // first row for its product
+  disableControls?: boolean;
 };
 export async function loader({ request }: any) {
   const url = new URL(request.url);
@@ -66,11 +80,12 @@ export async function loader({ request }: any) {
       id: line.id,
       childSku: line.child?.sku || "",
       childName: line.child?.name || "",
-      activityUsed: line.activityUsed || "",
+      activityUsed: normalizeUsageValue(line.activityUsed),
       type: (line.child?.type as string) || "",
       supplier: (line.child?.supplier?.name as string) || "",
       quantity: (line.quantity as any) ?? "",
       groupStart: idx === 0,
+      disableControls: false,
     }));
     if (items.length === 0) {
       items.push({
@@ -85,6 +100,7 @@ export async function loader({ request }: any) {
         supplier: "",
         quantity: "",
         groupStart: true,
+        disableControls: false,
       });
     }
     rows.push(...items);
@@ -195,9 +211,21 @@ export async function action({ request }: any) {
 export default function ProductsBomsFullzoom() {
   console.log("** ProductsBomsFullzoom mount");
   const { rows: initialRows } = useLoaderData<typeof loader>();
+  const normalizedInitialRows = useMemo(
+    () =>
+      ((initialRows || []) as MultiBOMRow[]).map((row) => ({
+        ...row,
+        activityUsed: normalizeUsageValue(row.activityUsed),
+        disableControls: false,
+      })),
+    [initialRows]
+  );
   const navigate = useNavigate();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const [saving, setSaving] = useState(false);
+  useSheetDirtyPrompt();
+  const exitUrl = "/products";
   const sanitize = useCallback((list: MultiBOMRow[]) => {
     // Strip derived fields and trailing blanks for dirty compare
     const core = (list || []).filter((r) => {
@@ -213,14 +241,17 @@ export default function ProductsBomsFullzoom() {
       id: r.id ?? null,
       childSku: String(r.childSku || "").trim(),
       quantity: Number(r.quantity) || 0,
-      activityUsed: r.activityUsed || "",
+      activityUsed: normalizeUsageValue(r.activityUsed),
     }));
   }, []);
 
-  const controller = useDataSheetController<MultiBOMRow>(initialRows || [], {
-    sanitize,
-    historyLimit: 200,
-  });
+  const controller = useDataSheetController<MultiBOMRow>(
+    normalizedInitialRows || [],
+    {
+      sanitize,
+      historyLimit: 200,
+    }
+  );
   const rows = controller.value;
   const setRows = controller.setValue;
 
@@ -286,6 +317,7 @@ export default function ProductsBomsFullzoom() {
           supplier: "",
           quantity: "",
           groupStart: false,
+          disableControls: false,
         });
       }
       if (filtered.length) filtered[0] = { ...filtered[0], groupStart: true };
@@ -299,9 +331,14 @@ export default function ProductsBomsFullzoom() {
 
   // Minimum row padding to keep grid visually full (shared util)
   const normalizeRows = useCallback(
-    (list: MultiBOMRow[]) =>
-      padToMinRows(
-        ensureProductTrailingBlank(list),
+    (list: MultiBOMRow[]) => {
+      const normalizedUsage = (list || []).map((row) => ({
+        ...row,
+        activityUsed: normalizeUsageValue(row.activityUsed),
+        disableControls: false,
+      }));
+      return padRowsWithDisableControls(
+        ensureProductTrailingBlank(normalizedUsage),
         DEFAULT_MIN_ROWS,
         (last) => ({
           productId: last?.productId ?? 0,
@@ -315,17 +352,20 @@ export default function ProductsBomsFullzoom() {
           supplier: "",
           quantity: "",
           groupStart: false,
-        })
-      ),
+          disableControls: false,
+        }),
+        { extraInteractiveRows: 0 }
+      );
+    },
     [ensureProductTrailingBlank]
   );
 
   useEffect(() => {
     console.log(
       "** useEffect initialRows",
-      Array.isArray(initialRows) ? initialRows.length : -1
+      Array.isArray(normalizedInitialRows) ? normalizedInitialRows.length : -1
     );
-    const base = (initialRows || []) as MultiBOMRow[];
+    const base = normalizedInitialRows as MultiBOMRow[];
     const next = normalizeRows(base);
     // Guard: only reset if the normalized loader rows differ from current state
     try {
@@ -341,17 +381,27 @@ export default function ProductsBomsFullzoom() {
     } catch {
       controller.reset(next);
     }
-  }, [initialRows, normalizeRows]);
+  }, [normalizedInitialRows, normalizeRows]);
 
   // Helpers for batched SKU lookup and trailing blank per product
   const pendingSkusRef = useRef<Set<string>>(new Set());
   const lookupTimerRef = useRef<any>(null);
-  const prevRowsRef = useRef<MultiBOMRow[]>(initialRows || []);
+  const prevRowsRef = useRef<MultiBOMRow[]>(normalizedInitialRows || []);
+  useEffect(() => {
+    prevRowsRef.current = normalizedInitialRows || [];
+  }, [normalizedInitialRows]);
   // We fully own paste; no DSG prePaste or overflow trackers needed
+  const normalizeSkuKey = useCallback(
+    (value: string) => value.trim().toLowerCase(),
+    []
+  );
   const enqueueLookup = useCallback(
     (skus: string[]) => {
       console.log("** enqueueLookup", { add: (skus || []).length });
-      skus.filter(Boolean).forEach((s) => pendingSkusRef.current.add(s));
+      skus
+        .map((s) => String(s || "").trim())
+        .filter(Boolean)
+        .forEach((s) => pendingSkusRef.current.add(s));
       if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
       lookupTimerRef.current = setTimeout(async () => {
         const toFetch = Array.from(pendingSkusRef.current);
@@ -363,7 +413,8 @@ export default function ProductsBomsFullzoom() {
           console.log("** lookup done", { hits: map.size });
           const curr = controller.getValue();
           const next = curr.map((r: MultiBOMRow) => {
-            const info = r.childSku ? map.get(r.childSku) : null;
+            const key = normalizeSkuKey(String(r.childSku || ""));
+            const info = key ? map.get(key) || map.get(r.childSku || "") : null;
             if (!info) return r;
             return {
               ...r,
@@ -381,7 +432,7 @@ export default function ProductsBomsFullzoom() {
         } catch {}
       }, 120);
     },
-    [controller, normalizeRows]
+    [controller, normalizeRows, normalizeSkuKey]
   );
 
   // Removed app-level paste interception. Rely on forked grid block paste.
@@ -436,12 +487,25 @@ export default function ProductsBomsFullzoom() {
       id: "activityUsed",
       title: "Usage",
       grow: 1,
+      component: ({ rowData, setRowData, focus, stopEditing }: any) => (
+        <UsageSelectCell
+          value={(rowData.activityUsed || "") as UsageValue}
+          focus={focus}
+          onBlur={() => stopEditing?.({ nextRow: false })}
+          onChange={(value) =>
+            setRowData({
+              ...rowData,
+              activityUsed: value,
+            })
+          }
+        />
+      ),
     } as any;
     const nameCol = col("childName" as any, "Name", 2, true) as any;
     const typeCol = col("type" as any, "Type", 1, true) as any;
     const supplierCol = col("supplier" as any, "Supplier", 1.2, true) as any;
 
-    return [
+    const cols: Column<MultiBOMRow>[] = [
       productCol,
       idCol,
       skuCol,
@@ -451,6 +515,7 @@ export default function ProductsBomsFullzoom() {
       typeCol,
       supplierCol,
     ];
+    return guardColumnsWithDisableControls(cols);
   }, [col, enqueueLookup]);
 
   const onChange = useCallback(
@@ -494,18 +559,23 @@ export default function ProductsBomsFullzoom() {
   );
 
   const save = useCallback(async () => {
-    const payload = { _intent: "products.boms.batchSave", rows };
-    const resp = await fetch("/products/boms-fullzoom", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      // eslint-disable-next-line no-alert
-      alert("Save failed");
-      return;
+    setSaving(true);
+    try {
+      const payload = { _intent: "products.boms.batchSave", rows };
+      const resp = await fetch("/products/boms-fullzoom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        // eslint-disable-next-line no-alert
+        alert("Save failed");
+        return;
+      }
+      navigate("/products?refreshed=1");
+    } finally {
+      setSaving(false);
     }
-    navigate("/products?refreshed=1");
   }, [rows, navigate]);
 
   const formHandlers = useMemo(
@@ -525,12 +595,8 @@ export default function ProductsBomsFullzoom() {
   return (
     <FullzoomAppShell
       title="Batch Edit BOMs"
-      left={
-        <Button variant="subtle" onClick={() => navigate(-1)}>
-          <IconLogout2 />
-          Exit
-        </Button>
-      }
+      left={<SheetExitButton to={exitUrl} />}
+      right={<SheetSaveButton saving={saving} />}
     >
       {(gridHeight) => (
         <RDG.DataSheetGrid
@@ -570,6 +636,7 @@ export default function ProductsBomsFullzoom() {
               type: "",
               supplier: "",
               quantity: "",
+              disableControls: false,
             } as MultiBOMRow;
           }}
           createRow={() => ({
@@ -583,6 +650,7 @@ export default function ProductsBomsFullzoom() {
             type: "",
             supplier: "",
             quantity: "",
+            disableControls: false,
           })}
         />
       )}

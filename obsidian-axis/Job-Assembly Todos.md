@@ -20,3 +20,15 @@
 - [ ] Form still dirty after saving (e.g. after updating order qty)
 - [ ] Assembly must have type (prod | SMS | PP | Keep)
 - [ ] Don't add the "Assembly make output" note to batches created from assembly
+- [ ] When user deletes activities, what should we do with assembly & job states?
+	- User can't currently go back from Fully Cut > Partially Cut > Cut Planned
+
+### Record Cut/Make
+- [ ] Set Material Consumption to "Job Location" by default
+- [ ] Open accordion for first material by default
+- [ ] Don't show material consumption section if there are no materials to consume
+- [ ] Currently labeling assembly size breakdown tables like "Assembly A2". Change to Assembly Name (Type)
+- [ ] '0' values add clutter
+- [ ] Don't include materials that are not tracked in inventory (eg make is showing CMT)
+- [ ] When state is Fully Cut, don't show cut actionIcon
+- [ ] When state is Complete, On Hold, don't show cut / make / pack actionIcons

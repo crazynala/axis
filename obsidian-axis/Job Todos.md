@@ -12,3 +12,4 @@
 - [ ] New assemblies must be in draft state, including those create by duplication
 - [ ] There is a column "Status Note" in the assemblies table of job detail. Is this status whiteboard? If so, header should be "Whiteboard" and field should be editable.
 - [ ] On job detail route, move the stateChangeButton above the cards, inline with the breadcrumbs but pushed right. The status whiteboard field should be to the left of this, with no label and placeholder text = "Whiteboard"
+- [ ] Stock location must be locked if there are any assembly activities

@@ -43,7 +43,12 @@ export const shipmentInfoFields: FieldConfig[] = [
   { name: "packingSlipCode", label: "Packing Slip", findOp: "contains" },
   { name: "date", label: "Date", type: "date", findOp: "equals" },
 
-  { name: "status", label: "Status", findOp: "contains" },
+  {
+    name: "status",
+    label: "Status",
+    findOp: "contains",
+    showIf: ({ mode }) => mode !== "create",
+  },
   {
     name: "id",
     label: "ID",
@@ -53,6 +58,7 @@ export const shipmentInfoFields: FieldConfig[] = [
     findOp: "equals",
     inlineWithNext: true,
     flex: 1,
+    showIf: ({ mode }) => mode !== "create",
   },
   {
     name: "type",
@@ -61,6 +67,7 @@ export const shipmentInfoFields: FieldConfig[] = [
     editable: false,
     readOnly: true,
     flex: 1,
+    showIf: ({ mode }) => mode !== "create",
   },
 ];
 
@@ -89,7 +96,12 @@ export const shipmentAddressFields: FieldConfig[] = [
 ];
 
 export const shipmentDetailFields: FieldConfig[] = [
-  { name: "trackingNo", label: "AWB / Tracking", findOp: "contains" },
+  {
+    name: "trackingNo",
+    label: "AWB / Tracking",
+    findOp: "contains",
+    showIf: ({ mode }) => mode !== "create",
+  },
   {
     name: "shipmentType",
     label: "Ship Type",
@@ -110,6 +122,7 @@ export const shipmentDetailFields: FieldConfig[] = [
     editable: false,
     readOnly: true,
     findOp: "contains",
+    showIf: ({ mode }) => mode !== "create",
   },
 ];
 

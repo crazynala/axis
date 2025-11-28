@@ -4,7 +4,7 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit } from "@remix-run/react";
+import { Outlet, useRouteLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { useRecordContext } from "../base/record/RecordContext";
@@ -172,8 +172,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/invoices/${id}`);
 }
 
-export default function InvoiceDetailRoute() {
-  const { invoice, totals, detailsById } = useLoaderData<typeof loader>();
+export function InvoiceDetailView() {
+  const { invoice, totals, detailsById } = useRouteLoaderData<typeof loader>(
+    "routes/invoices.$id"
+  )!;
   console.log("InvoiceDetailRoute invoice:", invoice);
   const { setCurrentId, state } = useRecordContext();
   // Preserve currentId when navigating back to index: do not clear on unmount.
@@ -255,4 +257,8 @@ export default function InvoiceDetailRoute() {
       ) : null}
     </Stack>
   );
+}
+
+export default function InvoiceDetailLayout() {
+  return <Outlet />;
 }

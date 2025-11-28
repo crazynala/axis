@@ -8,7 +8,12 @@ import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
 import { notifications } from "@mantine/notifications";
 // import { useNavigate } from "@remix-run/react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
+import { useInitGlobalFormContext } from "@aa/timber";
+import {
+  SheetExitButton,
+  SheetSaveButton,
+  useSheetDirtyPrompt,
+} from "~/components/sheets/SheetControls";
 
 export async function loader({ params }: any) {
   const id = Number(params.id);
@@ -54,6 +59,11 @@ export default function ProductBomRoute() {
   const productId = Number(params.id);
 
   const [editedRows, setEditedRows] = useState<BOMRow[]>(rows);
+  const [saving, setSaving] = useState(false);
+  useSheetDirtyPrompt();
+  const exitUrl = Number.isFinite(productId)
+    ? `/products/${productId}`
+    : "/products";
   const originalRef = useRef<BOMRow[]>(rows);
 
   type RowLite = {
@@ -79,6 +89,7 @@ export default function ProductBomRoute() {
 
   const save = useCallback(async () => {
     if (!Number.isFinite(productId)) return;
+    setSaving(true);
     const origById = new Map<number, RowLite>();
     for (const r of originalRef.current as RowLite[])
       if (r.id != null) origById.set(r.id, r);
@@ -152,37 +163,41 @@ export default function ProductBomRoute() {
       updates,
       deletes,
     } as const;
-    const resp = await fetch(`/products/${productId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (resp.ok) {
-      const data = await resp.json().catch(() => null);
-      originalRef.current = editedRows;
-      // trigger re-render so dirty recomputes to false
-      setEditedRows((r) => [...r]);
-      const msg = data?.ok
-        ? `Saved: +${data.created || 0} / ~${data.updated || 0} / -${
-            data.deleted || 0
-          }`
-        : `Saved`;
-      const unknown = Array.isArray(data?.unknownSkus)
-        ? data.unknownSkus.length
-        : 0;
-      notifications.show({
-        color: unknown ? "yellow" : "teal",
-        title: unknown ? "Saved with warnings" : "Saved",
-        message: unknown
-          ? `${msg}. ${unknown} unknown SKU${unknown === 1 ? "" : "s"}.`
-          : msg,
+    try {
+      const resp = await fetch(`/products/${productId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-    } else {
-      notifications.show({
-        color: "red",
-        title: "Save failed",
-        message: "Could not save BOM changes.",
-      });
+      if (resp.ok) {
+        const data = await resp.json().catch(() => null);
+        originalRef.current = editedRows;
+        // trigger re-render so dirty recomputes to false
+        setEditedRows((r) => [...r]);
+        const msg = data?.ok
+          ? `Saved: +${data.created || 0} / ~${data.updated || 0} / -${
+              data.deleted || 0
+            }`
+          : `Saved`;
+        const unknown = Array.isArray(data?.unknownSkus)
+          ? data.unknownSkus.length
+          : 0;
+        notifications.show({
+          color: unknown ? "yellow" : "teal",
+          title: unknown ? "Saved with warnings" : "Saved",
+          message: unknown
+            ? `${msg}. ${unknown} unknown SKU${unknown === 1 ? "" : "s"}.`
+            : msg,
+        });
+      } else {
+        notifications.show({
+          color: "red",
+          title: "Save failed",
+          message: "Could not save BOM changes.",
+        });
+      }
+    } finally {
+      setSaving(false);
     }
   }, [editedRows, productId]);
 
@@ -204,7 +219,8 @@ export default function ProductBomRoute() {
   return (
     <FullzoomAppShell
       title="Bill of Materials Spreadsheet"
-      right={<SaveCancelHeader />}
+      left={<SheetExitButton to={exitUrl} />}
+      right={<SheetSaveButton saving={saving} />}
     >
       {(gridHeight) => (
         <ProductBomSpreadsheet

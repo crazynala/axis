@@ -2,14 +2,23 @@ import { json } from "@remix-run/node";
 import { NativeSelect } from "@mantine/core";
 import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
 import { notifications } from "@mantine/notifications";
-import { SaveCancelHeader, useInitGlobalFormContext } from "@aa/timber";
+import { useInitGlobalFormContext } from "@aa/timber";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Column, CellProps } from "react-datasheet-grid";
 import * as RDG from "react-datasheet-grid";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { useOptions } from "~/base/options/OptionsContext";
-import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import {
+  guardColumnsWithDisableControls,
+  padRowsWithDisableControls,
+} from "~/components/sheets/disableControls";
 import { useDataGrid } from "~/components/sheets/useDataGrid";
+import {
+  SheetExitButton,
+  SheetSaveButton,
+  useSheetDirtyPrompt,
+} from "~/components/sheets/SheetControls";
 
 export async function loader({ request }: any) {
   const url = new URL(request.url);
@@ -49,6 +58,7 @@ export async function loader({ request }: any) {
     manualSalePrice: (p.manualSalePrice as any) ?? "",
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
+    disableControls: false,
   }));
   return json({ mode: "edit", rows });
 }
@@ -65,6 +75,7 @@ type SheetRow = {
   manualSalePrice?: number | string | "" | null;
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
+  disableControls?: boolean;
 };
 export default function ProductsBatchCreateFullzoom() {
   const navigate = useNavigate();
@@ -79,6 +90,8 @@ export default function ProductsBatchCreateFullzoom() {
   const gridRef = useRef<RDG.DataSheetGridRef>(null as any);
   const [mode] = useState<"create" | "edit">(loaderData?.mode || "create");
   const options = useOptions();
+  useSheetDirtyPrompt();
+  const exitUrl = "/products";
   // Row factory (hoisted via function declaration to allow early use)
   function createRow(): SheetRow {
     return {
@@ -92,6 +105,7 @@ export default function ProductsBatchCreateFullzoom() {
       manualSalePrice: "",
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
+      disableControls: false,
     };
   }
   // Data grid state & helpers
@@ -104,7 +118,13 @@ export default function ProductsBatchCreateFullzoom() {
 
   // Derived rows used for rendering (padded to minimum rows)
   const displayRows = useMemo(
-    () => padToMinRows(dataGrid.value, DEFAULT_MIN_ROWS, () => createRow()),
+    () =>
+      padRowsWithDisableControls(
+        dataGrid.value,
+        DEFAULT_MIN_ROWS,
+        () => createRow(),
+        { extraInteractiveRows: 0 }
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dataGrid.value]
   );
@@ -254,11 +274,8 @@ export default function ProductsBatchCreateFullzoom() {
         title: "Batch",
       } as any,
     ];
-    // In edit mode, show ID as first disabled column
-    if (mode === "edit") {
-      return [col("id", "ID", true), ...base];
-    }
-    return base;
+    const columns = mode === "edit" ? [col("id", "ID", true), ...base] : base;
+    return guardColumnsWithDisableControls(columns);
   }, [
     mode,
     options?.supplierOptions,
@@ -353,7 +370,8 @@ export default function ProductsBatchCreateFullzoom() {
   return (
     <FullzoomAppShell
       title={mode === "edit" ? "Batch Edit Products" : "Batch Create Products"}
-      right={<SaveCancelHeader />}
+      left={<SheetExitButton to={exitUrl} />}
+      right={<SheetSaveButton saving={saving} />}
     >
       {(gridHeight) => {
         return (

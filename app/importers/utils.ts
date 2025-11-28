@@ -76,8 +76,12 @@ export const asBool = (raw: any): boolean | null => {
 
 export const parseIntListPreserveGaps = (raw: any): number[] => {
   if (raw == null) return [];
-  const s = String(raw).replace(/[;|]/g, ",");
-  return s.split(",").map((tok) => {
+  const normalized = String(raw)
+    // Normalize common separators (commas already retained).
+    .replace(/[;|\t\r\n]+/g, ",")
+    // Remove brackets from serialized arrays like "[1,2,3]".
+    .replace(/[\[\](){}]/g, "");
+  return normalized.split(",").map((tok) => {
     const t = tok.trim();
     if (t === "") return 0;
     const n = Number(t);

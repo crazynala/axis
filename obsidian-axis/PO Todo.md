@@ -18,3 +18,4 @@
 - [ ] Fix widths of hamburger columns
 - [ ] Set shipment location when shipment is created for receiving
 - [ ] Deleting a product movement that is part of a "movement group" is confusing -- the whole group is deleted unexpectedly
+- [ ] The shipment created for a receiving has status RECEIVED, should be Complete

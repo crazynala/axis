@@ -37,7 +37,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
-import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
+import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
 import {
   InventoryAmendmentModal,
@@ -1466,50 +1466,24 @@ export default function ProductDetailRoute() {
           </Card>
         </Grid.Col>
       </Grid>
-      {/* Add Component Picker (single instance near top return) */}
-      <HotkeyAwareModal
+      <ProductPickerModal
         opened={pickerOpen}
         onClose={() => setPickerOpen(false)}
         title="Add Component"
-        size="xl"
-        centered
-      >
-        <Stack>
-          <Group justify="space-between" align="flex-end">
-            <TextInput
-              placeholder="Search products..."
-              value={pickerSearch}
-              onChange={(e) => setPickerSearch(e.currentTarget.value)}
-              w={320}
-            />
-            <Checkbox
-              label="Assembly Item"
-              checked={assemblyItemOnly}
-              onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
-            />
-          </Group>
-          <div style={{ maxHeight: 420, overflow: "auto" }}>
-            {filtered.map((p: any) => (
-              <Group
-                key={p.id}
-                py={6}
-                onClick={() => {
-                  const fd = new FormData();
-                  fd.set("_intent", "product.addComponent");
-                  fd.set("childId", String(p.id));
-                  submit(fd, { method: "post" });
-                  setPickerOpen(false);
-                }}
-                style={{ cursor: "pointer" }}
-              >
-                <Text w={60}>{p.id}</Text>
-                <Text w={160}>{p.sku}</Text>
-                <Text style={{ flex: 1 }}>{p.name}</Text>
-              </Group>
-            ))}
-          </div>
-        </Stack>
-      </HotkeyAwareModal>
+        searchValue={pickerSearch}
+        onSearchChange={setPickerSearch}
+        results={filtered as any}
+        loading={false}
+        assemblyItemOnly={assemblyItemOnly}
+        onAssemblyItemOnlyChange={setAssemblyItemOnly}
+        onSelect={(p) => {
+          const fd = new FormData();
+          fd.set("_intent", "product.addComponent");
+          fd.set("childId", String(p.id));
+          submit(fd, { method: "post" });
+          setPickerOpen(false);
+        }}
+      />
       <Group justify="space-between" align="flex-start">
         <Button
           color="red"

@@ -1,4 +1,5 @@
 export type ProductLookupInfo = {
+  id?: number | null;
   sku: string;
   name?: string | null;
   type?: string | null;
@@ -21,12 +22,24 @@ export async function lookupProductsBySkus(
   for (const p of arr) {
     const sku = String(p?.sku || "");
     if (!sku) continue;
-    map.set(sku, {
+    const info: ProductLookupInfo = {
+      id: typeof p?.id === "number" ? p.id : Number(p?.id) || null,
       sku,
       name: p?.name ?? null,
       type: p?.type ?? null,
       supplierName: p?.supplier?.name ?? null,
-    });
+    };
+    const register = (key: string) => {
+      if (!key) return;
+      map.set(key, info);
+    };
+    const trimmed = sku.trim();
+    register(sku);
+    if (trimmed && trimmed !== sku) register(trimmed);
+    const lower = trimmed.toLowerCase();
+    if (lower && lower !== trimmed) register(lower);
+    const upper = trimmed.toUpperCase();
+    if (upper && upper !== trimmed) register(upper);
   }
   return map;
 }

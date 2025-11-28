@@ -4,7 +4,12 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit, useFetcher } from "@remix-run/react";
+import {
+  Outlet,
+  useFetcher,
+  useRouteLoaderData,
+  useSubmit,
+} from "@remix-run/react";
 import {
   prisma,
   refreshProductStockSnapshot,
@@ -30,7 +35,7 @@ import { NumberInput } from "@mantine/core";
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
 // Using an async product search in this route instead of the shared ProductSelect
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { formatUSD } from "../../../utils/format";
 import { POReceiveModal } from "../../../components/POReceiveModal";
@@ -38,12 +43,13 @@ import { marshallPurchaseOrderToPrisma } from "../helpers/purchaseOrderMarshalle
 import { ProductPricingService } from "~/modules/product/services/ProductPricingService";
 // calcPrice no longer used in this route; pricing handled in lines table
 import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/PurchaseOrderLinesTable";
-import {
-  useRegisterNavLocation,
-  usePersistIndexSearch,
-  getSavedIndexSearch,
-} from "~/hooks/useNavLocation";
+import { getSavedIndexSearch } from "~/hooks/useNavLocation";
 import { IconMenu2, IconTrash, IconFileExport } from "@tabler/icons-react";
+import { VariantBreakdownSection } from "../../../components/VariantBreakdownSection";
+import {
+  groupVariantBreakdowns,
+  resolveVariantSourceFromLine,
+} from "../../../utils/variantBreakdown";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -59,7 +65,25 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const purchaseOrder = await prisma.purchaseOrder.findUnique({
     where: { id },
     include: {
-      lines: { include: { product: { include: { purchaseTax: true } } } },
+      lines: {
+        include: {
+          product: {
+            include: {
+              purchaseTax: true,
+              variantSet: { select: { id: true, name: true, variants: true } },
+            },
+          },
+          assembly: {
+            select: {
+              id: true,
+              name: true,
+              variantSetId: true,
+              qtyOrderedBreakdown: true,
+              variantSet: { select: { id: true, name: true, variants: true } },
+            },
+          },
+        },
+      },
       company: { select: { name: true } },
       consignee: { select: { name: true } },
       location: { select: { name: true } },
@@ -939,16 +963,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/purchase-orders/${id}`);
 }
 
-export default function PurchaseOrderDetailRoute() {
+export function PurchaseOrderDetailView() {
   const { purchaseOrder, totals, productOptions, poMovements } =
-    useLoaderData<typeof loader>();
+    useRouteLoaderData<typeof loader>(
+      "modules/purchaseOrder/routes/purchase-orders.$id"
+    )!;
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   const deleteFetcher = useFetcher<{ error?: string }>();
-  // Persist last visited purchase order path & index filters
-  useRegisterNavLocation({ includeSearch: true, moduleKey: "purchase-orders" });
-  usePersistIndexSearch("/purchase-orders");
-
   // console.log("PO detail", purchaseOrder, totals);
 
   // Register current id in RecordContext
@@ -963,6 +985,26 @@ export default function PurchaseOrderDetailRoute() {
     "PO defaults",
     form.formState.dirtyFields,
     form.formState.defaultValues
+  );
+  const variantBreakdownGroups = useMemo(
+    () =>
+      groupVariantBreakdowns(purchaseOrder.lines || [], {
+        getBreakdown: (line: any) => {
+          if (Array.isArray(line.qtyBreakdown) && line.qtyBreakdown.length) {
+            return line.qtyBreakdown;
+          }
+          if (
+            Array.isArray(line.assembly?.qtyOrderedBreakdown) &&
+            line.assembly.qtyOrderedBreakdown.length
+          ) {
+            return line.assembly.qtyOrderedBreakdown;
+          }
+          return [];
+        },
+        getVariant: (line: any) => resolveVariantSourceFromLine(line),
+        getItemKey: (line: any) => line.id,
+      }),
+    [purchaseOrder.lines]
   );
 
   // Product cache: id -> enriched product (tiers, tax, manualSalePrice)
@@ -1359,6 +1401,27 @@ export default function PurchaseOrderDetailRoute() {
             pricingPrefs={pricingPrefs}
           />
         </Card.Section>
+        {variantBreakdownGroups.length > 0 && (
+          <Card.Section inheritPadding py="md">
+            <VariantBreakdownSection
+              groups={variantBreakdownGroups}
+              lineHeader="PO Line"
+              renderLineLabel={(line: any) => (
+                <Stack gap={0}>
+                  <Text size="sm">
+                    {line.product?.sku ||
+                      line.productSkuCopy ||
+                      `Line ${line.id}`}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {line.assembly?.name ||
+                      (line.assemblyId ? `Assembly ${line.assemblyId}` : "")}
+                  </Text>
+                </Stack>
+              )}
+            />
+          </Card.Section>
+        )}
       </Card>
       {/* Related movements tied to this PO */}
       <Card withBorder padding="md" bg="transparent" mt="xl">
@@ -1483,6 +1546,10 @@ export default function PurchaseOrderDetailRoute() {
       />
     </Stack>
   );
+}
+
+export default function PurchaseOrderDetailLayout() {
+  return <Outlet />;
 }
 
 function MovementDeleteMenu({

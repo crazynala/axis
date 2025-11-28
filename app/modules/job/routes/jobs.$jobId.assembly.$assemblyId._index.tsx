@@ -11,7 +11,7 @@ import {
   prisma,
   prismaBase,
   refreshProductStockSnapshot,
-} from "../../../utils/prisma.server";
+} from "~/utils/prisma.server";
 import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import {
@@ -19,9 +19,12 @@ import {
   createMakeActivity,
   ensureMakeInventoryArtifacts,
 } from "../../../utils/activity.server";
+import { createPackActivity } from "~/modules/job/services/boxPacking.server";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
 import { syncJobStateFromAssemblies } from "~/modules/job/services/JobStateService";
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
+import { useRegisterNavLocation } from "~/hooks/useNavLocation";
+import type { PackBoxSummary } from "~/modules/job/types/pack";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -67,6 +70,45 @@ export async function loader({ params }: LoaderFunctionArgs) {
     orderBy: { id: "asc" },
   });
   if (!assemblies.length) return redirect("/jobs");
+
+  const firstAssemblyJob = assemblies[0]?.job as
+    | (typeof assemblies)[0]["job"]
+    | undefined;
+  const jobCompanyId = firstAssemblyJob?.company?.id ?? null;
+  const jobStockLocationId = firstAssemblyJob?.stockLocation?.id ?? null;
+
+  let packBoxes: PackBoxSummary[] = [];
+  if (jobCompanyId && jobStockLocationId) {
+    const boxes = await prisma.box.findMany({
+      where: {
+        companyId: jobCompanyId,
+        locationId: jobStockLocationId,
+        state: "open",
+      },
+      select: {
+        id: true,
+        warehouseNumber: true,
+        description: true,
+        notes: true,
+        locationId: true,
+        state: true,
+        lines: { select: { quantity: true } },
+      },
+      orderBy: [{ warehouseNumber: "asc" }, { id: "asc" }],
+    });
+    packBoxes = boxes.map((box) => ({
+      id: box.id,
+      warehouseNumber: box.warehouseNumber ?? null,
+      description: box.description ?? null,
+      notes: box.notes ?? null,
+      locationId: box.locationId ?? null,
+      state: box.state ?? null,
+      totalQuantity: (box.lines || []).reduce(
+        (total, line) => total + (Number(line.quantity) || 0),
+        0
+      ),
+    }));
+  }
 
   // If a single-assembly path actually belongs to a group, redirect to canonical group path
   if (!isMulti && (assemblies[0] as any).assemblyGroupId) {
@@ -296,6 +338,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
     activities,
     products,
     productVariantSet,
+    packContext: {
+      openBoxes: packBoxes,
+      stockLocation: firstAssemblyJob?.stockLocation ?? null,
+    },
   });
 }
 
@@ -797,6 +843,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
+  if (intent === "activity.create.pack") {
+    const qtyArrStr = String(form.get("qtyBreakdown") || "[]");
+    const activityDateStr = String(form.get("activityDate") || "");
+    let qtyArr: number[] = [];
+    try {
+      const arr = JSON.parse(qtyArrStr);
+      if (Array.isArray(arr))
+        qtyArr = arr.map((n: any) =>
+          Number.isFinite(Number(n)) ? Number(n) | 0 : 0
+        );
+    } catch {}
+    const activityDate = activityDateStr
+      ? new Date(activityDateStr)
+      : new Date();
+    const overrideAssemblyId = Number(form.get("assemblyId"));
+    const targetAssemblyId = Number.isFinite(overrideAssemblyId)
+      ? overrideAssemblyId
+      : assemblyId;
+    const rawBoxMode = String(form.get("boxMode") || "new").toLowerCase();
+    const boxMode = rawBoxMode === "existing" ? "existing" : "new";
+    const existingBoxIdStr = form.get("existingBoxId");
+    const warehouseNumberStr = form.get("warehouseNumber");
+    const parsedWarehouse = (() => {
+      if (!warehouseNumberStr) return null;
+      const value = Number(String(warehouseNumberStr).trim());
+      return Number.isFinite(value) ? value : null;
+    })();
+    const boxDescription = (form.get("boxDescription") as string) || null;
+    const boxNotes = (form.get("boxNotes") as string) || null;
+    await createPackActivity({
+      assemblyId: targetAssemblyId,
+      jobId,
+      qtyBreakdown: qtyArr,
+      activityDate,
+      boxMode,
+      existingBoxId: existingBoxIdStr ? Number(String(existingBoxIdStr)) : null,
+      warehouseNumber: parsedWarehouse,
+      boxDescription,
+      boxNotes,
+    });
+    return redirect(`/jobs/${jobId}/assembly/${raw}`);
+  }
   if (intent === "activity.update") {
     const activityId = Number(form.get("activityId"));
     const qtyArrStr = String(form.get("qtyBreakdown") || "[]");
@@ -995,6 +1083,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function JobAssemblyRoute() {
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
   const data = useLoaderData<typeof loader>() as any;
   const assemblies = (data.assemblies || []) as any[];
   const isGroup = (assemblies?.length || 0) > 1;
@@ -1076,6 +1165,7 @@ export default function JobAssemblyRoute() {
           activities={activities as any}
           activityConsumptionMap={activityConsumptionMap as any}
           renderStatusBar={renderGroupStatusBar}
+          packContext={data.packContext as any}
         />
       </Stack>
     );
@@ -1166,6 +1256,7 @@ export default function JobAssemblyRoute() {
             : (productVariantSet?.variants as any)) || []
         }
         renderStatusBar={renderSingleStatusBar}
+        packContext={data.packContext as any}
       />
     </Stack>
   );

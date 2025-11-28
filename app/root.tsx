@@ -81,6 +81,7 @@ import {
   IconTruck,
   IconCalendarDollar,
   IconChartHistogram,
+  IconBoxSeam,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
 import {
@@ -304,7 +305,9 @@ export default function App() {
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
-  const isSuppressAppShell = location.pathname.includes("fullzoom");
+  const isSuppressAppShell =
+    location.pathname.includes("fullzoom") ||
+    location.pathname.includes("costings-sheet");
 
   const navTopItems: NavMenuItem[] = [
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
@@ -317,6 +320,7 @@ export default function App() {
       label: "Purchase Orders",
     },
     { to: "/shipments", icon: <IconTruck />, label: "Shipments" },
+    { to: "/boxes", icon: <IconBoxSeam />, label: "Boxes" },
     { kind: "divider", key: "nav-top-after-shipments" },
     { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
@@ -414,7 +418,22 @@ function AppShellLayout({
   const navigate = useNavigate();
   const location = useLocation();
   // Register current location globally for per-module restoration
-  useRegisterNavLocation({ includeSearch: true });
+  const navExcludePrefixes = [
+    "/jobs",
+    "/companies",
+    "/products",
+    "/purchase-orders",
+    "/shipments",
+    "/boxes",
+    "/invoices",
+  ];
+  useRegisterNavLocation({
+    includeSearch: true,
+    exclude: (pathname) =>
+      navExcludePrefixes.some(
+        (base) => pathname === base || pathname.startsWith(`${base}/`)
+      ),
+  });
 
   // Persist desktop nav toggle per user
   useEffect(() => {

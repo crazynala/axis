@@ -22,6 +22,11 @@ import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../base/record/useHybridWindow";
 import { useRecords } from "../base/record/RecordContext";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
@@ -212,6 +217,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ShipmentsIndexRoute() {
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "shipments" });
+  usePersistIndexSearch("/shipments");
   const { currentId, setCurrentId } = useRecords();
   const navigate = useNavigate();
   const [sp] = useSearchParams();
@@ -223,6 +230,10 @@ export default function ShipmentsIndexRoute() {
     maxPlaceholders: 8,
   });
   const appendHref = useFindHrefAppender();
+  const savedSearch = getSavedIndexSearch("/shipments");
+  const shipmentsHref = savedSearch
+    ? `/shipments${savedSearch}`
+    : appendHref("/shipments");
   const columns = [
     {
       accessor: "id",
@@ -255,7 +266,7 @@ export default function ShipmentsIndexRoute() {
       <ShipmentFindManager />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
-          breadcrumbs={[{ label: "Shipments", href: appendHref("/shipments") }]}
+          breadcrumbs={[{ label: "Shipments", href: shipmentsHref }]}
         />
         <Button
           component={Link}

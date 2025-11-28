@@ -9,7 +9,7 @@ import {
 } from "@mantine/core";
 import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
-import { IconScissors, IconSettings } from "@tabler/icons-react";
+import { IconBox, IconScissors, IconSettings } from "@tabler/icons-react";
 
 export type VariantInfo = {
   labels: string[];
@@ -54,12 +54,17 @@ export function AssemblyQuantitiesCard({
     onRecordCut?: () => void;
     onRecordMake?: () => void;
     recordMakeDisabled?: boolean;
+    onRecordPack?: () => void;
+    recordPackDisabled?: boolean;
   };
 }) {
   const fmt = (n: number | undefined) =>
     n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "∙" : n;
   const hasActionColumn = Boolean(
-    actionColumn && (actionColumn.onRecordCut || actionColumn.onRecordMake)
+    actionColumn &&
+      (actionColumn.onRecordCut ||
+        actionColumn.onRecordMake ||
+        actionColumn.onRecordPack)
   );
   const rawLabels = variants.labels;
   // Determine if labels include any non-empty values and where the last non-empty is
@@ -297,7 +302,18 @@ export function AssemblyQuantitiesCard({
                       align="center"
                       style={{ verticalAlign: "middle" }}
                     >
-                      {/* Pack row has no actions */}
+                      {idx === 0 && actionColumn.onRecordPack ? (
+                        <Tooltip label="Record Pack" withArrow>
+                          <ActionIcon
+                            variant="subtle"
+                            aria-label="Record pack"
+                            onClick={actionColumn.onRecordPack}
+                            disabled={actionColumn.recordPackDisabled}
+                          >
+                            <IconBox size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      ) : null}
                     </Table.Td>
                   )}
                 </Table.Tr>

@@ -6,9 +6,18 @@ import {
   type Column,
 } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Checkbox, Group, Stack, Text, TextInput } from "@mantine/core";
-import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
-import { padToMinRows, DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import { Button, Group, Text } from "@mantine/core";
+import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
+import {
+  guardColumnsWithDisableControls,
+  padRowsWithDisableControls,
+} from "~/components/sheets/disableControls";
+import {
+  UsageSelectCell,
+  normalizeUsageValue,
+  type UsageValue,
+} from "~/components/sheets/UsageSelectCell";
+import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 
 export type BOMRow = {
   id: number | null;
@@ -18,6 +27,7 @@ export type BOMRow = {
   type: string;
   supplier: string;
   quantity: number | string;
+  disableControls?: boolean;
 };
 
 export default function ProductBomSpreadsheet({
@@ -49,6 +59,7 @@ export default function ProductBomSpreadsheet({
       type: "",
       supplier: "",
       quantity: "",
+      disableControls: false,
     }),
     []
   );
@@ -70,9 +81,21 @@ export default function ProductBomSpreadsheet({
     return withoutExtras;
   };
   useEffect(() => {
-    setLocalRows((prev) => ensureTrailingBlank(rows));
+    const normalized = (rows || []).map((row) => ({
+      ...row,
+      activityUsed: normalizeUsageValue(row.activityUsed),
+      disableControls: false,
+    }));
+    setLocalRows(() => ensureTrailingBlank(normalized));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
+  const displayRows = useMemo(
+    () =>
+      padRowsWithDisableControls(localRows, minRows, () => ({ ...blankRow }), {
+        extraInteractiveRows: 0,
+      }),
+    [localRows, minRows, blankRow]
+  );
   // Debounced batch lookup for SKUs
   const pendingSkusRef = useRef<Set<string>>(new Set());
   const lookupTimerRef = useRef<any>(null);
@@ -126,29 +149,34 @@ export default function ProductBomSpreadsheet({
       id: "childSku",
       title: "SKU",
       grow: 1.2,
-      component: ({ rowData, setRowData, focus }) => (
-        <input
-          style={{
-            width: "100%",
-            border: "none",
-            outline: "none",
-            background: "transparent",
-          }}
-          value={rowData.childSku || ""}
-          onChange={(e) => {
-            const sku = e.target.value;
-            setRowData({ ...rowData, childSku: sku });
-            enqueueLookup([sku]);
-          }}
-          onPaste={(e) => {
-            // Allow paste but trigger lookup after default paste logic runs
-            // (grid will call onChange with updated rows; we also enqueue here for responsiveness)
-            const text = e.clipboardData.getData("text");
-            if (text) enqueueLookup([text.split("\t")[0].split("\n")[0]]);
-          }}
-          autoFocus={focus}
-        />
-      ),
+      component: ({ rowData, setRowData, focus }) => {
+        if (rowData?.disableControls) {
+          return <div style={{ width: "100%", height: "100%" }} />;
+        }
+        return (
+          <input
+            style={{
+              width: "100%",
+              border: "none",
+              outline: "none",
+              background: "transparent",
+            }}
+            value={rowData.childSku || ""}
+            onChange={(e) => {
+              const sku = e.target.value;
+              setRowData({ ...rowData, childSku: sku });
+              enqueueLookup([sku]);
+            }}
+            onPaste={(e) => {
+              // Allow paste but trigger lookup after default paste logic runs
+              // (grid will call onChange with updated rows; we also enqueue here for responsiveness)
+              const text = e.clipboardData.getData("text");
+              if (text) enqueueLookup([text.split("\t")[0].split("\n")[0]]);
+            }}
+            autoFocus={focus}
+          />
+        );
+      },
     };
     const nameCol = {
       ...keyColumn<BOMRow, any>("childName", textColumn),
@@ -157,11 +185,25 @@ export default function ProductBomSpreadsheet({
       disabled: true,
       grow: 2,
     } as Column<BOMRow>;
-    const usageCol = {
+    const usageCol: Column<BOMRow> = {
       ...keyColumn<BOMRow, any>("activityUsed", textColumn),
       id: "activityUsed",
       title: "Usage",
       grow: 1,
+      component: ({ rowData, setRowData, focus, stopEditing }: any) => (
+        <UsageSelectCell
+          value={(rowData.activityUsed || "") as UsageValue}
+          focus={focus}
+          readOnly={Boolean(rowData?.disableControls)}
+          onBlur={() => stopEditing?.({ nextRow: false })}
+          onChange={(value) =>
+            setRowData({
+              ...rowData,
+              activityUsed: value,
+            })
+          }
+        />
+      ),
     } as Column<BOMRow>;
     const typeCol = {
       ...keyColumn<BOMRow, any>("type", textColumn),
@@ -183,7 +225,16 @@ export default function ProductBomSpreadsheet({
       title: "Qty",
       grow: 0.8,
     } as Column<BOMRow>;
-    return [idCol, skuCol, nameCol, usageCol, typeCol, supplierCol, qtyCol];
+    const columns: Column<BOMRow>[] = [
+      idCol,
+      skuCol,
+      nameCol,
+      usageCol,
+      typeCol,
+      supplierCol,
+      qtyCol,
+    ];
+    return guardColumnsWithDisableControls(columns);
   }, []);
 
   // Picker modal state
@@ -191,14 +242,17 @@ export default function ProductBomSpreadsheet({
   const [pickerSearch, setPickerSearch] = useState("");
   const [assemblyItemOnly, setAssemblyItemOnly] = useState(false);
   const [pickerResults, setPickerResults] = useState<any[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
   useEffect(() => {
     let active = true;
     const q = pickerSearch.trim();
     if (!pickerOpen) return;
     if (!q) {
       setPickerResults([]);
+      setPickerLoading(false);
       return;
     }
+    setPickerLoading(true);
     const h = setTimeout(async () => {
       try {
         const url = new URL(`/api/products/lookup`, window.location.origin);
@@ -213,6 +267,8 @@ export default function ProductBomSpreadsheet({
         setPickerResults(arr);
       } catch {
         if (active) setPickerResults([]);
+      } finally {
+        if (active) setPickerLoading(false);
       }
     }, 200);
     return () => {
@@ -220,6 +276,9 @@ export default function ProductBomSpreadsheet({
       clearTimeout(h);
     };
   }, [pickerSearch, pickerOpen, assemblyItemOnly]);
+  useEffect(() => {
+    if (!pickerOpen) setPickerLoading(false);
+  }, [pickerOpen]);
 
   return (
     <>
@@ -230,10 +289,17 @@ export default function ProductBomSpreadsheet({
         </Button>
       </Group>
       <DataSheetGrid
-        value={padToMinRows(localRows, minRows, () => ({ ...blankRow }))}
+        value={displayRows}
         onChange={(next) => {
-          const typed = (next as BOMRow[]) || [];
-          const normalized = ensureTrailingBlank(typed);
+          const typed = ((next as BOMRow[]) || []).map((row) => ({
+            ...row,
+            disableControls: false,
+          }));
+          const normalized = ensureTrailingBlank(typed).map((row) => ({
+            ...row,
+            activityUsed: normalizeUsageValue(row.activityUsed),
+            disableControls: false,
+          }));
           // detect changed SKUs to lookup (handles paste of rows too)
           try {
             const changed: string[] = [];
@@ -260,65 +326,37 @@ export default function ProductBomSpreadsheet({
         height={height}
         createRow={() => ({ ...blankRow })}
       />
-      {/* SKU picker modal */}
-      <HotkeyAwareModal
+      <ProductPickerModal
         opened={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        title="Add Component"
-        size="xl"
-        centered
-      >
-        <Stack>
-          <Group justify="space-between" align="flex-end">
-            <TextInput
-              placeholder="Search products..."
-              value={pickerSearch}
-              onChange={(e) => setPickerSearch(e.currentTarget.value)}
-              w={320}
-            />
-            <Checkbox
-              label="Assembly Item"
-              checked={assemblyItemOnly}
-              onChange={(e) => setAssemblyItemOnly(e.currentTarget.checked)}
-            />
-          </Group>
-          <div style={{ maxHeight: 420, overflow: "auto" }}>
-            {pickerResults.map((p: any) => (
-              <Group
-                key={p.id}
-                py={6}
-                onClick={() => {
-                  // insert new row with selected product
-                  setLocalRows((curr) => {
-                    const rows = ensureTrailingBlank(curr);
-                    // find first blank row or append
-                    const idx = rows.findIndex((r) => isBlank(r));
-                    const i = idx >= 0 ? idx : rows.length;
-                    const next = rows.slice();
-                    next[i] = {
-                      id: null,
-                      childSku: p.sku || "",
-                      childName: p.name || "",
-                      activityUsed: "",
-                      type: (p.type as string) || "",
-                      supplier: (p?.supplier?.name as string) || "",
-                      quantity: "",
-                    };
-                    onRowsChange?.(next.filter((r) => !isBlank(r)));
-                    return ensureTrailingBlank(next);
-                  });
-                  setPickerOpen(false);
-                }}
-                style={{ cursor: "pointer" }}
-              >
-                <Text w={60}>{p.id}</Text>
-                <Text w={160}>{p.sku}</Text>
-                <Text style={{ flex: 1 }}>{p.name}</Text>
-              </Group>
-            ))}
-          </div>
-        </Stack>
-      </HotkeyAwareModal>
+        searchValue={pickerSearch}
+        onSearchChange={setPickerSearch}
+        assemblyItemOnly={assemblyItemOnly}
+        onAssemblyItemOnlyChange={setAssemblyItemOnly}
+        results={pickerResults}
+        loading={pickerLoading}
+        onSelect={(p: any) => {
+          setLocalRows((curr) => {
+            const rows = ensureTrailingBlank(curr);
+            const idx = rows.findIndex((r) => isBlank(r));
+            const i = idx >= 0 ? idx : rows.length;
+            const next = rows.slice();
+            next[i] = {
+              id: null,
+              childSku: p.sku || "",
+              childName: p.name || "",
+              activityUsed: "",
+              type: (p.type as string) || "",
+              supplier: (p?.supplier?.name as string) || "",
+              quantity: "",
+              disableControls: false,
+            };
+            onRowsChange?.(next.filter((r) => !isBlank(r)));
+            return ensureTrailingBlank(next);
+          });
+          setPickerOpen(false);
+        }}
+      />
     </>
   );
 }

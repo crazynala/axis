@@ -100,6 +100,12 @@ enum ValueListType {
     ShippingMethod
 }
 
+enum BoxState {
+    open
+    sealed
+    shipped
+}
+
 // --- Tagging ---
 enum TagScope {
     GLOBAL
@@ -191,6 +197,7 @@ model Product {
     modifiedBy            String?
     createdAt             DateTime?             @default(now())
     updatedAt             DateTime?             @updatedAt
+    boxLines              BoxLine[]
 }
 
 // Join tables for tags
@@ -237,6 +244,7 @@ model Company {
     pricingGroups                   SupplierPricingGroup[]
     jobs                            Job[]
     // Back-relations
+    boxes                           Box[]
     invoices                        Invoice[]
     addresses                       Address[]
     shipmentsAsCarrier              Shipment[]              @relation("CarrierCompany")
@@ -350,6 +358,7 @@ model Assembly {
     // Unaccented shadow columns
     nameUnaccented      String?
     notesUnaccented     String?
+    boxLines            BoxLine[]
 }
 
 model Costing {
@@ -419,6 +428,7 @@ model Location {
     // Back-relations
     shipments             Shipment[]
     shipmentLines         ShipmentLine[]
+    boxes                 Box[]
     // Back-relations: Purchase Orders
     purchaseOrders        PurchaseOrder[]
     // Back-relations: Company default stock locations
@@ -456,6 +466,7 @@ model Batch {
     modifiedBy          String?
     createdAt           DateTime?             @default(now())
     updatedAt           DateTime?             @updatedAt
+    boxLines            BoxLine[]
 }
 
 model ProductMovement {
@@ -565,6 +576,7 @@ model Job {
     // Unaccented shadow columns
     nameUnaccented          String?
     descriptionUnaccented   String?
+    boxLines                BoxLine[]
 }
 
 // Group multiple assemblies within a job (for planning/visual grouping)
@@ -782,6 +794,81 @@ model Expense {
     invoiceLines    InvoiceLine[]
 }
 
+model Box {
+    id Int @id @default(autoincrement())
+
+    // Physical/identity info
+    code        String? @unique // optional barcode / human-readable code (BX000123)
+    description String? // e.g. "Doorman jackets, Oct build"
+
+    // Labelling
+    warehouseNumber Int? // e.g. 112 — label used in warehouse
+    shipmentNumber  Int? // e.g. 3 — label used within a specific shipment
+
+    // Context
+    locationId Int? // where the box physically is
+    shipmentId Int? // if attached to a shipment (outbound, or inbound if you want)
+    companyId  Int? // optional: convenience link for filtering
+
+    // Lifecycle
+    state BoxState @default(open)
+    notes String?
+
+    // Relations
+    location Location? @relation(fields: [locationId], references: [id])
+    shipment Shipment? @relation(fields: [shipmentId], references: [id])
+    company  Company?  @relation(fields: [companyId], references: [id])
+    lines    BoxLine[]
+
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime? @default(now())
+    updatedAt  DateTime? @updatedAt
+
+    @@index([locationId])
+    @@index([shipmentId])
+    @@index([companyId])
+    @@index([warehouseNumber])
+    @@index([shipmentNumber, shipmentId])
+    @@index([state, companyId, locationId])
+}
+
+model BoxLine {
+    id Int @id @default(autoincrement())
+
+    boxId          Int
+    productId      Int?
+    batchId        Int?
+    jobId          Int?
+    assemblyId     Int?
+    shipmentLineId Int? // when this line is tied to a shipment line
+
+    quantity     Decimal? @db.Decimal(14, 4)
+    qtyBreakdown Int[]    @default([]) // per size: aligns with Assembly/VariantSet conventions
+    notes        String?
+
+    box          Box           @relation(fields: [boxId], references: [id])
+    product      Product?      @relation(fields: [productId], references: [id])
+    batch        Batch?        @relation(fields: [batchId], references: [id])
+    job          Job?          @relation(fields: [jobId], references: [id])
+    assembly     Assembly?     @relation(fields: [assemblyId], references: [id])
+    shipmentLine ShipmentLine? @relation(fields: [shipmentLineId], references: [id])
+
+    // Metadata
+    createdBy  String?
+    modifiedBy String?
+    createdAt  DateTime? @default(now())
+    updatedAt  DateTime? @updatedAt
+
+    @@index([boxId])
+    @@index([productId])
+    @@index([batchId])
+    @@index([jobId])
+    @@index([assemblyId])
+    @@index([shipmentLineId])
+}
+
 model Shipment {
     id                 Int            @id // a__Serial maps here
     addressIdShip      Int?
@@ -816,6 +903,7 @@ model Shipment {
     companyReceiver    Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
     companySender      Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
     addressShip        Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
+    boxes              Box[]
     lines              ShipmentLine[]
     // Back-relations
     expenses           Expense[]
@@ -842,6 +930,7 @@ model ShipmentLine {
     createdAt    DateTime?   @default(now())
     modifiedBy   String?
     updatedAt    DateTime?   @updatedAt
+    boxLines     BoxLine[]
     assembly     Assembly?   @relation(fields: [assemblyId], references: [id])
     job          Job?        @relation(fields: [jobId], references: [id])
     location     Location?   @relation(fields: [locationId], references: [id])

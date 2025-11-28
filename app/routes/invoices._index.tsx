@@ -7,9 +7,16 @@ import { useEffect, useRef } from "react";
 import { useRecords } from "../base/record/RecordContext";
 import { SavedViews } from "../components/find/SavedViews";
 import { useHybridWindow } from "../base/record/useHybridWindow";
+import {
+  useRegisterNavLocation,
+  usePersistIndexSearch,
+  getSavedIndexSearch,
+} from "~/hooks/useNavLocation";
 
 // Hybrid index: no loader; relies on layout providing idList + initialRows. We join idList with sparse rowsMap.
 export default function InvoicesIndexRoute() {
+  useRegisterNavLocation({ includeSearch: true, moduleKey: "invoices" });
+  usePersistIndexSearch("/invoices");
   const navigate = useNavigate();
   const location = useLocation();
   const { state, currentId } = useRecords();
@@ -53,9 +60,15 @@ export default function InvoicesIndexRoute() {
         mb="sm"
         data-invoices-header
       >
-        <BreadcrumbSet
-          breadcrumbs={[{ label: "Invoices", href: "/invoices" }]}
-        />
+        {(() => {
+          const saved = getSavedIndexSearch("/invoices");
+          const hrefInvoices = saved ? `/invoices${saved}` : "/invoices";
+          return (
+            <BreadcrumbSet
+              breadcrumbs={[{ label: "Invoices", href: hrefInvoices }]}
+            />
+          );
+        })()}
         <Group gap="xs">
           <Button
             size="xs"

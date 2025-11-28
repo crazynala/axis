@@ -36,6 +36,8 @@ import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
+import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
+import type { PackBoxSummary } from "~/modules/job/types/pack";
 
 export type QuantityItem = {
   assemblyId: number;
@@ -90,6 +92,10 @@ export function AssembliesEditor(props: {
     statusControls: ReactNode;
     whiteboardControl: ReactNode | null;
   }) => ReactNode;
+  packContext?: {
+    openBoxes: PackBoxSummary[];
+    stockLocation?: { id: number; name: string | null } | null;
+  } | null;
 }) {
   const {
     job,
@@ -105,6 +111,7 @@ export function AssembliesEditor(props: {
     activityVariantLabels,
     groupContext,
     renderStatusBar,
+    packContext,
   } = props;
   const submit = useSubmit();
   const isGroup = (assemblies?.length ?? 0) > 1;
@@ -116,6 +123,10 @@ export function AssembliesEditor(props: {
   const [modalAssemblyId, setModalAssemblyId] = useState<number | null>(
     firstAssembly?.id ?? null
   );
+  const [packModalAssemblyId, setPackModalAssemblyId] = useState<number | null>(
+    null
+  );
+  const [packModalOpen, setPackModalOpen] = useState(false);
   const [deleteActivity, setDeleteActivity] = useState<any | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const deleteRequiredPhrase = "I AM SO SURE";
@@ -176,6 +187,9 @@ export function AssembliesEditor(props: {
   const modalAssembly =
     (modalAssemblyId != null && assembliesById.get(modalAssemblyId)) ||
     firstAssembly;
+  const packModalAssembly =
+    (packModalAssemblyId != null && assembliesById.get(packModalAssemblyId)) ||
+    null;
   const quantityItemsByAssemblyId = useMemo(() => {
     const map = new Map<number, QuantityItem>();
     (quantityItems || []).forEach((item) => {
@@ -230,6 +244,9 @@ export function AssembliesEditor(props: {
   const modalVariantLabels = modalAssembly?.id
     ? getVariantLabelsForAssembly(modalAssembly.id)
     : activityVariantLabels || [];
+  const packModalVariantLabels = packModalAssemblyId
+    ? getVariantLabelsForAssembly(packModalAssemblyId)
+    : [];
   const modalCostings = useMemo(() => {
     const raw = ((modalAssembly as any)?.costings || []) as any[];
     return raw.map((c: any) => ({
@@ -237,6 +254,9 @@ export function AssembliesEditor(props: {
       component: c.product ?? c.component ?? null,
     }));
   }, [modalAssembly]);
+  const packModalQuantityItem = packModalAssemblyId
+    ? quantityItemsByAssemblyId.get(packModalAssemblyId)
+    : undefined;
   const groupAssemblyIds = useMemo(
     () => (assemblies || []).map((a) => a.id),
     [assemblies]
@@ -266,10 +286,9 @@ export function AssembliesEditor(props: {
       },
       0
     );
-    const columnCount = Math.max(
-      baseActivityVariantLabels.length,
-      longestBreakdown
-    );
+    const columnCount = baseActivityVariantLabels.length
+      ? baseActivityVariantLabels.length
+      : longestBreakdown;
     if (!columnCount) return [] as string[];
     return Array.from({ length: columnCount }, (_, idx) => {
       const raw = baseActivityVariantLabels[idx];
@@ -387,6 +406,13 @@ export function AssembliesEditor(props: {
     const cut = Number(totals.cut ?? 0) || 0;
     const make = Number(totals.make ?? 0) || 0;
     return cut > make;
+  };
+  const canRecordPackForAssembly = (assemblyId: number) => {
+    const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
+    if (!totals) return false;
+    const make = Number(totals.make ?? 0) || 0;
+    const pack = Number(totals.pack ?? 0) || 0;
+    return make > pack;
   };
   const assembliesResetKey = useMemo(
     () =>
@@ -593,6 +619,12 @@ export function AssembliesEditor(props: {
     setActivityModalOpen(true);
   };
 
+  const handleRecordPack = (assemblyId: number) => {
+    if (!canRecordPackForAssembly(assemblyId)) return;
+    setPackModalAssemblyId(assemblyId);
+    setPackModalOpen(true);
+  };
+
   const statusControlElements = isGroup
     ? [
         <StateChangeButton
@@ -754,6 +786,8 @@ export function AssembliesEditor(props: {
                     onRecordCut: () => handleRecordCut(a.id),
                     onRecordMake: () => handleRecordMake(a.id),
                     recordMakeDisabled: !canRecordMakeForAssembly(a.id),
+                    onRecordPack: () => handleRecordPack(a.id),
+                    recordPackDisabled: !canRecordPackForAssembly(a.id),
                   }}
                 />
               </Grid.Col>
@@ -770,9 +804,9 @@ export function AssembliesEditor(props: {
                 assemblyId={firstAssembly?.id || 0}
               />,
               <Link
-                to={`/costings/fullzoom?ids=${(assemblies || [])
+                to={`/jobs/${job?.id || 0}/assembly/${(assemblies || [])
                   .map((a) => a.id)
-                  .join(",")}`}
+                  .join(",")}/costings-sheet`}
                 prefetch="intent"
                 key="open-sheet"
                 style={{ textDecoration: "none" }}
@@ -970,6 +1004,20 @@ export function AssembliesEditor(props: {
                 }
               : undefined
           }
+        />
+      )}
+      {packModalAssembly && (
+        <AssemblyPackModal
+          opened={packModalOpen}
+          onClose={() => {
+            setPackModalOpen(false);
+            setPackModalAssemblyId(null);
+          }}
+          assembly={packModalAssembly}
+          variantLabels={packModalVariantLabels}
+          quantityItem={packModalQuantityItem}
+          stockLocationName={packContext?.stockLocation?.name ?? null}
+          openBoxes={packContext?.openBoxes ?? []}
         />
       )}
       <Modal

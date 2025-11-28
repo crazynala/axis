@@ -6,7 +6,8 @@ import type {
 import { json, redirect } from "@remix-run/node";
 import {
   Link,
-  useLoaderData,
+  Outlet,
+  useRouteLoaderData,
   useNavigation,
   useSubmit,
   Form,
@@ -66,11 +67,7 @@ import {
   normalizeAssemblyState,
   normalizeJobState,
 } from "~/modules/job/stateUtils";
-import {
-  useRegisterNavLocation,
-  usePersistIndexSearch,
-  getSavedIndexSearch,
-} from "~/hooks/useNavLocation";
+import { getSavedIndexSearch } from "~/hooks/useNavLocation";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig, jobStateConfig } from "~/base/state/configs";
 
@@ -514,10 +511,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/jobs/${id}`);
 }
 
-export default function JobDetailRoute() {
-  // Persist last visited job path + index filters
-  useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
-  usePersistIndexSearch("/jobs");
+export function JobDetailView() {
   const {
     job,
     productsById,
@@ -525,7 +519,7 @@ export default function JobDetailRoute() {
     productChoices,
     groupsById,
     activityCounts,
-  } = useLoaderData<typeof loader>();
+  } = useRouteLoaderData<typeof loader>("modules/job/routes/jobs.$id")!;
   const { setCurrentId } = useRecordContext();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -1520,6 +1514,10 @@ export default function JobDetailRoute() {
       </HotkeyAwareModal>
     </Stack>
   );
+}
+
+export default function JobDetailLayout() {
+  return <Outlet />;
 }
 
 function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {

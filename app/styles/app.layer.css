@@ -27,6 +27,11 @@
     border: none;
   }
 
+/* DSG overrides */
+.dsg-container {
+  color: var(--mantine-text-color);  
+}
+
 /* Table styling */
 .mantine-Table-th {
   font-size: .7rem;
