@@ -13,6 +13,7 @@ export default function AdminIndex() {
           <Group gap="md">
             <Link to="/admin/import">Excel Import</Link>
             <Link to="/admin/logging">Logging</Link>
+            <Link to="/admin/users">Users</Link>
             <Link to="/admin/value-lists/Tax">Value Lists: Tax Codes</Link>
             <Link to="/admin/value-lists/Category">Value Lists: Category</Link>
             <Link to="/admin/value-lists/ProductType">

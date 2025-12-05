@@ -4,7 +4,7 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Outlet, useRouteLoaderData, useSubmit } from "@remix-run/react";
+import { Outlet, useFetcher, useRouteLoaderData, useSubmit } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { useRecordContext } from "../base/record/RecordContext";
@@ -12,23 +12,25 @@ import {
   Badge,
   Button,
   Card,
+  Divider,
   Group,
+  Modal,
+  NumberInput,
+  SegmentedControl,
+  Select,
   Stack,
   Table,
   Tabs,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm, useWatch } from "react-hook-form";
 import { useEffect, useMemo, useState } from "react";
 import { ShipmentDetailForm } from "../modules/shipment/forms/ShipmentDetailForm";
 import { AttachBoxesModal } from "../modules/shipment/components/AttachBoxesModal";
-import { VariantBreakdownSection } from "../components/VariantBreakdownSection";
-import {
-  groupVariantBreakdowns,
-  resolveVariantSourceFromLine,
-} from "../utils/variantBreakdown";
+import { resolveVariantSourceFromLine } from "../utils/variantBreakdown";
 
 const ALLOWED_BOX_STATES = new Set(["open", "sealed"]);
 
@@ -87,6 +89,131 @@ function parseBoxIdList(value: FormDataEntryValue | null): number[] {
   }
 }
 
+type AddBoxItemModalProps = {
+  opened: boolean;
+  onClose: () => void;
+  boxId: number | null;
+};
+
+function AddBoxItemModal({ opened, onClose, boxId }: AddBoxItemModalProps) {
+  const submit = useSubmit();
+  const [mode, setMode] = useState<"product" | "adHoc">("product");
+  const [productSearch, setProductSearch] = useState<string>("");
+  const [productId, setProductId] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState<number | "">(1);
+  const [description, setDescription] = useState<string>("");
+  const [debouncedSearch] = useDebouncedValue(productSearch, 200);
+  const productFetcher = useFetcher<{ results: any[] }>();
+
+  useEffect(() => {
+    if (!opened) return;
+    setMode("product");
+    setProductSearch("");
+    setProductId(null);
+    setQuantity(1);
+    setDescription("");
+  }, [opened]);
+
+  useEffect(() => {
+    if (!opened) return;
+    if (!debouncedSearch || debouncedSearch.length < 2) return;
+    productFetcher.load(
+      `/api.products.search?q=${encodeURIComponent(debouncedSearch)}`
+    );
+  }, [debouncedSearch, opened, productFetcher]);
+
+  const productOptions =
+    productFetcher.data?.results?.map((p) => ({
+      value: String(p.id),
+      label: p.name ? `${p.sku} — ${p.name}` : p.sku,
+    })) || [];
+
+  const handleSubmit = () => {
+    if (!boxId) return;
+    if (mode === "product" && !productId) return;
+    if (mode === "adHoc" && !description.trim()) return;
+    const fd = new FormData();
+    fd.set("_intent", "box.addLine");
+    fd.set("boxId", String(boxId));
+    fd.set("mode", mode);
+    fd.set("quantity", quantity === "" ? "0" : String(quantity));
+    if (mode === "product" && productId) fd.set("productId", productId);
+    if (mode === "adHoc") fd.set("description", description.trim());
+    submit(fd, { method: "post" });
+    onClose();
+  };
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Add item to box" centered>
+      <Stack gap="md">
+        <SegmentedControl
+          value={mode}
+          onChange={(value) => setMode(value as "product" | "adHoc")}
+          data={[
+            { value: "product", label: "Add Product" },
+            { value: "adHoc", label: "Ad Hoc" },
+          ]}
+        />
+        {mode === "product" ? (
+          <Stack gap="sm">
+            <Select
+              label="Product"
+              placeholder="Search products"
+              searchable
+              data={productOptions}
+              value={productId}
+              onChange={setProductId}
+              searchValue={productSearch}
+              onSearchChange={setProductSearch}
+              nothingFound={
+                productSearch.length < 2
+                  ? "Start typing..."
+                  : "No matching products"
+              }
+            />
+            <NumberInput
+              label="Quantity"
+              min={0}
+              value={quantity}
+              onChange={setQuantity}
+            />
+          </Stack>
+        ) : (
+          <Stack gap="sm">
+            <TextInput
+              label="Description"
+              placeholder="e.g. Fabric swatches – styles 2103, 2107, 3260"
+              value={description}
+              onChange={(e) => setDescription(e.currentTarget.value)}
+            />
+            <NumberInput
+              label="Quantity"
+              min={0}
+              value={quantity}
+              onChange={setQuantity}
+            />
+          </Stack>
+        )}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={
+              !boxId ||
+              (mode === "product" ? !productId : !description.trim()) ||
+              !Number(quantity)
+            }
+          >
+            Add
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
   if (!Number.isFinite(shipmentId)) return;
   const normalizedIds = Array.from(
@@ -96,10 +223,14 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
   await prisma.$transaction(async (tx) => {
     const shipmentRecord = await tx.shipment.findUnique({
       where: { id: shipmentId },
-      select: { id: true, locationId: true },
+      select: { id: true, locationId: true, packMode: true, type: true },
     });
     if (!shipmentRecord) {
       throw new Error("Shipment not found");
+    }
+    const isBoxMode = (shipmentRecord.packMode || "line") === "box";
+    if (shipmentRecord.type !== "Out" || !isBoxMode) {
+      throw new Error("Boxes can only be attached to outbound shipments in box mode");
     }
     const boxes = await tx.box.findMany({
       where: { id: { in: normalizedIds } },
@@ -114,6 +245,9 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
             qtyBreakdown: true,
             jobId: true,
             assemblyId: true,
+            description: true,
+            isAdHoc: true,
+            packingOnly: true,
             assembly: {
               select: {
                 id: true,
@@ -184,6 +318,7 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
         },
       });
       for (const line of box.lines) {
+        if (line.packingOnly) continue;
         const qtyBreakdown = Array.isArray(line.qtyBreakdown)
           ? (line.qtyBreakdown as number[])
           : [];
@@ -327,7 +462,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
         location: { select: { id: true, name: true } },
         lines: {
           orderBy: { id: "asc" },
-          include: {
+          select: {
+            id: true,
+            productId: true,
+            quantity: true,
+            qtyBreakdown: true,
+            jobId: true,
+            assemblyId: true,
+            shipmentLineId: true,
+            description: true,
+            isAdHoc: true,
+            packingOnly: true,
             product: {
               select: {
                 id: true,
@@ -372,6 +517,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
                 quantity: true,
                 qtyBreakdown: true,
                 jobId: true,
+                assemblyId: true,
+                shipmentLineId: true,
+                description: true,
+                isAdHoc: true,
+                packingOnly: true,
                 job: { select: { id: true, name: true } },
                 product: {
                   select: {
@@ -409,10 +559,158 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const id = !isNew && idRaw ? Number(idRaw) : NaN;
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  if (intent === "box.addLine") {
+    const boxId = Number(form.get("boxId"));
+    const mode = String(form.get("mode") || "product");
+    const productIdRaw = form.get("productId");
+    const description = (form.get("description") as string) || "";
+    const qtyRaw = Number(form.get("quantity") ?? 0);
+    const quantity = Number.isFinite(qtyRaw) ? qtyRaw : 0;
+    if (!Number.isFinite(boxId)) throw new Error("Box id required");
+    let redirectId = id;
+    await prisma.$transaction(async (tx) => {
+      const box = await tx.box.findUnique({
+        where: { id: boxId },
+        select: {
+          id: true,
+          shipmentId: true,
+          shipment: { select: { id: true, type: true, packMode: true } },
+        },
+      });
+      if (!box || !box.shipmentId) {
+        throw new Error("Box must be attached to a shipment");
+      }
+      redirectId = box.shipmentId;
+      if (box.shipment?.type !== "Out" || box.shipment?.packMode !== "box") {
+        throw new Error("Adding items only supported for outbound box-mode shipments");
+      }
+      const packingOnly = mode === "adHoc";
+      const isAdHoc = mode === "adHoc";
+      let productId: number | null = null;
+      let variantSetId: number | null = null;
+      if (!packingOnly) {
+        productId = Number(productIdRaw);
+        if (!Number.isFinite(productId)) {
+          throw new Error("Select a product to add");
+        }
+        const product = await tx.product.findUnique({
+          where: { id: productId },
+          select: { id: true, variantSetId: true },
+        });
+        if (!product) throw new Error("Product not found");
+        variantSetId = product.variantSetId ?? null;
+      }
+      const created = await tx.boxLine.create({
+        data: {
+          boxId,
+          productId: productId || undefined,
+          description: description || null,
+          isAdHoc,
+          packingOnly,
+          quantity,
+        } as any,
+      });
+      if (!packingOnly && productId) {
+        const existingLine = await tx.shipmentLine.findFirst({
+          where: {
+            shipmentId: box.shipmentId,
+            productId,
+            jobId: null,
+            assemblyId: null,
+            variantSetId,
+          },
+        });
+        if (existingLine) {
+          const updated = await tx.shipmentLine.update({
+            where: { id: existingLine.id },
+            data: {
+              quantity: Number(existingLine.quantity ?? 0) + quantity,
+            },
+          });
+          await tx.boxLine.update({
+            where: { id: created.id },
+            data: { shipmentLineId: updated.id },
+          });
+        } else {
+          const maxLine = await tx.shipmentLine.aggregate({
+            _max: { id: true },
+          });
+          const nextId = (maxLine._max.id || 0) + 1;
+          const newLine = await tx.shipmentLine.create({
+            data: {
+              id: nextId,
+              shipmentId: box.shipmentId,
+              productId,
+              quantity,
+              variantSetId: variantSetId ?? undefined,
+              status: "Packed",
+            },
+          });
+          await tx.boxLine.update({
+            where: { id: created.id },
+            data: { shipmentLineId: newLine.id },
+          });
+        }
+      }
+    });
+    const targetId = Number.isFinite(redirectId) ? redirectId : id;
+    return redirect(`/shipments/${targetId}`);
+  }
+  if (intent === "box.updateLine") {
+    const lineId = Number(form.get("lineId"));
+    const quantity = Number(form.get("quantity") ?? 0);
+    const description = (form.get("description") as string) || "";
+    if (!Number.isFinite(lineId)) throw new Error("Line id required");
+    let redirectId = id;
+    await prisma.$transaction(async (tx) => {
+      const line = await tx.boxLine.findUnique({
+        where: { id: lineId },
+        include: {
+          box: {
+            select: {
+              id: true,
+              shipmentId: true,
+              shipment: { select: { id: true, packMode: true, type: true } },
+            },
+          },
+        },
+      });
+      if (!line || !line.box?.shipmentId) {
+        throw new Error("Line not found on shipment box");
+      }
+      redirectId = line.box.shipmentId ?? redirectId;
+      if (line.box.shipment?.type !== "Out" || line.box.shipment?.packMode !== "box") {
+        throw new Error("Editing only supported for outbound box-mode shipments");
+      }
+      const qtyDelta =
+        !line.packingOnly && Number.isFinite(quantity)
+          ? quantity - Number(line.quantity ?? 0)
+          : 0;
+      await tx.boxLine.update({
+        where: { id: lineId },
+        data: {
+          quantity: Number.isFinite(quantity) ? quantity : line.quantity,
+          description: line.packingOnly ? description || null : line.description,
+        },
+      });
+      if (!line.packingOnly && line.shipmentLineId && qtyDelta !== 0) {
+        await tx.shipmentLine.update({
+          where: { id: line.shipmentLineId },
+          data: {
+            quantity: Number(line.quantity ?? 0) + qtyDelta,
+          },
+        });
+      }
+    });
+    const targetId = Number.isFinite(redirectId) ? redirectId : id;
+    return redirect(`/shipments/${targetId}`);
+  }
   if (isNew || intent === "shipment.create") {
     const status = "In Progress";
     const type = (form.get("type") as string) || null;
     const shipmentType = (form.get("shipmentType") as string) || null;
+    const packModeRaw = (form.get("packMode") as string) || null;
+    const packMode = packModeRaw || (type === "Out" ? "box" : "line");
     const trackingNo = (form.get("trackingNo") as string) || null;
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
     const dateRaw = form.get("date") as string | null;
@@ -449,6 +747,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         date,
         dateReceived,
         locationId,
+        packMode,
         companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
           ? (companyIdReceiver as any)
           : undefined,
@@ -462,6 +761,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "shipment.update") {
     const status = (form.get("status") as string) || null;
     const type = (form.get("type") as string) || null;
+    const packModeRaw = (form.get("packMode") as string) || null;
     const trackingNo = (form.get("trackingNo") as string) || null;
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
     const dateRaw = form.get("date") as string | null;
@@ -469,6 +769,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const companyIdReceiverRaw = form.get("companyIdReceiver") as string | null;
     const contactIdReceiverRaw = form.get("contactIdReceiver") as string | null;
     const pendingAttachBoxIds = parseBoxIdList(form.get("pendingAttachBoxIds"));
+    const normalizedPackMode =
+      packModeRaw === "box" ? "box" : packModeRaw === "line" ? "line" : null;
+    const existingShipment = await prisma.shipment.findUnique({
+      where: { id },
+      select: {
+        packMode: true,
+        _count: { select: { boxes: true, lines: true } },
+      },
+    });
+    if (!existingShipment) throw new Error("Shipment not found");
+    const hasExistingItems =
+      (existingShipment._count?.boxes ?? 0) > 0 ||
+      (existingShipment._count?.lines ?? 0) > 0;
+    const allowPackModeChange =
+      !hasExistingItems && pendingAttachBoxIds.length === 0;
+    const packModeUpdate = allowPackModeChange
+      ? normalizedPackMode
+      : undefined;
     const companyIdReceiver = companyIdReceiverRaw
       ? Number(companyIdReceiverRaw)
       : null;
@@ -486,6 +804,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         packingSlipCode,
         date,
         dateReceived,
+        ...(packModeUpdate ? { packMode: packModeUpdate } : {}),
         companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
           ? (companyIdReceiver as any)
           : undefined,
@@ -514,10 +833,17 @@ export function ShipmentDetailView() {
     attachedBoxes = [],
     availableBoxes = [],
   } = useRouteLoaderData<typeof loader>("routes/shipments.$id")!;
+  const isOutbound = shipment.type === "Out";
+  const isBoxMode = (shipment.packMode || "line") === "box";
+  const showBoxesTab = isOutbound && isBoxMode;
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
+  const lineUpdate = useSubmit();
   const [activeTab, setActiveTab] = useState<string>("lines");
   const [attachOpen, { open: openAttach, close: closeAttach }] =
+    useDisclosure(false);
+  const [addBoxId, setAddBoxId] = useState<number | null>(null);
+  const [addItemOpen, { open: openAddItem, close: closeAddItem }] =
     useDisclosure(false);
   useEffect(() => {
     setCurrentId(shipment.id);
@@ -537,14 +863,18 @@ export function ShipmentDetailView() {
     addressCountry: s.addressCountry ?? "",
     // Read-only derived display field
     locationName: s.location?.name ?? "",
+    packMode: s.packMode || "line",
     pendingAttachBoxIds: [],
   });
   const formDefaults = toFormDefaults(shipment);
   const form = useForm({
     defaultValues: formDefaults,
   });
-  const pendingAttachBoxIds: number[] =
+  const pendingAttachRaw =
     useWatch({ control: form.control, name: "pendingAttachBoxIds" }) || [];
+  const pendingAttachBoxIds: number[] = Array.isArray(pendingAttachRaw)
+    ? pendingAttachRaw
+    : [];
   const pendingAttachSet = useMemo(
     () => new Set(pendingAttachBoxIds.map((id) => Number(id))),
     [pendingAttachBoxIds]
@@ -569,6 +899,11 @@ export function ShipmentDetailView() {
     ],
     [pendingBoxes, attachedBoxes]
   );
+  useEffect(() => {
+    if (!showBoxesTab && activeTab === "boxes") {
+      setActiveTab("lines");
+    }
+  }, [showBoxesTab, activeTab]);
   useInitGlobalFormContext(
     form as any,
     (values: any) => {
@@ -577,6 +912,7 @@ export function ShipmentDetailView() {
       fd.set("trackingNo", values.trackingNo || "");
       fd.set("status", values.status || "");
       fd.set("type", values.type || "");
+      fd.set("packMode", values.packMode || "");
       fd.set("packingSlipCode", values.packingSlipCode || "");
       fd.set("date", values.date || "");
       fd.set("dateReceived", values.dateReceived || "");
@@ -599,7 +935,13 @@ export function ShipmentDetailView() {
   const lineCount = shipment.lines?.length ?? 0;
   const boxSummaries = useMemo(() => {
     return stagedAndSavedBoxes.map(({ box, isPending }) => {
-      const totalQuantity = (box.lines || []).reduce(
+      const commercialLines = (box.lines || []).filter(
+        (line: any) => !line.packingOnly
+      );
+      const extraLines = (box.lines || []).filter(
+        (line: any) => !!line.packingOnly
+      );
+      const totalQuantity = commercialLines.reduce(
         (sum: number, line: any) =>
           sum +
           lineQuantityOrSum({
@@ -612,12 +954,78 @@ export function ShipmentDetailView() {
       );
       const skuCount = Array.from(
         new Set(
-          (box.lines || [])
+          commercialLines
             .map((line: any) => line.productId ?? line.product?.id ?? null)
             .filter((id: number | null): id is number => id != null)
         )
       ).length;
-      return { box, totalQuantity, skuCount, isPending };
+      // Group by variant set for rendering headers/labels
+      const groupsMap = new Map<
+        string,
+        {
+          key: string;
+          title: string;
+          labels: string[];
+          lines: any[];
+        }
+      >();
+      commercialLines.forEach((line: any) => {
+        const variantSource = resolveVariantSourceFromLine(line);
+        const key =
+          (variantSource?.id != null
+            ? `id:${variantSource.id}`
+            : variantSource?.name
+            ? `name:${variantSource.name}`
+            : "none") || "none";
+        const title =
+          variantSource?.name ||
+          (variantSource?.id != null
+            ? `Variant Set ${variantSource.id}`
+            : "No Variant Set");
+        let labels: string[] = [];
+        const variants = variantSource?.variants || [];
+        if (variants.length) {
+          labels = variants.map((v: any, idx: number) => {
+            if (typeof v === "string") return v || `Variant ${idx + 1}`;
+            return v?.name || v?.value || `Variant ${idx + 1}`;
+          });
+        } else if (Array.isArray(line.qtyBreakdown)) {
+          labels = Array.from(
+            { length: line.qtyBreakdown.length },
+            (_, i) => `Variant ${i + 1}`
+          );
+        }
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, { key, title, labels, lines: [] });
+        } else {
+          const existing = groupsMap.get(key)!;
+          if (labels.length > existing.labels.length) existing.labels = labels;
+        }
+        groupsMap.get(key)!.lines.push(line);
+      });
+      const groups = Array.from(groupsMap.values()).sort((a, b) =>
+        a.title.localeCompare(b.title)
+      );
+      const maxVariantColumns = groups.reduce(
+        (max, g) => Math.max(max, g.labels.length || 0),
+        0
+      );
+      // Pad label arrays to max for consistent column count
+      groups.forEach((g) => {
+        while (g.labels.length < maxVariantColumns) {
+          g.labels.push(`Variant ${g.labels.length + 1}`);
+        }
+      });
+      return {
+        box,
+        totalQuantity,
+        skuCount,
+        isPending,
+        commercialLines,
+        extraLines,
+        groups,
+        maxVariantColumns,
+      };
     });
   }, [stagedAndSavedBoxes]);
   const handleAttachConfirm = (boxIds: number[]) => {
@@ -639,9 +1047,24 @@ export function ShipmentDetailView() {
       shouldTouch: true,
     });
   };
+  const handleLineUpdate = (lineId: number, updates: { quantity?: number; description?: string }) => {
+    const fd = new FormData();
+    fd.set("_intent", "box.updateLine");
+    fd.set("lineId", String(lineId));
+    if (updates.quantity != null) fd.set("quantity", String(updates.quantity));
+    if (updates.description != null) fd.set("description", updates.description);
+    lineUpdate(fd, { method: "post" });
+  };
   const canAttachBoxes = Boolean(
-    shipment.locationId && (attachableBoxes?.length ?? 0) > 0
+    showBoxesTab &&
+      shipment.status === "In Progress" &&
+      shipment.locationId &&
+      (attachableBoxes?.length ?? 0) > 0
   );
+  const hasAnyItems =
+    lineCount > 0 ||
+    (attachedBoxes?.length ?? 0) > 0 ||
+    (pendingBoxes?.length ?? 0) > 0;
 
   return (
     <Stack>
@@ -655,7 +1078,12 @@ export function ShipmentDetailView() {
         <Group gap="xs"></Group>
       </Group>
 
-      <ShipmentDetailForm mode="edit" form={form as any} shipment={shipment} />
+      <ShipmentDetailForm
+        mode="edit"
+        form={form as any}
+        shipment={shipment}
+        fieldCtx={{ packModeLocked: hasAnyItems }}
+      />
 
       <Tabs
         value={activeTab}
@@ -664,7 +1092,9 @@ export function ShipmentDetailView() {
       >
         <Tabs.List>
           <Tabs.Tab value="lines">Lines ({lineCount})</Tabs.Tab>
-          <Tabs.Tab value="boxes">Boxes ({attachedBoxes.length})</Tabs.Tab>
+          {showBoxesTab && (
+            <Tabs.Tab value="boxes">Boxes ({attachedBoxes.length})</Tabs.Tab>
+          )}
         </Tabs.List>
         <Tabs.Panel value="lines" pt="md">
           {lineCount ? (
@@ -705,169 +1135,279 @@ export function ShipmentDetailView() {
             </Text>
           )}
         </Tabs.Panel>
-        <Tabs.Panel value="boxes" pt="md">
-          <Card withBorder padding="md">
-            <Group justify="space-between" align="center" mb="md">
-              <Title order={5}>Boxes ({boxSummaries.length})</Title>
-              <Button onClick={openAttach} disabled={!canAttachBoxes}>
-                Attach boxes from warehouse…
-              </Button>
-            </Group>
-            {pendingBoxes.length > 0 && (
-              <Text size="sm" c="yellow.7" mb="sm">
-                {pendingBoxes.length} box{pendingBoxes.length === 1 ? "" : "es"}{" "}
-                pending – Save to commit or remove to discard.
-              </Text>
-            )}
-            {boxSummaries.length ? (
-              <Stack gap="md">
-                {boxSummaries.map(
-                  ({ box, totalQuantity, skuCount, isPending }) => {
-                    const breakdownGroups = groupVariantBreakdowns(
-                      box.lines || [],
-                      {
-                        getBreakdown: (line: any) =>
-                          Array.isArray(line.qtyBreakdown)
-                            ? line.qtyBreakdown
-                            : [],
-                        getVariant: (line: any) =>
-                          resolveVariantSourceFromLine(line),
-                        getItemKey: (line: any) => line.id,
-                      }
-                    );
-                    return (
-                      <Card key={box.id} withBorder padding="sm">
-                        <Group justify="space-between" align="flex-start">
-                          <Stack gap={2}>
-                            <Text fw={600}>
-                              {box.warehouseNumber != null
-                                ? `Box #${box.warehouseNumber}`
-                                : box.code || `Box ${box.id}`}
-                            </Text>
-                            <Text size="sm" c="dimmed">
-                              {box.company?.name ||
-                                (box.companyId
-                                  ? `Company ${box.companyId}`
-                                  : "—")}
-                            </Text>
-                          </Stack>
-                          <Group gap="lg" align="center">
-                            <Stack gap={0} ta="right">
-                              <Text size="sm">Total qty: {totalQuantity}</Text>
-                              <Text size="sm">SKUs: {skuCount}</Text>
+        {showBoxesTab && (
+          <Tabs.Panel value="boxes" pt="md">
+            <Stack gap="md">
+              <Group justify="space-between" align="center">
+                <Title order={5}>Boxes ({boxSummaries.length})</Title>
+                <Button onClick={openAttach} disabled={!canAttachBoxes}>
+                  Attach boxes from warehouse…
+                </Button>
+              </Group>
+              {pendingBoxes.length > 0 && (
+                <Text size="sm" c="yellow.7">
+                  {pendingBoxes.length} box{pendingBoxes.length === 1 ? "" : "es"}{" "}
+                  pending – Save to commit or remove to discard.
+                </Text>
+              )}
+              {boxSummaries.length ? (
+                <Stack gap="md">
+                  {boxSummaries.map(
+                    ({
+                      box,
+                      totalQuantity,
+                      isPending,
+                      commercialLines,
+                      extraLines,
+                      groups,
+                      maxVariantColumns,
+                    }) => {
+                      return (
+                        <Card key={box.id} withBorder padding="sm">
+                          <Group justify="space-between" align="flex-start">
+                            <Stack gap={2}>
+                              <Text fw={600}>
+                                {box.warehouseNumber != null
+                                  ? `Box #${box.warehouseNumber}`
+                                  : box.code || `Box ${box.id}`}
+                              </Text>
                             </Stack>
-                            <Group gap="xs">
-                              <Badge
-                                color={
-                                  box.state === "sealed"
-                                    ? "green"
-                                    : box.state === "open"
-                                    ? "blue"
-                                    : "gray"
-                                }
+                            <Group gap="md" align="center">
+                              <Stack gap={0} ta="right">
+                                <Text size="sm">
+                                  Total qty: {totalQuantity}
+                                </Text>
+                              </Stack>
+                              <Group gap="xs">
+                                <Badge
+                                  color={
+                                    box.state === "sealed"
+                                      ? "green"
+                                      : box.state === "open"
+                                      ? "blue"
+                                      : "gray"
+                                  }
+                                >
+                                  {box.state || "unknown"}
+                                </Badge>
+                                {isPending && (
+                                  <Badge color="yellow">Pending Save</Badge>
+                                )}
+                              </Group>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                onClick={() => {
+                                  setAddBoxId(box.id);
+                                  openAddItem();
+                                }}
                               >
-                                {box.state || "unknown"}
-                              </Badge>
+                                Add item
+                              </Button>
                               {isPending && (
-                                <Badge color="yellow">Pending Save</Badge>
+                                <Button
+                                  variant="subtle"
+                                  color="red"
+                                  size="xs"
+                                  onClick={() => handleRemovePendingBox(box.id)}
+                                >
+                                  Remove
+                                </Button>
                               )}
                             </Group>
-                            {isPending && (
-                              <Button
-                                variant="subtle"
-                                color="red"
-                                size="xs"
-                                onClick={() => handleRemovePendingBox(box.id)}
-                              >
-                                Remove
-                              </Button>
-                            )}
                           </Group>
-                        </Group>
-                        {box.lines?.length ? (
-                          <Stack gap="sm" mt="sm">
-                            <Table withColumnBorders>
+                          {commercialLines?.length ? (
+                            <Table withColumnBorders mt="sm">
                               <Table.Thead>
                                 <Table.Tr>
                                   <Table.Th>SKU</Table.Th>
-                                  <Table.Th>Product</Table.Th>
-                                  <Table.Th>Qty</Table.Th>
-                                  <Table.Th>Job</Table.Th>
                                   <Table.Th>Assembly</Table.Th>
+                                  {Array.from(
+                                    { length: maxVariantColumns || 0 },
+                                    (_, idx) => (
+                                      <Table.Th key={idx}>
+                                        Variant {idx + 1}
+                                      </Table.Th>
+                                    )
+                                  )}
+                                  <Table.Th>Total</Table.Th>
+                                  <Table.Th>Job</Table.Th>
                                 </Table.Tr>
                               </Table.Thead>
                               <Table.Tbody>
-                                {box.lines.map((line: any) => (
-                                  <Table.Tr key={line.id}>
-                                    <Table.Td>
-                                      {line.product?.sku ??
-                                        line.productId ??
-                                        ""}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {line.product?.name || "—"}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {line.quantity ??
+                                {groups.map((group) => (
+                                  <React.Fragment key={group.key}>
+                                    <Table.Tr>
+                                      <Table.Td colSpan={2} fw={600}>
+                                        {group.title}
+                                      </Table.Td>
+                                      {group.labels.map((label, idx) => (
+                                        <Table.Td key={idx} fw={600}>
+                                          {label}
+                                        </Table.Td>
+                                      ))}
+                                      {maxVariantColumns > group.labels.length
+                                        ? Array.from(
+                                            {
+                                              length:
+                                                maxVariantColumns -
+                                                group.labels.length,
+                                            },
+                                            (_, idx) => (
+                                              <Table.Td key={`pad-${idx}`} />
+                                            )
+                                          )
+                                        : null}
+                                      <Table.Td></Table.Td>
+                                      <Table.Td></Table.Td>
+                                    </Table.Tr>
+                                    {group.lines.map((line: any) => {
+                                      const breakdown = Array.isArray(
+                                        line.qtyBreakdown
+                                      )
+                                        ? line.qtyBreakdown
+                                        : [];
+                                      const totalQty =
+                                        line.quantity ??
                                         sumNumberArray(
                                           Array.isArray(line.qtyBreakdown)
                                             ? line.qtyBreakdown
                                             : []
-                                        )}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {line.job?.name ||
-                                        (line.jobId
-                                          ? `Job ${line.jobId}`
-                                          : "—")}
-                                    </Table.Td>
-                                    <Table.Td>
-                                      {line.assembly?.name ||
-                                        (line.assemblyId
-                                          ? `Assembly ${line.assemblyId}`
-                                          : "—")}
-                                    </Table.Td>
-                                  </Table.Tr>
+                                        );
+                                      return (
+                                        <Table.Tr key={line.id}>
+                                          <Table.Td>
+                                            {line.product?.sku ??
+                                              line.productId ??
+                                              ""}
+                                          </Table.Td>
+                                          <Table.Td>
+                                            {line.assembly?.name ||
+                                              (line.assemblyId
+                                                ? `Assembly ${line.assemblyId}`
+                                                : "—")}
+                                          </Table.Td>
+                                          {Array.from(
+                                            { length: maxVariantColumns || 0 },
+                                            (_, idx) => (
+                                              <Table.Td key={idx}>
+                                                {breakdown[idx] ?? 0}
+                                              </Table.Td>
+                                            )
+                                          )}
+                                          <Table.Td>
+                                            {line.isAdHoc ? (
+                                              <TextInput
+                                                type="number"
+                                                size="xs"
+                                                defaultValue={
+                                                  line.quantity ??
+                                                  sumNumberArray(
+                                                    Array.isArray(
+                                                      line.qtyBreakdown
+                                                    )
+                                                      ? line.qtyBreakdown
+                                                      : []
+                                                  )
+                                                }
+                                                onBlur={(e) => {
+                                                  const next = Number(
+                                                    e.currentTarget.value
+                                                  );
+                                                  if (Number.isNaN(next)) return;
+                                                  handleLineUpdate(line.id, {
+                                                    quantity: next,
+                                                  });
+                                                }}
+                                              />
+                                            ) : (
+                                              totalQty
+                                            )}
+                                          </Table.Td>
+                                          <Table.Td>
+                                            {line.job?.name ||
+                                              (line.jobId
+                                                ? `Job ${line.jobId}`
+                                                : "—")}
+                                          </Table.Td>
+                                        </Table.Tr>
+                                      );
+                                    })}
+                                  </React.Fragment>
                                 ))}
                               </Table.Tbody>
                             </Table>
-                            {breakdownGroups.length > 0 && (
-                              <VariantBreakdownSection
-                                groups={breakdownGroups}
-                                lineHeader="Line"
-                                renderLineLabel={(line: any) => (
-                                  <Stack gap={0}>
-                                    <Text size="sm">
-                                      {line.product?.sku ??
-                                        line.productId ??
-                                        `Line ${line.id}`}
-                                    </Text>
-                                    <Text size="xs" c="dimmed">
-                                      {line.job?.name ||
-                                        (line.jobId ? `Job ${line.jobId}` : "")}
-                                    </Text>
+                          ) : (
+                            <Text size="sm" c="dimmed" mt="sm">
+                              No commercial lines recorded for this box.
+                            </Text>
+                          )}
+                          {extraLines.length > 0 && (
+                            <Stack gap={4} mt="sm">
+                              <Text size="sm" fw={600}>
+                                Extras
+                              </Text>
+                              {extraLines.map((line: any) => (
+                                <Group key={line.id} gap="xs" align="flex-start">
+                                  <Badge size="xs" color="gray">
+                                    Packing-only
+                                  </Badge>
+                                  <Stack gap={6} style={{ flex: 1 }}>
+                                    <TextInput
+                                      size="xs"
+                                      label="Description"
+                                      defaultValue={
+                                        line.description ||
+                                        line.product?.name ||
+                                        line.productId ||
+                                        `Line ${line.id}`
+                                      }
+                                      onBlur={(e) => {
+                                        handleLineUpdate(line.id, {
+                                          description: e.currentTarget.value,
+                                        });
+                                      }}
+                                    />
+                                    <TextInput
+                                      type="number"
+                                      size="xs"
+                                      label="Quantity"
+                                      defaultValue={
+                                        line.quantity ??
+                                        sumNumberArray(
+                                          Array.isArray(line.qtyBreakdown)
+                                            ? line.qtyBreakdown
+                                            : []
+                                        )
+                                      }
+                                      onBlur={(e) => {
+                                        const next = Number(
+                                          e.currentTarget.value
+                                        );
+                                        if (Number.isNaN(next)) return;
+                                        handleLineUpdate(line.id, {
+                                          quantity: next,
+                                        });
+                                      }}
+                                    />
                                   </Stack>
-                                )}
-                              />
-                            )}
-                          </Stack>
-                        ) : (
-                          <Text size="sm" c="dimmed" mt="sm">
-                            No lines recorded for this box.
-                          </Text>
-                        )}
-                      </Card>
-                    );
-                  }
-                )}
-              </Stack>
-            ) : (
-              <Text c="dimmed">
-                No boxes attached or staged for this shipment.
-              </Text>
-            )}
-          </Card>
-        </Tabs.Panel>
+                                </Group>
+                              ))}
+                            </Stack>
+                          )}
+                        </Card>
+                      );
+                    }
+                  )}
+                </Stack>
+              ) : (
+                <Text c="dimmed">
+                  No boxes attached or staged for this shipment.
+                </Text>
+              )}
+            </Stack>
+          </Tabs.Panel>
+        )}
       </Tabs>
       <AttachBoxesModal
         opened={attachOpen}
@@ -880,6 +1420,11 @@ export function ShipmentDetailView() {
           handleAttachConfirm(ids);
           closeAttach();
         }}
+      />
+      <AddBoxItemModal
+        opened={addItemOpen}
+        onClose={closeAddItem}
+        boxId={addBoxId}
       />
     </Stack>
   );

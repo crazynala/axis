@@ -17,13 +17,16 @@ import {
   type LogLevels,
   type LogLevel,
 } from "~/utils/log-config.server";
+import { requireAdminUser } from "../utils/auth.server";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const logLevels = await loadLogLevels();
   return json({ logLevels });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const form = await request.formData();
   const raw = (form.get("levels") as string) || "{}";
   const parsed = JSON.parse(raw) as LogLevels;

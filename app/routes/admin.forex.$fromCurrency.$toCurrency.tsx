@@ -4,12 +4,14 @@ import { useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
 import { BreadcrumbSet } from "@aa/timber";
+import { requireAdminUser } from "../utils/auth.server";
 
 export const meta: MetaFunction = ({ params }) => [
   { title: `Forex ${params.fromCurrency} → ${params.toCurrency}` },
 ];
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const from = String(params.fromCurrency ?? "").toUpperCase();
   const to = String(params.toCurrency ?? "").toUpperCase();
   const rows = await prisma.forexLine.findMany({

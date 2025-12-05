@@ -17,6 +17,7 @@ import { Fragment, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { invalidateValueList } from "~/utils/options.server";
 import { prisma } from "~/utils/prisma.server";
+import { requireAdminUser } from "~/utils/auth.server";
 
 type LoaderValueList = {
   id: number;
@@ -78,12 +79,14 @@ async function fetchValueLists(type: ValueListType): Promise<LoaderData> {
   };
 }
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const type = parseListType(params.listType);
   return json(await fetchValueLists(type));
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const type = parseListType(params.listType);
   const form = await request.formData();
   const intent = form.get("_intent");

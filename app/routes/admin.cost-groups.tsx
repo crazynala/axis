@@ -12,8 +12,10 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { requireAdminUser } from "../utils/auth.server";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const groups = await prisma.productCostGroup.findMany({
     orderBy: { id: "asc" },
     include: { _count: { select: { costRanges: true } } } as any,
@@ -22,6 +24,7 @@ export async function loader(_args: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   if (intent === "create") {

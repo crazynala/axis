@@ -2,9 +2,11 @@ import { useActionData, useNavigation } from "@remix-run/react";
 import { Alert, Button, Group, Stack, Table, Title } from "@mantine/core";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { adminImportAction } from "../server/adminImportAction.server";
+import { requireAdminUser } from "../utils/auth.server";
 
 // Dynamic import of server action moved outside routes folder to avoid client bundling.
 export async function action(args: ActionFunctionArgs) {
+  await requireAdminUser(args.request);
   // const mod = await import("../server/adminImportAction.server");
   return adminImportAction(args);
 }

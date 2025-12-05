@@ -15,6 +15,12 @@ import { useForm } from "react-hook-form";
 import { buildInvoiceLineDetails } from "../utils/invoiceLineDetails";
 import { formatQuantity } from "../utils/format";
 import { formatUSD } from "../utils/format";
+import { InvoiceInvoicingTabs } from "../modules/invoice/components/InvoiceInvoicingTabs";
+import { createInvoiceLines } from "../modules/invoice/services/invoicing";
+import { getCostingsPendingInvoicing } from "../modules/invoice/services/costing";
+import { getShipmentsPendingInvoicing } from "../modules/invoice/services/shipment";
+import { getPOLinesPendingInvoicing } from "../modules/invoice/services/po";
+import { getExpensesPendingInvoicing } from "../modules/invoice/services/expense";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -131,7 +137,20 @@ export async function loader({ params }: LoaderFunctionArgs) {
     });
   }
 
-  return json({ invoice, totals, detailsById });
+  const costings = await getCostingsPendingInvoicing(invoice.companyId);
+  const pendingShipments = await getShipmentsPendingInvoicing(invoice.companyId);
+  const pendingPoLines = await getPOLinesPendingInvoicing(invoice.id);
+  const pendingExpenses = await getExpensesPendingInvoicing(invoice.companyId);
+
+  return json({
+    invoice,
+    totals,
+    detailsById,
+    costings,
+    shipments: pendingShipments,
+    poLines: pendingPoLines,
+    expenses: pendingExpenses,
+  });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -169,11 +188,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
     return redirect(`/invoices/${id}`);
   }
+  if (intent === "invoice.addLines") {
+    const itemsRaw = form.get("items") as string | null;
+    const items = itemsRaw ? JSON.parse(itemsRaw) : [];
+    await createInvoiceLines(id, Array.isArray(items) ? items : []);
+    return redirect(`/invoices/${id}`);
+  }
   return redirect(`/invoices/${id}`);
 }
 
 export function InvoiceDetailView() {
-  const { invoice, totals, detailsById } = useRouteLoaderData<typeof loader>(
+  const {
+    invoice,
+    totals,
+    detailsById,
+    costings = [],
+    shipments = [],
+    poLines = [],
+    expenses = [],
+  } = useRouteLoaderData<typeof loader>(
     "routes/invoices.$id"
   )!;
   console.log("InvoiceDetailRoute invoice:", invoice);
@@ -255,6 +288,18 @@ export function InvoiceDetailView() {
           </Table>
         </Card>
       ) : null}
+
+      <Card withBorder padding="md">
+        <Card.Section inheritPadding py="xs">
+          <Title order={5}>Add charges to this invoice</Title>
+        </Card.Section>
+        <InvoiceInvoicingTabs
+          costings={costings as any}
+          shipments={shipments as any}
+          poLines={poLines as any}
+          expenses={expenses as any}
+        />
+      </Card>
     </Stack>
   );
 }

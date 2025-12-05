@@ -18,6 +18,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { requireAdminUser } from "../utils/auth.server";
 
 type LoaderData = {
   ranges: Array<{
@@ -38,6 +39,7 @@ type LoaderData = {
 };
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const url = new URL(request.url);
   const productId = url.searchParams.get("productId");
   const costGroupId = url.searchParams.get("costGroupId");
@@ -106,6 +108,7 @@ async function assertNoOverlap(args: {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   try {

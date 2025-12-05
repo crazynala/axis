@@ -3,8 +3,10 @@ import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import { prisma } from "~/utils/prisma.server";
 import { Button, Group, Stack, Table, TextInput, Title } from "@mantine/core";
+import { requireAdminUser } from "~/utils/auth.server";
 
-export async function loader() {
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const groups = await prisma.salePriceGroup.findMany({
     include: { saleRanges: true },
     orderBy: { id: "asc" },
@@ -13,6 +15,7 @@ export async function loader() {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const fd = await request.formData();
   const intent = String(fd.get("_intent") || "");
   if (intent === "group.create") {

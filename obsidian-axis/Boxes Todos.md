@@ -1,0 +1,2 @@
+- [ ] Must be able to delete boxes
+- [ ] Must be able to remove a box from a shipment

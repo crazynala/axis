@@ -50,6 +50,17 @@ export const shipmentInfoFields: FieldConfig[] = [
     showIf: ({ mode }) => mode !== "create",
   },
   {
+    name: "packMode",
+    label: "Pack Mode",
+    widget: "select",
+    options: [
+      { value: "line", label: "Lines" },
+      { value: "box", label: "Boxes" },
+    ],
+    hiddenInModes: ["find"],
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.packModeLocked),
+  },
+  {
     name: "id",
     label: "ID",
     widget: "idStatic",

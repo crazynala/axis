@@ -1,10 +1,13 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { Outlet, NavLink as RemixNavLink } from "@remix-run/react";
 import { AppShell, Divider, NavLink, Stack, Title } from "@mantine/core";
 import { IconArrowLeft } from "@tabler/icons-react";
+import { requireAdminUser } from "~/utils/auth.server";
 
 const items = [
   { to: "/admin/import", label: "Excel Import" },
   { to: "/admin/logging", label: "Logging" },
+  { to: "/admin/users", label: "Users" },
   { to: "/admin/value-lists/Tax", label: "Value Lists: Tax Codes" },
   { to: "/admin/value-lists/Category", label: "Value Lists: Category" },
   { to: "/admin/value-lists/ProductType", label: "Value Lists: Product Type" },
@@ -21,6 +24,11 @@ const items = [
   { to: "/admin/dhl-records", label: "DHL Records" },
   { to: "/admin/settings/pricing", label: "Pricing Settings" },
 ];
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
+  return null;
+}
 
 export default function AdminLayoutRoute() {
   return (

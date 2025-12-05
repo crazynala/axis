@@ -19,6 +19,9 @@ export type ShipmentBoxLine = {
   qtyBreakdown: number[] | null;
   jobId: number | null;
   job?: { id: number; name: string | null } | null;
+  packingOnly?: boolean | null;
+  isAdHoc?: boolean | null;
+  description?: string | null;
 };
 
 export type ShipmentBox = {
@@ -44,6 +47,7 @@ export type AttachBoxesModalProps = {
 };
 
 function sumQuantity(line: ShipmentBoxLine): number {
+  if (line.packingOnly) return 0;
   const qty = Number(line.quantity ?? 0);
   if (Number.isFinite(qty) && qty !== 0) return qty;
   const breakdown = Array.isArray(line.qtyBreakdown) ? line.qtyBreakdown : [];
@@ -121,6 +125,7 @@ export function AttachBoxesModal({
     const set = new Map<string, string>();
     boxes.forEach((box) => {
       box.lines.forEach((line) => {
+        if (line.packingOnly) return;
         if (line.jobId == null) return;
         const key = String(line.jobId);
         if (!set.has(key)) {
@@ -143,7 +148,10 @@ export function AttachBoxesModal({
     }
     if (jobFilter) {
       const hasJob = box.lines.some(
-        (line) => line.jobId != null && String(line.jobId) === jobFilter
+        (line) =>
+          !line.packingOnly &&
+          line.jobId != null &&
+          String(line.jobId) === jobFilter
       );
       if (!hasJob) return false;
     }
@@ -151,19 +159,20 @@ export function AttachBoxesModal({
   });
 
   const rows = filteredBoxes.map((box) => {
-    const totalQuantity = box.lines.reduce(
+    const commercialLines = box.lines.filter((line) => !line.packingOnly);
+    const totalQuantity = commercialLines.reduce(
       (sum, line) => sum + sumQuantity(line),
       0
     );
     const skuCount = Array.from(
       new Set(
-        box.lines
+        commercialLines
           .map((line) => line.productId ?? null)
           .filter((id): id is number => id != null)
       )
     ).length;
     const jobLabel = mergeLabels(
-      box.lines.map(
+      commercialLines.map(
         (line) =>
           line.job?.name || (line.jobId != null ? `Job ${line.jobId}` : null)
       )

@@ -3,8 +3,10 @@ import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { MasterTableProvider } from "@aa/timber";
 import { prisma } from "../utils/prisma.server";
+import { requireAdminUser } from "../utils/auth.server";
 
-export async function loader(_args: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const rows = await prisma.dHLReportLine.findMany({
     orderBy: { invoiceDate: "desc" },
     select: {

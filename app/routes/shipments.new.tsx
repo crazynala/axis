@@ -19,7 +19,7 @@ export default function NewShipmentRoute() {
   const submit = useSubmit();
   const form = useForm({
     defaultValues: {
-      date: "",
+      date: new Date().toISOString().slice(0, 10),
       dateReceived: "",
       status: "In Progress",
       type: "Out",
@@ -28,6 +28,7 @@ export default function NewShipmentRoute() {
       packingSlipCode: "",
       companyIdReceiver: null,
       contactIdReceiver: null,
+      packMode: "box",
     },
   });
   const onSubmit = (values: any) => {
@@ -40,6 +41,7 @@ export default function NewShipmentRoute() {
     if (values.trackingNo) fd.set("trackingNo", values.trackingNo);
     if (values.packingSlipCode)
       fd.set("packingSlipCode", values.packingSlipCode);
+    if (values.packMode) fd.set("packMode", values.packMode);
     if (values.companyIdReceiver != null)
       fd.set("companyIdReceiver", String(values.companyIdReceiver));
     if (values.contactIdReceiver != null)

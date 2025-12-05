@@ -4,6 +4,7 @@ import { useLoaderData } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Card, Divider, Group, Stack, TextInput, Title } from "@mantine/core";
+import { requireAdminUser } from "../utils/auth.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -13,7 +14,8 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => [
   },
 ];
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const id = Number(params.id);
   if (!Number.isFinite(id)) throw new Response("Invalid id", { status: 400 });
   const row = await prisma.dHLReportLine.findUnique({ where: { id } });

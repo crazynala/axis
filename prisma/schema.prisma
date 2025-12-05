@@ -36,6 +36,12 @@ enum ColorScheme {
     dark
 }
 
+enum UserLevel {
+    Admin
+    Manager
+    RegularJoe
+}
+
 model CostingTag {
     id        Int @id @default(autoincrement())
     costingId Int
@@ -384,6 +390,7 @@ model Costing {
     flagIsBillableDefaultOrManual Boolean?
     flagIsBillableManual          Boolean?
     flagIsInvoiceableManual       Boolean?
+    flagStockTracked              Boolean?
     assembly                      Assembly?       @relation(fields: [assemblyId], references: [id])
     product                       Product?        @relation(fields: [productId], references: [id])
     // Metadata
@@ -640,6 +647,9 @@ model User {
     email            String          @unique
     passwordHash     String
     name             String?
+    firstName        String?
+    lastName         String?
+    userLevel        UserLevel       @default(Admin)
     recordsPerPage   Int             @default(25)
     isActive         Boolean         @default(true)
     colorScheme      ColorScheme     @default(light)
@@ -844,6 +854,11 @@ model BoxLine {
     assemblyId     Int?
     shipmentLineId Int? // when this line is tied to a shipment line
 
+    // Ad hoc / extras
+    description  String?  // e.g. "Fabric swatches – styles 2103, 2107, 3260"
+    isAdHoc      Boolean? @default(false)
+    packingOnly  Boolean? @default(false) // if true, doesn't generate/adjust ShipmentLines
+
     quantity     Decimal? @db.Decimal(14, 4)
     qtyBreakdown Int[]    @default([]) // per size: aligns with Assembly/VariantSet conventions
     notes        String?
@@ -884,6 +899,7 @@ model Shipment {
     status             String?
     trackingNo         String?
     type               String? // "In" | "Out"
+    packMode           String?         @default("line") // "line" | "box"
     memo               String?
     shippingMethod     String?
     addressName        String?

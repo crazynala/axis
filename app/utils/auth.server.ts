@@ -124,6 +124,26 @@ export async function completePasswordReset(
   return true;
 }
 
+export async function requireAdminUser(request: Request) {
+  const userId = await requireUserId(request);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      isActive: true,
+      userLevel: true,
+      firstName: true,
+      lastName: true,
+      name: true,
+    },
+  });
+  if (!user || !user.isActive || user.userLevel !== "Admin") {
+    throw redirect("/");
+  }
+  return user;
+}
+
 // Basic email sender; replace with real provider later
 export async function sendEmail(
   to: string,

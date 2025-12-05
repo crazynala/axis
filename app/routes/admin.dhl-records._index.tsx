@@ -5,10 +5,12 @@ import { prisma } from "../utils/prisma.server";
 import { DataTable } from "mantine-datatable";
 import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
+import { requireAdminUser } from "../utils/auth.server";
 
 export const meta: MetaFunction = () => [{ title: "DHL Records" }];
 
 export async function loader(args: LoaderFunctionArgs) {
+  await requireAdminUser(args.request);
   const params = parseTableParams(args.request.url);
   const prismaArgs = buildPrismaArgs<any>(params, {
     defaultSort: { field: "invoiceDate", dir: "desc" },

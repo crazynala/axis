@@ -7,10 +7,12 @@ import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import { prisma } from "~/utils/prisma.server";
 import { Button, Group, NumberInput, Stack, Title } from "@mantine/core";
+import { requireAdminUser } from "../utils/auth.server";
 
 export const meta: MetaFunction = () => [{ title: "Pricing Settings" }];
 
-export async function loader(_: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAdminUser(request);
   const setting = await prisma.setting.findUnique({
     where: { key: "defaultMargin" },
   });
@@ -24,6 +26,7 @@ export async function loader(_: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  await requireAdminUser(request);
   const fd = await request.formData();
   const v = fd.get("defaultMargin");
   const num = typeof v === "string" ? Number(v) : 0;

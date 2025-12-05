@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import type { UserLevel } from "@prisma/client";
 import { loadLogLevels } from "~/utils/log-config.server";
 // LinksFunction imported above
 import {
@@ -106,6 +107,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       logLevels,
       options: null,
       desktopNavOpened: true,
+      userLevel: null,
     });
   const uid = await getUserId(request);
   if (!uid) {
@@ -118,7 +120,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const desktopNavOpened = me?.desktopNavOpened ?? true;
   const options = await loadOptions();
   // console.log("Root loaded options: ", options);
-  return json({ colorScheme, desktopNavOpened, logLevels, options });
+  return json({
+    colorScheme,
+    desktopNavOpened,
+    logLevels,
+    options,
+    userLevel: (me?.userLevel as UserLevel | null | undefined) ?? null,
+  });
 }
 // export const links: LinksFunction = () => {
 // If Remix CSS bundling is enabled, we could also include cssBundleHref here.
@@ -302,6 +310,7 @@ export default function App() {
   const logLevels = data.logLevels;
   const desktopNavPref = data.desktopNavOpened ?? true;
   const options: OptionsData | undefined = data.options ?? undefined;
+  const isAdminUser = !data.userLevel || data.userLevel === "Admin";
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
@@ -328,11 +337,15 @@ export default function App() {
     // Admin-only tools have moved under /admin
   ];
   const navBottomItems: NavLinkItem[] = [
-    {
-      to: "/admin/value-lists/Category",
-      icon: <IconSettings />,
-      label: "Admin",
-    },
+    ...(isAdminUser
+      ? [
+          {
+            to: "/admin/value-lists/Category",
+            icon: <IconSettings />,
+            label: "Admin",
+          },
+        ]
+      : []),
     { to: "/settings", icon: <IconAdjustments />, label: "Settings" },
   ];
 

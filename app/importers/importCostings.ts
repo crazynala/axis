@@ -7,6 +7,8 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
     updated = 0,
     skipped = 0;
   const errors: any[] = [];
+  const toCreate: any[] = [];
+
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const id = asNum(pick(r, ["a__Serial", "id"])) as number | null;
@@ -14,8 +16,8 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       skipped++;
       continue;
     }
+
     const data: any = {
-      id,
       assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
       productId: asNum(
         pick(r, ["a__ProductCode", "a_ProductCode", "ComponentId", "ProductId"])
@@ -39,29 +41,50 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
         Boolean(pick(r, ["Flag|InvoiceableManual"])) || null,
       flagStockTracked: Boolean(pick(r, ["Flag|StockTracked"])) || null,
     };
+
     try {
-      await prisma.costing.upsert({
-        where: { id },
-        create: data,
-        update: data,
-      });
-      created++;
+      const existing = await prisma.costing.findUnique({ where: { id } });
+      if (existing) {
+        await prisma.costing.update({ where: { id }, data });
+        updated++;
+      } else {
+        toCreate.push({ id, ...data });
+      }
     } catch (e: any) {
       errors.push({ index: i, id, message: e?.message, code: e?.code });
     }
+
     if ((i + 1) % 100 === 0) {
       console.log(
-        `[import] costings progress ${i + 1}/${
-          rows.length
-        } created=${created} updated=${updated} skipped=${skipped} errors=${
-          errors.length
-        }`
+        `[import] costings progress ${i + 1}/${rows.length} staged=${
+          toCreate.length
+        } updated=${updated} skipped=${skipped} errors=${errors.length}`
       );
     }
   }
+
+  if (toCreate.length) {
+    try {
+      const res = await prisma.costing.createMany({
+        data: toCreate as any[],
+        skipDuplicates: true,
+      });
+      created += res.count;
+    } catch (e: any) {
+      errors.push({
+        index: -1,
+        id: null,
+        message: e?.message,
+        code: e?.code,
+        note: `createMany failed for ${toCreate.length} records`,
+      });
+    }
+  }
+
   console.log(
     `[import] costings complete total=${rows.length} created=${created} updated=${updated} skipped=${skipped} errors=${errors.length}`
   );
+
   if (errors.length) {
     const grouped: Record<
       string,
@@ -76,5 +99,6 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] costings error summary", Object.values(grouped));
   }
+
   return { created, updated, skipped, errors };
 }
