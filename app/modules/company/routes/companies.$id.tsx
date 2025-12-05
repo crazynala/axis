@@ -82,6 +82,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
         String(form.get("priceMultiplier")).trim() !== ""
           ? Number(form.get("priceMultiplier"))
           : null,
+      invoiceBillUpon: (form.get("invoiceBillUpon") as string) || null,
+      invoicePercentOnCut:
+        form.get("invoicePercentOnCut") != null &&
+        String(form.get("invoicePercentOnCut")).trim() !== ""
+          ? Number(form.get("invoicePercentOnCut"))
+          : null,
+      invoicePercentOnOrder:
+        form.get("invoicePercentOnOrder") != null &&
+        String(form.get("invoicePercentOnOrder")).trim() !== ""
+          ? Number(form.get("invoicePercentOnOrder"))
+          : null,
     } as any;
     // Stock location: empty string clears to null
     if (form.has("stockLocationId")) {
@@ -159,6 +170,9 @@ export function CompanyDetailView() {
     defaultMarginOverride?: string | number | null;
     priceMultiplier?: string | number;
     stockLocationId?: number | null;
+    invoiceBillUpon?: string | null;
+    invoicePercentOnCut?: number | string | null;
+    invoicePercentOnOrder?: number | string | null;
   }>({
     defaultValues: {
       id: company.id,
@@ -178,6 +192,15 @@ export function CompanyDetailView() {
           ? Number(company.priceMultiplier)
           : undefined,
       stockLocationId: (company as any).stockLocationId ?? null,
+      invoiceBillUpon: (company as any).invoiceBillUpon || null,
+      invoicePercentOnCut:
+        (company as any).invoicePercentOnCut != null
+          ? Number((company as any).invoicePercentOnCut)
+          : null,
+      invoicePercentOnOrder:
+        (company as any).invoicePercentOnOrder != null
+          ? Number((company as any).invoicePercentOnOrder)
+          : null,
     },
   });
 
@@ -203,6 +226,15 @@ export function CompanyDetailView() {
           ? Number(company.priceMultiplier)
           : undefined,
       stockLocationId: (company as any).stockLocationId ?? null,
+      invoiceBillUpon: (company as any).invoiceBillUpon || null,
+      invoicePercentOnCut:
+        (company as any).invoicePercentOnCut != null
+          ? Number((company as any).invoicePercentOnCut)
+          : null,
+      invoicePercentOnOrder:
+        (company as any).invoicePercentOnOrder != null
+          ? Number((company as any).invoicePercentOnOrder)
+          : null,
     };
 
     form.reset(next, { keepDirty: false });
@@ -220,6 +252,9 @@ export function CompanyDetailView() {
     defaultMarginOverride?: string | number | null;
     priceMultiplier?: string | number | null;
     stockLocationId?: number | null;
+    invoiceBillUpon?: string | null;
+    invoicePercentOnCut?: number | string | null;
+    invoicePercentOnOrder?: number | string | null;
   };
   const save = (values: FormValues) => {
     const fd = new FormData();
@@ -246,6 +281,18 @@ export function CompanyDetailView() {
         raw === undefined || raw === null || raw === "" ? "" : String(raw)
       );
     }
+    if (values.invoiceBillUpon)
+      fd.set("invoiceBillUpon", String(values.invoiceBillUpon));
+    if (
+      values.invoicePercentOnCut != null &&
+      String(values.invoicePercentOnCut) !== ""
+    )
+      fd.set("invoicePercentOnCut", String(values.invoicePercentOnCut));
+    if (
+      values.invoicePercentOnOrder != null &&
+      String(values.invoicePercentOnOrder) !== ""
+    )
+      fd.set("invoicePercentOnOrder", String(values.invoicePercentOnOrder));
     submit(fd, { method: "post" });
   };
 

@@ -4,7 +4,22 @@ export type PendingCostingItem = {
   jobId: number;
   assemblyId: number;
   jobProjectCode?: string | null;
+  assemblyName?: string | null;
+  costingName?: string | null;
   description: string;
+  invoiceCalcDebug?: {
+    billUpon: "Ship" | "Make";
+    qtyOrdered: number;
+    qtyCut: number;
+    qtyMake: number;
+    qtyPack: number;
+    pctCut: number;
+    pctOrder: number;
+    baseQty: number;
+    addFromCut: number;
+    minFromOrder: number;
+    invoiceable: number;
+  };
   maxQuantity: string;
   alreadyInvoicedQty: string;
   defaultQuantity: string;

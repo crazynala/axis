@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, coerceFlag } from "./utils";
 
 export async function importProductLines(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -30,7 +30,7 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
       unitCost: asNum(pick(r, ["UnitCost"])) as number | null,
       unitCostManual: asNum(pick(r, ["UnitCost|Manual"])) as number | null,
       activityUsed: (pick(r, ["ActivityUsed"]) ?? "").toString().trim() || null,
-      flagAssemblyOmit: Boolean(pick(r, ["Flag|AssemblyOmit"])) || null,
+      flagAssemblyOmit: coerceFlag(pick(r, ["Flag|AssemblyOmit"])),
     };
     try {
       await prisma.productLine.upsert({

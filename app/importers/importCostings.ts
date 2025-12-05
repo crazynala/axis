@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, coerceFlag } from "./utils";
 
 export async function importCostings(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -32,14 +32,13 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       costPricePerItem: asNum(pick(r, ["Price|CostWithVAT_PerItem"])) as
         | number
         | null,
-      flagAssembly: Boolean(pick(r, ["Flag|Assembly"])) || null,
-      flagDefinedInProduct: Boolean(pick(r, ["Flag|DefinedInProduct"])) || null,
-      flagIsBillableDefaultOrManual:
-        Boolean(pick(r, ["Flag|BillableDefaultOrManual"])) || null,
-      flagIsBillableManual: Boolean(pick(r, ["Flag|BillableManual"])) || null,
-      flagIsInvoiceableManual:
-        Boolean(pick(r, ["Flag|InvoiceableManual"])) || null,
-      flagStockTracked: Boolean(pick(r, ["Flag|StockTracked"])) || null,
+      flagAssembly: coerceFlag(pick(r, ["Flag|Assembly"])),
+      flagDefinedInProduct: coerceFlag(pick(r, ["Flag|DefinedInProduct"])),
+      flagIsBillableManual: coerceFlag(pick(r, ["Flag_IsBillable|Manual"])),
+      flagIsInvoiceableManual: coerceFlag(
+        pick(r, ["Flag_IsInvoiceable|Manual"])
+      ),
+      flagStockTracked: coerceFlag(pick(r, ["Flag|StockTracked"])),
     };
 
     try {

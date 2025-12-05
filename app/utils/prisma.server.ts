@@ -1021,6 +1021,24 @@ function classifyActivityType(
   return s.includes(needle);
 }
 
+function isTrashCut(
+  a: { name?: string | null; activityType?: string | null }
+) {
+  const s = (a.activityType || a.name || "").toString().toLowerCase();
+  return s.includes("trash") && s.includes("cut");
+}
+
+function subtractArrays(
+  targetLen: number,
+  base: number[],
+  subtract: number[]
+): number[] {
+  const out = Array.from({ length: targetLen }, (_, i) =>
+    Math.max(0, (base[i] || 0) - (subtract[i] || 0))
+  );
+  return out;
+}
+
 function sumArrays(
   targetLen: number,
   arrays: Array<number[] | null | undefined>
@@ -1044,9 +1062,11 @@ async function computeAssemblyBreakdowns(
   c_qtyCut_Breakdown: number[];
   c_qtyMake_Breakdown: number[];
   c_qtyPack_Breakdown: number[];
+  c_qtyKeep_Breakdown: number[];
   c_qtyCut: number;
   c_qtyMake: number;
   c_qtyPack: number;
+  c_qtyKeep: number;
   c_numVariants: number;
 }> {
   const activities = await base.assemblyActivity.findMany({
@@ -1083,7 +1103,10 @@ async function computeAssemblyBreakdowns(
     activityType?: string | null;
   };
   const cutArrays = (activities as Act[])
-    .filter((a: Act) => classifyActivityType(a, "cut"))
+    .filter((a: Act) => classifyActivityType(a, "cut") && !isTrashCut(a))
+    .map((a: Act) => a.qtyBreakdown);
+  const trashCutArrays = (activities as Act[])
+    .filter((a: Act) => isTrashCut(a))
     .map((a: Act) => a.qtyBreakdown);
   const makeArrays = (activities as Act[])
     .filter((a: Act) => classifyActivityType(a, "make"))
@@ -1091,16 +1114,26 @@ async function computeAssemblyBreakdowns(
   const packArrays = (activities as Act[])
     .filter((a: Act) => classifyActivityType(a, "pack"))
     .map((a: Act) => a.qtyBreakdown);
-  const c_qtyCut_Breakdown = sumArrays(len, cutArrays);
+  const keepArrays = (activities as Act[])
+    .filter((a: Act) => classifyActivityType(a, "keep"))
+    .map((a: Act) => a.qtyBreakdown);
+  const c_qtyCut_Breakdown = subtractArrays(
+    len,
+    sumArrays(len, cutArrays),
+    sumArrays(len, trashCutArrays)
+  );
   const c_qtyMake_Breakdown = sumArrays(len, makeArrays);
   const c_qtyPack_Breakdown = sumArrays(len, packArrays);
+  const c_qtyKeep_Breakdown = sumArrays(len, keepArrays);
   return {
     c_qtyCut_Breakdown,
     c_qtyMake_Breakdown,
     c_qtyPack_Breakdown,
+    c_qtyKeep_Breakdown,
     c_qtyCut: sumIntArray(c_qtyCut_Breakdown),
     c_qtyMake: sumIntArray(c_qtyMake_Breakdown),
     c_qtyPack: sumIntArray(c_qtyPack_Breakdown),
+    c_qtyKeep: sumIntArray(c_qtyKeep_Breakdown),
     c_numVariants,
   };
 }

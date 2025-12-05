@@ -74,6 +74,20 @@ export const asBool = (raw: any): boolean | null => {
   return ["1", "true", "yes", "y", "t"].includes(s);
 };
 
+export const coerceFlag = (val: any): boolean | null => {
+  if (val === undefined || val === null) return null;
+  const raw = String(val).trim();
+  if (raw === "") return null;
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  const lower = raw.toLowerCase();
+  if (["true", "yes", "y", "t"].includes(lower)) return true;
+  if (["false", "no", "n", "f"].includes(lower)) return false;
+  const num = Number(raw);
+  if (!Number.isNaN(num)) return !!num;
+  return null;
+};
+
 export const parseIntListPreserveGaps = (raw: any): number[] => {
   if (raw == null) return [];
   const normalized = String(raw)

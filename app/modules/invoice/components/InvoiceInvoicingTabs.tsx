@@ -9,6 +9,8 @@ import {
   Table,
   Tabs,
   Text,
+  Modal,
+  Code,
 } from "@mantine/core";
 import type {
   PendingCostingItem,
@@ -31,6 +33,55 @@ type Props = {
   expenses: PendingExpenseItem[];
 };
 
+function groupCostings(costings: PendingCostingItem[]) {
+  const groups = new Map<
+    number,
+    {
+      jobId: number;
+      jobLabel: string;
+      assemblies: Map<
+        number,
+        { assemblyId: number; assemblyLabel: string; costings: PendingCostingItem[] }
+      >;
+    }
+  >();
+
+  const sorted = [...costings].sort((a, b) => {
+    const jobA = a.jobProjectCode || "";
+    const jobB = b.jobProjectCode || "";
+    if (jobA !== jobB) return jobA.localeCompare(jobB);
+    if (a.jobId !== b.jobId) return (a.jobId || 0) - (b.jobId || 0);
+    if (a.assemblyId !== b.assemblyId)
+      return (a.assemblyId || 0) - (b.assemblyId || 0);
+    return (a.costingName || "").localeCompare(b.costingName || "");
+  });
+
+  sorted.forEach((c) => {
+    const jobId = c.jobId || -1;
+    const jobLabel = c.jobProjectCode || `Job ${jobId}`;
+    if (!groups.has(jobId)) {
+      groups.set(jobId, { jobId, jobLabel, assemblies: new Map() });
+    }
+    const jobGroup = groups.get(jobId)!;
+    const asmId = c.assemblyId || -1;
+    const asmLabel = c.assemblyName || (asmId > 0 ? `Assembly ${asmId}` : "Assembly");
+    if (!jobGroup.assemblies.has(asmId)) {
+      jobGroup.assemblies.set(asmId, {
+        assemblyId: asmId,
+        assemblyLabel: asmLabel,
+        costings: [],
+      });
+    }
+    jobGroup.assemblies.get(asmId)!.costings.push(c);
+  });
+
+  return Array.from(groups.values()).map((g) => ({
+    jobId: g.jobId,
+    jobLabel: g.jobLabel,
+    assemblies: Array.from(g.assemblies.values()),
+  }));
+}
+
 export function InvoiceInvoicingTabs({
   costings,
   shipments,
@@ -41,6 +92,7 @@ export function InvoiceInvoicingTabs({
   const [activeTab, setActiveTab] = useState<string>("production");
   const [selection, setSelection] = useState<Record<string, Selection>>({});
   const itemsInputRef = useRef<HTMLInputElement | null>(null);
+  const [diag, setDiag] = useState<PendingCostingItem | null>(null);
 
   const shippingEntries = useMemo(() => {
     const rows: Array<{
@@ -174,59 +226,86 @@ export function InvoiceInvoicingTabs({
               </Table.Td>
             </Table.Tr>
           ) : (
-            costings.map((c) => {
-              const key = `costing-${c.costingId}`;
-              const sel = selection[key] || { checked: false };
-              return (
-                <Table.Tr key={key}>
-                  <Table.Td>
-                    <input
-                      type="checkbox"
-                      checked={sel.checked}
-                      onChange={(e) =>
-                        updateSelection(key, { checked: e.currentTarget.checked })
-                      }
-                    />
-                  </Table.Td>
-                  <Table.Td>
-                    <Stack gap={2}>
-                      <Text fw={500}>{c.description}</Text>
-                      <Text size="xs" c="dimmed">
-                        Already invoiced: {c.alreadyInvoicedQty}
-                      </Text>
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>
-                    {c.jobProjectCode || "—"}
-                  </Table.Td>
-                  <Table.Td>{c.assemblyId}</Table.Td>
-                  <Table.Td>
-                    <NumberInput
-                      min={0}
-                      size="xs"
-                      defaultValue={Number(c.defaultQuantity)}
-                      onChange={(v) =>
-                        updateSelection(key, { quantity: v?.toString() || "0" })
-                      }
-                    />
-                  </Table.Td>
-                  <Table.Td>
-                    <NumberInput
-                      min={0}
-                      size="xs"
-                      defaultValue={
-                        c.defaultUnitPrice != null
-                          ? Number(c.defaultUnitPrice)
-                          : undefined
-                      }
-                      onChange={(v) =>
-                        updateSelection(key, { unitPrice: v?.toString() || "0" })
-                      }
-                    />
+            groupCostings(costings).map((jobGroup) => (
+              <React.Fragment key={`job-${jobGroup.jobId}`}>
+                <Table.Tr>
+                  <Table.Td colSpan={6}>
+                    <Text fw={700}>Job: {jobGroup.jobLabel}</Text>
                   </Table.Td>
                 </Table.Tr>
-              );
-            })
+                {jobGroup.assemblies.map((asm) => (
+                  <React.Fragment key={`asm-${asm.assemblyId}`}>
+                    <Table.Tr>
+                      <Table.Td colSpan={6}>
+                        <Text fw={600} c="dimmed">
+                          Assembly: {asm.assemblyLabel}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                    {asm.costings.map((c) => {
+                      const key = `costing-${c.costingId}`;
+                      const sel = selection[key] || { checked: false };
+                      return (
+                    <Table.Tr key={key}>
+                      <Table.Td>
+                        <input
+                          type="checkbox"
+                          checked={sel.checked}
+                              onChange={(e) =>
+                                updateSelection(key, { checked: e.currentTarget.checked })
+                              }
+                            />
+                          </Table.Td>
+                          <Table.Td>
+                            <Stack gap={2}>
+                              <Text fw={500}>{c.costingName || c.description}</Text>
+                              <Text size="xs" c="dimmed">
+                                Already invoiced: {c.alreadyInvoicedQty}
+                              </Text>
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td>{jobGroup.jobLabel}</Table.Td>
+                          <Table.Td>{asm.assemblyLabel}</Table.Td>
+                          <Table.Td>
+                            <NumberInput
+                              min={0}
+                              size="xs"
+                              defaultValue={Number(c.defaultQuantity)}
+                              onChange={(v) =>
+                                updateSelection(key, { quantity: v?.toString() || "0" })
+                              }
+                            />
+                          </Table.Td>
+                          <Table.Td>
+                            <NumberInput
+                              min={0}
+                              size="xs"
+                              defaultValue={
+                                c.defaultUnitPrice != null
+                                  ? Number(c.defaultUnitPrice)
+                                  : undefined
+                              }
+                              onChange={(v) =>
+                                updateSelection(key, { unitPrice: v?.toString() || "0" })
+                              }
+                            />
+                          </Table.Td>
+                          <Table.Td>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              onClick={() => setDiag(c)}
+                            >
+                              Calc details
+                            </Button>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </React.Fragment>
+            ))
           )}
         </Table.Tbody>
       </Table>
@@ -468,6 +547,82 @@ export function InvoiceInvoicingTabs({
           {renderExpenses()}
         </Tabs.Panel>
       </Tabs>
+      <Modal
+        opened={!!diag}
+        onClose={() => setDiag(null)}
+        title="Invoiceable units breakdown"
+        size="lg"
+      >
+        {!diag?.invoiceCalcDebug ? (
+          <Text c="dimmed">No diagnostic data.</Text>
+        ) : (
+          <Stack gap="xs">
+            <Text fw={600}>
+              {diag.costingName || diag.description} (Assembly{" "}
+              {diag.assemblyId}) — Job {diag.jobProjectCode || diag.jobId}
+            </Text>
+            <Table withColumnBorders>
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Td>Bill Upon</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.billUpon}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Ordered</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.qtyOrdered}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Cut</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.qtyCut}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Make</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.qtyMake}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Pack</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.qtyPack}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Percent on Cut</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.pctCut}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Percent on Order</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.pctOrder}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Base Qty</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.baseQty}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Add from Cut</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.addFromCut}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Min from Order</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.minFromOrder}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Invoiceable Units</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.invoiceable}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Already Invoiced</Table.Td>
+                  <Table.Td>{diag.alreadyInvoicedQty}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Pending (shown)</Table.Td>
+                  <Table.Td>{diag.maxQuantity}</Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+            <Code block c="dimmed">
+              {JSON.stringify(diag.invoiceCalcDebug, null, 2)}
+            </Code>
+          </Stack>
+        )}
+      </Modal>
     </Form>
   );
 }

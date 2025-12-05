@@ -80,6 +80,11 @@ enum CompanyType {
     other
 }
 
+enum InvoiceBillUpon {
+    Ship
+    Make
+}
+
 model PurchaseOrderTag {
     id              Int @id @default(autoincrement())
     purchaseOrderId Int
@@ -238,6 +243,9 @@ model Company {
     isConsignee                     Boolean?
     isSupplier                      Boolean?
     isInactive                      Boolean?
+    invoicePercentOnCut             Decimal?                @db.Decimal(5, 2)
+    invoicePercentOnOrder           Decimal?                @db.Decimal(5, 2)
+    invoiceBillUpon                 InvoiceBillUpon?        @default(Ship)
     // Optional default margin override for this vendor (used when computing sale prices)
     defaultMarginOverride           Decimal?                @db.Decimal(14, 4)
     // Optional default sale price multiplier for this customer (applies to sale tiers)
@@ -368,40 +376,39 @@ model Assembly {
 }
 
 model Costing {
-    id                            Int             @id @default(autoincrement())
-    assemblyId                    Int?
+    id                      Int             @id @default(autoincrement())
+    assemblyId              Int?
     // renamed: componentId -> productId; removed usageType/componentType per new spec
-    productId                     Int?
-    quantityPerUnit               Decimal?        @db.Decimal(14, 4)
-    unitCost                      Decimal?        @db.Decimal(14, 4)
-    notes                         String?
-    activityUsed                  String?
-    costPricePerItem              Decimal?        @db.Decimal(14, 4)
-    salePricePerItem              Decimal?        @db.Decimal(14, 4)
+    productId               Int?
+    quantityPerUnit         Decimal?        @db.Decimal(14, 4)
+    unitCost                Decimal?        @db.Decimal(14, 4)
+    notes                   String?
+    activityUsed            String?
+    costPricePerItem        Decimal?        @db.Decimal(14, 4)
+    salePricePerItem        Decimal?        @db.Decimal(14, 4)
     // Dynamic pricing context pulled from Product to compute sale prices prior to fixing
     // Optional link to a Sale Price Group for tiered sale pricing at the time of costing
-    salePriceGroupId              Int?
-    salePriceGroup                SalePriceGroup? @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
+    salePriceGroupId        Int?
+    salePriceGroup          SalePriceGroup? @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
     // Optional manual overrides captured on the costing
-    manualSalePrice               Decimal?        @db.Decimal(14, 4)
-    manualMargin                  Decimal?        @db.Decimal(14, 4)
-    flagAssembly                  Boolean?
-    flagDefinedInProduct          Boolean?
-    flagIsBillableDefaultOrManual Boolean?
-    flagIsBillableManual          Boolean?
-    flagIsInvoiceableManual       Boolean?
-    flagStockTracked              Boolean?
-    assembly                      Assembly?       @relation(fields: [assemblyId], references: [id])
-    product                       Product?        @relation(fields: [productId], references: [id])
+    manualSalePrice         Decimal?        @db.Decimal(14, 4)
+    manualMargin            Decimal?        @db.Decimal(14, 4)
+    flagAssembly            Boolean?
+    flagDefinedInProduct    Boolean?
+    flagIsBillableManual    Boolean?
+    flagIsInvoiceableManual Boolean?
+    flagStockTracked        Boolean?
+    assembly                Assembly?       @relation(fields: [assemblyId], references: [id])
+    product                 Product?        @relation(fields: [productId], references: [id])
     // Metadata
-    createdBy                     String?
-    modifiedBy                    String?
-    createdAt                     DateTime?       @default(now())
-    updatedAt                     DateTime?       @updatedAt
+    createdBy               String?
+    modifiedBy              String?
+    createdAt               DateTime?       @default(now())
+    updatedAt               DateTime?       @updatedAt
     // Back-relations
-    invoiceLines                  InvoiceLine[]
+    invoiceLines            InvoiceLine[]
     // Back-relations: Tags
-    costingTags                   CostingTag[]
+    costingTags             CostingTag[]
 }
 
 model ProductLine {
@@ -855,9 +862,9 @@ model BoxLine {
     shipmentLineId Int? // when this line is tied to a shipment line
 
     // Ad hoc / extras
-    description  String?  // e.g. "Fabric swatches – styles 2103, 2107, 3260"
-    isAdHoc      Boolean? @default(false)
-    packingOnly  Boolean? @default(false) // if true, doesn't generate/adjust ShipmentLines
+    description String? // e.g. "Fabric swatches – styles 2103, 2107, 3260"
+    isAdHoc     Boolean? @default(false)
+    packingOnly Boolean? @default(false) // if true, doesn't generate/adjust ShipmentLines
 
     quantity     Decimal? @db.Decimal(14, 4)
     qtyBreakdown Int[]    @default([]) // per size: aligns with Assembly/VariantSet conventions
@@ -899,7 +906,7 @@ model Shipment {
     status             String?
     trackingNo         String?
     type               String? // "In" | "Out"
-    packMode           String?         @default("line") // "line" | "box"
+    packMode           String?        @default("line") // "line" | "box"
     memo               String?
     shippingMethod     String?
     addressName        String?

@@ -4,23 +4,18 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Outlet, useRouteLoaderData, useSubmit } from "@remix-run/react";
+import { Outlet, useRouteLoaderData, useSubmit, Link } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { useRecordContext } from "../base/record/RecordContext";
-import { Card, Divider, Group, Stack, Title, Table } from "@mantine/core";
+import { Card, Divider, Group, Stack, Title, Table, Button } from "@mantine/core";
 import { InvoiceDetailForm } from "../modules/invoice/forms/InvoiceDetailForm";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { buildInvoiceLineDetails } from "../utils/invoiceLineDetails";
 import { formatQuantity } from "../utils/format";
 import { formatUSD } from "../utils/format";
-import { InvoiceInvoicingTabs } from "../modules/invoice/components/InvoiceInvoicingTabs";
 import { createInvoiceLines } from "../modules/invoice/services/invoicing";
-import { getCostingsPendingInvoicing } from "../modules/invoice/services/costing";
-import { getShipmentsPendingInvoicing } from "../modules/invoice/services/shipment";
-import { getPOLinesPendingInvoicing } from "../modules/invoice/services/po";
-import { getExpensesPendingInvoicing } from "../modules/invoice/services/expense";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
@@ -137,19 +132,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
     });
   }
 
-  const costings = await getCostingsPendingInvoicing(invoice.companyId);
-  const pendingShipments = await getShipmentsPendingInvoicing(invoice.companyId);
-  const pendingPoLines = await getPOLinesPendingInvoicing(invoice.id);
-  const pendingExpenses = await getExpensesPendingInvoicing(invoice.companyId);
-
   return json({
     invoice,
     totals,
     detailsById,
-    costings,
-    shipments: pendingShipments,
-    poLines: pendingPoLines,
-    expenses: pendingExpenses,
   });
 }
 
@@ -202,10 +188,6 @@ export function InvoiceDetailView() {
     invoice,
     totals,
     detailsById,
-    costings = [],
-    shipments = [],
-    poLines = [],
-    expenses = [],
   } = useRouteLoaderData<typeof loader>(
     "routes/invoices.$id"
   )!;
@@ -289,17 +271,11 @@ export function InvoiceDetailView() {
         </Card>
       ) : null}
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={5}>Add charges to this invoice</Title>
-        </Card.Section>
-        <InvoiceInvoicingTabs
-          costings={costings as any}
-          shipments={shipments as any}
-          poLines={poLines as any}
-          expenses={expenses as any}
-        />
-      </Card>
+      <Group justify="flex-end">
+        <Button component={Link} to="add-lines" variant="outline">
+          Add charges to this invoice
+        </Button>
+      </Group>
     </Stack>
   );
 }

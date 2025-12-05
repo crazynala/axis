@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick, fixMojibake } from "./utils";
+import { asDate, asNum, pick, fixMojibake, coerceFlag } from "./utils";
 
 export async function importCompanies(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -30,10 +30,10 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
       pick(r, ["CustomerPricingDiscount"])
     ) as number | null;
     const ourRep = (pick(r, ["OurRep"]) ?? "").toString().trim() || null;
-    const flagCarrier = !!pick(r, ["Flag_Carrier"]);
-    const flagCustomer = !!pick(r, ["Flag_Customer"]);
-    const flagInactive = !!pick(r, ["Flag_Inactive"]);
-    const flagSupplier = !!pick(r, ["Flag_Supplier"]);
+    const flagCarrier = coerceFlag(pick(r, ["Flag_Carrier"]));
+    const flagCustomer = coerceFlag(pick(r, ["Flag_Customer"]));
+    const flagInactive = coerceFlag(pick(r, ["Flag_Inactive"]));
+    const flagSupplier = coerceFlag(pick(r, ["Flag_Supplier"]));
     const createdBy =
       (pick(r, ["Record_CreatedBy"]) ?? "").toString().trim() || null;
     const createdAt = asDate(
@@ -44,7 +44,12 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
     const updatedAt = asDate(
       pick(r, ["Record_ModifiedTimestamp"])
     ) as Date | null;
-    const type = flagSupplier ? "vendor" : flagCustomer ? "customer" : "other";
+    const type =
+      flagSupplier === true
+        ? "vendor"
+        : flagCustomer === true
+        ? "customer"
+        : "other";
     const data: any = {
       name,
       email,
@@ -64,10 +69,10 @@ export async function importCompanies(rows: any[]): Promise<ImportResult> {
         ]
           .filter(Boolean)
           .join(" | ") || null,
-      isCarrier: flagCarrier || null,
-      isCustomer: flagCustomer || null,
-      isSupplier: flagSupplier || null,
-      isInactive: flagInactive || null,
+      isCarrier: flagCarrier,
+      isCustomer: flagCustomer,
+      isSupplier: flagSupplier,
+      isInactive: flagInactive,
       createdBy,
       modifiedBy,
     };

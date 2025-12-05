@@ -54,6 +54,31 @@ export const companyMainFields: FieldConfig[] = [
     showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
     hiddenInModes: ["find"],
   },
+  {
+    name: "invoiceBillUpon",
+    label: "Bill Upon",
+    widget: "select",
+    options: [
+      { value: "Ship", label: "Ship" },
+      { value: "Make", label: "Make" },
+    ],
+    showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
+    hiddenInModes: ["find"],
+  },
+  {
+    name: "invoicePercentOnCut",
+    label: "Invoice % on Cut",
+    widget: "text",
+    showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
+    hiddenInModes: ["find"],
+  },
+  {
+    name: "invoicePercentOnOrder",
+    label: "Invoice % on Order",
+    widget: "text",
+    showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
+    hiddenInModes: ["find"],
+  },
 ];
 
 export function allCompanyFindFields() {
