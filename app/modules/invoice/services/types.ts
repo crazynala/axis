@@ -37,8 +37,31 @@ export type PendingShipmentItem = {
 export type PendingPOLineItem = {
   sourceType: "po";
   purchaseOrderLineId: number;
+  purchaseOrderId: number | null;
+  productName?: string | null;
+  quantityOrdered: string;
+  quantityReceived: string;
   amountPendingUSD: string;
   unitPrice: string;
+  calcDebug?: {
+    orderedQuantity: number;
+    receivedQuantity: number;
+    targetQuantity: number;
+    invoicedQuantity: number;
+    pendingQuantity: number;
+    unitPrice: number;
+    pendingAmount: number;
+    invoiceLines?: Array<{
+      id: number | null | undefined;
+      quantity: any;
+      priceSell: any;
+      invoicedPrice?: any;
+      invoicedTotalManual: any;
+      category?: string | null;
+      subCategory?: string | null;
+      computedTotal: number;
+    }>;
+  };
 };
 
 export type PendingExpenseItem = {

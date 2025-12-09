@@ -66,6 +66,7 @@ export async function createInvoiceLines(
             purchaseOrderLineId: item.sourceId,
             quantity,
             priceSell: unitPrice,
+            invoicedPrice: unitPrice,
             category: item.category || "Materials",
           } as any,
         });
@@ -93,6 +94,7 @@ export async function createInvoiceLines(
             expenseId: item.sourceId,
             quantity,
             priceSell,
+            invoicedPrice: priceSell,
             category: item.category || "Expense",
           } as any,
         });
@@ -123,6 +125,7 @@ async function createFromCosting(
       assemblyId: costing.assembly?.id ?? null,
       quantity,
       priceSell,
+      invoicedPrice: priceSell,
       category: item.category || "Production",
     } as any,
   });

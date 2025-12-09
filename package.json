@@ -23,6 +23,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "postinstall": "prisma generate",
+    "db:reset": "tsx scripts/reset-db.ts",
     "db:who": "npx dotenv -e .env -- sh -c 'echo DATABASE_URL=$DATABASE_URL; psql \"$DATABASE_URL\" -c \"\\\\conninfo\"'",
     "db:truncate": "npx dotenv -e .env -- sh -c 'psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f scripts/truncate-db.sql'",
     "db:truncate:confirm": "npx node -e \"const rl=require('readline').createInterface({input:process.stdin,output:process.stdout});rl.question('This will TRUNCATE all public tables (except _prisma_migrations). Continue? [y/N] ', a=>{if(a.toLowerCase()==='y'){process.exit(0)}else{process.exit(1)}})\" && npm run db:truncate",

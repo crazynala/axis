@@ -768,6 +768,7 @@ model InvoiceLine {
     subCategory         String?
     priceCost           Decimal?   @db.Decimal(14, 4)
     priceSell           Decimal?   @db.Decimal(14, 4)
+    invoicedPrice       Decimal?   @db.Decimal(14, 4)
     quantity            Decimal?   @db.Decimal(14, 4)
     taxCodeId           Int?
     // Renamed to reflect source import naming

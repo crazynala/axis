@@ -8,6 +8,11 @@ export type PendingPOLineItem = {
   unitPrice: string;
 };
 
+function roundCurrency(value: number) {
+  // Clamp tiny floating point residue and standardize to cents
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 export async function getPOLinesPendingInvoicing(
   invoiceId: number | null | undefined
 ): Promise<PendingPOLineItem[]> {
@@ -19,7 +24,17 @@ export async function getPOLinesPendingInvoicing(
   if (!invoice?.companyId) return [];
   const lines = await prisma.purchaseOrderLine.findMany({
     where: {
-      purchaseOrder: { companyId: invoice.companyId },
+      purchaseOrder: { consigneeCompanyId: invoice.companyId },
+    },
+    select: {
+      id: true,
+      purchaseOrderId: true,
+      quantityOrdered: true,
+      qtyReceived: true,
+      priceSell: true,
+      taxRate: true,
+      product: { select: { name: true } },
+      productNameCopy: true,
     },
   });
   const results: PendingPOLineItem[] = [];
@@ -29,25 +44,59 @@ export async function getPOLinesPendingInvoicing(
       (Number(line.priceSell ?? 0) || 0);
     const receivedAmount =
       (Number(line.qtyReceived ?? 0) || 0) * (Number(line.priceSell ?? 0) || 0);
-    const depositPercent = Number(line.taxRate ?? 0) || 0; // placeholder for legacy depositPercent
-    const targetAmount = Math.max(
-      receivedAmount,
-      (depositPercent / 100) * orderedAmount
-    );
+    // Quantity-based invoiceability
+    const orderedQty = Number(line.quantityOrdered ?? 0) || 0;
+    const receivedQty = Number(line.qtyReceived ?? 0) || 0;
+    const targetQty = receivedQty || orderedQty; // prefer received qty; fall back to ordered if none
     const invoiced = await prisma.invoiceLine.findMany({
       where: { purchaseOrderLineId: line.id },
+      select: {
+        id: true,
+        quantity: true,
+        priceSell: true,
+        invoicedPrice: true,
+        invoicedTotalManual: true,
+        category: true,
+        subCategory: true,
+      },
     });
-    const alreadyInvoicedAmount = invoiced.reduce(
-      (sum, l) => sum + computeInvoiceLineTotal(l),
+    const alreadyInvoicedQty = invoiced.reduce(
+      (sum, l) => sum + (Number(l.quantity ?? 0) || 0),
       0
     );
-    const pendingAmount = Math.max(0, targetAmount - alreadyInvoicedAmount);
+    const pendingQty = Math.max(0, targetQty - alreadyInvoicedQty);
+    const pendingAmount = pendingQty * (Number(line.priceSell ?? 0) || 0);
+    const pendingAmountRounded = roundCurrency(pendingAmount);
+    const unitPriceRounded = roundCurrency(Number(line.priceSell ?? 0) || 0);
     if (pendingAmount > 0) {
       results.push({
         sourceType: "po",
         purchaseOrderLineId: line.id,
-        amountPendingUSD: pendingAmount.toString(),
-        unitPrice: (line.priceSell ?? 0).toString(),
+        purchaseOrderId: line.purchaseOrderId ?? null,
+        productName: line.product?.name ?? line.productNameCopy ?? null,
+        quantityOrdered: (Number(line.quantityOrdered ?? 0) || 0).toString(),
+        quantityReceived: (Number(line.qtyReceived ?? 0) || 0).toString(),
+        amountPendingUSD: pendingAmountRounded.toString(),
+        unitPrice: unitPriceRounded.toString(),
+        calcDebug: {
+          orderedQuantity: orderedQty,
+          receivedQuantity: receivedQty,
+          targetQuantity: targetQty,
+          invoicedQuantity: alreadyInvoicedQty,
+          pendingQuantity: pendingQty,
+          unitPrice: unitPriceRounded,
+          pendingAmount: pendingAmountRounded,
+          invoiceLines: invoiced.map((l) => ({
+            id: l.id,
+            quantity: l.quantity,
+            priceSell: l.priceSell,
+            invoicedPrice: l.invoicedPrice,
+            invoicedTotalManual: l.invoicedTotalManual,
+            category: l.category,
+            subCategory: l.subCategory,
+            computedTotal: roundCurrency(computeInvoiceLineTotal(l)),
+          })),
+        },
       });
     }
   }

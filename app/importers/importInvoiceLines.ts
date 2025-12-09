@@ -39,6 +39,9 @@ export async function importInvoiceLines(rows: any[]): Promise<ImportResult> {
       subCategory: (pick(r, ["SubCategory"]) ?? "").toString().trim() || null,
       priceCost: asNum(pick(r, ["Price|Cost", "PriceCost"])) as number | null,
       priceSell: asNum(pick(r, ["Price|Sell", "PriceSell"])) as number | null,
+      invoicedPrice: asNum(
+        pick(r, ["InvoicedPrice", "Price|Invoice", "PriceInvoice"])
+      ) as number | null,
       quantity: asNum(pick(r, ["Quantity"])) as number | null,
       taxCodeId: asNum(pick(r, ["TaxCode|Cost", "a_TaxCodeID"])) as
         | number

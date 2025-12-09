@@ -93,6 +93,7 @@ export function InvoiceInvoicingTabs({
   const [selection, setSelection] = useState<Record<string, Selection>>({});
   const itemsInputRef = useRef<HTMLInputElement | null>(null);
   const [diag, setDiag] = useState<PendingCostingItem | null>(null);
+  const [poDiag, setPoDiag] = useState<PendingPOLineItem | null>(null);
 
   const shippingEntries = useMemo(() => {
     const rows: Array<{
@@ -396,15 +397,19 @@ export function InvoiceInvoicingTabs({
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Add</Table.Th>
-            <Table.Th>PO Line</Table.Th>
+            <Table.Th>PO</Table.Th>
+            <Table.Th>Product</Table.Th>
+            <Table.Th>Ordered</Table.Th>
+            <Table.Th>Received</Table.Th>
             <Table.Th>Pending USD</Table.Th>
             <Table.Th>Unit Price</Table.Th>
+            <Table.Th>Details</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {poLines.length === 0 ? (
             <Table.Tr>
-              <Table.Td colSpan={4}>
+              <Table.Td colSpan={8}>
                 <Text c="dimmed">No PO lines pending invoicing.</Text>
               </Table.Td>
             </Table.Tr>
@@ -423,7 +428,10 @@ export function InvoiceInvoicingTabs({
                       }
                     />
                   </Table.Td>
-                  <Table.Td>Line {po.purchaseOrderLineId}</Table.Td>
+                  <Table.Td>PO {po.purchaseOrderId ?? "—"}</Table.Td>
+                  <Table.Td>{po.productName || "—"}</Table.Td>
+                  <Table.Td>{po.quantityOrdered}</Table.Td>
+                  <Table.Td>{po.quantityReceived}</Table.Td>
                   <Table.Td>
                     <NumberInput
                       min={0}
@@ -447,6 +455,15 @@ export function InvoiceInvoicingTabs({
                         })
                       }
                     />
+                  </Table.Td>
+                  <Table.Td>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      onClick={() => setPoDiag(po)}
+                    >
+                      Calc details
+                    </Button>
                   </Table.Td>
                 </Table.Tr>
               );
@@ -619,6 +636,106 @@ export function InvoiceInvoicingTabs({
             </Table>
             <Code block c="dimmed">
               {JSON.stringify(diag.invoiceCalcDebug, null, 2)}
+            </Code>
+          </Stack>
+        )}
+      </Modal>
+      <Modal
+        opened={!!poDiag}
+        onClose={() => setPoDiag(null)}
+        title="PO invoiceability breakdown"
+        size="lg"
+      >
+        {!poDiag?.calcDebug ? (
+          <Text c="dimmed">No diagnostic data.</Text>
+        ) : (
+          <Stack gap="xs">
+            <Text fw={600}>
+              PO {poDiag.purchaseOrderId ?? "—"} — Line {poDiag.purchaseOrderLineId}
+            </Text>
+            <Table withColumnBorders>
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Td>Product</Table.Td>
+                  <Table.Td>{poDiag.productName || "—"}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Ordered</Table.Td>
+                  <Table.Td>{poDiag.quantityOrdered}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Qty Received</Table.Td>
+                  <Table.Td>{poDiag.quantityReceived}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Ordered Qty</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.orderedQuantity}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Received Qty</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.receivedQuantity}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Target Qty</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.targetQuantity}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Already Invoiced Qty</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.invoicedQuantity}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Pending Qty</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.pendingQuantity}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Unit Price</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.unitPrice}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Pending Amount</Table.Td>
+                  <Table.Td>{poDiag.calcDebug.pendingAmount}</Table.Td>
+                </Table.Tr>
+                {poDiag.calcDebug.invoiceLines?.map((l, idx) => (
+                  <React.Fragment key={l.id ?? `inv-${idx}`}>
+                    <Table.Tr>
+                      <Table.Td colSpan={2}>
+                        <Text fw={600}>Invoice line {l.id ?? "—"}</Text>
+                      </Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Qty</Table.Td>
+                      <Table.Td>{l.quantity}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Price Sell</Table.Td>
+                      <Table.Td>{l.priceSell}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Invoiced Price</Table.Td>
+                      <Table.Td>{l.invoicedPrice ?? "—"}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Manual Total</Table.Td>
+                      <Table.Td>{l.invoicedTotalManual ?? "—"}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Category</Table.Td>
+                      <Table.Td>{l.category || "—"}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Subcategory</Table.Td>
+                      <Table.Td>{l.subCategory || "—"}</Table.Td>
+                    </Table.Tr>
+                    <Table.Tr>
+                      <Table.Td>Computed Total</Table.Td>
+                      <Table.Td>{l.computedTotal}</Table.Td>
+                    </Table.Tr>
+                  </React.Fragment>
+                ))}
+              </Table.Tbody>
+            </Table>
+            <Code block c="dimmed">
+              {JSON.stringify(poDiag.calcDebug, null, 2)}
             </Code>
           </Stack>
         )}
