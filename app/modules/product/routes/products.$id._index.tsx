@@ -17,8 +17,10 @@ import {
   Table,
   Text,
   TextInput,
+  Textarea,
   Title,
   Modal,
+  Tabs,
 } from "@mantine/core";
 import { IconMenu2 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
@@ -115,6 +117,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
           },
         },
         productTags: { include: { tag: true } },
+        primaryAssemblies: {
+          select: {
+            id: true,
+            name: true,
+            jobId: true,
+            job: { select: { id: true, projectCode: true, name: true } },
+          },
+        },
       },
     });
     // Option lists (tax/category/company) are provided via OptionsContext globally;
@@ -128,6 +138,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
         supplier: { select: { id: true, name: true } },
         _count: { select: { productLines: true } },
       },
+      where: { flagIsDisabled: false },
       orderBy: { id: "asc" },
       take: 1000,
     });
@@ -437,6 +448,96 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
     return redirect(`/products/${id}`);
+  }
+  if (intent === "product.duplicate") {
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
+    const source = await prismaBase.product.findUnique({
+      where: { id },
+      include: {
+        productTags: { select: { tagId: true } },
+        Costing: true,
+      },
+    });
+    if (!source) return redirect("/products");
+    const baseSku = source.sku ? `${source.sku}-COPY` : `${source.id}-COPY`;
+    let candidateSku = baseSku;
+    let counter = 2;
+    // ensure unique sku
+    while (
+      (await prismaBase.product.findUnique({
+        where: { sku: candidateSku },
+        select: { id: true },
+      }))
+    ) {
+      candidateSku = `${baseSku}-${counter++}`;
+    }
+    const newProduct = await prismaBase.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          sku: candidateSku,
+          name: source.name,
+          description: source.description,
+          type: source.type,
+          supplierId: source.supplierId,
+          customerId: source.customerId,
+          costPrice: source.costPrice,
+          costCurrency: source.costCurrency,
+          purchaseTaxId: source.purchaseTaxId,
+          categoryId: source.categoryId,
+          subCategory: source.subCategory,
+          pricingGroupId: source.pricingGroupId,
+          manualSalePrice: source.manualSalePrice,
+          manualMargin: source.manualMargin,
+          defaultCostQty: source.defaultCostQty,
+          variantSetId: source.variantSetId,
+          stockTrackingEnabled: source.stockTrackingEnabled,
+          batchTrackingEnabled: source.batchTrackingEnabled,
+          isActive: source.isActive,
+          notes: source.notes,
+          whiteboard: source.whiteboard,
+          costGroupId: source.costGroupId,
+          salePriceGroupId: source.salePriceGroupId,
+          flagIsDisabled: false,
+        },
+      });
+      const tagRows = (source.productTags || [])
+        .map((pt: any) => pt?.tagId)
+        .filter((id: any) => Number.isFinite(Number(id)))
+        .map((tagId: any) => ({
+          productId: created.id,
+          tagId: Number(tagId),
+        }));
+      if (tagRows.length) {
+        await tx.productTag.createMany({ data: tagRows });
+      }
+      const costings = (source as any).Costing || [];
+      if (Array.isArray(costings) && costings.length) {
+        await tx.costing.createMany({
+          data: costings.map((c: any) => ({
+            assemblyId: null,
+            productId: created.id,
+            quantityPerUnit: c.quantityPerUnit,
+            unitCost: c.unitCost,
+            notes: c.notes,
+            activityUsed: c.activityUsed,
+            costPricePerItem: c.costPricePerItem,
+            salePricePerItem: c.salePricePerItem,
+            salePriceGroupId: c.salePriceGroupId,
+            manualSalePrice: c.manualSalePrice,
+            manualMargin: c.manualMargin,
+            flagAssembly: c.flagAssembly,
+            flagDefinedInProduct: c.flagDefinedInProduct,
+            flagIsBillableManual: c.flagIsBillableManual,
+            flagIsInvoiceableManual: c.flagIsInvoiceableManual,
+            flagIsDisabled: c.flagIsDisabled,
+            flagStockTracked: c.flagStockTracked,
+          })),
+        });
+      }
+      return created;
+    });
+    return redirect(`/products/${newProduct.id}`);
   }
   if (intent === "batch.editMeta") {
     if (!Number.isFinite(id))
@@ -904,6 +1005,9 @@ export default function ProductDetailRoute() {
     () => (locationNameById as any as Record<number | string, string>) || {},
     [locationNameById]
   );
+  const assemblies =
+    ((product as any)?.primaryAssemblies as any[])?.filter(Boolean) || [];
+  const showInstances = product.type === "Finished" && assemblies.length > 0;
 
   return (
     <Stack gap="lg">
@@ -928,10 +1032,26 @@ export default function ProductDetailRoute() {
         })()}
         <Group
           gap="xs"
-          style={{ minWidth: 280, maxWidth: 520, flex: 1 }}
+          style={{ minWidth: 200, maxWidth: 520, flex: 1 }}
           justify="flex-end"
         >
-          <div style={{ minWidth: 280, maxWidth: 520, width: "100%" }}>
+          <div style={{ minWidth: 180, maxWidth: 260, width: 220 }}>
+            <Controller
+              control={editForm.control as any}
+              name={"whiteboard" as any}
+              render={({ field }) => (
+                <Textarea
+                  placeholder="Whiteboard"
+                  autosize
+                  minRows={1}
+                  maxRows={3}
+                  value={field.value || ""}
+                  onChange={(e) => field.onChange(e.currentTarget.value)}
+                />
+              )}
+            />
+          </div>
+          <div style={{ minWidth: 220, maxWidth: 360, width: 240 }}>
             <Controller
               control={editForm.control as any}
               name={"tagNames" as any}
@@ -945,6 +1065,46 @@ export default function ProductDetailRoute() {
               )}
             />
           </div>
+          <Menu withinPortal position="bottom-end" shadow="md">
+            <Menu.Target>
+              <ActionIcon variant="subtle" size="lg" aria-label="Product actions">
+                <IconMenu2 size={18} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item component={Link} to="/products/new">
+                New Product
+              </Menu.Item>
+              <Menu.Item
+                onClick={() => {
+                  const fd = new FormData();
+                  fd.set("_intent", "product.duplicate");
+                  submit(fd, { method: "post" });
+                }}
+              >
+                Duplicate Product
+              </Menu.Item>
+              <Menu.Item
+                onClick={() =>
+                  refreshFetcher.submit(
+                    { _intent: "stock.refresh" },
+                    { method: "post" }
+                  )
+                }
+              >
+                Refresh Stock View
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                onClick={() => {
+                  setDeleteConfirmation("");
+                  setDeleteModalOpen(true);
+                }}
+              >
+                Delete Product
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
       </Group>
       <ProductFindManager />
@@ -1018,454 +1178,523 @@ export default function ProductDetailRoute() {
         </Card>
       )}
 
-      <Grid gutter="md">
-        <Grid.Col span={{ base: 12, md: 5 }}>
-          <Stack>
-            {/* Stock by Location + Batch (left) */}
-            <Card withBorder padding="md" bg="transparent">
-              <Card.Section>
-                <Table highlightOnHover>
-                  <Table.Tbody>
-                    <Table.Tr>
-                      <Table.Td>Total Stock</Table.Td>
-                      <Table.Td>
-                        <Title order={1}>
-                          {Number(
-                            (stockByLocation as any[])
-                              .reduce((sum, r) => sum + Number(r.qty || 0), 0)
-                              .toFixed(2)
-                          )}
-                        </Title>
-                      </Table.Td>
-                    </Table.Tr>
-                    {(stockByLocation || []).map((row: any, i: number) => (
-                      // Use composite key with index to avoid collisions when location_id is null/duplicate
-                      <Table.Tr key={`loc-${row.location_id ?? "none"}-${i}`}>
-                        <Table.Td>
-                          {row.location_name ||
-                            `${row.location_id ?? "(none)"}`}
-                        </Table.Td>
-                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Card.Section>
-            </Card>
-            {/* Stock by Batch */}
-            <Card withBorder padding="md" bg="transparent">
-              <Card.Section inheritPadding py="xs">
-                <Group justify="space-between" align="center" px={8} pb={6}>
-                  <Title order={5}>Stock by Batch</Title>
-                  <Group gap="sm" wrap="wrap">
-                    <SegmentedControl
-                      size="xs"
-                      data={[
-                        { label: "Current", value: "current" },
-                        { label: "All", value: "all" },
-                      ]}
-                      value={batchScope}
-                      onChange={(v) => setBatchScope(v as any)}
-                    />
-                    <Select
-                      size="xs"
-                      data={batchLocationOptions}
-                      value={batchLocation}
-                      onChange={(v) => setBatchLocation(v || "all")}
-                      searchable
-                      clearable={false}
-                      w={200}
-                    />
-                    <Button
-                      size="xs"
-                      variant="light"
-                      onClick={() => {
-                        const rows: BatchRowLite[] = filteredBatchRowsLite.map(
-                          (r) => ({ ...r })
-                        );
-                        setActiveBatch({ rows });
-                        setAmendProductOpen(true);
-                      }}
-                    >
-                      Amend All…
-                    </Button>
-                  </Group>
-                </Group>
-              </Card.Section>
-              <Card.Section>
-                <Table
-                  // striped
-                  // withTableBorder
-                  withColumnBorders
-                  highlightOnHover
-                >
-                  <Table.Thead fs="xs">
-                    <Table.Tr>
-                      <Table.Th>Codes</Table.Th>
-                      <Table.Th>Location</Table.Th>
-                      <Table.Th>Received</Table.Th>
-                      <Table.Th>Qty</Table.Th>
-                      <Table.Th></Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {filteredBatches.map((row: any) => (
-                      // Batch id alone can repeat across locations; include location in key to ensure uniqueness
-                      <Table.Tr
-                        key={`batch-${row.batch_id}-${
-                          row.location_id ?? "none"
-                        }`}
-                      >
-                        <Table.Td>
-                          {row.code_mill || row.code_sartor ? (
-                            <>
-                              {row.code_mill || ""}
-                              {row.code_sartor
-                                ? (row.code_mill ? " | " : "") + row.code_sartor
-                                : ""}
-                            </>
-                          ) : (
-                            `${row.batch_id}`
-                          )}
-                        </Table.Td>
-
-                        <Table.Td>
-                          {row.location_name ||
-                            (row.location_id ? `${row.location_id}` : "")}
-                        </Table.Td>
-                        <Table.Td>
-                          {row.received_at
-                            ? new Date(row.received_at).toLocaleDateString()
-                            : ""}
-                        </Table.Td>
-                        <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
-                        <Table.Td>
-                          <Menu withinPortal position="bottom-end" shadow="md">
-                            <Menu.Target>
-                              <ActionIcon
-                                variant="subtle"
-                                size="sm"
-                                aria-label="Batch actions"
-                              >
-                                <IconMenu2 size={16} />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              <Menu.Item
-                                disabled={row.batch_id == null}
-                                onClick={() => {
-                                  if (row.batch_id == null) return;
-                                  setBatchEdit({
-                                    batchId: Number(row.batch_id),
-                                    name: row.batch_name ?? "",
-                                    codeMill: row.code_mill ?? "",
-                                    codeSartor: row.code_sartor ?? "",
-                                  });
-                                }}
-                              >
-                                Edit details
-                              </Menu.Item>
-                              <Menu.Item
-                                onClick={() => {
-                                  setActiveBatch(row);
-                                  setAmendBatchOpen(true);
-                                }}
-                              >
-                                Amend
-                              </Menu.Item>
-                              <Menu.Item
-                                onClick={() => {
-                                  setActiveBatch(row);
-                                  setTransferOpen(true);
-                                }}
-                              >
-                                Transfer
-                              </Menu.Item>
-                            </Menu.Dropdown>
-                          </Menu>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Card.Section>
-            </Card>
-            {/* Modals */}
-            <Modal
-              opened={deleteModalOpen}
-              onClose={() => {
-                setDeleteModalOpen(false);
-                setDeleteConfirmation("");
-              }}
-              title="Delete Product"
-              centered
-            >
-              <Form method="post">
-                <Stack gap="sm">
-                  <input type="hidden" name="_intent" value="delete" />
-                  <Text size="sm" c="dimmed">
-                    This action cannot be undone. Type the confirmation phrase
-                    to proceed.
-                  </Text>
-                  <TextInput
-                    name="confirmDelete"
-                    label={`Type ${deletePhrase}`}
-                    placeholder={deletePhrase}
-                    value={deleteConfirmation}
-                    onChange={(e) =>
-                      setDeleteConfirmation(e.currentTarget.value)
-                    }
-                    autoComplete="off"
-                  />
-                  {deleteError ? (
-                    <Text size="sm" c="red">
-                      {deleteError}
-                    </Text>
-                  ) : null}
-                  <Group justify="flex-end" gap="sm">
-                    <Button
-                      variant="default"
-                      type="button"
-                      onClick={() => {
-                        setDeleteModalOpen(false);
-                        setDeleteConfirmation("");
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      color="red"
-                      type="submit"
-                      disabled={!deleteReady || busy}
-                      loading={busy}
-                    >
-                      Delete
-                    </Button>
-                  </Group>
-                </Stack>
-              </Form>
-            </Modal>
-            <Modal
-              opened={!!batchEdit}
-              onClose={closeBatchEdit}
-              title="Edit Batch Details"
-              centered
-              size="sm"
-            >
-              {batchEdit ? (
-                <form onSubmit={handleBatchEditSubmit}>
-                  <Stack gap="sm">
-                    <TextInput
-                      label="Batch name"
-                      placeholder="Optional display name"
-                      {...batchEditForm.register("name")}
-                    />
-                    <TextInput
-                      label="Mill code"
-                      placeholder="Enter mill code"
-                      {...batchEditForm.register("codeMill")}
-                    />
-                    <TextInput
-                      label="Sartor code"
-                      placeholder="Enter Sartor code"
-                      {...batchEditForm.register("codeSartor")}
-                    />
-                    {batchEditError ? (
-                      <Text size="sm" c="red">
-                        {batchEditError}
-                      </Text>
-                    ) : null}
-                    <Group justify="flex-end" gap="sm">
-                      <Button
-                        variant="default"
-                        type="button"
-                        onClick={closeBatchEdit}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="submit"
-                        loading={batchEditBusy}
-                        disabled={batchEditBusy}
-                      >
-                        Save
-                      </Button>
-                    </Group>
-                  </Stack>
-                </form>
-              ) : null}
-            </Modal>
-            <InventoryAmendmentModal
-              opened={amendBatchOpen}
-              onClose={() => setAmendBatchOpen(false)}
-              productId={product.id}
-              mode="batch"
-              batch={
-                activeBatch
-                  ? {
-                      batchId: activeBatch.batch_id,
-                      locationId: activeBatch.location_id,
-                      locationName: activeBatch.location_name,
-                      name: activeBatch.batch_name,
-                      codeMill: activeBatch.code_mill,
-                      codeSartor: activeBatch.code_sartor,
-                      qty: Number(activeBatch.qty || 0),
-                    }
-                  : null
-              }
-            />
-            <InventoryAmendmentModal
-              opened={amendProductOpen}
-              onClose={() => setAmendProductOpen(false)}
-              productId={product.id}
-              mode="product"
-              batches={(activeBatch?.rows || []) as any}
-            />
-            <InventoryTransferModal
-              opened={transferOpen}
-              onClose={() => setTransferOpen(false)}
-              productId={product.id}
-              sourceBatchId={activeBatch?.batch_id}
-              sourceLabel={
-                activeBatch
-                  ? activeBatch.code_mill ||
-                    activeBatch.code_sartor ||
-                    String(activeBatch.batch_id)
-                  : ""
-              }
-              sourceQty={Number(activeBatch?.qty || 0)}
-              sourceLocationId={activeBatch?.location_id ?? null}
-              targetOptions={
-                filteredBatches
-                  .filter((r: any) => r.batch_id !== activeBatch?.batch_id)
-                  .map((r: any) => ({
-                    value: String(r.batch_id),
-                    label: (r.code_mill ||
-                      r.code_sartor ||
-                      r.batch_name ||
-                      String(r.batch_id)) as string,
-                    locationId: r.location_id,
-                  })) as BatchOption[]
-              }
-            />
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 7 }}>
-          {/* Product Movements (right) */}
-          <Card withBorder padding="md" bg="transparent">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Product Movements</Title>
-                {/* view switch removed */}
-              </Group>
-            </Card.Section>
-            <Card.Section>
-              <Table withColumnBorders highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Date</Table.Th>
-                    <Table.Th>Type</Table.Th>
-                    <Table.Th>Out</Table.Th>
-                    <Table.Th>In</Table.Th>
-                    {movementView === "line" && <Table.Th>Batch</Table.Th>}
-                    <Table.Th>Qty</Table.Th>
-                    <Table.Th>Notes</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {movementView === "line"
-                    ? (showAllMovements ? lines : lines.slice(0, 8)).map(
-                        (ml: any) => (
-                          <Table.Tr key={`line-${ml.id}`}>
-                            <Table.Td>
-                              {ml.movement?.date
-                                ? new Date(
-                                    ml.movement.date
-                                  ).toLocaleDateString()
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {ml.movement?.movementType || ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {ml.movement?.locationOutId != null
-                                ? locById?.[ml.movement.locationOutId] ||
-                                  ml.movement.locationOutId
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {ml.movement?.locationInId != null
-                                ? locById?.[ml.movement.locationInId] ||
-                                  ml.movement.locationInId
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {ml.batch?.codeMill || ml.batch?.codeSartor
-                                ? `${ml.batch?.codeMill || ""}${
-                                    ml.batch?.codeMill && ml.batch?.codeSartor
-                                      ? " | "
-                                      : ""
-                                  }${ml.batch?.codeSartor || ""}`
-                                : ml.batch?.id
-                                ? `${ml.batch.id}`
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>{ml.quantity ?? ""}</Table.Td>
-                            <Table.Td>{ml.notes || ""}</Table.Td>
-                          </Table.Tr>
-                        )
-                      )
-                    : (showAllMovements ? headers : headers.slice(0, 8)).map(
-                        (mh: any) => (
-                          <Table.Tr key={`hdr-${mh.id}`}>
-                            <Table.Td>
-                              {mh.date
-                                ? new Date(mh.date).toLocaleDateString()
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>{mh.movementType || ""}</Table.Td>
-                            <Table.Td>
-                              {mh.locationOutId != null
-                                ? locById?.[mh.locationOutId] ||
-                                  mh.locationOutId
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {mh.locationInId != null
-                                ? locById?.[mh.locationInId] || mh.locationInId
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>{mh.quantity ?? ""}</Table.Td>
-                            <Table.Td>{mh.notes || ""}</Table.Td>
-                          </Table.Tr>
-                        )
-                      )}
-                </Table.Tbody>
-              </Table>
-            </Card.Section>
-            {(() => {
-              const total =
-                movementView === "line" ? lines.length : headers.length;
-              if (total > 8 && !showAllMovements)
-                return (
+      <Tabs defaultValue="stock" keepMounted={false}>
+        <Tabs.List>
+          <Tabs.Tab value="stock">Stock</Tabs.Tab>
+          {showInstances ? (
+            <Tabs.Tab value="instances">Instances</Tabs.Tab>
+          ) : null}
+        </Tabs.List>
+        <Tabs.Panel value="stock" pt="md">
+          <Grid gutter="md">
+            <Grid.Col span={{ base: 12, md: 5 }}>
+              <Stack>
+                {/* Stock by Location + Batch (left) */}
+                <Card withBorder padding="md" bg="transparent">
                   <Card.Section>
-                    <Group justify="center" mt={8}>
-                      <Anchor
-                        component="button"
-                        type="button"
-                        onClick={() => setShowAllMovements(true)}
-                        size="sm"
-                      >
-                        Show all {total} movements
-                      </Anchor>
+                    <Table highlightOnHover>
+                      <Table.Tbody>
+                        <Table.Tr>
+                          <Table.Td>Total Stock</Table.Td>
+                          <Table.Td>
+                            <Title order={1}>
+                              {Number(
+                                (stockByLocation as any[])
+                                  .reduce(
+                                    (sum, r) => sum + Number(r.qty || 0),
+                                    0
+                                  )
+                                  .toFixed(2)
+                              )}
+                            </Title>
+                          </Table.Td>
+                        </Table.Tr>
+                        {(stockByLocation || []).map((row: any, i: number) => (
+                          // Use composite key with index to avoid collisions when location_id is null/duplicate
+                          <Table.Tr
+                            key={`loc-${row.location_id ?? "none"}-${i}`}
+                          >
+                            <Table.Td>
+                              {row.location_name ||
+                                `${row.location_id ?? "(none)"}`}
+                            </Table.Td>
+                            <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Card.Section>
+                </Card>
+                {/* Stock by Batch */}
+                <Card withBorder padding="md" bg="transparent">
+                  <Card.Section inheritPadding py="xs">
+                    <Group justify="space-between" align="center" px={8} pb={6}>
+                      <Title order={5}>Stock by Batch</Title>
+                      <Group gap="sm" wrap="wrap">
+                        <SegmentedControl
+                          size="xs"
+                          data={[
+                            { label: "Current", value: "current" },
+                            { label: "All", value: "all" },
+                          ]}
+                          value={batchScope}
+                          onChange={(v) => setBatchScope(v as any)}
+                        />
+                        <Select
+                          size="xs"
+                          data={batchLocationOptions}
+                          value={batchLocation}
+                          onChange={(v) => setBatchLocation(v || "all")}
+                          searchable
+                          clearable={false}
+                          w={200}
+                        />
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => {
+                            const rows: BatchRowLite[] =
+                              filteredBatchRowsLite.map((r) => ({ ...r }));
+                            setActiveBatch({ rows });
+                            setAmendProductOpen(true);
+                          }}
+                        >
+                          Amend All…
+                        </Button>
+                      </Group>
                     </Group>
                   </Card.Section>
-                );
-              return null;
-            })()}
-          </Card>
-        </Grid.Col>
-      </Grid>
+                  <Card.Section>
+                    <Table
+                      // striped
+                      // withTableBorder
+                      withColumnBorders
+                      highlightOnHover
+                    >
+                      <Table.Thead fs="xs">
+                        <Table.Tr>
+                          <Table.Th>Codes</Table.Th>
+                          <Table.Th>Location</Table.Th>
+                          <Table.Th>Received</Table.Th>
+                          <Table.Th>Qty</Table.Th>
+                          <Table.Th></Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {filteredBatches.map((row: any) => (
+                          // Batch id alone can repeat across locations; include location in key to ensure uniqueness
+                          <Table.Tr
+                            key={`batch-${row.batch_id}-${
+                              row.location_id ?? "none"
+                            }`}
+                          >
+                            <Table.Td>
+                              {row.code_mill || row.code_sartor ? (
+                                <>
+                                  {row.code_mill || ""}
+                                  {row.code_sartor
+                                    ? (row.code_mill ? " | " : "") +
+                                      row.code_sartor
+                                    : ""}
+                                </>
+                              ) : (
+                                `${row.batch_id}`
+                              )}
+                            </Table.Td>
+
+                            <Table.Td>
+                              {row.location_name ||
+                                (row.location_id ? `${row.location_id}` : "")}
+                            </Table.Td>
+                            <Table.Td>
+                              {row.received_at
+                                ? new Date(row.received_at).toLocaleDateString()
+                                : ""}
+                            </Table.Td>
+                            <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                            <Table.Td>
+                              <Menu
+                                withinPortal
+                                position="bottom-end"
+                                shadow="md"
+                              >
+                                <Menu.Target>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    size="sm"
+                                    aria-label="Batch actions"
+                                  >
+                                    <IconMenu2 size={16} />
+                                  </ActionIcon>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Item
+                                    disabled={row.batch_id == null}
+                                    onClick={() => {
+                                      if (row.batch_id == null) return;
+                                      setBatchEdit({
+                                        batchId: Number(row.batch_id),
+                                        name: row.batch_name ?? "",
+                                        codeMill: row.code_mill ?? "",
+                                        codeSartor: row.code_sartor ?? "",
+                                      });
+                                    }}
+                                  >
+                                    Edit details
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    onClick={() => {
+                                      setActiveBatch(row);
+                                      setAmendBatchOpen(true);
+                                    }}
+                                  >
+                                    Amend
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    onClick={() => {
+                                      setActiveBatch(row);
+                                      setTransferOpen(true);
+                                    }}
+                                  >
+                                    Transfer
+                                  </Menu.Item>
+                                </Menu.Dropdown>
+                              </Menu>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Card.Section>
+                </Card>
+                {/* Modals */}
+                <Modal
+                  opened={deleteModalOpen}
+                  onClose={() => {
+                    setDeleteModalOpen(false);
+                    setDeleteConfirmation("");
+                  }}
+                  title="Delete Product"
+                  centered
+                >
+                  <Form method="post">
+                    <Stack gap="sm">
+                      <input type="hidden" name="_intent" value="delete" />
+                      <Text size="sm" c="dimmed">
+                        This action cannot be undone. Type the confirmation
+                        phrase to proceed.
+                      </Text>
+                      <TextInput
+                        name="confirmDelete"
+                        label={`Type ${deletePhrase}`}
+                        placeholder={deletePhrase}
+                        value={deleteConfirmation}
+                        onChange={(e) =>
+                          setDeleteConfirmation(e.currentTarget.value)
+                        }
+                        autoComplete="off"
+                      />
+                      {deleteError ? (
+                        <Text size="sm" c="red">
+                          {deleteError}
+                        </Text>
+                      ) : null}
+                      <Group justify="flex-end" gap="sm">
+                        <Button
+                          variant="default"
+                          type="button"
+                          onClick={() => {
+                            setDeleteModalOpen(false);
+                            setDeleteConfirmation("");
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          color="red"
+                          type="submit"
+                          disabled={!deleteReady || busy}
+                          loading={busy}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Form>
+                </Modal>
+                <Modal
+                  opened={!!batchEdit}
+                  onClose={closeBatchEdit}
+                  title="Edit Batch Details"
+                  centered
+                  size="sm"
+                >
+                  {batchEdit ? (
+                    <form onSubmit={handleBatchEditSubmit}>
+                      <Stack gap="sm">
+                        <TextInput
+                          label="Batch name"
+                          placeholder="Optional display name"
+                          {...batchEditForm.register("name")}
+                        />
+                        <TextInput
+                          label="Mill code"
+                          placeholder="Enter mill code"
+                          {...batchEditForm.register("codeMill")}
+                        />
+                        <TextInput
+                          label="Sartor code"
+                          placeholder="Enter Sartor code"
+                          {...batchEditForm.register("codeSartor")}
+                        />
+                        {batchEditError ? (
+                          <Text size="sm" c="red">
+                            {batchEditError}
+                          </Text>
+                        ) : null}
+                        <Group justify="flex-end" gap="sm">
+                          <Button
+                            variant="default"
+                            type="button"
+                            onClick={closeBatchEdit}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            loading={batchEditBusy}
+                            disabled={batchEditBusy}
+                          >
+                            Save
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </form>
+                  ) : null}
+                </Modal>
+                <InventoryAmendmentModal
+                  opened={amendBatchOpen}
+                  onClose={() => setAmendBatchOpen(false)}
+                  productId={product.id}
+                  mode="batch"
+                  batch={
+                    activeBatch
+                      ? {
+                          batchId: activeBatch.batch_id,
+                          locationId: activeBatch.location_id,
+                          locationName: activeBatch.location_name,
+                          name: activeBatch.batch_name,
+                          codeMill: activeBatch.code_mill,
+                          codeSartor: activeBatch.code_sartor,
+                          qty: Number(activeBatch.qty || 0),
+                        }
+                      : null
+                  }
+                />
+                <InventoryAmendmentModal
+                  opened={amendProductOpen}
+                  onClose={() => setAmendProductOpen(false)}
+                  productId={product.id}
+                  mode="product"
+                  batches={(activeBatch?.rows || []) as any}
+                />
+                <InventoryTransferModal
+                  opened={transferOpen}
+                  onClose={() => setTransferOpen(false)}
+                  productId={product.id}
+                  sourceBatchId={activeBatch?.batch_id}
+                  sourceLabel={
+                    activeBatch
+                      ? activeBatch.code_mill ||
+                        activeBatch.code_sartor ||
+                        String(activeBatch.batch_id)
+                      : ""
+                  }
+                  sourceQty={Number(activeBatch?.qty || 0)}
+                  sourceLocationId={activeBatch?.location_id ?? null}
+                  targetOptions={
+                    filteredBatches
+                      .filter((r: any) => r.batch_id !== activeBatch?.batch_id)
+                      .map((r: any) => ({
+                        value: String(r.batch_id),
+                        label: (r.code_mill ||
+                          r.code_sartor ||
+                          r.batch_name ||
+                          String(r.batch_id)) as string,
+                        locationId: r.location_id,
+                      })) as BatchOption[]
+                  }
+                />
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 7 }}>
+              {/* Product Movements (right) */}
+              <Card withBorder padding="md" bg="transparent">
+                <Card.Section inheritPadding py="xs">
+                  <Group justify="space-between" align="center">
+                    <Title order={4}>Product Movements</Title>
+                    {/* view switch removed */}
+                  </Group>
+                </Card.Section>
+                <Card.Section>
+                  <Table withColumnBorders highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Date</Table.Th>
+                        <Table.Th>Type</Table.Th>
+                        <Table.Th>Out</Table.Th>
+                        <Table.Th>In</Table.Th>
+                        {movementView === "line" && <Table.Th>Batch</Table.Th>}
+                        <Table.Th>Qty</Table.Th>
+                        <Table.Th>Notes</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {movementView === "line"
+                        ? (showAllMovements ? lines : lines.slice(0, 8)).map(
+                            (ml: any) => (
+                              <Table.Tr key={`line-${ml.id}`}>
+                                <Table.Td>
+                                  {ml.movement?.date
+                                    ? new Date(
+                                        ml.movement.date
+                                      ).toLocaleDateString()
+                                    : ""}
+                                </Table.Td>
+                                <Table.Td>
+                                  {ml.movement?.movementType || ""}
+                                </Table.Td>
+                                <Table.Td>
+                                  {ml.movement?.locationOutId != null
+                                    ? locById?.[ml.movement.locationOutId] ||
+                                      ml.movement.locationOutId
+                                    : ""}
+                                </Table.Td>
+                                <Table.Td>
+                                  {ml.movement?.locationInId != null
+                                    ? locById?.[ml.movement.locationInId] ||
+                                      ml.movement.locationInId
+                                    : ""}
+                                </Table.Td>
+                                <Table.Td>
+                                  {ml.batch?.codeMill || ml.batch?.codeSartor
+                                    ? `${ml.batch?.codeMill || ""}${
+                                        ml.batch?.codeMill &&
+                                        ml.batch?.codeSartor
+                                          ? " | "
+                                          : ""
+                                      }${ml.batch?.codeSartor || ""}`
+                                    : ml.batch?.id
+                                    ? `${ml.batch.id}`
+                                    : ""}
+                                </Table.Td>
+                                <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                                <Table.Td>{ml.notes || ""}</Table.Td>
+                              </Table.Tr>
+                            )
+                          )
+                        : (showAllMovements
+                            ? headers
+                            : headers.slice(0, 8)
+                          ).map((mh: any) => (
+                            <Table.Tr key={`hdr-${mh.id}`}>
+                              <Table.Td>
+                                {mh.date
+                                  ? new Date(mh.date).toLocaleDateString()
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>{mh.movementType || ""}</Table.Td>
+                              <Table.Td>
+                                {mh.locationOutId != null
+                                  ? locById?.[mh.locationOutId] ||
+                                    mh.locationOutId
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>
+                                {mh.locationInId != null
+                                  ? locById?.[mh.locationInId] ||
+                                    mh.locationInId
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                              <Table.Td>{mh.notes || ""}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                    </Table.Tbody>
+                  </Table>
+                </Card.Section>
+                {(() => {
+                  const total =
+                    movementView === "line" ? lines.length : headers.length;
+                  if (total > 8 && !showAllMovements)
+                    return (
+                      <Card.Section>
+                        <Group justify="center" mt={8}>
+                          <Anchor
+                            component="button"
+                            type="button"
+                            onClick={() => setShowAllMovements(true)}
+                            size="sm"
+                          >
+                            Show all {total} movements
+                          </Anchor>
+                        </Group>
+                      </Card.Section>
+                    );
+                  return null;
+                })()}
+              </Card>
+            </Grid.Col>
+          </Grid>
+        </Tabs.Panel>
+        {showInstances ? (
+          <Tabs.Panel value="instances" pt="md">
+            <Card withBorder padding="md" bg="transparent">
+              <Card.Section inheritPadding py="xs">
+                <Title order={5}>Assemblies using this product</Title>
+              </Card.Section>
+              <Card.Section>
+                {assemblies.length ? (
+                  <Table withColumnBorders highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Assembly</Table.Th>
+                        <Table.Th>Job</Table.Th>
+                        <Table.Th>Project</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {assemblies.map((a: any) => (
+                        <Table.Tr key={a.id}>
+                          <Table.Td>{a.name || `A${a.id}`}</Table.Td>
+                          <Table.Td>
+                            {a.job ? (
+                              <Link to={`/jobs/${a.job.id}`}>
+                                {a.job.id}
+                              </Link>
+                            ) : (
+                              a.jobId || ""
+                            )}
+                          </Table.Td>
+                          <Table.Td>
+                            {a.job
+                              ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
+                              : ""}
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                ) : (
+                  <Text c="dimmed" size="sm">
+                    No assemblies currently use this product.
+                  </Text>
+                )}
+              </Card.Section>
+            </Card>
+          </Tabs.Panel>
+        ) : null}
+      </Tabs>
       <ProductPickerModal
         opened={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -1484,29 +1713,6 @@ export default function ProductDetailRoute() {
           setPickerOpen(false);
         }}
       />
-      <Group justify="space-between" align="flex-start">
-        <Button
-          color="red"
-          variant="light"
-          onClick={() => {
-            setDeleteConfirmation("");
-            setDeleteModalOpen(true);
-          }}
-        >
-          Delete product
-        </Button>
-        <refreshFetcher.Form method="post">
-          <input type="hidden" name="_intent" value="stock.refresh" />
-          <Button
-            size="xs"
-            variant="light"
-            type="submit"
-            loading={refreshFetcher.state !== "idle"}
-          >
-            Refresh Stock View
-          </Button>
-        </refreshFetcher.Form>
-      </Group>
     </Stack>
   );
 }
