@@ -7,6 +7,8 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
     updated = 0,
     skipped = 0;
   const errors: any[] = [];
+  const primaryTargets: Array<{ productId: number; productLineId: number }> =
+    [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const id = asNum(pick(r, ["a__Serial", "id"])) as number | null;
@@ -14,6 +16,7 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
       skipped++;
       continue;
     }
+    const isPrimary = coerceFlag(pick(r, ["Flag_isPrimaryProductLine"]));
     const data: any = {
       id,
       parentId: asNum(
@@ -38,6 +41,9 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
         create: data,
         update: data,
       });
+      if (isPrimary && data.parentId) {
+        primaryTargets.push({ productId: data.parentId, productLineId: id });
+      }
       created++;
     } catch (e: any) {
       errors.push({ index: i, id, message: e?.message, code: e?.code });
@@ -62,6 +68,14 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
       grouped[key].ids.push(e.id ?? null);
     }
     console.log("[import] product_lines error summary", Object.values(grouped));
+  }
+  if (primaryTargets.length) {
+    for (const t of primaryTargets) {
+      await prisma.product.update({
+        where: { id: t.productId },
+        data: { primaryProductLineId: t.productLineId },
+      });
+    }
   }
   await resetSequence(prisma, "ProductLine");
   return { created, updated, skipped, errors };

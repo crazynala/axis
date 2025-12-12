@@ -19,13 +19,21 @@ import {
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useState, type ReactNode } from "react";
 import { calcPrice } from "~/modules/product/calc/calcPrice";
-import { ExternalLink } from "~/components/ExternalLink";
 import { AccordionTable } from "~/components/AccordionTable";
 import type { Column } from "~/components/AccordionTable";
 import { debugEnabled } from "~/utils/debugFlags";
 import type { UseFormRegister } from "react-hook-form";
-import { IconLink, IconMenu2, IconTrash, IconCircleCheck, IconCircleOff } from "@tabler/icons-react";
+import {
+  IconLink,
+  IconMenu2,
+  IconTag,
+  IconTagFilled,
+  IconTrash,
+  IconCircleCheck,
+  IconCircleOff,
+} from "@tabler/icons-react";
 import { formatUSD } from "~/utils/format";
+import { JumpLink } from "~/components/JumpLink";
 
 export type CostingRow = {
   id: number;
@@ -82,7 +90,14 @@ export function AssemblyCostingsTable(props: {
   /** Optional rows to render in a separate Disabled section */
   disabledRows?: CostingRow[];
   /** Handler for costing actions (enable/disable/delete) */
-  onCostingAction?: (costingId: number, action: "enable" | "disable" | "delete") => void;
+  onCostingAction?: (
+    costingId: number,
+    action: "enable" | "disable" | "delete"
+  ) => void;
+  /** Map of assemblyId -> primaryCostingId */
+  primaryCostingIdByAssembly?: Record<number, number | null>;
+  /** Setter for primary costing */
+  onSetPrimaryCosting?: (costingId: number, assemblyId: number) => void;
 }) {
   const {
     title,
@@ -100,6 +115,8 @@ export function AssemblyCostingsTable(props: {
     actions,
     disabledRows,
     onCostingAction,
+    primaryCostingIdByAssembly,
+    onSetPrimaryCosting,
   } = props;
   const DEBUG = debugEnabled("costingsTable") || !!debug;
 
@@ -205,20 +222,51 @@ export function AssemblyCostingsTable(props: {
     rows.map((c) => {
       const showActivityInput = activityEditable(c);
       const showQpuInput = qpuEditable(c, false);
+      const primaryId =
+        primaryCostingIdByAssembly?.[Number(c.assemblyId ?? 0) || 0] ?? null;
+      const isPrimary = primaryId != null && primaryId === c.id;
+      if (process.env.NODE_ENV !== "production") {
+        // temp debug: log primary resolution per row
+        // eslint-disable-next-line no-console
+        console.debug("[costings] primary debug", {
+          rowId: c.id,
+          assemblyId: c.assemblyId,
+          primaryId,
+          isPrimary,
+        });
+      }
       return (
         <Table.Tr key={`c-${c.id}`}>
+          <Table.Td width={40}>
+            <ActionIcon
+              variant="subtle"
+              color={isPrimary ? "var(--mantine-color-bright)" : "gray"}
+              aria-label="Primary costing"
+              onClick={() =>
+                !isPrimary &&
+                onSetPrimaryCosting &&
+                c.assemblyId &&
+                onSetPrimaryCosting(c.id, Number(c.assemblyId))
+              }
+              disabled={isPrimary}
+              style={{ opacity: isPrimary ? 1 : 0.5 }}
+              size="xs"
+            >
+              {isPrimary ? <IconTagFilled /> : <IconTag />}
+            </ActionIcon>
+          </Table.Td>
           <Table.Td>{c.assemblyId ? `A${c.assemblyId}` : ""}</Table.Td>
           <Table.Td>
             {c.productId ? (
-              <ExternalLink href={`/products/${c.productId}`}>
-                {c.productId}
-              </ExternalLink>
+              <JumpLink to={`/products/${c.productId}`} label={c.productId} />
             ) : (
               c.id
             )}
           </Table.Td>
           <Table.Td style={disabledStyle(c)}>{c.sku || ""}</Table.Td>
-          <Table.Td style={disabledStyle(c)}>{c.name || c.productId || ""}</Table.Td>
+          <Table.Td style={disabledStyle(c)}>
+            {c.name || c.productId || ""}
+          </Table.Td>
           {/* Activity (per-activity usage) */}
           <Table.Td
             align="center"
@@ -392,7 +440,8 @@ export function AssemblyCostingsTable(props: {
     return map;
   };
   const activeRows = (common || []).filter((r) => !r.flagIsDisabled);
-  const disabledList = disabledRows ?? (common || []).filter((r) => r.flagIsDisabled);
+  const disabledList =
+    disabledRows ?? (common || []).filter((r) => r.flagIsDisabled);
   const groups = accordionByProduct ? groupByProduct(activeRows) : null;
   const groupedSubrows = new Map<string, CostingRow[]>();
 
@@ -451,7 +500,9 @@ export function AssemblyCostingsTable(props: {
           }))
         );
       } else {
-        tableData.push(...arr.map((r) => ({ ...r, isSingle: arr.length === 1 } as any)));
+        tableData.push(
+          ...arr.map((r) => ({ ...r, isSingle: arr.length === 1 } as any))
+        );
       }
     }
   } else {
@@ -486,6 +537,34 @@ export function AssemblyCostingsTable(props: {
 
   columns = [
     {
+      key: "primary",
+      header: "",
+      width: 20,
+      render: (c) => {
+        const primaryId =
+          primaryCostingIdByAssembly?.[Number(c.assemblyId ?? 0) || 0] ?? null;
+        const isPrimary = primaryId != null && primaryId === c.id;
+        return (
+          <ActionIcon
+            variant="subtle"
+            color={isPrimary ? "var(--mantine-color-text)" : "gray"}
+            aria-label="Primary costing"
+            onClick={() =>
+              !isPrimary &&
+              onSetPrimaryCosting &&
+              c.assemblyId &&
+              onSetPrimaryCosting(c.id, Number(c.assemblyId))
+            }
+            // disabled={isPrimary}
+            style={{ opacity: isPrimary ? 1 : 0.5 }}
+            size="xs"
+          >
+            {isPrimary ? <IconTagFilled /> : <IconTag />}
+          </ActionIcon>
+        );
+      },
+    },
+    {
       key: "assembly",
       header: "Assembly",
       width: compactColumnWidth,
@@ -498,9 +577,7 @@ export function AssemblyCostingsTable(props: {
       width: compactColumnWidth,
       render: (c) =>
         c.productId ? (
-          <ExternalLink href={`/products/${c.productId}`}>
-            {c.productId}
-          </ExternalLink>
+          <JumpLink to={`/products/${c.productId}`} label={c.productId} />
         ) : (
           c.id
         ),

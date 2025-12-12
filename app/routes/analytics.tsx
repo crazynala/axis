@@ -3,6 +3,7 @@ import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
 import { DatePickerInput } from "@mantine/dates";
 import { Box, Button, Group, Paper, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { AreaChart, LineChart } from "@mantine/charts";
+import { AssemblyStage } from "@prisma/client";
 import { prisma } from "../utils/prisma.server";
 
 type Range = { start: Date; end: Date };
@@ -115,7 +116,7 @@ async function getItemsCut(range: Range, bucket: Bucket): Promise<SeriesPoint[]>
   for (const b of iterateBuckets(range, bucket)) {
     const agg = await prisma.assemblyActivity.aggregate({
       where: {
-        activityType: { contains: "cut", mode: "insensitive" },
+        stage: AssemblyStage.cut,
         activityDate: { gte: b.start, lte: b.end },
       },
       _sum: { quantity: true },
@@ -131,7 +132,7 @@ async function getItemsMade(range: Range, bucket: Bucket): Promise<SeriesPoint[]
   for (const b of iterateBuckets(range, bucket)) {
     const agg = await prisma.assemblyActivity.aggregate({
       where: {
-        activityType: { contains: "make", mode: "insensitive" },
+        stage: AssemblyStage.make,
         activityDate: { gte: b.start, lte: b.end },
       },
       _sum: { quantity: true },

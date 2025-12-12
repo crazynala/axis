@@ -8,6 +8,7 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
     skipped = 0;
   const errors: any[] = [];
   const toCreate: any[] = [];
+  const primaryTargets: Array<{ assemblyId: number; costingId: number }> = [];
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -17,6 +18,9 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       continue;
     }
 
+    const isPrimary = coerceFlag(
+      pick(r, ["Flag_isPrimaryCosting", "Flag_isPrimary"])
+    );
     const data: any = {
       assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
       productId: asNum(
@@ -42,17 +46,29 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       flagStockTracked: coerceFlag(pick(r, ["Flag_StockTracked"])),
     };
 
-    try {
-      const existing = await prisma.costing.findUnique({ where: { id } });
-      if (existing) {
-        await prisma.costing.update({ where: { id }, data });
-        updated++;
-      } else {
-        toCreate.push({ id, ...data });
+      try {
+        const existing = await prisma.costing.findUnique({ where: { id } });
+        if (existing) {
+          await prisma.costing.update({ where: { id }, data });
+          if (isPrimary && data.assemblyId) {
+            await prisma.assembly.update({
+              where: { id: data.assemblyId },
+              data: { primaryCostingId: id },
+            });
+          }
+          updated++;
+        } else {
+          toCreate.push({ id, ...data });
+          if (isPrimary && data.assemblyId) {
+            primaryTargets.push({
+              assemblyId: data.assemblyId,
+              costingId: id,
+            });
+          }
+        }
+      } catch (e: any) {
+        errors.push({ index: i, id, message: e?.message, code: e?.code });
       }
-    } catch (e: any) {
-      errors.push({ index: i, id, message: e?.message, code: e?.code });
-    }
 
     if ((i + 1) % 100 === 0) {
       console.log(
@@ -70,6 +86,14 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
         skipDuplicates: true,
       });
       created += res.count;
+      if (primaryTargets.length) {
+        for (const t of primaryTargets) {
+          await prisma.assembly.update({
+            where: { id: t.assemblyId },
+            data: { primaryCostingId: t.costingId },
+          });
+        }
+      }
     } catch (e: any) {
       errors.push({
         index: -1,

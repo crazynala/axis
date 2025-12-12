@@ -1,4 +1,4 @@
-import { ActivityKind, AssemblyStage } from "@prisma/client";
+import { ActivityKind, AssemblyStage, ActivityAction } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 
 function normalizeBreakdown(values: number[] | undefined | null): number[] {
@@ -216,9 +216,9 @@ export async function createPackActivity(input: PackActivityInput) {
         assemblyId: assembly.id,
         jobId: assembly.jobId,
         name: "Pack",
-        activityType: "PACK",
         stage: AssemblyStage.pack,
         kind: ActivityKind.normal,
+        action: ActivityAction.RECORDED,
         activityDate: input.activityDate,
         qtyBreakdown: normalizedBreakdown as any,
         quantity: totalQuantity,

@@ -14,11 +14,6 @@ const DEFECT_MOVEMENT_TYPE: Record<DefectDisposition, string> = {
   sample: "DEFECT_SAMPLE",
 };
 
-function inferDefectActivityType(stage: AssemblyStage | null): string | null {
-  if (!stage) return "DEFECT";
-  return `DEFECT_${stage.toUpperCase()}`;
-}
-
 async function findDestinationLocationId(
   tx: Prisma.TransactionClient,
   disposition: DefectDisposition
@@ -56,6 +51,7 @@ async function maybeCreateDefectMovement(
     productId: number | null;
     quantity: number;
     disposition: DefectDisposition;
+    stage?: AssemblyStage | null;
   }
 ) {
   if (!args.quantity || args.quantity <= 0) return null;
@@ -103,11 +99,24 @@ async function maybeCreateDefectMovement(
       notes: `Auto defect movement (${args.disposition})`,
     },
   });
+  let batchId: number | null = null;
+  if (args.stage === AssemblyStage.make) {
+    const batch = await tx.batch.findFirst({
+      where: {
+        productId,
+        assemblyId: args.assemblyId,
+        jobId: args.jobId,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    batchId = batch?.id ?? null;
+  }
   await tx.productMovementLine.create({
     data: {
       movementId: movement.id,
       productMovementId: movement.id,
       productId,
+      batchId: batchId ?? undefined,
       quantity: Math.abs(args.quantity),
       notes: `Defect (${args.disposition})`,
     },
@@ -203,7 +212,6 @@ export async function createDefectActivity(input: CreateDefectInput) {
         assemblyId: input.assemblyId,
         jobId: input.jobId,
         name: "Defect",
-        activityType: inferDefectActivityType(input.stage),
         stage: input.stage,
         kind: ActivityKind.defect,
         defectDisposition: disposition,
@@ -223,6 +231,7 @@ export async function createDefectActivity(input: CreateDefectInput) {
       productId: input.productId ?? null,
       quantity: input.quantity,
       disposition,
+      stage: input.stage,
     });
 
     return activity;

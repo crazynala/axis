@@ -21,6 +21,7 @@ export async function createAssemblyFromProductAndSeedCostings(
     select: {
       id: true,
       name: true,
+      primaryProductLineId: true,
       variantSetId: true,
       variantSet: { select: { variants: true } },
       productLines: {
@@ -109,13 +110,30 @@ export async function createAssemblyFromProductAndSeedCostings(
           activityUsed: p.activityUsed,
         })),
       });
-      const res = await prisma.costing.createMany({ data: payloads });
+      let primaryCostingId: number | null = null;
+      for (let idx = 0; idx < filtered.length; idx++) {
+        const pl = filtered[idx];
+        const payload = payloads[idx];
+        const createdCosting = await prisma.costing.create({ data: payload });
+        if (
+          primaryCostingId == null &&
+          prod.primaryProductLineId != null &&
+          pl.id === prod.primaryProductLineId
+        ) {
+          primaryCostingId = createdCosting.id;
+        }
+      }
+      if (primaryCostingId != null) {
+        await prisma.assembly.update({
+          where: { id: created.id },
+          data: { primaryCostingId },
+        });
+      }
       console.log("[assemblyFromProduct] Seeded costings", {
         assemblyId: created.id,
         productId: prod.id,
         lineCount: lines.length,
         payloadCount: payloads.length,
-        createdCount: res.count,
       });
     } else {
       console.log("[assemblyFromProduct] No valid payloads to create");

@@ -1013,19 +1013,19 @@ type MaybeAssembly = {
   variantSetId?: number | null;
 } | null;
 
-function classifyActivityType(
-  a: { name?: string | null; activityType?: string | null },
+function isStage(
+  a: { name?: string | null; stage?: string | null },
   needle: "cut" | "make" | "pack"
 ) {
-  const s = (a.activityType || a.name || "").toString().toLowerCase();
+  const stage = (a.stage || "").toString().toLowerCase();
+  if (stage) return stage === needle;
+  const s = (a.name || "").toString().toLowerCase();
   return s.includes(needle);
 }
 
-function isTrashCut(
-  a: { name?: string | null; activityType?: string | null }
-) {
-  const s = (a.activityType || a.name || "").toString().toLowerCase();
-  return s.includes("trash") && s.includes("cut");
+function isTrashCut(a: { name?: string | null; stage?: string | null }) {
+  const name = (a.name || "").toString().toLowerCase();
+  return isStage(a, "cut") && name.includes("trash");
 }
 
 function subtractArrays(
@@ -1071,7 +1071,7 @@ async function computeAssemblyBreakdowns(
 }> {
   const activities = await base.assemblyActivity.findMany({
     where: { assemblyId },
-    select: { qtyBreakdown: true, name: true, activityType: true },
+    select: { qtyBreakdown: true, name: true, stage: true },
   });
   let len = 0;
   let c_numVariants = 0;
@@ -1100,22 +1100,25 @@ async function computeAssemblyBreakdowns(
   type Act = {
     qtyBreakdown: number[] | null;
     name?: string | null;
-    activityType?: string | null;
+    stage?: string | null;
   };
   const cutArrays = (activities as Act[])
-    .filter((a: Act) => classifyActivityType(a, "cut") && !isTrashCut(a))
+    .filter((a: Act) => isStage(a, "cut") && !isTrashCut(a))
     .map((a: Act) => a.qtyBreakdown);
   const trashCutArrays = (activities as Act[])
     .filter((a: Act) => isTrashCut(a))
     .map((a: Act) => a.qtyBreakdown);
   const makeArrays = (activities as Act[])
-    .filter((a: Act) => classifyActivityType(a, "make"))
+    .filter((a: Act) => isStage(a, "make"))
     .map((a: Act) => a.qtyBreakdown);
   const packArrays = (activities as Act[])
-    .filter((a: Act) => classifyActivityType(a, "pack"))
+    .filter((a: Act) => isStage(a, "pack"))
     .map((a: Act) => a.qtyBreakdown);
   const keepArrays = (activities as Act[])
-    .filter((a: Act) => classifyActivityType(a, "keep"))
+    .filter((a: Act) => {
+      const s = (a.name || "").toString().toLowerCase();
+      return s.includes("keep");
+    })
     .map((a: Act) => a.qtyBreakdown);
   const c_qtyCut_Breakdown = subtractArrays(
     len,

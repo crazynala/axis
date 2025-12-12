@@ -84,6 +84,7 @@ import {
   IconChartHistogram,
   IconBoxSeam,
   IconShieldCheck,
+  IconListDetails,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
 import {
@@ -351,6 +352,11 @@ export default function App() {
             icon: <IconShieldCheck />,
             label: "Integrity",
           },
+          {
+            to: "/production-ledger",
+            icon: <IconListDetails />,
+            label: "Production Ledger",
+          },
         ]
       : []),
     { to: "/settings", icon: <IconAdjustments />, label: "Settings" },
@@ -435,6 +441,7 @@ function AppShellLayout({
   const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(
     desktopNavOpenedInitial
   );
+  const [navHydrated, setNavHydrated] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   // Register current location globally for per-module restoration
@@ -467,6 +474,9 @@ function AppShellLayout({
       body: JSON.stringify({ desktopNavOpened }),
     }).catch(() => {});
   }, [desktopNavOpened]);
+  useEffect(() => {
+    setNavHydrated(true);
+  }, []);
 
   // Color scheme toggle moved to settings page
   const renderNavLinkItem = (item: NavLinkItem) => {
@@ -477,7 +487,7 @@ function AppShellLayout({
     if (insideModule) {
       href = item.to;
     }
-    if (href === item.to) {
+    if (navHydrated && href === item.to) {
       const search = getSavedIndexSearch(item.to);
       if (search) href = `${item.to}${search}`;
     }

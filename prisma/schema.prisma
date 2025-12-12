@@ -123,17 +123,31 @@ enum AssemblyStage {
 }
 
 enum ActivityKind {
-    normal   // good units produced/moved forward
-    defect   // units failed QC for this assembly
-    rework   // repaired/restored units for this assembly
+    normal // good units produced/moved forward
+    defect // units failed QC for this assembly
+    rework // repaired/restored units for this assembly
+}
+
+enum ActivityAction {
+    RECORDED
+    SENT_OUT
+    RECEIVED_IN
+    ADJUSTMENT
+    NOTE
+}
+
+enum ExternalStepType {
+    EMBROIDERY
+    WASH
+    DYE
 }
 
 enum DefectDisposition {
-    none    // internal default
-    review  // sent to QC review
-    scrap   // physically scrapped / trashed
+    none // internal default
+    review // sent to QC review
+    scrap // physically scrapped / trashed
     offSpec // kept as off-spec stock / donation / staff / testing
-    sample  // kept as a sample under this assembly
+    sample // kept as a sample under this assembly
 }
 
 enum LocationType {
@@ -209,6 +223,8 @@ model Product {
     nameUnaccented        String?
     descriptionUnaccented String?
     notesUnaccented       String?
+    primaryProductLineId  Int?
+    primaryProductLine    ProductLine?          @relation("PrimaryProductLine", fields: [primaryProductLineId], references: [id])
     supplier              Company?              @relation("Supplier", fields: [supplierId], references: [id])
     customer              Company?              @relation("Customer", fields: [customerId], references: [id])
     purchaseTax           ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
@@ -238,14 +254,13 @@ model Product {
     // Back-relations: Cost ranges (per-product tiered costs)
     productCostRanges     ProductCostRange[]
     salePriceRanges       SalePriceRange[]
-    // Optional inverse for assemblies' primary product relation
-    primaryAssemblies     Assembly[]
     // Metadata
     createdBy             String?
     modifiedBy            String?
     createdAt             DateTime?             @default(now())
     updatedAt             DateTime?             @updatedAt
     boxLines              BoxLine[]
+    assemblies            Assembly[]
 }
 
 // Join tables for tags
@@ -310,6 +325,7 @@ model Company {
     // Back-relations: Vendor/Customer pricing mappings
     vendorCustomerPricingAsVendor   VendorCustomerPricing[] @relation("VendorCompany")
     vendorCustomerPricingAsCustomer VendorCustomerPricing[] @relation("CustomerCompany")
+    assemblyActivitiesAsVendor      AssemblyActivity[]      @relation("AssemblyActivity_vendorCompany")
     // Metadata
     createdBy                       String?
     modifiedBy                      String?
@@ -348,27 +364,27 @@ model SupplierPricingGroup {
 }
 
 model ValueList {
-    id                  Int           @id @default(autoincrement())
-    code                String?
-    label               String?
-    value               Decimal?      @db.Decimal(14, 4)
-    type                ValueListType
-    parentId            Int?
-    parent              ValueList?    @relation("ValueListHierarchy", fields: [parentId], references: [id])
-    children            ValueList[]   @relation("ValueListHierarchy")
-    productsTax         Product[]     @relation("Tax")
-    productsCategory    Product[]     @relation("Category")
+    id                    Int                @id @default(autoincrement())
+    code                  String?
+    label                 String?
+    value                 Decimal?           @db.Decimal(14, 4)
+    type                  ValueListType
+    parentId              Int?
+    parent                ValueList?         @relation("ValueListHierarchy", fields: [parentId], references: [id])
+    children              ValueList[]        @relation("ValueListHierarchy")
+    productsTax           Product[]          @relation("Tax")
+    productsCategory      Product[]          @relation("Category")
     // Back-relations
-    invoiceLinesTaxCode InvoiceLine[] @relation("TaxCode")
-    invoicesTaxCode     Invoice[]     @relation("Inv_TaxCode")
+    invoiceLinesTaxCode   InvoiceLine[]      @relation("TaxCode")
+    invoicesTaxCode       Invoice[]          @relation("Inv_TaxCode")
     assemblyDefectReasons AssemblyActivity[] @relation("AssemblyActivity_defectReason")
     // Back-relations: Purchase Orders
     // Removed: PurchaseOrderLine taxCode relation; POL now stores taxCode as string
     // Metadata
-    createdBy           String?
-    modifiedBy          String?
-    createdAt           DateTime?     @default(now())
-    updatedAt           DateTime?     @updatedAt
+    createdBy             String?
+    modifiedBy            String?
+    createdAt             DateTime?          @default(now())
+    updatedAt             DateTime?          @updatedAt
 }
 
 model Assembly {
@@ -391,6 +407,8 @@ model Assembly {
     // Link Assembly to original Product by id and relation
     productId           Int?
     product             Product?            @relation(fields: [productId], references: [id])
+    primaryCostingId    Int?
+    primaryCosting      Costing?            @relation("PrimaryAssemblyCosting", fields: [primaryCostingId], references: [id])
     // Optional link to a Variant Set (may mirror the Product's variant set)
     variantSetId        Int?
     variantSet          VariantSet?         @relation(fields: [variantSetId], references: [id])
@@ -415,36 +433,39 @@ model Assembly {
 }
 
 model Costing {
-    id                      Int             @id @default(autoincrement())
+    id                      Int               @id @default(autoincrement())
     assemblyId              Int?
     // renamed: componentId -> productId; removed usageType/componentType per new spec
     productId               Int?
-    quantityPerUnit         Decimal?        @db.Decimal(14, 4)
-    unitCost                Decimal?        @db.Decimal(14, 4)
+    quantityPerUnit         Decimal?          @db.Decimal(14, 4)
+    unitCost                Decimal?          @db.Decimal(14, 4)
     notes                   String?
     activityUsed            String?
-    costPricePerItem        Decimal?        @db.Decimal(14, 4)
-    salePricePerItem        Decimal?        @db.Decimal(14, 4)
+    costPricePerItem        Decimal?          @db.Decimal(14, 4)
+    salePricePerItem        Decimal?          @db.Decimal(14, 4)
     // Dynamic pricing context pulled from Product to compute sale prices prior to fixing
     // Optional link to a Sale Price Group for tiered sale pricing at the time of costing
     salePriceGroupId        Int?
-    salePriceGroup          SalePriceGroup? @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
+    salePriceGroup          SalePriceGroup?   @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
     // Optional manual overrides captured on the costing
-    manualSalePrice         Decimal?        @db.Decimal(14, 4)
-    manualMargin            Decimal?        @db.Decimal(14, 4)
+    manualSalePrice         Decimal?          @db.Decimal(14, 4)
+    manualMargin            Decimal?          @db.Decimal(14, 4)
+    externalStepType        ExternalStepType?
+    leadTimeDays            Int?
     flagAssembly            Boolean?
     flagDefinedInProduct    Boolean?
     flagIsBillableManual    Boolean?
     flagIsInvoiceableManual Boolean?
     flagIsDisabled          Boolean?
     flagStockTracked        Boolean?
-    assembly                Assembly?       @relation(fields: [assemblyId], references: [id])
-    product                 Product?        @relation(fields: [productId], references: [id])
+    assembly                Assembly?         @relation(fields: [assemblyId], references: [id])
+    product                 Product?          @relation(fields: [productId], references: [id])
+    primaryForAssemblies    Assembly[]        @relation("PrimaryAssemblyCosting")
     // Metadata
     createdBy               String?
     modifiedBy              String?
-    createdAt               DateTime?       @default(now())
-    updatedAt               DateTime?       @updatedAt
+    createdAt               DateTime?         @default(now())
+    updatedAt               DateTime?         @updatedAt
     // Back-relations
     invoiceLines            InvoiceLine[]
     // Back-relations: Tags
@@ -452,21 +473,22 @@ model Costing {
 }
 
 model ProductLine {
-    id               Int       @id @default(autoincrement())
-    parentId         Int?
-    childId          Int?
-    quantity         Decimal?  @db.Decimal(14, 4)
-    unitCost         Decimal?  @db.Decimal(14, 4)
-    unitCostManual   Decimal?  @db.Decimal(14, 4)
-    activityUsed     String?
-    flagAssemblyOmit Boolean?
-    parent           Product?  @relation("ParentProduct", fields: [parentId], references: [id])
-    child            Product?  @relation(fields: [childId], references: [id])
+    id                 Int       @id @default(autoincrement())
+    parentId           Int?
+    childId            Int?
+    quantity           Decimal?  @db.Decimal(14, 4)
+    unitCost           Decimal?  @db.Decimal(14, 4)
+    unitCostManual     Decimal?  @db.Decimal(14, 4)
+    activityUsed       String?
+    flagAssemblyOmit   Boolean?
+    parent             Product?  @relation("ParentProduct", fields: [parentId], references: [id])
+    child              Product?  @relation(fields: [childId], references: [id])
+    primaryForProducts Product[] @relation("PrimaryProductLine")
     // Metadata
-    createdBy        String?
-    modifiedBy       String?
-    createdAt        DateTime? @default(now())
-    updatedAt        DateTime? @updatedAt
+    createdBy          String?
+    modifiedBy         String?
+    createdAt          DateTime? @default(now())
+    updatedAt          DateTime? @updatedAt
 }
 
 model Location {
@@ -659,12 +681,15 @@ model SavedView {
 }
 
 model AssemblyActivity {
-    id                       Int       @id @default(autoincrement())
+    id                       Int                @id @default(autoincrement())
     assemblyId               Int?
     jobId                    Int?
     name                     String?
     description              String?
-    activityType             String?
+    action                   ActivityAction?
+    externalStepType         ExternalStepType?
+    vendorCompanyId          Int?
+    vendorCompany            Company?           @relation("AssemblyActivity_vendorCompany", fields: [vendorCompanyId], references: [id])
     activityDate             DateTime?
     // Optional key to link activities performed together across multiple assemblies
     groupKey                 String?
@@ -677,20 +702,24 @@ model AssemblyActivity {
     productId                Int?
     locationInId             Int?
     locationOutId            Int?
-    locationIn               Location? @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
-    locationOut              Location? @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
-    quantity                 Decimal?  @db.Decimal(14, 4)
-    qtyFabricConsumed        Decimal?  @db.Decimal(14, 4)
-    qtyFabricConsumedPerUnit Decimal?  @db.Decimal(14, 4)
-    qtyBreakdown             Int[]     @default([])
-    assembly                 Assembly? @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
-    job                      Job?      @relation(fields: [jobId], references: [id])
-    defectReason             ValueList? @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
+    locationIn               Location?          @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
+    locationOut              Location?          @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
+    quantity                 Decimal?           @db.Decimal(14, 4)
+    qtyFabricConsumed        Decimal?           @db.Decimal(14, 4)
+    qtyFabricConsumedPerUnit Decimal?           @db.Decimal(14, 4)
+    qtyBreakdown             Int[]              @default([])
+    assembly                 Assembly?          @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
+    job                      Job?               @relation(fields: [jobId], references: [id])
+    defectReason             ValueList?         @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
     // Metadata
     createdBy                String?
     modifiedBy               String?
-    createdAt                DateTime? @default(now())
-    updatedAt                DateTime? @updatedAt
+    createdAt                DateTime?          @default(now())
+    updatedAt                DateTime?          @updatedAt
+
+    @@index([assemblyId, stage, activityDate])
+    @@index([assemblyId, externalStepType, action, activityDate])
+    @@index([vendorCompanyId, activityDate])
 }
 
 // --- Auth models ---

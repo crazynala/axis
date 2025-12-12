@@ -50,6 +50,7 @@ import {
   InventoryTransferModal,
   type BatchOption,
 } from "~/components/InventoryTransferModal";
+import { JumpLink } from "~/components/JumpLink";
 import { TagPicker } from "~/components/TagPicker";
 import {
   buildProductEditDefaults,
@@ -182,20 +183,20 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
-  const [
-    product,
-    productChoices,
-    movements,
-    movementHeaders,
-    salePriceGroups,
-    usedInProducts,
-    costingAssemblies,
-    shipmentLines,
-  ] = await Promise.all([
-    productPromise.then((r) => {
-      mark("product");
-      return r;
-    }),
+    const [
+      product,
+      productChoices,
+      movements,
+      movementHeaders,
+      salePriceGroups,
+      usedInProducts,
+      costingAssemblies,
+      shipmentLines,
+    ] = await Promise.all([
+      productPromise.then((r) => {
+        mark("product");
+        return r;
+      }),
       productChoicesPromise.then((r) => {
         mark("productChoices");
         return r;
@@ -205,56 +206,61 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
         return r;
       }),
       movementHeadersPromise.then((r) => {
-      mark("movementHeaders");
-      return r;
-    }),
-    salePriceGroupsPromise.then((r) => r),
-    prismaBase.productLine.findMany({
-      where: { childId: id },
-      select: {
-        id: true,
-        parent: { select: { id: true, sku: true, name: true, type: true } },
-      },
-    }),
-    prismaBase.costing.findMany({
-      where: {
-        productId: id,
-        OR: [{ flagIsDisabled: false }, { flagIsDisabled: null }],
-      },
-      select: {
-        assembly: {
-          select: {
-            id: true,
-            name: true,
-            jobId: true,
-            job: { select: { id: true, projectCode: true, name: true } },
-          },
-        },
-      },
-    }),
-    (async () => {
-      const ids = new Set<number>();
-      for (const ml of await movementLinesPromise) {
-        const sid = Number((ml as any)?.movement?.shippingLineId);
-        if (Number.isFinite(sid)) ids.add(sid);
-      }
-      for (const mh of await movementHeadersPromise) {
-        const sid = Number((mh as any)?.shippingLineId);
-        if (Number.isFinite(sid)) ids.add(sid);
-      }
-      if (!ids.size) return [];
-      return prismaBase.shipmentLine.findMany({
-        where: { id: { in: Array.from(ids) } },
+        mark("movementHeaders");
+        return r;
+      }),
+      salePriceGroupsPromise.then((r) => r),
+      prismaBase.productLine.findMany({
+        where: { childId: id },
         select: {
           id: true,
-          shipmentId: true,
-          shipment: {
-            select: { id: true, trackingNo: true, packingSlipCode: true, type: true },
+          parent: { select: { id: true, sku: true, name: true, type: true } },
+        },
+      }),
+      prismaBase.costing.findMany({
+        where: {
+          productId: id,
+          OR: [{ flagIsDisabled: false }, { flagIsDisabled: null }],
+        },
+        select: {
+          assembly: {
+            select: {
+              id: true,
+              name: true,
+              jobId: true,
+              job: { select: { id: true, projectCode: true, name: true } },
+            },
           },
         },
-      });
-    })(),
-  ]);
+      }),
+      (async () => {
+        const ids = new Set<number>();
+        for (const ml of await movementLinesPromise) {
+          const sid = Number((ml as any)?.movement?.shippingLineId);
+          if (Number.isFinite(sid)) ids.add(sid);
+        }
+        for (const mh of await movementHeadersPromise) {
+          const sid = Number((mh as any)?.shippingLineId);
+          if (Number.isFinite(sid)) ids.add(sid);
+        }
+        if (!ids.size) return [];
+        return prismaBase.shipmentLine.findMany({
+          where: { id: { in: Array.from(ids) } },
+          select: {
+            id: true,
+            shipmentId: true,
+            shipment: {
+              select: {
+                id: true,
+                trackingNo: true,
+                packingSlipCode: true,
+                type: true,
+              },
+            },
+          },
+        });
+      })(),
+    ]);
     if (!product) return redirect("/products");
 
     // Resolve location names for in/out in one query (lines + headers)
@@ -295,7 +301,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
         qty: l.qty ?? 0,
       })
     );
-    const stockByBatch = ((snapshot as any)?.byBatch || []).map((b: any) => ({
+    let stockByBatch = ((snapshot as any)?.byBatch || []).map((b: any) => ({
       batch_id: b.batchId ?? null,
       code_mill: b.codeMill ?? "",
       code_sartor: b.codeSartor ?? "",
@@ -305,6 +311,40 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       location_name: b.locationName ?? "",
       qty: b.qty ?? 0,
     }));
+    if (
+      product?.type === "Finished" &&
+      stockByBatch.length &&
+      stockByBatch.some((b: any) => b.batch_id != null)
+    ) {
+      const batchIds = Array.from(
+        new Set(
+          stockByBatch
+            .map((b: any) => Number(b.batch_id))
+            .filter((n) => Number.isFinite(n))
+        )
+      );
+      const batchDetails = await prismaBase.batch.findMany({
+        where: { id: { in: batchIds } },
+        select: {
+          id: true,
+          job: { select: { id: true, projectCode: true, name: true } },
+          assembly: { select: { id: true, name: true } },
+        },
+      });
+      const byId = new Map(batchDetails.map((b: any) => [b.id, b]));
+      stockByBatch = stockByBatch.map((row: any) => {
+        const detail = byId.get(Number(row.batch_id));
+        if (!detail) return row;
+        return {
+          ...row,
+          job_id: detail.job?.id ?? null,
+          job_project_code: detail.job?.projectCode ?? "",
+          job_name: detail.job?.name ?? "",
+          assembly_id: detail.assembly?.id ?? null,
+          assembly_name: detail.assembly?.name ?? "",
+        };
+      });
+    }
     let userLevel: string | null = null;
     try {
       const uid = await requireUserId(request);
@@ -588,10 +628,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     let counter = 2;
     // ensure unique sku
     while (
-      (await prismaBase.product.findUnique({
+      await prismaBase.product.findUnique({
         where: { sku: candidateSku },
         select: { id: true },
-      }))
+      })
     ) {
       candidateSku = `${baseSku}-${counter++}`;
     }
@@ -1170,7 +1210,10 @@ export default function ProductDetailRoute() {
       (l: any) => Number(l?.movement?.id) === Number(movementDetailId)
     );
     const movement =
-      header || movementLinesForMovement[0]?.movement || (header as any) || null;
+      header ||
+      movementLinesForMovement[0]?.movement ||
+      (header as any) ||
+      null;
     return {
       movement,
       lines: movementLinesForMovement,
@@ -1199,7 +1242,10 @@ export default function ProductDetailRoute() {
     const movementSid = Number((detailMovement as any)?.shippingLineId);
     if (!Number.isFinite(movementSid)) return;
     shipmentLookupFetcher.submit(
-      { _intent: "movement.lookupShipment", movementId: String(detailMovement.id) },
+      {
+        _intent: "movement.lookupShipment",
+        movementId: String(detailMovement.id),
+      },
       { method: "post" }
     );
   }, [detailMovement, detailShipment, shipmentLookupFetcher]);
@@ -1224,9 +1270,7 @@ export default function ProductDetailRoute() {
     [isAdminUser, movementActionFetcher]
   );
   const showInstances =
-    assemblies.length > 0 ||
-    bomParents.length > 0 ||
-    costingAsm.length > 0;
+    assemblies.length > 0 || bomParents.length > 0 || costingAsm.length > 0;
 
   return (
     <Stack gap="lg">
@@ -1286,7 +1330,11 @@ export default function ProductDetailRoute() {
           </div>
           <Menu withinPortal position="bottom-end" shadow="md">
             <Menu.Target>
-              <ActionIcon variant="subtle" size="lg" aria-label="Product actions">
+              <ActionIcon
+                variant="subtle"
+                size="lg"
+                aria-label="Product actions"
+              >
                 <IconMenu2 size={18} />
               </ActionIcon>
             </Menu.Target>
@@ -1484,17 +1532,21 @@ export default function ProductDetailRoute() {
                     </Group>
                   </Card.Section>
                   <Card.Section>
-                    <Table
-                      // striped
-                      // withTableBorder
-                      withColumnBorders
-                      highlightOnHover
-                    >
+                    <Table withColumnBorders>
                       <Table.Thead fs="xs">
                         <Table.Tr>
-                          <Table.Th>Codes</Table.Th>
-                          <Table.Th>Location</Table.Th>
-                          <Table.Th>Received</Table.Th>
+                          {product.type === "Finished" ? (
+                            <>
+                              <Table.Th>Job</Table.Th>
+                              <Table.Th>Assembly</Table.Th>
+                            </>
+                          ) : (
+                            <>
+                              <Table.Th>Codes</Table.Th>
+                              <Table.Th>Location</Table.Th>
+                              <Table.Th>Received</Table.Th>
+                            </>
+                          )}
                           <Table.Th>Qty</Table.Th>
                           <Table.Th></Table.Th>
                         </Table.Tr>
@@ -1507,29 +1559,67 @@ export default function ProductDetailRoute() {
                               row.location_id ?? "none"
                             }`}
                           >
-                            <Table.Td>
-                              {row.code_mill || row.code_sartor ? (
-                                <>
-                                  {row.code_mill || ""}
-                                  {row.code_sartor
-                                    ? (row.code_mill ? " | " : "") +
-                                      row.code_sartor
-                                    : ""}
-                                </>
-                              ) : (
-                                `${row.batch_id}`
-                              )}
-                            </Table.Td>
+                            {product.type === "Finished" ? (
+                              <>
+                                <Table.Td>
+                                  {row.job_id ? (
+                                    <JumpLink
+                                      to={`/jobs/${row.job_id}`}
+                                      label={`${
+                                        row.job_project_code || "Job"
+                                      } ${row.job_id}${
+                                        row.job_name ? ` – ${row.job_name}` : ""
+                                      }`}
+                                    />
+                                  ) : (
+                                    ""
+                                  )}
+                                </Table.Td>
+                                <Table.Td>
+                                  {row.assembly_id ? (
+                                    <JumpLink
+                                      to={`/jobs/${row.job_id}/assembly/${row.assembly_id}`}
+                                      label={
+                                        row.assembly_name ||
+                                        `A${row.assembly_id}`
+                                      }
+                                    />
+                                  ) : (
+                                    row.assembly_name || ""
+                                  )}
+                                </Table.Td>
+                              </>
+                            ) : (
+                              <>
+                                <Table.Td>
+                                  {row.code_mill || row.code_sartor ? (
+                                    <>
+                                      {row.code_mill || ""}
+                                      {row.code_sartor
+                                        ? (row.code_mill ? " | " : "") +
+                                          row.code_sartor
+                                        : ""}
+                                    </>
+                                  ) : (
+                                    `${row.batch_id}`
+                                  )}
+                                </Table.Td>
 
-                            <Table.Td>
-                              {row.location_name ||
-                                (row.location_id ? `${row.location_id}` : "")}
-                            </Table.Td>
-                            <Table.Td>
-                              {row.received_at
-                                ? new Date(row.received_at).toLocaleDateString()
-                                : ""}
-                            </Table.Td>
+                                <Table.Td>
+                                  {row.location_name ||
+                                    (row.location_id
+                                      ? `${row.location_id}`
+                                      : "")}
+                                </Table.Td>
+                                <Table.Td>
+                                  {row.received_at
+                                    ? new Date(
+                                        row.received_at
+                                      ).toLocaleDateString()
+                                    : ""}
+                                </Table.Td>
+                              </>
+                            )}
                             <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
                             <Table.Td>
                               <Menu
@@ -1666,6 +1756,9 @@ export default function ProductDetailRoute() {
                           placeholder="Enter Sartor code"
                           {...batchEditForm.register("codeSartor")}
                         />
+                        <Text size="sm" c="dimmed">
+                          Batch ID: {batchEdit.batchId}
+                        </Text>
                         {batchEditError ? (
                           <Text size="sm" c="red">
                             {batchEditError}
@@ -1796,20 +1889,91 @@ export default function ProductDetailRoute() {
                                       ml.movement.locationInId
                                     : ""}
                                 </Table.Td>
+                                <Table.Td>
+                                  {ml.batch?.codeMill || ml.batch?.codeSartor
+                                    ? `${ml.batch?.codeMill || ""}${
+                                        ml.batch?.codeMill &&
+                                        ml.batch?.codeSartor
+                                          ? " | "
+                                          : ""
+                                      }${ml.batch?.codeSartor || ""}`
+                                    : ml.batch?.id
+                                    ? `${ml.batch.id}`
+                                    : ""}
+                                </Table.Td>
+                                <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                                <Table.Td>{ml.notes || ""}</Table.Td>
+                                <Table.Td width={48}>
+                                  <Menu
+                                    withinPortal
+                                    position="bottom-end"
+                                    shadow="sm"
+                                  >
+                                    <Menu.Target>
+                                      <ActionIcon
+                                        variant="subtle"
+                                        aria-label="Movement actions"
+                                      >
+                                        <IconMenu2 size={16} />
+                                      </ActionIcon>
+                                    </Menu.Target>
+                                    <Menu.Dropdown>
+                                      <Menu.Item
+                                        onClick={() =>
+                                          setMovementDetailId(
+                                            ml.movement?.id ?? null
+                                          )
+                                        }
+                                        disabled={!ml.movement?.id}
+                                      >
+                                        Details
+                                      </Menu.Item>
+                                      {isAdminUser && (
+                                        <Menu.Item
+                                          color="red"
+                                          onClick={() => {
+                                            if (!ml.movement?.id) return;
+                                            setPendingDeleteMovementId(
+                                              ml.movement.id
+                                            );
+                                            setMovementDeleteInput("");
+                                          }}
+                                          disabled={!ml.movement?.id}
+                                        >
+                                          Delete
+                                        </Menu.Item>
+                                      )}
+                                    </Menu.Dropdown>
+                                  </Menu>
+                                </Table.Td>
+                              </Table.Tr>
+                            )
+                          )
+                        : (showAllMovements
+                            ? headers
+                            : headers.slice(0, 8)
+                          ).map((mh: any) => (
+                            <Table.Tr key={`hdr-${mh.id}`}>
                               <Table.Td>
-                                {ml.batch?.codeMill || ml.batch?.codeSartor
-                                  ? `${ml.batch?.codeMill || ""}${
-                                      ml.batch?.codeMill &&
-                                      ml.batch?.codeSartor
-                                        ? " | "
-                                        : ""
-                                    }${ml.batch?.codeSartor || ""}`
-                                  : ml.batch?.id
-                                  ? `${ml.batch.id}`
+                                {mh.date
+                                  ? new Date(mh.date).toLocaleDateString()
                                   : ""}
                               </Table.Td>
-                              <Table.Td>{ml.quantity ?? ""}</Table.Td>
-                              <Table.Td>{ml.notes || ""}</Table.Td>
+                              <Table.Td>{mh.movementType || ""}</Table.Td>
+                              <Table.Td>
+                                {mh.locationOutId != null
+                                  ? locById?.[mh.locationOutId] ||
+                                    mh.locationOutId
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>
+                                {mh.locationInId != null
+                                  ? locById?.[mh.locationInId] ||
+                                    mh.locationInId
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                              <Table.Td>{mh.notes || ""}</Table.Td>
                               <Table.Td width={48}>
                                 <Menu
                                   withinPortal
@@ -1827,9 +1991,9 @@ export default function ProductDetailRoute() {
                                   <Menu.Dropdown>
                                     <Menu.Item
                                       onClick={() =>
-                                        setMovementDetailId(ml.movement?.id ?? null)
+                                        setMovementDetailId(mh.id ?? null)
                                       }
-                                      disabled={!ml.movement?.id}
+                                      disabled={!mh.id}
                                     >
                                       Details
                                     </Menu.Item>
@@ -1837,13 +2001,13 @@ export default function ProductDetailRoute() {
                                       <Menu.Item
                                         color="red"
                                         onClick={() => {
-                                          if (!ml.movement?.id) return;
+                                          if (!mh.id) return;
                                           setPendingDeleteMovementId(
-                                            ml.movement.id
+                                            mh.id as number
                                           );
                                           setMovementDeleteInput("");
                                         }}
-                                        disabled={!ml.movement?.id}
+                                        disabled={!mh.id}
                                       >
                                         Delete
                                       </Menu.Item>
@@ -1852,76 +2016,7 @@ export default function ProductDetailRoute() {
                                 </Menu>
                               </Table.Td>
                             </Table.Tr>
-                          )
-                        )
-                      : (showAllMovements
-                          ? headers
-                          : headers.slice(0, 8)
-                          ).map((mh: any) => (
-                            <Table.Tr key={`hdr-${mh.id}`}>
-                              <Table.Td>
-                                {mh.date
-                                  ? new Date(mh.date).toLocaleDateString()
-                                  : ""}
-                              </Table.Td>
-                              <Table.Td>{mh.movementType || ""}</Table.Td>
-                              <Table.Td>
-                                {mh.locationOutId != null
-                                  ? locById?.[mh.locationOutId] ||
-                                    mh.locationOutId
-                                  : ""}
-                            </Table.Td>
-                            <Table.Td>
-                              {mh.locationInId != null
-                                ? locById?.[mh.locationInId] ||
-                                  mh.locationInId
-                                : ""}
-                            </Table.Td>
-                            <Table.Td>{mh.quantity ?? ""}</Table.Td>
-                            <Table.Td>{mh.notes || ""}</Table.Td>
-                            <Table.Td width={48}>
-                              <Menu
-                                withinPortal
-                                position="bottom-end"
-                                shadow="sm"
-                              >
-                                <Menu.Target>
-                                  <ActionIcon
-                                    variant="subtle"
-                                    aria-label="Movement actions"
-                                  >
-                                    <IconMenu2 size={16} />
-                                  </ActionIcon>
-                                </Menu.Target>
-                                <Menu.Dropdown>
-                                  <Menu.Item
-                                    onClick={() =>
-                                      setMovementDetailId(mh.id ?? null)
-                                    }
-                                    disabled={!mh.id}
-                                  >
-                                    Details
-                                  </Menu.Item>
-                                  {isAdminUser && (
-                                    <Menu.Item
-                                      color="red"
-                                      onClick={() => {
-                                        if (!mh.id) return;
-                                        setPendingDeleteMovementId(
-                                          mh.id as number
-                                        );
-                                        setMovementDeleteInput("");
-                                      }}
-                                      disabled={!mh.id}
-                                    >
-                                      Delete
-                                    </Menu.Item>
-                                  )}
-                                </Menu.Dropdown>
-                              </Menu>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))}
+                          ))}
                     </Table.Tbody>
                   </Table>
                 </Card.Section>
@@ -1983,16 +2078,15 @@ export default function ProductDetailRoute() {
                           : "—"}
                       </Text>
                     </Group>
-                    <Text size="sm">
-                      Notes: {detailMovement?.notes || "—"}
-                    </Text>
+                    <Text size="sm">Notes: {detailMovement?.notes || "—"}</Text>
                     {detailShipment || detailShipmentFromFetcher ? (
                       <Stack gap={4}>
                         <Text fw={600} size="sm">
                           Shipment (Out)
                         </Text>
                         {(() => {
-                          const sl = detailShipment || detailShipmentFromFetcher;
+                          const sl =
+                            detailShipment || detailShipmentFromFetcher;
                           if (!sl) return null;
                           return (
                             <>
@@ -2006,9 +2100,7 @@ export default function ProductDetailRoute() {
                                   ? ` • Packing Slip ${sl.shipment.packingSlipCode}`
                                   : ""}
                               </Text>
-                              <Text size="sm">
-                                Shipment Line ID: {sl.id}
-                              </Text>
+                              <Text size="sm">Shipment Line ID: {sl.id}</Text>
                             </>
                           );
                         })()}
@@ -2073,7 +2165,9 @@ export default function ProductDetailRoute() {
                     <TextInput
                       placeholder={movementDeletePhrase}
                       value={movementDeleteInput}
-                      onChange={(e) => setMovementDeleteInput(e.currentTarget.value)}
+                      onChange={(e) =>
+                        setMovementDeleteInput(e.currentTarget.value)
+                      }
                     />
                     <Group justify="flex-end" gap="xs">
                       <Button
@@ -2089,7 +2183,9 @@ export default function ProductDetailRoute() {
                           movementDeleteInput.replace(/\u2019/g, "'").trim() !==
                           movementDeletePhrase
                         }
-                        onClick={() => handleDeleteMovement(pendingDeleteMovementId)}
+                        onClick={() =>
+                          handleDeleteMovement(pendingDeleteMovementId)
+                        }
                       >
                         Delete
                       </Button>
@@ -2166,7 +2262,9 @@ export default function ProductDetailRoute() {
                             </Table.Td>
                             <Table.Td>
                               {a.job
-                                ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
+                                ? `${a.job.projectCode || ""} ${
+                                    a.job.name || ""
+                                  }`.trim()
                                 : ""}
                             </Table.Td>
                           </Table.Tr>
@@ -2183,7 +2281,9 @@ export default function ProductDetailRoute() {
                             </Table.Td>
                             <Table.Td>
                               {a.job
-                                ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
+                                ? `${a.job.projectCode || ""} ${
+                                    a.job.name || ""
+                                  }`.trim()
                                 : ""}
                             </Table.Td>
                           </Table.Tr>

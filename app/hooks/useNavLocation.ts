@@ -62,12 +62,7 @@ export function getSavedNavLocation(moduleBasePath: string): string | null {
 
 export function useNavHref(moduleBasePath: string, fallbackPath?: string) {
   const location = useLocation();
-  const [href, setHref] = useState<string>(() => {
-    if (typeof window === "undefined") return fallbackPath || moduleBasePath;
-    return (
-      getSavedNavLocation(moduleBasePath) || fallbackPath || moduleBasePath
-    );
-  });
+  const [href, setHref] = useState<string>(() => fallbackPath || moduleBasePath);
 
   useEffect(() => {
     // Update when storage changes in this tab or another tab

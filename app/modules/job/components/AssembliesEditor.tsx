@@ -23,6 +23,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  Fragment,
   type ChangeEvent,
   type ReactNode,
 } from "react";
@@ -40,6 +41,7 @@ import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
+import { JumpLink } from "~/components/JumpLink";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 
@@ -90,6 +92,7 @@ export function AssembliesEditor(props: {
     number,
     Record<number, Record<number, number>>
   >;
+  primaryCostingIdByAssembly?: Record<number, number | null> | null;
   packActivityReferences?: Record<
     number,
     {
@@ -132,6 +135,7 @@ export function AssembliesEditor(props: {
     packActivityReferences,
     assemblyTypeOptions,
     defectReasons,
+    primaryCostingIdByAssembly,
   } = props;
   const activityList = activitiesProp || [];
   const submit = useSubmit();
@@ -160,7 +164,7 @@ export function AssembliesEditor(props: {
   const [defectAssemblyId, setDefectAssemblyId] = useState<number | null>(
     firstAssembly?.id ?? null
   );
-  const [defectStage, setDefectStage] = useState<string>("cut");
+  const [defectStage, setDefectStage] = useState<string>("make");
   const [defectBreakdown, setDefectBreakdown] = useState<number[]>([]);
   const [defectReasonId, setDefectReasonId] = useState<string>("");
   const [defectDisposition, setDefectDisposition] = useState<string>("review");
@@ -307,6 +311,12 @@ export function AssembliesEditor(props: {
         (assemblies || [])
           .flatMap((a) => a.costings || [])
           .map((c: any) => [String(c.id), Boolean((c as any).flagIsDisabled)])
+      ) as any,
+      primaryCostingIds: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          primaryCostingIdByAssembly?.[a.id] ?? (a as any).primaryCostingId ?? null,
+        ])
       ) as any,
       names: Object.fromEntries(
         (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
@@ -643,6 +653,14 @@ export function AssembliesEditor(props: {
               String(c.activityUsed ?? "").toLowerCase(),
             ])
         ) as any,
+        primaryCostingIds: Object.fromEntries(
+          (assemblies || []).map((a) => [
+            String(a.id),
+            primaryCostingIdByAssembly?.[a.id] ??
+              (a as any).primaryCostingId ??
+              null,
+          ])
+        ) as any,
         names: Object.fromEntries(
           (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
         ) as any,
@@ -685,6 +703,10 @@ export function AssembliesEditor(props: {
     }
     fd.set("qpu", JSON.stringify(editForm.getValues("qpu")));
     fd.set("activity", JSON.stringify(editForm.getValues("activity")));
+    fd.set(
+      "primaryCostingIds",
+      JSON.stringify(editForm.getValues("primaryCostingIds") || {})
+    );
     fd.set("statuses", JSON.stringify(editForm.getValues("statuses")));
     submit(fd, { method: "post" });
   };
@@ -773,9 +795,10 @@ export function AssembliesEditor(props: {
   };
 
   const resolveActivityType = (activity: any | null): ActivityModalType => {
-    const raw = String(
-      activity?.activityType || activity?.name || ""
-    ).toLowerCase();
+    const stage = String(activity?.stage || "").toLowerCase();
+    if (stage === "make") return "make";
+    if (stage === "pack") return "pack";
+    const raw = String(activity?.name || "").toLowerCase();
     if (raw.includes("make")) return "make";
     if (raw.includes("pack")) return "pack";
     return "cut";
@@ -816,13 +839,60 @@ export function AssembliesEditor(props: {
     return labels && labels.length ? labels : ["Qty"];
   };
 
+  const watchedPrimaryCostingIds =
+    (editForm.watch("primaryCostingIds") as Record<string, number | null>) ||
+    {};
+  const currentPrimaryCostingByAssembly = (() => {
+    const map = new Map<number, number | null>();
+    (assemblies || []).forEach((a) => {
+      const aid = Number(a.id);
+      const fromForm = watchedPrimaryCostingIds[String(aid)];
+      if (fromForm != null) {
+        map.set(aid, Number(fromForm));
+        return;
+      }
+      const fromProp =
+        primaryCostingIdByAssembly?.[aid] ??
+        (a as any).primaryCostingId ??
+        null;
+      map.set(aid, fromProp != null ? Number(fromProp) : null);
+    });
+    return Object.fromEntries(map);
+  })();
+
+  const computeDefectCaps = (
+    assemblyId: number | null,
+    stage: string
+  ): { arr: number[]; total: number } | null => {
+    if (!assemblyId) return null;
+    const item = quantityItemsByAssemblyId.get(assemblyId);
+    const stats = item?.stageStats;
+    if (!stats) return null;
+    const cut = (stats.cut?.usableArr as number[]) || [];
+    const make = (stats.make?.usableArr as number[]) || [];
+    const pack = (stats.pack?.usableArr as number[]) || [];
+    const len = Math.max(cut.length, make.length, pack.length);
+    const arr = Array.from({ length: len }, (_, idx) => {
+      const c = Number(cut[idx] ?? 0) || 0;
+      const m = Number(make[idx] ?? 0) || 0;
+      const p = Number(pack[idx] ?? 0) || 0;
+      const stg = stage.toLowerCase();
+      if (stg === "cut") return Math.max(0, c - m);
+      if (stg === "make") return Math.max(0, m - p);
+      if (stg === "pack") return Math.max(0, m);
+      return 0;
+    });
+    const total = arr.reduce((t, n) => t + (Number(n) || 0), 0);
+    return { arr, total };
+  };
+
   const openDefectModal = (opts?: { assemblyId?: number | null; activity?: any }) => {
     const targetAssemblyId =
       opts?.assemblyId ?? defectAssemblyId ?? firstAssembly?.id ?? null;
     const labels = resolveVariantLabels(targetAssemblyId);
     const activity = opts?.activity;
     setDefectAssemblyId(targetAssemblyId);
-    setDefectStage(String(activity?.stage || "cut"));
+    setDefectStage(String(activity?.stage || "make"));
     const disp =
       activity?.defectDisposition && activity.defectDisposition !== "none"
         ? activity.defectDisposition
@@ -1008,7 +1078,7 @@ export function AssembliesEditor(props: {
             (a as any).assemblyType ||
             "Prod";
           return (
-            <>
+            <Fragment key={a.id}>
               <Grid.Col span={5}>
                 <Card bg="transparent" padding="md">
                   <TextInput
@@ -1045,12 +1115,25 @@ export function AssembliesEditor(props: {
                       });
                     }}
                   />
-                  <TextInput
-                    readOnly
-                    value={((a as any).product?.name as string) || ""}
-                    label="Product"
-                    mod="data-autosize"
-                  />
+                  <Stack gap={4}>
+                    <Text size="sm" fw={500}>
+                      Product
+                    </Text>
+                    {((a as any).product?.id || (a as any).productId) ? (
+                      <JumpLink
+                        to={`/products/${(a as any).product?.id ?? (a as any).productId}`}
+                        label={
+                          ((a as any).product?.name as string) ||
+                          ((a as any).product?.sku as string) ||
+                          `Product ${(a as any).productId ?? ""}`
+                        }
+                      />
+                    ) : (
+                      <Text>
+                        {((a as any).product?.name as string) || "—"}
+                      </Text>
+                    )}
+                  </Stack>
                   <TextInput
                     readOnly
                     value={a.id || ""}
@@ -1059,7 +1142,7 @@ export function AssembliesEditor(props: {
                   />
                 </Card>
               </Grid.Col>
-              <Grid.Col span={7} key={a.id}>
+              <Grid.Col span={7}>
                 <Group justify="flex-end" mb="xs">
                   <Button
                     size="xs"
@@ -1102,7 +1185,7 @@ export function AssembliesEditor(props: {
                   }}
                 />
               </Grid.Col>
-            </>
+            </Fragment>
           );
         })}
         <Grid.Col span={12} mt="lg">
@@ -1139,6 +1222,16 @@ export function AssembliesEditor(props: {
             fieldNameForQpu={(row) => `qpu.${row.id}`}
             fieldNameForActivityUsed={(row) => `activity.${row.id}`}
             onCostingAction={handleCostingAction}
+            primaryCostingIdByAssembly={
+              (currentPrimaryCostingByAssembly as any) || undefined
+            }
+            onSetPrimaryCosting={(costingId, assemblyId) => {
+              editForm.setValue(
+                `primaryCostingIds.${assemblyId}` as any,
+                costingId,
+                { shouldDirty: true, shouldTouch: true }
+              );
+            }}
             common={
               ((assemblies || [])
                 .flatMap((a) =>
@@ -1220,10 +1313,8 @@ export function AssembliesEditor(props: {
                               : ""}
                           </Table.Td>
                           <Table.Td>
-                            {representative?.activityType
-                              ? String(
-                                  representative.activityType
-                                ).toUpperCase()
+                            {representative?.stage
+                              ? String(representative.stage).toUpperCase()
                               : representative?.name || "Activity"}
                           </Table.Td>
                           <Table.Td>{assemblyLabel}</Table.Td>
@@ -1389,9 +1480,9 @@ export function AssembliesEditor(props: {
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {factoryRows.map((row) => (
+                      {factoryRows.map((row, idx) => (
                         <Table.Tr
-                          key={row.label}
+                          key={`${row.label}-${row.stage || row.kind || idx}`}
                           style={
                             row.highlight
                               ? { backgroundColor: "#f6f7fb", fontWeight: 600 }
@@ -1557,6 +1648,15 @@ export function AssembliesEditor(props: {
           const variantLabels = resolveVariantLabels(
             defectAssemblyId ?? firstAssembly?.id ?? null
           );
+          const caps =
+            computeDefectCaps(
+              defectAssemblyId ?? firstAssembly?.id ?? null,
+              defectStage
+            ) || null;
+          const capsArr =
+            caps?.arr ||
+            Array.from({ length: variantLabels.length }, () => 0);
+          const capTotal = caps?.total ?? 0;
           const totalQty =
             defectBreakdown.reduce(
               (t, n) => t + (Number(n) || 0),
@@ -1637,49 +1737,62 @@ export function AssembliesEditor(props: {
             <Group justify="space-between" align="center">
               <Title order={6}>Quantity breakdown</Title>
               <Text size="sm" c="dimmed">
-                Total: {totalQty}
+                Total: {totalQty} {capTotal ? `· Max available: ${capTotal}` : ""}
               </Text>
             </Group>
             <Table withColumnBorders withTableBorder>
               <Table.Thead>
                 <Table.Tr>
                   {variantLabels.map((label: string, idx: number) => (
-                    <Table.Th ta="center" key={`defect-head-${idx}`} py={2}>
-                      {label || idx + 1}
-                    </Table.Th>
-                  ))}
-                </Table.Tr>
+                  <Table.Th ta="center" key={`defect-head-${idx}`} py={2}>
+                    {label || idx + 1}
+                  </Table.Th>
+                ))}
+              </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 <Table.Tr>
-                  {variantLabels.map((_label: string, idx: number) => (
-                    <Table.Td p={0} ta="center" key={`defect-cell-${idx}`}>
-                      <TextInput
-                        type="number"
-                        variant="unstyled"
-                        inputMode="numeric"
-                        value={
-                          Number.isFinite(defectBreakdown[idx])
-                            ? String(defectBreakdown[idx])
-                            : ""
-                        }
-                        onChange={(e) => {
-                          const val = Number(e.currentTarget.value);
-                          setDefectBreakdown((prev) => {
-                            const next = [...prev];
-                            next[idx] = Number.isFinite(val) ? val : 0;
-                            return next;
-                          });
-                        }}
-                        styles={{
-                          input: {
-                            textAlign: "center",
-                            padding: "8px 4px",
-                          },
-                        }}
-                      />
-                    </Table.Td>
-                  ))}
+                  {variantLabels.map((_label: string, idx: number) => {
+                    const cap = Number(capsArr[idx] ?? 0) || 0;
+                    const currentVal =
+                      Number.isFinite(defectBreakdown[idx])
+                        ? Number(defectBreakdown[idx])
+                        : 0;
+                    const displayVal = currentVal ? String(currentVal) : "";
+                    const disabled = cap <= 0;
+                    return (
+                      <Table.Td p={0} ta="center" key={`defect-cell-${idx}`}>
+                        <TextInput
+                          type="number"
+                          variant="unstyled"
+                          inputMode="numeric"
+                          disabled={disabled}
+                          value={displayVal}
+                          placeholder={cap ? undefined : ""}
+                          onChange={(e) => {
+                            if (disabled) return;
+                            const rawVal = Number(e.currentTarget.value);
+                            const val = Number.isFinite(rawVal)
+                              ? Math.max(0, Math.min(rawVal, cap))
+                              : 0;
+                            setDefectBreakdown((prev) => {
+                              const next = [...prev];
+                              next[idx] = val;
+                              return next;
+                            });
+                          }}
+                          styles={{
+                            input: {
+                              textAlign: "center",
+                              padding: "8px 4px",
+                              opacity: disabled ? 0.5 : 1,
+                              cursor: disabled ? "not-allowed" : "text",
+                            },
+                          }}
+                        />
+                      </Table.Td>
+                    );
+                  })}
                 </Table.Tr>
               </Table.Tbody>
             </Table>

@@ -4,6 +4,8 @@ import {
   usePersistIndexSearch,
 } from "~/hooks/useNavLocation";
 
+export { action } from "./purchase-orders.$id";
+
 export default function PurchaseOrderDetailIndexRoute() {
   useRegisterNavLocation({
     includeSearch: true,

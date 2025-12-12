@@ -10,7 +10,7 @@
 
 ## Backend Logic
 - [ ] Helper to compute usable/attempts per stage (normal + rework – finalized defects)
-- [ ] Defect create/update flow to set structured fields + friendly `activityType`
+- [ ] Defect create/update flow to set structured fields + friendly label (stage/action)
 - [ ] Auto ProductMovement when disposition transitions from `none` → `scrap/offSpec/sample`
 - [ ] Loader wiring to expose defect reasons/options
 

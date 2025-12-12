@@ -29,7 +29,12 @@ import {
   createDefectActivity,
   moveDefectDisposition,
 } from "~/modules/job/services/defectActivity.server";
-import { AssemblyStage, DefectDisposition } from "@prisma/client";
+import {
+  AssemblyStage,
+  DefectDisposition,
+  ActivityKind,
+  ActivityAction,
+} from "@prisma/client";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -55,6 +60,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
       },
       product: { select: { id: true, sku: true, name: true } },
       variantSet: true,
+      primaryCosting: {
+        select: { id: true, product: { select: { name: true, sku: true } } },
+      },
       costings: {
         include: {
           product: {
@@ -266,36 +274,25 @@ export async function loader({ params }: LoaderFunctionArgs) {
     let kind = (act?.kind as string | null) ?? null;
     let disp =
       (act?.defectDisposition as string | null) ?? (DefectDisposition.none as any);
-    const atype = String(act?.activityType || "").toUpperCase();
-    const mapStage = (suffix: string): string => {
-      if (suffix === "CUT") return "cut";
-      if (suffix === "MAKE") return "make";
-      if (suffix === "PACK") return "pack";
-      if (suffix === "QC") return "qc";
-      return "other";
-    };
     if (!stage) {
-      if (atype.startsWith("TRASH_")) stage = mapStage(atype.replace("TRASH_", ""));
-      else if (atype.startsWith("DEFECT_"))
-        stage = mapStage(atype.replace("DEFECT_", ""));
-      else if (atype.startsWith("REWORK_"))
-        stage = mapStage(atype.replace("REWORK_", ""));
-      else if (atype === "CUT" || atype === "MAKE" || atype === "PACK" || atype === "QC")
-        stage = mapStage(atype);
+      const name = String(act?.name || "").toLowerCase();
+      if (name.includes("cut")) stage = "cut";
+      else if (name.includes("make")) stage = "make";
+      else if (name.includes("pack")) stage = "pack";
+      else if (name.includes("qc")) stage = "qc";
+      else stage = "other";
     }
     if (!kind) {
-      if (atype.startsWith("TRASH_") || atype.startsWith("DEFECT_")) kind = "defect";
-      else if (atype.startsWith("REWORK_")) kind = "rework";
-      else kind = "normal";
+      kind = ActivityKind.normal;
     }
-    if (atype.startsWith("TRASH_") && disp === DefectDisposition.none) {
-      disp = DefectDisposition.scrap;
-    }
-    return { ...act, stage, kind, defectDisposition: disp };
+    const action =
+      act?.action ||
+      (stage && ["cut", "make", "pack"].includes(stage) ? ActivityAction.RECORDED : null);
+    return { ...act, stage, kind, defectDisposition: disp, action };
   };
+  activities = (activities || []).map(normalizeActivity);
   const activitiesByAssembly = new Map<number, any[]>();
-  for (const raw of activities || []) {
-    const act = normalizeActivity(raw);
+  for (const act of activities) {
     const aid = Number((act as any).assemblyId || 0);
     if (!aid) continue;
     const arr = activitiesByAssembly.get(aid) || [];
@@ -354,9 +351,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
     | undefined = undefined;
   const packActivityIds = activities
     .map((a: any) => {
-      const atype = String(a?.activityType || "").toLowerCase();
       const stage = String(a?.stage || "").toLowerCase();
-      if (atype.includes("pack") || stage === "pack") return Number(a?.id);
+      const name = String(a?.name || "").toLowerCase();
+      if (stage === "pack" || name.includes("pack")) return Number(a?.id);
       return null;
     })
     .filter((id: any) => Number.isFinite(id)) as number[];
@@ -437,6 +434,13 @@ export async function loader({ params }: LoaderFunctionArgs) {
     fallbackArr: number[],
     fallbackTotal: number
   ) => {
+    if (stage === "make") {
+      console.log("[factory debug] computeStageStats make: incoming", {
+        stageActsCount: (acts || []).filter((a) => a?.stage === stage).length,
+        fallbackArr,
+        fallbackTotal,
+      });
+    }
     const goodArr: number[] = [];
     const defectArr: number[] = [];
     let goodTotal = 0;
@@ -453,6 +457,19 @@ export async function loader({ params }: LoaderFunctionArgs) {
         usableTotal: fallbackTotal,
         attemptsTotal: fallbackTotal,
       };
+    }
+    if (stage === "make") {
+      console.log("[factory debug] computeStageStats make", {
+        stageActs: stageActs.map((a) => ({
+          id: a.id,
+          qty: a.quantity,
+          qtyBreakdown: a.qtyBreakdown,
+          stage: a.stage,
+          kind: a.kind,
+        })),
+        fallbackArr,
+        fallbackTotal,
+      });
     }
     const applyArr = (target: number[], source: number[], sign: number) => {
       const len = Math.max(target.length, source.length);
@@ -539,17 +556,31 @@ export async function loader({ params }: LoaderFunctionArgs) {
     // Pipeline usable counts: downstream stages cap upstream usable units
     const usableCutArr = cutStats.usableArr;
     const usableMakeArr = minArrays(makeStats.usableArr, usableCutArr);
-    const usablePackArr = minArrays(packStats.usableArr, usableMakeArr);
+    const hasPackData =
+      (packStats?.attemptsTotal || 0) > 0 ||
+      (Array.isArray(fallbackPackArr) &&
+        fallbackPackArr.some((n) => Number(n) || 0));
+    const usablePackArr = hasPackData
+      ? minArrays(packStats.usableArr, usableMakeArr)
+      : usableMakeArr;
     const usableCutTotal = cutStats.usableTotal;
     const usableMakeTotal = Math.min(makeStats.usableTotal, usableCutTotal);
-    const usablePackTotal = Math.min(packStats.usableTotal, usableMakeTotal);
+    const usablePackTotal = hasPackData
+      ? Math.min(packStats.usableTotal, usableMakeTotal)
+      : usableMakeTotal;
     // Display values are capped by downstream throughput to reflect "usable for assembly"
     const displayCutArr = minArrays(usableCutArr, usableMakeArr);
-    const displayMakeArr = minArrays(usableMakeArr, usablePackArr);
-    const displayPackArr = usablePackArr;
+    const displayMakeArr = hasPackData
+      ? minArrays(usableMakeArr, usablePackArr)
+      : usableMakeArr;
+    const displayPackArr = hasPackData
+      ? usablePackArr
+      : Array.from({ length: usableMakeArr.length }, () => 0);
     const displayCutTotal = Math.min(usableCutTotal, usableMakeTotal);
-    const displayMakeTotal = Math.min(usableMakeTotal, usablePackTotal);
-    const displayPackTotal = usablePackTotal;
+    const displayMakeTotal = hasPackData
+      ? Math.min(usableMakeTotal, usablePackTotal)
+      : usableMakeTotal;
+    const displayPackTotal = hasPackData ? usablePackTotal : 0;
     return {
       assemblyId: a.id,
       label: `Assembly ${a.id}`,
@@ -576,6 +607,16 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
 
   console.log(
+    "[factory debug] make stage summary",
+    quantityItems.map((q) => ({
+      assemblyId: q.assemblyId,
+      make: q.make,
+      totals: q.totals,
+      stageStats: q.stageStats?.make,
+    }))
+  );
+
+  console.log(
     "[assembly] quantityItems usable",
     JSON.stringify(
       {
@@ -593,6 +634,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
     )
   );
 
+  const primaryCostingIdByAssembly = Object.fromEntries(
+    assemblies.map((a: any) => [a.id, (a as any).primaryCostingId ?? null])
+  );
+
   return json({
     job,
     assemblies,
@@ -607,9 +652,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
       stockLocation: firstAssemblyJob?.stockLocation ?? null,
     },
     packActivityReferences: packActivityReferences || null,
-    activityConsumptionMap: activityConsumptionMap || null,
     assemblyTypes,
     defectReasons,
+    primaryCostingIdByAssembly,
   });
 }
 
@@ -625,6 +670,88 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const form = await request.formData();
   console.log("form", form);
   const intent = form.get("_intent");
+  const sumInto = (target: number[], source: number[], sign = 1) => {
+    const len = Math.max(target.length, source.length);
+    for (let i = 0; i < len; i++) {
+      const curr = Number(target[i] ?? 0) || 0;
+      const val = Number(source[i] ?? 0) || 0;
+      target[i] = curr + sign * val;
+    }
+  };
+  const normalizeBreakdown = (arr: number[], fallbackQty: number) => {
+    if (Array.isArray(arr) && arr.length) return arr.map((n) => Number(n) || 0);
+    if (Number.isFinite(fallbackQty) && fallbackQty > 0) return [fallbackQty];
+    return [];
+  };
+  const validateDefectBreakdown = async (opts: {
+    assemblyId: number;
+    stage: AssemblyStage;
+    breakdown: number[];
+    excludeActivityId?: number | null;
+  }) => {
+    if (!opts.breakdown.length) return null;
+    const acts = await prisma.assemblyActivity.findMany({
+      where: {
+        assemblyId: opts.assemblyId,
+        stage: { in: [AssemblyStage.cut, AssemblyStage.make, AssemblyStage.pack] },
+      },
+      select: { id: true, stage: true, kind: true, qtyBreakdown: true, quantity: true },
+    });
+    const cutArr: number[] = [];
+    const makeArr: number[] = [];
+    const packArr: number[] = [];
+    const cutDefArr: number[] = [];
+    const makeDefArr: number[] = [];
+    const apply = (target: number[], act: any, sign = 1) => {
+      const arr = normalizeBreakdown(
+        Array.isArray(act?.qtyBreakdown) ? (act.qtyBreakdown as number[]) : [],
+        Number(act?.quantity ?? 0) || 0
+      );
+      sumInto(target, arr, sign);
+    };
+    acts.forEach((act) => {
+      if (opts.excludeActivityId && act.id === opts.excludeActivityId) return;
+      if (act.stage === AssemblyStage.cut) {
+        if (act.kind === "defect") apply(cutDefArr, act, 1);
+        else apply(cutArr, act, 1);
+      }
+      if (act.stage === AssemblyStage.make) {
+        if (act.kind === "defect") apply(makeDefArr, act, 1);
+        else apply(makeArr, act, 1);
+      }
+      if (act.stage === AssemblyStage.pack) {
+        apply(packArr, act, 1);
+      }
+    });
+    const availableCut: number[] = [];
+    const availableMake: number[] = [];
+    const len = Math.max(cutArr.length, cutDefArr.length, makeArr.length, makeDefArr.length, packArr.length, opts.breakdown.length);
+    for (let i = 0; i < len; i++) {
+      const cut = Number(cutArr[i] ?? 0) || 0;
+      const cutDef = Number(cutDefArr[i] ?? 0) || 0;
+      const make = Number(makeArr[i] ?? 0) || 0;
+      const makeDef = Number(makeDefArr[i] ?? 0) || 0;
+      const pack = Number(packArr[i] ?? 0) || 0;
+      availableCut[i] = cut - cutDef - make;
+      availableMake[i] = make - makeDef - pack;
+    }
+    const errs: string[] = [];
+    if (opts.stage === AssemblyStage.cut) {
+      opts.breakdown.forEach((val, idx) => {
+        if (val > Math.max(0, availableCut[idx] ?? 0)) {
+          errs.push(`Cut defect at variant ${idx + 1} exceeds available cut (${Math.max(0, availableCut[idx] ?? 0)})`);
+        }
+      });
+    }
+    if (opts.stage === AssemblyStage.make) {
+      opts.breakdown.forEach((val, idx) => {
+        if (val > Math.max(0, availableMake[idx] ?? 0)) {
+          errs.push(`Make defect at variant ${idx + 1} exceeds available make (${Math.max(0, availableMake[idx] ?? 0)})`);
+        }
+      });
+    }
+    return errs.length ? errs.join("; ") : null;
+  };
   const parseStatusMap = (
     rawValue: FormDataEntryValue | null
   ): Map<number, string> => {
@@ -815,9 +942,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const orderedStr = String(form.get("orderedArr") || "{}");
     const qpuStr = String(form.get("qpu") || "{}");
     const activityStr = String(form.get("activity") || "{}");
+    const primaryStr = String(form.get("primaryCostingIds") || "{}");
     let orderedByAssembly: Record<string, number[]> = {};
     let qpu: Record<string, number> = {};
     let activity: Record<string, string> = {};
+    let primaryMap: Record<string, number> = {};
     try {
       const obj = JSON.parse(orderedStr);
       if (obj && typeof obj === "object") orderedByAssembly = obj;
@@ -829,6 +958,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     try {
       const obj = JSON.parse(activityStr);
       if (obj && typeof obj === "object") activity = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(primaryStr);
+      if (obj && typeof obj === "object") primaryMap = obj;
     } catch {}
     // Apply ordered breakdown per assembly
     for (const [aid, arr] of Object.entries(orderedByAssembly)) {
@@ -861,6 +994,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       await prisma.costing.update({
         where: { id: cid },
         data: { activityUsed: val },
+      });
+    }
+    // Apply primary costing updates
+    const primaryEntries = Object.entries(primaryMap).filter(
+      ([aid, cid]) => Number.isFinite(Number(aid)) && Number.isFinite(Number(cid))
+    );
+    for (const [aid, cid] of primaryEntries) {
+      await prisma.assembly.update({
+        where: { id: Number(aid) },
+        data: { primaryCostingId: Number(cid) },
       });
     }
     // Propagate edits across shared product costings in the selected assemblies
@@ -1207,6 +1350,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       defectReasonRaw != null && defectReasonRaw !== ""
         ? Number(defectReasonRaw)
         : null;
+    const defectReasonValid =
+      defectReasonId != null &&
+      Number.isFinite(defectReasonId) &&
+      defectReasonId > 0;
     const notesRaw = form.get("notes");
     const dispositionRaw = form.get("defectDisposition");
     const dispositionVal =
@@ -1239,31 +1386,60 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const activityDate = activityDateStr
       ? new Date(activityDateStr)
       : new Date();
+    const qtyTotal = qtyArr.reduce((t, n) => t + (Number(n) || 0), 0);
+    const existingForValidation = await prisma.assemblyActivity.findUnique({
+      where: { id: activityId },
+      select: { assemblyId: true, stage: true, defectDisposition: true },
+    });
+    const validationBreakdown = normalizeBreakdown(qtyArr, qtyTotal);
+    if (existingForValidation?.assemblyId) {
+      const validationError = await validateDefectBreakdown({
+        assemblyId: existingForValidation.assemblyId,
+        stage: existingForValidation.stage as AssemblyStage,
+        breakdown: validationBreakdown,
+        excludeActivityId: activityId,
+      });
+      if (validationError) {
+        return json({ error: validationError }, { status: 400 });
+      }
+    }
     let updatedDisposition: DefectDisposition | null = null;
     let previousDisposition: DefectDisposition | null = null;
     await prisma.$transaction(async (tx) => {
       const existingActivity = await tx.assemblyActivity.findUnique({
         where: { id: activityId },
-        select: { defectDisposition: true },
+        select: {
+          defectDisposition: true,
+          stage: true,
+          assemblyId: true,
+          action: true,
+        },
       });
       previousDisposition = (existingActivity?.defectDisposition ??
         null) as DefectDisposition | null;
+      const stageLower = String(existingActivity?.stage || "").toLowerCase();
+      const isRecordedStage =
+        stageLower === "cut" || stageLower === "make" || stageLower === "pack";
+      const updateAction =
+        isRecordedStage
+          ? ActivityAction.RECORDED
+          : existingActivity?.action ?? null;
       const updated = await tx.assemblyActivity.update({
         where: { id: activityId },
         data: {
           qtyBreakdown: qtyArr as any,
-          quantity: qtyArr.reduce((t, n) => t + (Number(n) || 0), 0),
+          quantity: qtyTotal,
           activityDate,
           defectDisposition: newDisposition ?? undefined,
-          defectReasonId: Number.isFinite(defectReasonId as any)
+          defectReasonId: defectReasonValid
             ? (defectReasonId as number)
-            : undefined,
+            : null,
           notes:
             typeof notesRaw === "string" ? notesRaw || null : undefined,
+          action: updateAction ?? undefined,
         },
         select: {
           id: true,
-          activityType: true,
           assemblyId: true,
           jobId: true,
           groupKey: true,
@@ -1286,7 +1462,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           where: { id: { in: existingIds } },
         });
       }
-      const normalizedType = String(updated.activityType || "").toLowerCase();
       const targetAssemblyId = updated.assemblyId ?? assemblyId;
       const targetJobId = updated.jobId ?? jobId;
       if (normalizedType.includes("cut")) {
@@ -1418,7 +1593,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // ignore bad breakdown
       }
     }
-    const defectReasonId = Number(form.get("defectReasonId"));
+    const defectReasonVal = Number(form.get("defectReasonId"));
+    const defectReasonId =
+      Number.isFinite(defectReasonVal) && defectReasonVal > 0
+        ? defectReasonVal
+        : null;
     const dispositionRaw = String(form.get("defectDisposition") || "review");
     const disposition = (
       ["review", "scrap", "offSpec", "sample", "none"] as DefectDisposition[]
@@ -1426,7 +1605,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       ? (dispositionRaw as DefectDisposition)
       : DefectDisposition.review;
     const notes = form.get("notes");
+    const breakdownForValidation = normalizeBreakdown(qtyBreakdown, qty);
     if (Number.isFinite(qty) && qty > 0) {
+      const validationError = await validateDefectBreakdown({
+        assemblyId: targetAssemblyId,
+        stage: stageEnum,
+        breakdown: breakdownForValidation,
+      });
+      if (validationError) {
+        return json({ error: validationError }, { status: 400 });
+      }
       await createDefectActivity({
         assemblyId: targetAssemblyId,
         jobId,
@@ -1434,9 +1622,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         stage: stageEnum,
         quantity: qty,
         qtyBreakdown,
-        defectReasonId: Number.isFinite(defectReasonId)
-          ? defectReasonId
-          : undefined,
+        defectReasonId: defectReasonId ?? undefined,
         defectDisposition: disposition,
         notes: typeof notes === "string" ? notes : undefined,
       });
@@ -1447,9 +1633,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const orderedStr = String(form.get("orderedArr") || "[]");
     const qpuStr = String(form.get("qpu") || "{}");
     const activityStr = String(form.get("activity") || "{}");
+    const primaryStr = String(form.get("primaryCostingIds") || "{}");
     let ordered: number[] = [];
     let qpu: Record<string, number> = {};
     let activity: Record<string, string> = {};
+    let primaryMap: Record<string, number> = {};
     try {
       const arr = JSON.parse(orderedStr);
       if (Array.isArray(arr))
@@ -1464,6 +1652,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     try {
       const obj = JSON.parse(activityStr);
       if (obj && typeof obj === "object") activity = obj;
+    } catch {}
+    try {
+      const obj = JSON.parse(primaryStr);
+      if (obj && typeof obj === "object") primaryMap = obj;
     } catch {}
     // Apply ordered breakdown update
     await prisma.assembly.update({
@@ -1495,6 +1687,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
       await prisma.costing.update({
         where: { id: cid },
         data: { activityUsed: val },
+      });
+    }
+    // Apply primary costing if provided
+    const primaryVal = primaryMap?.[String(assemblyId)];
+    if (Number.isFinite(Number(primaryVal))) {
+      await prisma.assembly.update({
+        where: { id: assemblyId },
+        data: { primaryCostingId: Number(primaryVal) },
       });
     }
     await applyStatusUpdates(parseStatusMap(form.get("statuses")));
@@ -1591,6 +1791,7 @@ export default function JobAssemblyRoute() {
           defectReasons={data.defectReasons as any}
           renderStatusBar={renderGroupStatusBar}
           packContext={data.packContext as any}
+          primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
         />
       </Stack>
     );
@@ -1662,6 +1863,7 @@ export default function JobAssemblyRoute() {
         defectReasons={data.defectReasons as any}
         renderStatusBar={renderSingleStatusBar}
         packContext={data.packContext as any}
+        primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
       />
     </Stack>
   );

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import {
   ActivityKind,
+  ActivityAction,
   AssemblyStage,
   DefectDisposition,
 } from "@prisma/client";
@@ -59,9 +60,9 @@ export async function createCutActivity(options: {
         assemblyId,
         jobId,
         name: "Cut",
-        activityType: "CUT",
         stage: AssemblyStage.cut,
         kind: ActivityKind.normal,
+        action: ActivityAction.RECORDED,
         activityDate,
         qtyBreakdown: qtyBreakdown as any,
         quantity: totalCut,
@@ -311,9 +312,9 @@ export async function createMakeActivity(options: {
         assemblyId,
         jobId,
         name: "Make",
-        activityType: "MAKE",
         stage: AssemblyStage.make,
         kind: ActivityKind.normal,
+        action: ActivityAction.RECORDED,
         activityDate,
         qtyBreakdown: qtyBreakdown as any,
         quantity: totalMake,

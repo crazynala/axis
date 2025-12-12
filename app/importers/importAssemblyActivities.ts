@@ -9,6 +9,8 @@ import {
 } from "./utils";
 import {
   ActivityKind,
+  ActivityAction,
+  ExternalStepType,
   AssemblyStage,
   DefectDisposition,
 } from "@prisma/client";
@@ -19,8 +21,17 @@ function deriveStructuredActivity(
   stage: AssemblyStage | null;
   kind: ActivityKind | null;
   defectDisposition: DefectDisposition | null;
+  action: ActivityAction | null;
+  externalStepType: ExternalStepType | null;
 } {
-  if (!rawType) return { stage: null, kind: null, defectDisposition: null };
+  if (!rawType)
+    return {
+      stage: null,
+      kind: null,
+      defectDisposition: null,
+      action: null,
+      externalStepType: null,
+    };
   const upper = rawType.trim().toUpperCase();
   const mapStage = (suffix: string): AssemblyStage => {
     if (suffix === "CUT") return AssemblyStage.cut;
@@ -36,6 +47,8 @@ function deriveStructuredActivity(
       stage: mapStage(suffix),
       kind: ActivityKind.defect,
       defectDisposition: DefectDisposition.scrap,
+      action: ActivityAction.RECORDED,
+      externalStepType: null,
     };
   }
   if (upper === "CUT" || upper === "MAKE" || upper === "PACK" || upper === "QC") {
@@ -43,9 +56,17 @@ function deriveStructuredActivity(
       stage: mapStage(upper),
       kind: ActivityKind.normal,
       defectDisposition: null,
+      action: ActivityAction.RECORDED,
+      externalStepType: null,
     };
   }
-  return { stage: null, kind: null, defectDisposition: null };
+  return {
+    stage: null,
+    kind: null,
+    defectDisposition: null,
+    action: null,
+    externalStepType: null,
+  };
 }
 
 export async function importAssemblyActivities(
@@ -78,26 +99,27 @@ export async function importAssemblyActivities(
       (t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t),
       0
     );
-    const data: any = {
-      id,
-      assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
-      jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
-      name: (pick(r, ["Name"]) ?? "").toString().trim() || null,
-      description: (pick(r, ["Description"]) ?? "").toString().trim() || null,
-      activityType: rawActivityType,
-      activityDate: asDate(
-        pick(r, ["ActivityDate", "Date", "Activity Date"])
-      ) as Date | null,
+    const assemblyIdVal = asNum(pick(r, ["a_AssemblyID"])) as number | null;
+    const jobIdVal = asNum(pick(r, ["a_JobNo"])) as number | null;
+    const productIdVal = asNum(
+      pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
+    ) as number | null;
+    const locationInVal = asNum(
+      pick(r, ["a_LocationID_In", "a_LocationID|In"])
+    ) as number | null;
+    const locationOutVal = asNum(
+      pick(r, ["a_LocationID_Out", "a_LocationID|Out"])
+    ) as number | null;
+
+  const baseData: any = {
+    name: (pick(r, ["Name"]) ?? "").toString().trim() || null,
+    description: (pick(r, ["Description"]) ?? "").toString().trim() || null,
+    action: structured.action,
+    externalStepType: structured.externalStepType,
+    activityDate: asDate(
+      pick(r, ["ActivityDate", "Date", "Activity Date"])
+    ) as Date | null,
       notes: (pick(r, ["Notes"]) ?? "").toString().trim() || null,
-      productId: asNum(
-        pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
-      ) as number | null,
-      locationInId: asNum(pick(r, ["a_LocationID_In", "a_LocationID|In"])) as
-        | number
-        | null,
-      locationOutId: asNum(
-        pick(r, ["a_LocationID_Out", "a_LocationID|Out"])
-      ) as number | null,
       qtyBreakdown: qtyBreakdown as any,
       quantity:
         qtySum > 0
@@ -113,13 +135,46 @@ export async function importAssemblyActivities(
       kind: structured.kind,
       defectDisposition: structured.defectDisposition,
     };
+
+    const relationConnects: any = {};
+    if (assemblyIdVal != null)
+      relationConnects.assembly = { connect: { id: assemblyIdVal } };
+    if (jobIdVal != null) relationConnects.job = { connect: { id: jobIdVal } };
+    if (productIdVal != null)
+      relationConnects.productId = productIdVal;
+    if (locationInVal != null)
+      relationConnects.locationIn = { connect: { id: locationInVal } };
+    if (locationOutVal != null)
+      relationConnects.locationOut = { connect: { id: locationOutVal } };
+
+    const data: any = { ...baseData, ...relationConnects };
     try {
-      await prisma.assemblyActivity.upsert({
+      const exists = await prisma.assemblyActivity.findUnique({
         where: { id },
-        create: data,
-        update: data,
+        select: { id: true },
       });
-      created++;
+      const dataForUpdate: any = { ...data };
+      delete dataForUpdate.id;
+      if (exists) {
+        await prisma.assemblyActivity.update({
+          where: { id },
+          data: dataForUpdate,
+        });
+        updated++;
+      } else {
+        const createdRow = await prisma.assemblyActivity.create({
+          data,
+        });
+        created++;
+        if (createdRow.id !== id) {
+          console.warn(
+            "[import] assemblyActivity created with new id",
+            id,
+            "->",
+            createdRow.id
+          );
+        }
+      }
     } catch (e: any) {
       errors.push({
         index: i,
