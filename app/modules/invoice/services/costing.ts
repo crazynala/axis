@@ -52,6 +52,7 @@ export async function getCostingsPendingInvoicing(
 
   const results: PendingCostingItem[] = [];
   for (const costing of costings) {
+    if ((costing as any).flagIsDisabled) continue;
     if (costing.flagIsInvoiceableManual === false) continue;
     const assembly = costing.assembly?.id
       ? assemblyById.get(costing.assembly.id) || costing.assembly

@@ -109,6 +109,41 @@ enum ValueListType {
     JobType
     Currency
     ShippingMethod
+    AssemblyType
+    DefectReason
+}
+
+enum AssemblyStage {
+    order
+    cut
+    make
+    pack
+    qc
+    other
+}
+
+enum ActivityKind {
+    normal   // good units produced/moved forward
+    defect   // units failed QC for this assembly
+    rework   // repaired/restored units for this assembly
+}
+
+enum DefectDisposition {
+    none    // internal default
+    review  // sent to QC review
+    scrap   // physically scrapped / trashed
+    offSpec // kept as off-spec stock / donation / staff / testing
+    sample  // kept as a sample under this assembly
+}
+
+enum LocationType {
+    warehouse
+    customer_depot
+    wip
+    sample
+    scrap
+    off_spec
+    review
 }
 
 enum BoxState {
@@ -167,7 +202,9 @@ model Product {
     stockTrackingEnabled  Boolean               @default(false)
     batchTrackingEnabled  Boolean               @default(false)
     isActive              Boolean?
+    flagIsDisabled        Boolean               @default(false)
     notes                 String?
+    whiteboard            String?
     // Unaccented shadow columns for accent-insensitive search
     nameUnaccented        String?
     descriptionUnaccented String?
@@ -324,6 +361,7 @@ model ValueList {
     // Back-relations
     invoiceLinesTaxCode InvoiceLine[] @relation("TaxCode")
     invoicesTaxCode     Invoice[]     @relation("Inv_TaxCode")
+    assemblyDefectReasons AssemblyActivity[] @relation("AssemblyActivity_defectReason")
     // Back-relations: Purchase Orders
     // Removed: PurchaseOrderLine taxCode relation; POL now stores taxCode as string
     // Metadata
@@ -338,6 +376,7 @@ model Assembly {
     name                String?
     status              String?
     quantity            Decimal?            @db.Decimal(14, 4)
+    assemblyType        String?             @default("Prod")
     // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
     qtyOrderedBreakdown Int[]               @default([])
     notes               String?
@@ -397,6 +436,7 @@ model Costing {
     flagDefinedInProduct    Boolean?
     flagIsBillableManual    Boolean?
     flagIsInvoiceableManual Boolean?
+    flagIsDisabled          Boolean?
     flagStockTracked        Boolean?
     assembly                Assembly?       @relation(fields: [assemblyId], references: [id])
     product                 Product?        @relation(fields: [productId], references: [id])
@@ -432,7 +472,7 @@ model ProductLine {
 model Location {
     id                    Int                @id @default(autoincrement())
     name                  String?
-    type                  String?
+    type                  LocationType?
     is_active             Boolean?
     notes                 String?
     batches               Batch[]
@@ -630,6 +670,10 @@ model AssemblyActivity {
     groupKey                 String?
     // Removed: deprecated time/status fields per new spec
     notes                    String?
+    stage                    AssemblyStage?
+    kind                     ActivityKind?
+    defectReasonId           Int?
+    defectDisposition        DefectDisposition? @default(none)
     productId                Int?
     locationInId             Int?
     locationOutId            Int?
@@ -641,6 +685,7 @@ model AssemblyActivity {
     qtyBreakdown             Int[]     @default([])
     assembly                 Assembly? @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
     job                      Job?      @relation(fields: [jobId], references: [id])
+    defectReason             ValueList? @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
     // Metadata
     createdBy                String?
     modifiedBy               String?

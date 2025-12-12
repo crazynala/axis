@@ -126,3 +126,32 @@ export async function processRowsInBatches<T>(
     console.log(`[import] ${label} ${end}/${items.length}`);
   }
 }
+
+// Reset a serial/identity sequence to the next value after the current max(id).
+export async function resetSequence(
+  prisma: { $executeRawUnsafe: (query: string) => Promise<unknown> },
+  table: string,
+  column = "id"
+) {
+  if (!table) return;
+  const quotedTable = `"${table.replace(/"/g, '""')}"`;
+  const quotedColumn = `"${column.replace(/"/g, '""')}"`;
+  const sql = `
+    SELECT setval(
+      pg_get_serial_sequence('${quotedTable}', '${column.replace(/'/g, "''")}'),
+      (SELECT COALESCE(MAX(${quotedColumn}), 0) + 1 FROM ${quotedTable}),
+      false
+    )
+  `;
+  await prisma.$executeRawUnsafe(sql);
+}
+
+export async function resetSequences(
+  prisma: { $executeRawUnsafe: (query: string) => Promise<unknown> },
+  tables: string[],
+  column = "id"
+) {
+  for (const table of tables) {
+    await resetSequence(prisma, table, column);
+  }
+}

@@ -25,6 +25,11 @@ import { syncJobStateFromAssemblies } from "~/modules/job/services/JobStateServi
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { useRegisterNavLocation } from "~/hooks/useNavLocation";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
+import {
+  createDefectActivity,
+  moveDefectDisposition,
+} from "~/modules/job/services/defectActivity.server";
+import { AssemblyStage, DefectDisposition } from "@prisma/client";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -142,31 +147,15 @@ export async function loader({ params }: LoaderFunctionArgs) {
       if (Array.isArray(vars) && vars.length) prodVariantMap.set(p.id, vars);
     }
   }
-
-  const quantityItems = assemblies.map((a: any) => {
-    let labels = (a.variantSet?.variants || []) as string[];
-    if ((!labels || labels.length === 0) && (a as any).productId) {
-      const fb = prodVariantMap.get(Number((a as any).productId));
-      if (fb && fb.length) labels = fb as string[];
-    }
-    return {
-      assemblyId: a.id,
-      label: `Assembly ${a.id}`,
-      variants: {
-        labels,
-        numVariants:
-          Number((a as any).c_numVariants || labels.length || 0) || 0,
-      },
-      ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
-      cut: ((a as any).c_qtyCut_Breakdown || []) as number[],
-      make: ((a as any).c_qtyMake_Breakdown || []) as number[],
-      pack: ((a as any).c_qtyPack_Breakdown || []) as number[],
-      totals: {
-        cut: Number((a as any).c_qtyCut || 0),
-        make: Number((a as any).c_qtyMake || 0),
-        pack: Number((a as any).c_qtyPack || 0),
-      },
-    };
+  const assemblyTypes = await prisma.valueList.findMany({
+    where: { type: "AssemblyType" },
+    select: { label: true },
+    orderBy: { label: "asc" },
+  });
+  const defectReasons = await prisma.valueList.findMany({
+    where: { type: "DefectReason" },
+    select: { id: true, label: true },
+    orderBy: { label: "asc" },
   });
 
   // Minimal job info
@@ -272,6 +261,47 @@ export async function loader({ params }: LoaderFunctionArgs) {
       orderBy: [{ activityDate: "desc" }, { id: "desc" }],
     });
   }
+  const normalizeActivity = (act: any) => {
+    let stage = (act?.stage as string | null) ?? null;
+    let kind = (act?.kind as string | null) ?? null;
+    let disp =
+      (act?.defectDisposition as string | null) ?? (DefectDisposition.none as any);
+    const atype = String(act?.activityType || "").toUpperCase();
+    const mapStage = (suffix: string): string => {
+      if (suffix === "CUT") return "cut";
+      if (suffix === "MAKE") return "make";
+      if (suffix === "PACK") return "pack";
+      if (suffix === "QC") return "qc";
+      return "other";
+    };
+    if (!stage) {
+      if (atype.startsWith("TRASH_")) stage = mapStage(atype.replace("TRASH_", ""));
+      else if (atype.startsWith("DEFECT_"))
+        stage = mapStage(atype.replace("DEFECT_", ""));
+      else if (atype.startsWith("REWORK_"))
+        stage = mapStage(atype.replace("REWORK_", ""));
+      else if (atype === "CUT" || atype === "MAKE" || atype === "PACK" || atype === "QC")
+        stage = mapStage(atype);
+    }
+    if (!kind) {
+      if (atype.startsWith("TRASH_") || atype.startsWith("DEFECT_")) kind = "defect";
+      else if (atype.startsWith("REWORK_")) kind = "rework";
+      else kind = "normal";
+    }
+    if (atype.startsWith("TRASH_") && disp === DefectDisposition.none) {
+      disp = DefectDisposition.scrap;
+    }
+    return { ...act, stage, kind, defectDisposition: disp };
+  };
+  const activitiesByAssembly = new Map<number, any[]>();
+  for (const raw of activities || []) {
+    const act = normalizeActivity(raw);
+    const aid = Number((act as any).assemblyId || 0);
+    if (!aid) continue;
+    const arr = activitiesByAssembly.get(aid) || [];
+    arr.push(act);
+    activitiesByAssembly.set(aid, arr);
+  }
   let activityConsumptionMap:
     | Record<number, Record<number, Record<number, number>>>
     | undefined = undefined;
@@ -279,12 +309,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const map: Record<number, Record<number, Record<number, number>>> = {};
     for (const aid of assemblyIds) {
       const consRows = (await prismaBase.$queryRaw`
-        SELECT pm."assemblyActivityId" AS aid, pml."costingId" AS cid, pml."batchId" AS bid,
-               COALESCE(SUM(ABS(pml.quantity)),0)::float AS qty
-        FROM "ProductMovementLine" pml
-        JOIN "ProductMovement" pm ON pm.id = pml."movementId"
+        SELECT pm."assemblyActivityId" AS aid,
+               COALESCE(pml."costingId", pm."costingId") AS cid,
+               COALESCE(pml."batchId", 0) AS bid,
+               COALESCE(SUM(ABS(pml.quantity)), ABS(pm.quantity), 0)::float AS qty
+        FROM "ProductMovement" pm
+        LEFT JOIN "ProductMovementLine" pml ON pm.id = pml."movementId"
         WHERE pm."assemblyId" = ${aid}
-        GROUP BY pm."assemblyActivityId", pml."costingId", pml."batchId"
+        GROUP BY pm.id, pm."assemblyActivityId", cid, bid
       `) as Array<{
         aid: number | null;
         cid: number | null;
@@ -294,8 +326,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
       for (const r of consRows) {
         const activityId = r.aid ?? 0;
         const cid = r.cid ?? 0;
-        const bid = r.bid ?? 0;
-        if (!activityId || !cid || !bid) continue;
+        const bid = r.bid ?? 0; // bid=0 means no batch recorded
+        if (!activityId || !cid) continue;
         map[activityId] = map[activityId] || {};
         map[activityId][cid] = map[activityId][cid] || {};
         map[activityId][cid][bid] = Number(r.qty || 0);
@@ -303,6 +335,74 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }
     if (Object.keys(map).length) {
       activityConsumptionMap = map;
+    }
+  }
+
+  // Legacy pack activities tied to shipment lines should surface references (read-only)
+  let packActivityReferences:
+    | Record<
+        number,
+        {
+          kind: "shipment";
+          shipmentLineId: number;
+          shipmentId: number | null;
+          trackingNo?: string | null;
+          packingSlipCode?: string | null;
+          shipmentType?: string | null;
+        }
+      >
+    | undefined = undefined;
+  const packActivityIds = activities
+    .map((a: any) => {
+      const atype = String(a?.activityType || "").toLowerCase();
+      const stage = String(a?.stage || "").toLowerCase();
+      if (atype.includes("pack") || stage === "pack") return Number(a?.id);
+      return null;
+    })
+    .filter((id: any) => Number.isFinite(id)) as number[];
+  if (packActivityIds.length) {
+    const movements = await prisma.productMovement.findMany({
+      where: { assemblyActivityId: { in: packActivityIds } },
+      select: { assemblyActivityId: true, shippingLineId: true },
+    });
+    const shipmentLineIds = movements
+      .map((m) => Number(m.shippingLineId))
+      .filter((id) => Number.isFinite(id));
+    const shipmentLines = shipmentLineIds.length
+      ? await prisma.shipmentLine.findMany({
+          where: { id: { in: shipmentLineIds } },
+          select: {
+            id: true,
+            shipmentId: true,
+            shipment: {
+              select: {
+                id: true,
+                trackingNo: true,
+                packingSlipCode: true,
+                type: true,
+              },
+            },
+          },
+        })
+      : [];
+    const lineById = new Map(
+      shipmentLines.map((line) => [line.id, line] as const)
+    );
+    for (const mv of movements) {
+      const aid = mv.assemblyActivityId ?? null;
+      const lineId = Number(mv.shippingLineId);
+      if (!aid || !Number.isFinite(lineId)) continue;
+      const line = lineById.get(lineId);
+      if (!line) continue;
+      packActivityReferences = packActivityReferences || {};
+      packActivityReferences[aid] = {
+        kind: "shipment",
+        shipmentLineId: line.id,
+        shipmentId: line.shipmentId ?? null,
+        trackingNo: line.shipment?.trackingNo ?? null,
+        packingSlipCode: line.shipment?.packingSlipCode ?? null,
+        shipmentType: line.shipment?.type ?? null,
+      };
     }
   }
 
@@ -318,6 +418,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     products = await prismaBase.product.findMany({
       select: { id: true, sku: true, name: true },
       orderBy: { id: "asc" },
+      where: { flagIsDisabled: false },
     });
     if (!assembly.variantSetId && assembly.productId) {
       const p = await prisma.product.findUnique({
@@ -330,18 +431,185 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }
   }
 
+  const computeStageStats = (
+    acts: any[] | undefined,
+    stage: "cut" | "make" | "pack",
+    fallbackArr: number[],
+    fallbackTotal: number
+  ) => {
+    const goodArr: number[] = [];
+    const defectArr: number[] = [];
+    let goodTotal = 0;
+    let defectTotal = 0;
+    const stageActs = (acts || []).filter((a) => a?.stage === stage);
+    if (!stageActs.length) {
+      return {
+        goodArr: fallbackArr,
+        defectArr: [],
+        usableArr: fallbackArr,
+        attemptsArr: fallbackArr,
+        goodTotal: fallbackTotal,
+        defectTotal: 0,
+        usableTotal: fallbackTotal,
+        attemptsTotal: fallbackTotal,
+      };
+    }
+    const applyArr = (target: number[], source: number[], sign: number) => {
+      const len = Math.max(target.length, source.length);
+      for (let i = 0; i < len; i++) {
+        const curr = Number(target[i] ?? 0) || 0;
+        const val = Number(source[i] ?? 0) || 0;
+        target[i] = curr + sign * val;
+      }
+    };
+    for (const act of stageActs) {
+      const qty = Number(act.quantity ?? 0) || 0;
+      const breakdown =
+        Array.isArray(act.qtyBreakdown) && act.qtyBreakdown.length
+          ? (act.qtyBreakdown as number[])
+          : qty
+          ? [qty]
+          : [];
+      if (act.kind === "defect") {
+        defectTotal += qty;
+        applyArr(defectArr, breakdown, 1);
+      } else {
+        goodTotal += qty;
+        applyArr(goodArr, breakdown, 1);
+      }
+    }
+    const usableArr: number[] = [];
+    const attemptsArr: number[] = [];
+    const len = Math.max(goodArr.length, defectArr.length);
+    for (let i = 0; i < len; i++) {
+      const good = Number(goodArr[i] ?? 0) || 0;
+      const bad = Number(defectArr[i] ?? 0) || 0;
+      usableArr[i] = good - bad;
+      attemptsArr[i] = good; // attempts reflect good work logged; defects shown separately
+    }
+    return {
+      goodArr,
+      defectArr,
+      usableArr,
+      attemptsArr,
+      goodTotal,
+      defectTotal,
+      usableTotal: goodTotal - defectTotal,
+      attemptsTotal: goodTotal,
+    };
+  };
+
+  const minArrays = (a: number[], b: number[]) => {
+    const len = Math.max(a.length, b.length);
+    const out: number[] = [];
+    for (let i = 0; i < len; i++) {
+      out[i] = Math.min(Number(a[i] ?? 0) || 0, Number(b[i] ?? 0) || 0);
+    }
+    return out;
+  };
+
+  const quantityItems = assemblies.map((a: any) => {
+    let labels = (a.variantSet?.variants || []) as string[];
+    if ((!labels || labels.length === 0) && (a as any).productId) {
+      const fb = prodVariantMap.get(Number((a as any).productId));
+      if (fb && fb.length) labels = fb as string[];
+    }
+    const acts = activitiesByAssembly.get(a.id) || [];
+    const fallbackCutArr = ((a as any).c_qtyCut_Breakdown || []) as number[];
+    const fallbackMakeArr = ((a as any).c_qtyMake_Breakdown || []) as number[];
+    const fallbackPackArr = ((a as any).c_qtyPack_Breakdown || []) as number[];
+    const cutStats = computeStageStats(
+      acts,
+      "cut",
+      fallbackCutArr,
+      Number((a as any).c_qtyCut || 0) || 0
+    );
+    const makeStats = computeStageStats(
+      acts,
+      "make",
+      fallbackMakeArr,
+      Number((a as any).c_qtyMake || 0) || 0
+    );
+    const packStats = computeStageStats(
+      acts,
+      "pack",
+      fallbackPackArr,
+      Number((a as any).c_qtyPack || 0) || 0
+    );
+    // Pipeline usable counts: downstream stages cap upstream usable units
+    const usableCutArr = cutStats.usableArr;
+    const usableMakeArr = minArrays(makeStats.usableArr, usableCutArr);
+    const usablePackArr = minArrays(packStats.usableArr, usableMakeArr);
+    const usableCutTotal = cutStats.usableTotal;
+    const usableMakeTotal = Math.min(makeStats.usableTotal, usableCutTotal);
+    const usablePackTotal = Math.min(packStats.usableTotal, usableMakeTotal);
+    // Display values are capped by downstream throughput to reflect "usable for assembly"
+    const displayCutArr = minArrays(usableCutArr, usableMakeArr);
+    const displayMakeArr = minArrays(usableMakeArr, usablePackArr);
+    const displayPackArr = usablePackArr;
+    const displayCutTotal = Math.min(usableCutTotal, usableMakeTotal);
+    const displayMakeTotal = Math.min(usableMakeTotal, usablePackTotal);
+    const displayPackTotal = usablePackTotal;
+    return {
+      assemblyId: a.id,
+      label: `Assembly ${a.id}`,
+      variants: {
+        labels,
+        numVariants:
+          Number((a as any).c_numVariants || labels.length || 0) || 0,
+      },
+      ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
+      cut: displayCutArr,
+      make: displayMakeArr,
+      pack: displayPackArr,
+      totals: {
+        cut: displayCutTotal,
+        make: displayMakeTotal,
+        pack: displayPackTotal,
+      },
+      stageStats: {
+        cut: cutStats,
+        make: makeStats,
+        pack: packStats,
+      },
+    };
+  });
+
+  console.log(
+    "[assembly] quantityItems usable",
+    JSON.stringify(
+      {
+        ids: assemblies.map((a: any) => a.id),
+        items: quantityItems.map((q) => ({
+          assemblyId: q.assemblyId,
+          cut: q.cut,
+          make: q.make,
+          pack: q.pack,
+          totals: q.totals,
+        })),
+      },
+      null,
+      2
+    )
+  );
+
   return json({
     job,
     assemblies,
     quantityItems,
     costingStats,
     activities,
+    activityConsumptionMap,
     products,
     productVariantSet,
     packContext: {
       openBoxes: packBoxes,
       stockLocation: firstAssemblyJob?.stockLocation ?? null,
     },
+    packActivityReferences: packActivityReferences || null,
+    activityConsumptionMap: activityConsumptionMap || null,
+    assemblyTypes,
+    defectReasons,
   });
 }
 
@@ -655,6 +923,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       data.name = ((form.get("name") as string) || "").trim() || null;
     }
     let statusChanged = false;
+    if (form.has("assemblyType")) {
+      const typeVal = String(form.get("assemblyType") ?? "").trim();
+      data.assemblyType = typeVal || "Prod";
+    }
     if (form.has("status")) {
       const statusVal = normalizeAssemblyState(
         String(form.get("status") ?? "").trim()
@@ -746,10 +1018,39 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
+  if (intent === "costing.enable" || intent === "costing.disable") {
+    const cid = Number(form.get("id"));
+    if (Number.isFinite(cid)) {
+      const costing = await prisma.costing.findUnique({
+        where: { id: cid },
+        select: { flagDefinedInProduct: true },
+      });
+      if (costing) {
+        if (intent === "costing.enable") {
+          await prisma.costing.update({
+            where: { id: cid },
+            data: { flagIsDisabled: false },
+          });
+        } else if (costing.flagDefinedInProduct) {
+          await prisma.costing.update({
+            where: { id: cid },
+            data: { flagIsDisabled: true },
+          });
+        }
+      }
+    }
+    return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+  }
   if (intent === "costing.delete") {
     const cid = Number(form.get("id"));
     if (Number.isFinite(cid)) {
-      await prisma.costing.delete({ where: { id: cid } });
+      const costing = await prisma.costing.findUnique({
+        where: { id: cid },
+        select: { flagDefinedInProduct: true },
+      });
+      if (costing && !costing.flagDefinedInProduct) {
+        await prisma.costing.delete({ where: { id: cid } });
+      }
     }
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
@@ -759,15 +1060,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
       await prisma.$transaction(async (tx) => {
         const movements = await tx.productMovement.findMany({
           where: { assemblyActivityId: aid },
-          select: { id: true },
+          select: { id: true, shippingLineId: true },
         });
         const movementIds = movements.map((m) => m.id);
+        const shipmentLineIds = movements
+          .map((m) => Number(m.shippingLineId))
+          .filter((id) => Number.isFinite(id));
         if (movementIds.length) {
           await tx.productMovementLine.deleteMany({
             where: { movementId: { in: movementIds } },
           });
           await tx.productMovement.deleteMany({
             where: { id: { in: movementIds } },
+          });
+        }
+        if (shipmentLineIds.length) {
+          await tx.boxLine.deleteMany({
+            where: { shipmentLineId: { in: shipmentLineIds } },
+          });
+          await tx.shipmentLine.deleteMany({
+            where: { id: { in: shipmentLineIds } },
           });
         }
         await tx.assemblyActivity.delete({ where: { id: aid } });
@@ -890,6 +1202,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const qtyArrStr = String(form.get("qtyBreakdown") || "[]");
     const activityDateStr = String(form.get("activityDate") || "");
     const consumptionsStr = String(form.get("consumptions") || "[]");
+    const defectReasonRaw = form.get("defectReasonId");
+    const defectReasonId =
+      defectReasonRaw != null && defectReasonRaw !== ""
+        ? Number(defectReasonRaw)
+        : null;
+    const notesRaw = form.get("notes");
+    const dispositionRaw = form.get("defectDisposition");
+    const dispositionVal =
+      typeof dispositionRaw === "string" ? dispositionRaw.trim() : "";
+    const allowedDisposition = new Set<DefectDisposition>([
+      DefectDisposition.review,
+      DefectDisposition.scrap,
+      DefectDisposition.offSpec,
+      DefectDisposition.sample,
+      DefectDisposition.none,
+    ]);
+    const newDisposition: DefectDisposition | null = allowedDisposition.has(
+      dispositionVal as DefectDisposition
+    )
+      ? (dispositionVal as DefectDisposition)
+      : null;
     let qtyArr: number[] = [];
     let consumptions: any[] = [];
     try {
@@ -906,13 +1239,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const activityDate = activityDateStr
       ? new Date(activityDateStr)
       : new Date();
+    let updatedDisposition: DefectDisposition | null = null;
+    let previousDisposition: DefectDisposition | null = null;
     await prisma.$transaction(async (tx) => {
+      const existingActivity = await tx.assemblyActivity.findUnique({
+        where: { id: activityId },
+        select: { defectDisposition: true },
+      });
+      previousDisposition = (existingActivity?.defectDisposition ??
+        null) as DefectDisposition | null;
       const updated = await tx.assemblyActivity.update({
         where: { id: activityId },
         data: {
           qtyBreakdown: qtyArr as any,
           quantity: qtyArr.reduce((t, n) => t + (Number(n) || 0), 0),
           activityDate,
+          defectDisposition: newDisposition ?? undefined,
+          defectReasonId: Number.isFinite(defectReasonId as any)
+            ? (defectReasonId as number)
+            : undefined,
+          notes:
+            typeof notesRaw === "string" ? notesRaw || null : undefined,
         },
         select: {
           id: true,
@@ -920,8 +1267,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           assemblyId: true,
           jobId: true,
           groupKey: true,
+          defectDisposition: true,
         },
       });
+      updatedDisposition = updated.defectDisposition as
+        | DefectDisposition
+        | null;
       const existing = await tx.productMovement.findMany({
         where: { assemblyActivityId: activityId },
         select: { id: true },
@@ -1019,8 +1370,78 @@ export async function action({ request, params }: ActionFunctionArgs) {
         });
       }
     });
+    if (
+      newDisposition &&
+      newDisposition !== DefectDisposition.none &&
+      previousDisposition !== newDisposition
+    ) {
+      await moveDefectDisposition(activityId, newDisposition);
+    }
     await refreshProductStockSnapshot();
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+  }
+  if (intent === "activity.create.defect") {
+    const assemblyIdRaw = Number(form.get("assemblyId") ?? assemblyId);
+    const targetAssemblyId = Number.isFinite(assemblyIdRaw)
+      ? assemblyIdRaw
+      : assemblyId;
+    const stageRaw = String(form.get("stage") || "").toLowerCase();
+    let stageEnum: AssemblyStage;
+    switch (stageRaw) {
+      case "cut":
+        stageEnum = AssemblyStage.cut;
+        break;
+      case "make":
+        stageEnum = AssemblyStage.make;
+        break;
+      case "pack":
+        stageEnum = AssemblyStage.pack;
+        break;
+      case "qc":
+        stageEnum = AssemblyStage.qc;
+        break;
+      default:
+        stageEnum = AssemblyStage.other;
+    }
+    const qty = Number(form.get("quantity"));
+    const qtyBreakdownRaw = form.get("qtyBreakdown");
+    let qtyBreakdown: number[] = [];
+    if (typeof qtyBreakdownRaw === "string" && qtyBreakdownRaw.trim()) {
+      try {
+        const arr = JSON.parse(qtyBreakdownRaw);
+        if (Array.isArray(arr))
+          qtyBreakdown = arr
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n))
+            .map((n) => n | 0);
+      } catch {
+        // ignore bad breakdown
+      }
+    }
+    const defectReasonId = Number(form.get("defectReasonId"));
+    const dispositionRaw = String(form.get("defectDisposition") || "review");
+    const disposition = (
+      ["review", "scrap", "offSpec", "sample", "none"] as DefectDisposition[]
+    ).includes(dispositionRaw as DefectDisposition)
+      ? (dispositionRaw as DefectDisposition)
+      : DefectDisposition.review;
+    const notes = form.get("notes");
+    if (Number.isFinite(qty) && qty > 0) {
+      await createDefectActivity({
+        assemblyId: targetAssemblyId,
+        jobId,
+        activityDate: new Date(),
+        stage: stageEnum,
+        quantity: qty,
+        qtyBreakdown,
+        defectReasonId: Number.isFinite(defectReasonId)
+          ? defectReasonId
+          : undefined,
+        defectDisposition: disposition,
+        notes: typeof notes === "string" ? notes : undefined,
+      });
+    }
+    return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
   if (intent === "assembly.updateOrderedBreakdown") {
     const orderedStr = String(form.get("orderedArr") || "[]");
@@ -1099,6 +1520,7 @@ export default function JobAssemblyRoute() {
     activities,
     products,
     productVariantSet,
+    assemblyTypes,
   } = data as any;
 
   const nav = useNavigation();
@@ -1164,6 +1586,9 @@ export default function JobAssemblyRoute() {
           products={products as any}
           activities={activities as any}
           activityConsumptionMap={activityConsumptionMap as any}
+          packActivityReferences={data.packActivityReferences as any}
+          assemblyTypeOptions={(assemblyTypes || []).map((t: any) => t.label || "")}
+          defectReasons={data.defectReasons as any}
           renderStatusBar={renderGroupStatusBar}
           packContext={data.packContext as any}
         />
@@ -1217,30 +1642,7 @@ export default function JobAssemblyRoute() {
             },
           ] as any
         }
-        quantityItems={
-          [
-            {
-              assemblyId: assembly.id,
-              variants: {
-                labels:
-                  (assembly.variantSet?.variants?.length
-                    ? assembly.variantSet.variants
-                    : productVariantSet?.variants) || [],
-                numVariants: Number((assembly as any).c_numVariants || 0) || 0,
-              },
-              ordered: ((assembly as any).qtyOrderedBreakdown ||
-                []) as number[],
-              cut: ((assembly as any).c_qtyCut_Breakdown || []) as number[],
-              make: ((assembly as any).c_qtyMake_Breakdown || []) as number[],
-              pack: ((assembly as any).c_qtyPack_Breakdown || []) as number[],
-              totals: {
-                cut: Number((assembly as any).c_qtyCut || 0),
-                make: Number((assembly as any).c_qtyMake || 0),
-                pack: Number((assembly as any).c_qtyPack || 0),
-              },
-            },
-          ] as any
-        }
+        quantityItems={data.quantityItems as any}
         priceMultiplier={
           Number((assembly.job as any)?.company?.priceMultiplier ?? 1) || 1
         }
@@ -1250,11 +1652,14 @@ export default function JobAssemblyRoute() {
         products={products as any}
         activities={activities as any}
         activityConsumptionMap={activityConsumptionMap as any}
+        packActivityReferences={data.packActivityReferences as any}
+        assemblyTypeOptions={(assemblyTypes || []).map((t: any) => t.label || "")}
         activityVariantLabels={
           (assembly.variantSet?.variants?.length
             ? (assembly.variantSet.variants as any)
             : (productVariantSet?.variants as any)) || []
         }
+        defectReasons={data.defectReasons as any}
         renderStatusBar={renderSingleStatusBar}
         packContext={data.packContext as any}
       />

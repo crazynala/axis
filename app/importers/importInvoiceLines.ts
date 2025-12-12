@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, resetSequence } from "./utils";
 
 export async function importInvoiceLines(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -100,5 +100,6 @@ export async function importInvoiceLines(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] invoice_lines error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "InvoiceLine");
   return { created, updated, skipped, errors };
 }

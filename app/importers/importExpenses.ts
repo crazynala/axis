@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, resetSequence } from "./utils";
 
 export async function importExpenses(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -77,5 +77,6 @@ export async function importExpenses(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] expenses error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "Expense");
   return { created, updated, skipped, errors };
 }

@@ -30,6 +30,7 @@ import {
   usePersistIndexSearch,
   useRegisterNavLocation,
 } from "~/hooks/useNavLocation";
+import { IconBaselineDensityMedium } from "@tabler/icons-react";
 
 function usePricingPrefsFromWidget() {
   const [customerId, setCustomerId] = useState<string | null>(() => {
@@ -105,6 +106,83 @@ function PriceCell({
       manual != null && manual !== "" ? Number(manual) : undefined,
   });
   return <>{formatUSD(out.unitSellPrice)}</>;
+}
+
+function StockCell({
+  row,
+  customerId,
+}: {
+  row: any;
+  customerId: string | null;
+}) {
+  if (!row?.stockTrackingEnabled) return <></>;
+  const [extra, setExtra] = useState<any | null>(null);
+  useEffect(() => {
+    if (!row?.stockTrackingEnabled) return;
+    const hasData =
+      (Array.isArray(row?.c_byLocation) && row.c_byLocation.length > 0) ||
+      row?.c_stockQty != null;
+    if (hasData) return;
+    let abort = false;
+    (async () => {
+      try {
+        const resp = await fetch(`/api.products.by-ids?ids=${row.id}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const item = Array.isArray(data?.items) ? data.items[0] : null;
+        if (!item || abort) return;
+        setExtra(item);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      abort = true;
+    };
+  }, [row?.id, row?.stockTrackingEnabled, row?.c_byLocation, row?.c_stockQty]);
+  const byLocSource =
+    Array.isArray(extra?.c_byLocation) && extra?.c_byLocation.length
+      ? extra.c_byLocation
+      : Array.isArray(row?.c_byLocation)
+      ? row.c_byLocation
+      : [];
+  const totalFromLoc = byLocSource.reduce(
+    (sum: number, loc: any) => sum + (Number(loc.qty) || 0),
+    0
+  );
+  const totalStock =
+    row?.c_stockQty != null && Number.isFinite(Number(row.c_stockQty))
+      ? Number(row.c_stockQty)
+      : extra?.c_stockQty != null && Number.isFinite(Number(extra.c_stockQty))
+      ? Number(extra.c_stockQty)
+      : totalFromLoc;
+  if (customerId) {
+    const locId = Number(
+      (row?.customer?.stockLocationId ??
+        extra?.customer?.stockLocationId ??
+        NaN) as any
+    );
+    const match = byLocSource.find(
+      (loc: any) =>
+        Number(
+          loc.location_id ?? loc.lid ?? loc.locationId ?? loc.locId
+        ) === locId
+    );
+    const qty = match ? Number(match.qty ?? 0) : totalStock;
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("[products.index] stock customer view", {
+        id: row?.id,
+        sku: row?.sku,
+        customerId,
+        locId,
+        match,
+        qty,
+        totalStock,
+      });
+    }
+    return <>{Number.isFinite(qty) ? qty : ""}</>;
+  }
+  return <>{Number.isFinite(totalStock) ? totalStock : ""}</>;
 }
 
 export default function ProductsIndexRoute() {
@@ -316,21 +394,23 @@ export default function ProductsIndexRoute() {
               width: 70,
               render: (r: any) => <Link to={`/products/${r.id}`}>{r.id}</Link>,
             },
-            { accessor: "sku", title: "SKU", sortable: true },
-            { accessor: "name", title: "Name", sortable: true },
-            { accessor: "type", title: "Type", sortable: true },
+            { accessor: "sku", title: "SKU", width: "30%", sortable: true },
+            { accessor: "name", title: "Name", width: "70%", sortable: true },
+            { accessor: "type", title: "Type", width: 90, sortable: true },
             {
               accessor: "costPrice",
               title: "Cost",
+              width: 100,
               sortable: true,
               render: (r: any) => formatUSD(r.costPrice),
             },
             {
               accessor: "sellPrice",
-              title: "Auto",
+              title: "Sell",
+              width: 100,
               sortable: false,
               render: (r: any) => (
-                <Group>
+                <Group justify="space-between" w="70px">
                   <Indicator
                     color="red"
                     position="middle-start"
@@ -346,19 +426,22 @@ export default function ProductsIndexRoute() {
                       }}
                     />
                   </Indicator>
-                  {r.c_hasPriceTiers ? <span title="Has tiers">⋯</span> : ""}
+                  {r.c_hasPriceTiers ? (
+                    <IconBaselineDensityMedium size={8} />
+                  ) : (
+                    ""
+                  )}
                 </Group>
               ),
             },
             {
-              accessor: "stockTrackingEnabled",
+              accessor: "stockQty",
               title: "Stock",
-              render: (r: any) => (r.stockTrackingEnabled ? "Yes" : "No"),
-            },
-            {
-              accessor: "batchTrackingEnabled",
-              title: "Batch",
-              render: (r: any) => (r.batchTrackingEnabled ? "Yes" : "No"),
+              textAlign: "center",
+              width: 80,
+              render: (r: any) => (
+                <StockCell row={r} customerId={pricing.customerId} />
+              ),
             },
           ]}
           sortStatus={

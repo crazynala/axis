@@ -1,6 +1,11 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick, parseIntListPreserveGaps } from "./utils";
+import {
+  asNum,
+  pick,
+  parseIntListPreserveGaps,
+  resetSequence,
+} from "./utils";
 
 export async function importAssemblies(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -93,5 +98,6 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] assemblies error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "Assembly");
   return { created, updated, skipped, errors };
 }

@@ -5,22 +5,22 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Link, useNavigate, useSearchParams } from "@remix-run/react";
-import { prismaBase } from "../utils/prisma.server";
-import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { prismaBase } from "../../../utils/prisma.server";
+import { buildPrismaArgs, parseTableParams } from "../../../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
 import { useEffect } from "react";
-import { ShipmentFindManager } from "../modules/shipment/findify/ShipmentFindManager";
-import { SavedViews } from "../components/find/SavedViews";
-import { listViews, saveView } from "../utils/views.server";
+import { ShipmentFindManager } from "../findify/ShipmentFindManager";
+import { SavedViews } from "../../../components/find/SavedViews";
+import { listViews, saveView } from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
-} from "../base/find/multiFind";
-import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../base/record/useHybridWindow";
-import { useRecords } from "../base/record/RecordContext";
+} from "../../../base/find/multiFind";
+import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
+import { useHybridWindow } from "../../../base/record/useHybridWindow";
+import { useRecords } from "../../../base/record/RecordContext";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   useRegisterNavLocation,

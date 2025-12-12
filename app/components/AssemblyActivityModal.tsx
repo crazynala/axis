@@ -15,6 +15,7 @@ import { DatePickerInput } from "@mantine/dates";
 import { useSubmit } from "@remix-run/react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { ExternalLink } from "./ExternalLink";
+import { IconInfoCircle } from "@tabler/icons-react";
 import {
   buildAssemblyActivityDefaultValues,
   calculateConsumptionTotals,
@@ -40,6 +41,16 @@ type BatchRow = {
   location?: { id: number; name: string | null } | null;
 };
 
+type PackReference =
+  | {
+      kind: "shipment";
+      shipmentLineId: number;
+      shipmentId: number | null;
+      trackingNo?: string | null;
+      packingSlipCode?: string | null;
+      shipmentType?: string | null;
+    };
+
 const formatBatchCodes = (batch?: BatchRow | null) => {
   if (!batch) return "";
   const parts = [batch.codeMill, batch.codeSartor]
@@ -63,6 +74,7 @@ export function AssemblyActivityModal(props: {
   initialConsumption?: Record<number, Record<number, number>>;
   extraFields?: Record<string, string | number>;
   overrideIntent?: string;
+  packReference?: PackReference | null;
   // Optional: when launching from a group, provide per-assembly quantity items
   groupQtyItems?: Array<{
     assemblyId: number;
@@ -85,6 +97,7 @@ export function AssemblyActivityModal(props: {
     initialConsumption,
     extraFields,
     overrideIntent,
+    packReference,
   } = props;
   const submit = useSubmit();
   const labelsRaw =
@@ -262,6 +275,7 @@ export function AssemblyActivityModal(props: {
   const [batchLocScope, setBatchLocScope] = useState<"all" | "job">(
     (props.assembly?.job?.locationInId ?? null) != null ? "job" : "all"
   );
+  const [isEditing, setIsEditing] = useState(mode !== "edit");
   const qtyBreakdownValues = useWatch({ control, name: "qtyBreakdown" }) ?? [];
   const qtyGroupValues =
     (useWatch({ control, name: "qtyGroup" }) as
@@ -294,6 +308,10 @@ export function AssemblyActivityModal(props: {
     () => calculateUnitsInCut(qtyBreakdownValues, qtyGroupValues || undefined),
     [qtyBreakdownValues, qtyGroupValues]
   );
+  const isPack = activityType === "pack";
+  const isLegacyPack = isPack && packReference?.kind === "shipment";
+  const readOnly = mode === "edit" && (!isEditing || isLegacyPack);
+  const showConsumptionSection = !isPack;
   const setConsumptionValue = useCallback(
     (cid: number, bid: number, value: string) => {
       const path = `consumption.${cid}.${bid}` as const;
@@ -321,6 +339,7 @@ export function AssemblyActivityModal(props: {
 
   useEffect(() => {
     if (!opened) return;
+    setIsEditing(mode !== "edit");
     reset(
       buildAssemblyActivityDefaultValues({
         mode,
@@ -356,6 +375,22 @@ export function AssemblyActivityModal(props: {
     // );
     return eligibleCostings;
   }, [costings, activityType]);
+
+  // Ensure batch metadata is ready for costings with existing consumption so read-only views can render labels
+  useEffect(() => {
+    if (!opened || !initialConsumption) return;
+    const cidList = Object.keys(initialConsumption)
+      .map((cid) => Number(cid))
+      .filter((cid) => Number.isFinite(cid));
+    for (const cid of cidList) {
+      if (batchesByCosting[cid]) continue;
+      const cost = eligibleCostings.find((c) => c.id === cid);
+      if (!cost) continue;
+      const productId = cost.product?.id ?? cost.component?.id ?? null;
+      if (productId) void loadBatchesForCosting(cid, productId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, initialConsumption, eligibleCostings]);
 
   // Open first panel by default when modal opens and costings are ready
   useEffect(() => {
@@ -408,6 +443,7 @@ export function AssemblyActivityModal(props: {
   }, [openedCostings]);
 
   const onSubmit = handleSubmit((values) => {
+    if (mode === "edit" && readOnly) return;
     const fd = serializeAssemblyActivityValues(values, {
       mode,
       activityType,
@@ -418,6 +454,10 @@ export function AssemblyActivityModal(props: {
     submit(fd, { method: "post" });
     onClose();
   });
+
+  const resetFormToDefaults = useCallback(() => {
+    reset(defaultValues);
+  }, [defaultValues, reset]);
 
   return (
     <Modal
@@ -449,14 +489,72 @@ export function AssemblyActivityModal(props: {
                   value={field.value}
                   onChange={(value) => field.onChange(value ?? null)}
                   valueFormat="YYYY-MM-DD"
+                  disabled={readOnly}
                   required
                 />
               )}
             />
-            <Button type="submit" variant="filled">
-              Save
-            </Button>
+            <Group gap="xs">
+              {mode === "edit" ? (
+                isEditing && !readOnly ? (
+                  <>
+                    <Button
+                      variant="default"
+                      onClick={() => {
+                        resetFormToDefaults();
+                        setIsEditing(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" variant="filled" disabled={readOnly}>
+                      Save
+                    </Button>
+                  </>
+                ) : isLegacyPack ? null : (
+                  <Button variant="filled" onClick={() => setIsEditing(true)}>
+                    Edit
+                  </Button>
+                )
+              ) : (
+                <Button type="submit" variant="filled">
+                  Save
+                </Button>
+              )}
+            </Group>
           </Group>
+
+          {isPack && mode === "edit" ? (
+            <Stack gap="xs">
+              <Group gap={6} align="flex-start">
+                <IconInfoCircle size={16} color="var(--mantine-color-dimmed)" />
+                <Text size="sm" c="dimmed">
+                  Pack activities are shown in read-only by default.
+                  {isLegacyPack
+                    ? " This record was created before boxes and was linked to a shipment, so it cannot be edited."
+                    : " Click Edit to adjust the recorded pack."}
+                </Text>
+              </Group>
+              {packReference?.kind === "shipment" ? (
+                <Text size="sm">
+                  Shipment:{" "}
+                  {packReference.shipmentId ? (
+                    <ExternalLink href={`/shipments/${packReference.shipmentId}`}>
+                      #{packReference.shipmentId}
+                    </ExternalLink>
+                  ) : (
+                    "Unknown"
+                  )}
+                  {packReference.trackingNo
+                    ? ` • Tracking ${packReference.trackingNo}`
+                    : ""}
+                  {packReference.packingSlipCode
+                    ? ` • Slip ${packReference.packingSlipCode}`
+                    : ""}
+                </Text>
+              ) : null}
+            </Stack>
+          ) : null}
 
           <Stack gap="md">
             {groupDefaults && groupDefaults.length > 0 ? (
@@ -516,6 +614,8 @@ export function AssemblyActivityModal(props: {
                                       variant="unstyled"
                                       inputMode="numeric"
                                       {...registration}
+                                      readOnly={readOnly}
+                                      disabled={readOnly}
                                       styles={{
                                         input: {
                                           width: "100%",
@@ -576,6 +676,8 @@ export function AssemblyActivityModal(props: {
                             variant="unstyled"
                             inputMode="numeric"
                             {...registration}
+                            readOnly={readOnly}
+                            disabled={readOnly}
                             styles={{
                               input: {
                                 width: "100%",
@@ -596,224 +698,356 @@ export function AssemblyActivityModal(props: {
             )}
           </Stack>
 
-          <Stack gap="md">
-            <Group justify="space-between" align="center">
-              <Title order={6}>Material Consumption</Title>
-              <Text size="sm" c="dimmed">
-                Units recorded: {unitsInCut}
-              </Text>
-            </Group>
-            <Group gap={12} align="center" wrap="wrap">
-              <SegmentedControl
-                data={[
-                  { label: "All", value: "all" },
-                  { label: "Current", value: "current" },
-                ]}
-                size="xs"
-                value={batchScope}
-                onChange={(value) => setBatchScope(value as "all" | "current")}
-              />
-              <SegmentedControl
-                data={(() => {
-                  const locName = (
-                    assembly?.job?.locationIn?.name || ""
-                  ).trim();
-                  const jobLabel = locName || "Job location";
-                  return [
-                    { label: "All", value: "all" },
-                    { label: jobLabel, value: "job" },
-                  ];
-                })()}
-                size="xs"
-                value={batchLocScope}
-                onChange={(value) => setBatchLocScope(value as "all" | "job")}
-              />
-            </Group>
+          {showConsumptionSection ? (
+            <Stack gap="md">
+              <Group justify="space-between" align="center">
+                <Title order={6}>Material Consumption</Title>
+                <Text size="sm" c="dimmed">
+                  Units recorded: {unitsInCut}
+                </Text>
+              </Group>
 
-            {eligibleCostings.length === 0 ? (
-              <Text size="sm" c="dimmed">
-                No material costings are configured for this activity type.
-              </Text>
-            ) : (
-              <Accordion
-                multiple
-                variant="contained"
-                value={openedCostings}
-                onChange={(values) => setOpenedCostings(values as string[])}
-              >
-                {eligibleCostings.map((costing) => {
-                  const cid = costing.id;
-                  const comp = costing.product ?? costing.component ?? null;
-                  const compId = comp?.id ?? null;
-                  const compSku = comp?.sku ?? "";
-                  const compName = comp?.name ?? "";
-                  const consumed = consumptionTotals[cid] ?? 0;
-                  const expected = (costing.quantityPerUnit || 0) * unitsInCut;
-                  const costingBatches = batchesByCosting[cid] || [];
-                  const jobLocId = (assembly?.job?.stockLocationId ?? null) as
-                    | number
-                    | null;
-                  const batchInfos = costingBatches
-                    .map((batch) => {
-                      const batchId = Number(batch.id);
-                      const consumedPreviously =
-                        previouslyConsumedByCosting[cid]?.[batchId] ?? 0;
-                      const effectiveAvailable = Math.max(
-                        0,
-                        (Number(batch.quantity ?? 0) || 0) + consumedPreviously
-                      );
-                      const consumeValue =
-                        consumption[cid]?.[batchId] ??
-                        (consumedPreviously ? String(consumedPreviously) : "");
-                      const passesScope =
-                        batchScope === "current"
-                          ? effectiveAvailable > 0 || consumeValue !== ""
-                          : true;
-                      const passesLocation =
-                        batchLocScope === "all" ||
-                        consumeValue !== "" ||
-                        !jobLocId
-                          ? true
-                          : (batch.location?.id ?? null) === jobLocId;
-                      return {
-                        batch,
-                        batchId,
-                        effectiveAvailable,
-                        consumeValue,
-                        passesScope,
-                        passesLocation,
-                      };
-                    })
-                    .filter((info) => info.passesScope && info.passesLocation);
-
-                  return (
-                    <Accordion.Item key={cid} value={String(cid)}>
-                      <Accordion.Control>
-                        <Group
-                          justify="space-between"
-                          wrap="nowrap"
-                          align="center"
-                        >
-                          <Group gap={8} wrap="nowrap" align="center">
-                            {compId ? (
-                              <ExternalLink href={`/products/${compId}`}>
-                                {compId}
-                              </ExternalLink>
-                            ) : (
-                              <Text c="dimmed">?</Text>
-                            )}
-                            <Text style={{ whiteSpace: "nowrap" }}>
-                              [{compSku || ""}]
-                            </Text>
-                            <Text inherit>{compName || ""}</Text>
-                          </Group>
-                          <Group gap={4} wrap="nowrap" align="center" ml="auto">
-                            <Text inherit>{consumed}</Text>
-                            <Text c="dimmed">/</Text>
-                            <Text inherit>{expected}</Text>
-                          </Group>
-                        </Group>
-                      </Accordion.Control>
-                      <Accordion.Panel>
-                        <Group gap={8} mb={4} align="center">
-                          <Text size="sm" fw={600}>
-                            Batches
-                          </Text>
-                          {loadingCosting[cid] && (
-                            <Text size="xs" c="dimmed">
-                              Loading...
-                            </Text>
-                          )}
-                        </Group>
-                        <Table withTableBorder withColumnBorders striped>
-                          <Table.Thead>
-                            <Table.Tr>
-                              <Table.Th>ID</Table.Th>
-                              <Table.Th>Batch</Table.Th>
-                              <Table.Th>Location</Table.Th>
-                              <Table.Th>Available</Table.Th>
-                              <Table.Th>Consume</Table.Th>
-                            </Table.Tr>
-                          </Table.Thead>
-                          <Table.Tbody>
-                            {batchInfos.length === 0 ? (
-                              <Table.Tr>
-                                <Table.Td colSpan={5}>
-                                  <Text size="sm" c="dimmed">
-                                    {loadingCosting[cid]
-                                      ? "Fetching batches..."
-                                      : "No batches match the current filters."}
-                                  </Text>
-                                </Table.Td>
-                              </Table.Tr>
-                            ) : (
-                              batchInfos.map((info) => (
-                                <Table.Tr key={info.batch.id}>
-                                  <Table.Td>
-                                    <ExternalLink
-                                      href={`/batches/${info.batch.id}`}
-                                    >
-                                      {info.batch.id}
-                                    </ExternalLink>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    {formatBatchCodes(info.batch) ||
-                                      "(unnamed)"}
-                                  </Table.Td>
-                                  <Table.Td>
-                                    {info.batch.location?.name || ""}
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <Text
-                                      style={{ cursor: "pointer" }}
-                                      onClick={() => {
-                                        const qString = String(
-                                          info.effectiveAvailable || 0
-                                        );
-                                        setConsumptionValue(
-                                          cid,
-                                          info.batchId,
-                                          qString
-                                        );
-                                      }}
-                                    >
-                                      {info.effectiveAvailable}
-                                    </Text>
-                                  </Table.Td>
-                                  <Table.Td>
-                                    <TextInput
-                                      w={100}
-                                      type="number"
-                                      inputMode="decimal"
-                                      value={info.consumeValue}
-                                      onChange={(event) =>
-                                        setConsumptionValue(
-                                          cid,
-                                          info.batchId,
-                                          event.currentTarget.value
-                                        )
-                                      }
-                                      onBlur={() =>
-                                        clampConsumptionEntry(
-                                          cid,
-                                          info.batchId,
-                                          info.effectiveAvailable
-                                        )
-                                      }
-                                    />
-                                  </Table.Td>
+              {mode === "edit" && readOnly ? (
+                <Stack gap="sm">
+                  {Object.keys(previouslyConsumedByCosting).length === 0 ? (
+                    <Text size="sm" c="dimmed">
+                      No material consumption recorded for this activity.
+                    </Text>
+                  ) : (
+                    Object.entries(previouslyConsumedByCosting).map(
+                      ([cidRaw, batches]) => {
+                        const cid = Number(cidRaw);
+                        const costing = costings.find((c) => c.id === cid);
+                        const comp = costing?.product ?? costing?.component;
+                        const compLabel = comp
+                          ? `[${comp.sku || ""}] ${comp.name || ""}`
+                          : "Unknown component";
+                        const costingBatches = batchesByCosting[cid] || [];
+                        return (
+                          <Stack key={cid} gap="xs">
+                            <Group gap={8} align="center" wrap="wrap">
+                              <Text fw={600}>{compLabel}</Text>
+                              <Text size="sm" c="dimmed">
+                                Total consumed:{" "}
+                                {consumptionTotals[cid] ?? 0} /{" "}
+                                {(costing?.quantityPerUnit || 0) * unitsInCut}
+                              </Text>
+                            </Group>
+                            <Table withTableBorder withColumnBorders striped>
+                              <Table.Thead>
+                                <Table.Tr>
+                                  <Table.Th>ID</Table.Th>
+                                  <Table.Th>Batch</Table.Th>
+                                  <Table.Th>Location</Table.Th>
+                                  <Table.Th>Qty</Table.Th>
                                 </Table.Tr>
-                              ))
-                            )}
-                          </Table.Tbody>
-                        </Table>
-                      </Accordion.Panel>
-                    </Accordion.Item>
-                  );
-                })}
-              </Accordion>
-            )}
-          </Stack>
+                              </Table.Thead>
+                              <Table.Tbody>
+                                {Object.entries(batches).map(
+                                  ([bidRaw, qty]) => {
+                                    const bid = Number(bidRaw);
+                                    const match =
+                                      costingBatches.find(
+                                        (b) => Number(b.id) === bid
+                                      ) || null;
+                                    return (
+                                      <Table.Tr key={`${cid}-${bid}`}>
+                                        <Table.Td>
+                                          {bid && bid !== 0 ? (
+                                            <ExternalLink
+                                              href={`/batches/${bid}`}
+                                            >
+                                              {bid}
+                                            </ExternalLink>
+                                          ) : (
+                                            <Text size="sm" c="dimmed">
+                                              Untracked
+                                            </Text>
+                                          )}
+                                        </Table.Td>
+                                        <Table.Td>
+                                          {formatBatchCodes(match) ||
+                                            "(unnamed)"}
+                                        </Table.Td>
+                                        <Table.Td>
+                                          {match?.location?.name || ""}
+                                        </Table.Td>
+                                        <Table.Td>{qty}</Table.Td>
+                                      </Table.Tr>
+                                    );
+                                  }
+                                )}
+                              </Table.Tbody>
+                            </Table>
+                          </Stack>
+                        );
+                      }
+                    )
+                  )}
+                </Stack>
+              ) : (
+                <>
+                  <Group gap={12} align="center" wrap="wrap">
+                    <SegmentedControl
+                      data={[
+                        { label: "All", value: "all" },
+                        { label: "Current", value: "current" },
+                      ]}
+                      size="xs"
+                      value={batchScope}
+                      onChange={(value) =>
+                        setBatchScope(value as "all" | "current")
+                      }
+                      disabled={readOnly}
+                    />
+                    <SegmentedControl
+                      data={(() => {
+                        const locName = (
+                          assembly?.job?.locationIn?.name || ""
+                        ).trim();
+                        const jobLabel = locName || "Job location";
+                        return [
+                          { label: "All", value: "all" },
+                          { label: jobLabel, value: "job" },
+                        ];
+                      })()}
+                      size="xs"
+                      value={batchLocScope}
+                      onChange={(value) =>
+                        setBatchLocScope(value as "all" | "job")
+                      }
+                      disabled={readOnly}
+                    />
+                  </Group>
+
+                  {eligibleCostings.length === 0 ? (
+                    <Text size="sm" c="dimmed">
+                      No material costings are configured for this activity type.
+                    </Text>
+                  ) : (
+                    <Accordion
+                      multiple
+                      variant="contained"
+                      value={openedCostings}
+                      onChange={(values) => setOpenedCostings(values as string[])}
+                    >
+                      {eligibleCostings.map((costing) => {
+                        const cid = costing.id;
+                        const comp = costing.product ?? costing.component ?? null;
+                        const compId = comp?.id ?? null;
+                        const compSku = comp?.sku ?? "";
+                        const compName = comp?.name ?? "";
+                        const consumed = consumptionTotals[cid] ?? 0;
+                        const expected =
+                          (costing.quantityPerUnit || 0) * unitsInCut;
+                        const costingBatches = batchesByCosting[cid] || [];
+                        const jobLocId = (assembly?.job?.stockLocationId ??
+                          null) as number | null;
+                        const batchInfos = costingBatches
+                          .map((batch) => {
+                            const batchId = Number(batch.id);
+                            const consumedPreviously =
+                              previouslyConsumedByCosting[cid]?.[batchId] ?? 0;
+                            const effectiveAvailable = Math.max(
+                              0,
+                              (Number(batch.quantity ?? 0) || 0) +
+                                consumedPreviously
+                            );
+                            const consumeValue =
+                              consumption[cid]?.[batchId] ??
+                              (consumedPreviously
+                                ? String(consumedPreviously)
+                                : "");
+                            const passesScope =
+                              batchScope === "current"
+                                ? effectiveAvailable > 0 ||
+                                  consumeValue !== ""
+                                : true;
+                            const passesLocation =
+                              batchLocScope === "all" ||
+                              consumeValue !== "" ||
+                              !jobLocId
+                                ? true
+                                : (batch.location?.id ?? null) === jobLocId;
+                            return {
+                              batch,
+                              batchId,
+                              effectiveAvailable,
+                              consumeValue,
+                              passesScope,
+                              passesLocation,
+                            };
+                          })
+                          .filter((info) => info.passesScope && info.passesLocation);
+                        const batchIdsInList = new Set(
+                          batchInfos.map((info) => info.batchId)
+                        );
+                        // Ensure we show any existing consumption that lacks a batch record (e.g., legacy/untracked)
+                        Object.keys(consumption[cid] || {}).forEach((bidKey) => {
+                          const bid = Number(bidKey);
+                          if (!Number.isFinite(bid)) return;
+                          if (batchIdsInList.has(bid)) return;
+                          const consumeValue = consumption[cid]?.[bidKey] ?? "";
+                          batchInfos.push({
+                            batch: {
+                              id: bid,
+                              name: bid === 0 ? "Untracked batch" : `Batch ${bid}`,
+                              codeMill: null,
+                              codeSartor: null,
+                              quantity: null,
+                              location: null,
+                            },
+                            batchId: bid,
+                            effectiveAvailable: 0,
+                            consumeValue,
+                            passesScope: true,
+                            passesLocation: true,
+                          });
+                        });
+
+                        return (
+                          <Accordion.Item key={cid} value={String(cid)}>
+                            <Accordion.Control>
+                              <Group
+                                justify="space-between"
+                                wrap="nowrap"
+                                align="center"
+                              >
+                                <Group gap={8} wrap="nowrap" align="center">
+                                  {compId ? (
+                                    <ExternalLink href={`/products/${compId}`}>
+                                      {compId}
+                                    </ExternalLink>
+                                  ) : (
+                                    <Text c="dimmed">?</Text>
+                                  )}
+                                  <Text style={{ whiteSpace: "nowrap" }}>
+                                    [{compSku || ""}]
+                                  </Text>
+                                  <Text inherit>{compName || ""}</Text>
+                                </Group>
+                                <Group
+                                  gap={4}
+                                  wrap="nowrap"
+                                  align="center"
+                                  ml="auto"
+                                >
+                                  <Text inherit>{consumed}</Text>
+                                  <Text c="dimmed">/</Text>
+                                  <Text inherit>{expected}</Text>
+                                </Group>
+                              </Group>
+                            </Accordion.Control>
+                            <Accordion.Panel>
+                              <Group gap={8} mb={4} align="center">
+                                <Text size="sm" fw={600}>
+                                  Batches
+                                </Text>
+                                {loadingCosting[cid] && (
+                                  <Text size="xs" c="dimmed">
+                                    Loading...
+                                  </Text>
+                                )}
+                              </Group>
+                              <Table withTableBorder withColumnBorders striped>
+                                <Table.Thead>
+                                  <Table.Tr>
+                                    <Table.Th>ID</Table.Th>
+                                    <Table.Th>Batch</Table.Th>
+                                    <Table.Th>Location</Table.Th>
+                                    <Table.Th>Available</Table.Th>
+                                    <Table.Th>Consume</Table.Th>
+                                  </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                  {batchInfos.length === 0 ? (
+                                    <Table.Tr>
+                                      <Table.Td colSpan={5}>
+                                        <Text size="sm" c="dimmed">
+                                          {loadingCosting[cid]
+                                            ? "Fetching batches..."
+                                            : "No batches match the current filters."}
+                                        </Text>
+                                      </Table.Td>
+                                    </Table.Tr>
+                                  ) : (
+                                    batchInfos.map((info) => (
+                                      <Table.Tr key={info.batch.id}>
+                                    <Table.Td>
+                                      {info.batch.id && info.batch.id !== 0 ? (
+                                        <ExternalLink
+                                          href={`/batches/${info.batch.id}`}
+                                        >
+                                          {info.batch.id}
+                                        </ExternalLink>
+                                      ) : (
+                                        <Text size="sm" c="dimmed">
+                                          Untracked
+                                        </Text>
+                                      )}
+                                    </Table.Td>
+                                        <Table.Td>
+                                          {formatBatchCodes(info.batch) ||
+                                            "(unnamed)"}
+                                        </Table.Td>
+                                        <Table.Td>
+                                          {info.batch.location?.name || ""}
+                                        </Table.Td>
+                                        <Table.Td>
+                                          <Text
+                                            style={{ cursor: "pointer" }}
+                                            onClick={() => {
+                                              const qString = String(
+                                                info.effectiveAvailable || 0
+                                              );
+                                              setConsumptionValue(
+                                                cid,
+                                                info.batchId,
+                                                qString
+                                              );
+                                            }}
+                                          >
+                                            {info.effectiveAvailable}
+                                          </Text>
+                                        </Table.Td>
+                                        <Table.Td>
+                                          <TextInput
+                                            w={100}
+                                            type="number"
+                                            inputMode="decimal"
+                                            value={info.consumeValue}
+                                            onChange={(event) =>
+                                              setConsumptionValue(
+                                                cid,
+                                                info.batchId,
+                                                event.currentTarget.value
+                                              )
+                                            }
+                                            onBlur={() =>
+                                              clampConsumptionEntry(
+                                                cid,
+                                                info.batchId,
+                                                info.effectiveAvailable
+                                              )
+                                            }
+                                            disabled={readOnly}
+                                          />
+                                        </Table.Td>
+                                      </Table.Tr>
+                                    ))
+                                  )}
+                                </Table.Tbody>
+                              </Table>
+                            </Accordion.Panel>
+                          </Accordion.Item>
+                        );
+                      })}
+                    </Accordion>
+                  )}
+                </>
+              )}
+            </Stack>
+          ) : null}
         </Stack>
       </form>
     </Modal>

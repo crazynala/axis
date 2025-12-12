@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick, parseIntListPreserveGaps } from "./utils";
+import { asNum, pick, parseIntListPreserveGaps, resetSequence } from "./utils";
 
 export async function importShipmentLines(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -84,5 +84,6 @@ export async function importShipmentLines(rows: any[]): Promise<ImportResult> {
       Object.values(grouped)
     );
   }
+  await resetSequence(prisma, "ShipmentLine");
   return { created, updated, skipped, errors };
 }

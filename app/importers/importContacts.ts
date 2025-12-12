@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, resetSequence } from "./utils";
 
 // Contacts importer
 // RecordType can be Employee | Contact | Customer -> map to contactType field (string) if present
@@ -61,5 +61,6 @@ export async function importContacts(rows: any[]): Promise<ImportResult> {
   console.log(
     `[import] contacts complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
   );
+  await resetSequence(prisma, "Contact");
   return { created, updated, skipped, errors };
 }

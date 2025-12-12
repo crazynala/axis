@@ -33,6 +33,7 @@ import {
   Tooltip,
   ActionIcon,
   Menu,
+  NativeSelect,
 } from "@mantine/core";
 import {
   HotkeyAwareModal,
@@ -116,6 +117,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const productsById: Record<number, any> = Object.fromEntries(
     products.map((p: any) => [p.id, p])
   );
+  const assemblyTypes = await prisma.valueList.findMany({
+    where: { type: "AssemblyType" },
+    select: { label: true },
+    orderBy: { label: "asc" },
+  });
   const customers = await prisma.company.findMany({
     where: { isCustomer: true },
     select: { id: true, name: true },
@@ -155,6 +161,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   return json({
     job,
     productsById,
+    assemblyTypes,
     customers,
     productChoices,
     groupsById,
@@ -296,6 +303,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       } catch {}
     }
+    const assemblyTypeMap = new Map<number, string>();
+    if (form.has("assemblyTypes")) {
+      const rawTypes = String(form.get("assemblyTypes") || "{}");
+      try {
+        const obj = JSON.parse(rawTypes);
+        if (obj && typeof obj === "object") {
+          for (const [key, val] of Object.entries(obj)) {
+            const asmId = Number(key);
+            if (!Number.isFinite(asmId)) continue;
+            const v = typeof val === "string" ? val : String(val ?? "");
+            assemblyTypeMap.set(asmId, v || "Prod");
+          }
+        }
+      } catch {}
+    }
     try {
       if (Object.keys(data).length) {
         await prisma.job.update({ where: { id }, data });
@@ -303,16 +325,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
       if (nextStatus) {
         await applyJobStateTransition(prisma, id, nextStatus);
       }
-      if (assemblyStatusMap.size || assemblyWhiteboardMap.size) {
+      if (assemblyStatusMap.size || assemblyWhiteboardMap.size || assemblyTypeMap.size) {
         const asmIds = Array.from(
           new Set([
             ...assemblyStatusMap.keys(),
             ...assemblyWhiteboardMap.keys(),
+            ...assemblyTypeMap.keys(),
           ])
         );
         const assemblies = await prisma.assembly.findMany({
           where: { id: { in: asmIds }, jobId: id },
-          select: { id: true, status: true, statusWhiteboard: true },
+          select: { id: true, status: true, statusWhiteboard: true, assemblyType: true },
         });
         let statusUpdates = 0;
         const updates = assemblies
@@ -334,6 +357,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 | null;
               if (nextNote !== currentNote) {
                 data.statusWhiteboard = nextNote;
+              }
+            }
+            if (assemblyTypeMap.has(asm.id)) {
+              const nextType = assemblyTypeMap.get(asm.id) || "Prod";
+              if (nextType !== (asm.assemblyType || "Prod")) {
+                data.assemblyType = nextType;
               }
             }
             if (Object.keys(data).length) {
@@ -515,6 +544,7 @@ export function JobDetailView() {
   const {
     job,
     productsById,
+    assemblyTypes,
     customers,
     productChoices,
     groupsById,
@@ -619,6 +649,12 @@ export function JobDetailView() {
         String(a.statusWhiteboard || ""),
       ])
     ),
+    assemblyTypes: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [
+        String(a.id),
+        String((a as any).assemblyType || "Prod"),
+      ])
+    ),
   });
   const jobForm = useForm<any>({
     defaultValues: jobToDefaults(job),
@@ -681,6 +717,9 @@ export function JobDetailView() {
         "assemblyWhiteboards",
         JSON.stringify(values.assemblyWhiteboards || {})
       );
+    }
+    if (values.assemblyTypes) {
+      fd.set("assemblyTypes", JSON.stringify(values.assemblyTypes || {}));
     }
     submit(fd, { method: "post" });
   };
@@ -749,6 +788,13 @@ export function JobDetailView() {
       string,
       string | undefined
     >) || {};
+  const assemblyTypeMap =
+    (jobForm.watch("assemblyTypes") as Record<string, string | undefined>) ||
+    {};
+  const assemblyTypeOptions = (assemblyTypes || []).map((t) => ({
+    value: t.label || "",
+    label: t.label || "",
+  }));
   const handleAssemblyStatusChange = useCallback(
     (asmIds: number | number[], next: string | null) => {
       if (!next) return;
@@ -994,7 +1040,8 @@ export function JobDetailView() {
                   ID
                 </Table.Th>
                 <Table.Th>Product SKU</Table.Th>
-                <Table.Th>Product Name</Table.Th>
+                <Table.Th>Assembly Name</Table.Th>
+                <Table.Th>Assembly Type</Table.Th>
                 <Table.Th>Variant Set</Table.Th>
                 <Table.Th># Ordered</Table.Th>
                 <Table.Th>Cut</Table.Th>
@@ -1160,7 +1207,25 @@ export function JobDetailView() {
                         )}
                       </Table.Td>
                       <Table.Td>{p?.sku || ""}</Table.Td>
-                      <Table.Td>{p?.name || ""}</Table.Td>
+                      <Table.Td>{a.name || p?.name || ""}</Table.Td>
+                      <Table.Td>
+                        <NativeSelect
+                          data={assemblyTypeOptions}
+                          value={
+                            assemblyTypeMap[String(a.id)] ??
+                            (a as any).assemblyType ??
+                            "Prod"
+                          }
+                          onChange={(e) =>
+                            jobForm.setValue(
+                              `assemblyTypes.${a.id}` as any,
+                              e.currentTarget.value,
+                              { shouldDirty: true, shouldTouch: true }
+                            )
+                          }
+                          size="xs"
+                        />
+                      </Table.Td>
                       <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
                       <Table.Td>
                         <Button

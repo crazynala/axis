@@ -15,6 +15,8 @@ export default [
   ...(await flatRoutes({ rootDirectory: "modules/product/routes" })),
   ...(await flatRoutes({ rootDirectory: "modules/job/routes" })),
   ...(await flatRoutes({ rootDirectory: "modules/purchaseOrder/routes" })),
+  ...(await flatRoutes({ rootDirectory: "modules/shipment/routes" })),
+  ...(await flatRoutes({ rootDirectory: "modules/integrity/routes" })),
 
   // 3) You can also mix in hand-written routes if needed:
   // route("/healthz", "routes/healthz.tsx"),

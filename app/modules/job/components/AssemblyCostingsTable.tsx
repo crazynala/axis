@@ -14,6 +14,7 @@ import {
   Button,
   NumberInput,
   Stack,
+  Menu,
 } from "@mantine/core";
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useState, type ReactNode } from "react";
@@ -23,7 +24,7 @@ import { AccordionTable } from "~/components/AccordionTable";
 import type { Column } from "~/components/AccordionTable";
 import { debugEnabled } from "~/utils/debugFlags";
 import type { UseFormRegister } from "react-hook-form";
-import { IconLink } from "@tabler/icons-react";
+import { IconLink, IconMenu2, IconTrash, IconCircleCheck, IconCircleOff } from "@tabler/icons-react";
 import { formatUSD } from "~/utils/format";
 
 export type CostingRow = {
@@ -50,6 +51,8 @@ export type CostingRow = {
   priceMultiplier?: number | null; // from job.company
   manualSalePrice?: number | null; // override for calc
   marginPct?: number | null; // optional margin when falling back to cost+margin
+  flagIsDisabled?: boolean;
+  flagDefinedInProduct?: boolean;
 };
 
 export function AssemblyCostingsTable(props: {
@@ -76,6 +79,10 @@ export function AssemblyCostingsTable(props: {
   fieldNameForActivityUsed?: (row: CostingRow) => string;
   /** Optional action elements to render in the header (e.g., Add Costing button) */
   actions?: ReactNode | ReactNode[];
+  /** Optional rows to render in a separate Disabled section */
+  disabledRows?: CostingRow[];
+  /** Handler for costing actions (enable/disable/delete) */
+  onCostingAction?: (costingId: number, action: "enable" | "disable" | "delete") => void;
 }) {
   const {
     title,
@@ -91,6 +98,8 @@ export function AssemblyCostingsTable(props: {
     register,
     fieldNameForActivityUsed,
     actions,
+    disabledRows,
+    onCostingAction,
   } = props;
   const DEBUG = debugEnabled("costingsTable") || !!debug;
 
@@ -125,7 +134,12 @@ export function AssemblyCostingsTable(props: {
   const editable = (editableCosting ?? false) && hasRHF;
   const canEditFn = canEditCosting;
   const canEditBaseRow = (row: CostingRow) =>
-    Boolean(editable && typeof canEditFn === "function" && canEditFn(row));
+    Boolean(
+      editable &&
+        !row.flagIsDisabled &&
+        typeof canEditFn === "function" &&
+        canEditFn(row)
+    );
 
   const isChildRow = (row: CostingRow) => Boolean((row as any).isChild);
   const isMasterRow = (row: CostingRow) => Boolean((row as any).isMaster);
@@ -146,6 +160,47 @@ export function AssemblyCostingsTable(props: {
   const skuColumnWidth = "18ch";
   const nameColumnWidth = "32ch";
 
+  const disabledStyle = (row: CostingRow) =>
+    row.flagIsDisabled ? { textDecoration: "line-through" } : undefined;
+
+  const renderActionsMenu = (row: CostingRow) => {
+    if (!onCostingAction) return null;
+    return (
+      <Menu withinPortal position="bottom-end" shadow="sm">
+        <Menu.Target>
+          <ActionIcon variant="subtle" aria-label="Costing actions">
+            <IconMenu2 size={16} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {row.flagIsDisabled ? (
+            <Menu.Item
+              leftSection={<IconCircleCheck size={14} />}
+              onClick={() => onCostingAction(row.id, "enable")}
+            >
+              Enable
+            </Menu.Item>
+          ) : row.flagDefinedInProduct ? (
+            <Menu.Item
+              leftSection={<IconCircleOff size={14} />}
+              onClick={() => onCostingAction(row.id, "disable")}
+            >
+              Disable
+            </Menu.Item>
+          ) : (
+            <Menu.Item
+              color="red"
+              leftSection={<IconTrash size={14} />}
+              onClick={() => onCostingAction(row.id, "delete")}
+            >
+              Delete
+            </Menu.Item>
+          )}
+        </Menu.Dropdown>
+      </Menu>
+    );
+  };
+
   const renderFlatRows = (rows: CostingRow[]) =>
     rows.map((c) => {
       const showActivityInput = activityEditable(c);
@@ -162,8 +217,8 @@ export function AssemblyCostingsTable(props: {
               c.id
             )}
           </Table.Td>
-          <Table.Td>{c.sku || ""}</Table.Td>
-          <Table.Td>{c.name || c.productId || ""}</Table.Td>
+          <Table.Td style={disabledStyle(c)}>{c.sku || ""}</Table.Td>
+          <Table.Td style={disabledStyle(c)}>{c.name || c.productId || ""}</Table.Td>
           {/* Activity (per-activity usage) */}
           <Table.Td
             align="center"
@@ -188,7 +243,7 @@ export function AssemblyCostingsTable(props: {
                 }}
               />
             ) : (
-              <Text>
+              <Text style={disabledStyle(c)}>
                 {c.activityUsed === "cut"
                   ? "Cut"
                   : c.activityUsed === "make"
@@ -218,7 +273,7 @@ export function AssemblyCostingsTable(props: {
                 }}
               />
             ) : (
-              <Text>{c.quantityPerUnit ?? ""}</Text>
+              <Text style={disabledStyle(c)}>{c.quantityPerUnit ?? ""}</Text>
             )}
           </Table.Td>
           <Table.Td align="center">{c.required ?? ""}</Table.Td>
@@ -250,6 +305,7 @@ export function AssemblyCostingsTable(props: {
               </Table.Td>
             );
           })()}
+          <Table.Td align="center">{renderActionsMenu(c)}</Table.Td>
         </Table.Tr>
       );
     });
@@ -335,7 +391,10 @@ export function AssemblyCostingsTable(props: {
     }
     return map;
   };
-  const groups = accordionByProduct ? groupByProduct(common) : null;
+  const activeRows = (common || []).filter((r) => !r.flagIsDisabled);
+  const disabledList = disabledRows ?? (common || []).filter((r) => r.flagIsDisabled);
+  const groups = accordionByProduct ? groupByProduct(activeRows) : null;
+  const groupedSubrows = new Map<string, CostingRow[]>();
 
   // We no longer use 'required' variance to break into subrows; keep helper only for debugging output
   const hasRequiredVariance = (arr: CostingRow[]) => {
@@ -357,15 +416,11 @@ export function AssemblyCostingsTable(props: {
     return uniq.size > 1;
   };
 
-  const showAccordion = !!(
-    groups && Array.from(groups.values()).some((arr) => arr.length > 1)
-  );
-
-  const tableData = showAccordion
-    ? Array.from(groups!.values()).map((arr) => {
-        if (arr.length === 1) {
-          return { ...arr[0], isSingle: true } as CostingRow;
-        }
+  const tableData: CostingRow[] = [];
+  if (groups) {
+    for (const [key, arr] of groups.entries()) {
+      const assemblyIds = new Set(arr.map((r) => r.assemblyId ?? r.id));
+      if (arr.length > 1 && assemblyIds.size > 1) {
         const first = arr[0];
         const requiredSum = arr.reduce(
           (sum, row) =>
@@ -373,16 +428,37 @@ export function AssemblyCostingsTable(props: {
             (Number.isFinite(Number(row.required)) ? Number(row.required) : 0),
           0
         );
-        return {
+        tableData.push({
           ...first,
           required: requiredSum,
           quantityPerUnit: hasQpuVariance(arr)
             ? ("*" as any)
             : (first.quantityPerUnit as any),
           isMaster: true,
-        } as CostingRow;
-      })
-    : common;
+        } as CostingRow);
+        groupedSubrows.set(
+          key,
+          arr.map((row, index, all) => ({
+            ...row,
+            isChild: true,
+            _groupPos:
+              index === 0
+                ? ("first" as const)
+                : index === all.length - 1
+                ? ("last" as const)
+                : ("middle" as const),
+            _groupSize: all.length,
+          }))
+        );
+      } else {
+        tableData.push(...arr.map((r) => ({ ...r, isSingle: arr.length === 1 } as any)));
+      }
+    }
+  } else {
+    tableData.push(...activeRows);
+  }
+
+  const showAccordion = groupedSubrows.size > 0;
 
   const tableRowId = (row: CostingRow) => {
     const base =
@@ -395,29 +471,17 @@ export function AssemblyCostingsTable(props: {
   const getSubrowsForMaster = (master: CostingRow) => {
     if (!showAccordion) return [];
     const key = String(master.productId ?? `custom-${master.id}`);
-    const arr = groups!.get(key) || [];
-    if (arr.length <= 1) return [];
-    const marked = arr.map((row, index, all) => ({
-      ...row,
-      isChild: true,
-      _groupPos:
-        index === 0
-          ? ("first" as const)
-          : index === all.length - 1
-          ? ("last" as const)
-          : ("middle" as const),
-      _groupSize: all.length,
-    }));
+    const arr = groupedSubrows.get(key) || [];
     if (DEBUG) {
       console.debug("[CostingsTable] getSubrows", {
         key,
         arrLen: arr.length,
         hasRequiredVariance: hasRequiredVariance(arr),
         hasQpuVariance: hasQpuVariance(arr),
-        returning: marked.length,
+        returning: arr.length,
       });
     }
-    return marked as CostingRow[];
+    return arr as CostingRow[];
   };
 
   columns = [
@@ -445,13 +509,15 @@ export function AssemblyCostingsTable(props: {
       key: "sku",
       header: "SKU",
       width: skuColumnWidth,
-      render: (c) => c.sku || "",
+      render: (c) => <span style={disabledStyle(c)}>{c.sku || ""}</span>,
     },
     {
       key: "name",
       header: "Name",
       width: nameColumnWidth,
-      render: (c) => c.name || c.productId || "",
+      render: (c) => (
+        <span style={disabledStyle(c)}>{c.name || c.productId || ""}</span>
+      ),
     },
     {
       key: "act",
@@ -479,11 +545,15 @@ export function AssemblyCostingsTable(props: {
           );
         }
         if (isChildRow(c)) return "";
-        return c.activityUsed === "cut"
-          ? "Cut"
-          : c.activityUsed === "make"
-          ? "Make"
-          : "";
+        return (
+          <span style={disabledStyle(c)}>
+            {c.activityUsed === "cut"
+              ? "Cut"
+              : c.activityUsed === "make"
+              ? "Make"
+              : ""}
+          </span>
+        );
       },
     },
     {
@@ -492,7 +562,8 @@ export function AssemblyCostingsTable(props: {
       width: compactColumnWidth,
       align: "center",
       render: (c) => {
-        if (qpuEditable(c, showAccordion)) {
+        const grouped = showAccordion && !c.flagIsDisabled;
+        if (qpuEditable(c, grouped)) {
           return (
             <TextInput
               key={`qpu-${c.id}`}
@@ -509,7 +580,7 @@ export function AssemblyCostingsTable(props: {
             />
           );
         }
-        return c.quantityPerUnit ?? "";
+        return <span style={disabledStyle(c)}>{c.quantityPerUnit ?? ""}</span>;
       },
     },
     {
@@ -581,6 +652,13 @@ export function AssemblyCostingsTable(props: {
         );
       },
     },
+    {
+      key: "actions",
+      header: "Actions",
+      width: "70px",
+      align: "center",
+      render: (c) => renderActionsMenu(c),
+    },
   ];
 
   if (DEBUG) {
@@ -645,6 +723,22 @@ export function AssemblyCostingsTable(props: {
         striped
         getSubrows={showAccordion ? getSubrowsForMaster : undefined}
       />
+      {disabledList.length ? (
+        <Stack gap="xs" mt="md">
+          <Divider />
+          <Title order={6}>Disabled Costings</Title>
+          <AccordionTable<CostingRow>
+            columns={columns}
+            data={disabledList}
+            getRowId={(row) => tableRowId(row)}
+            withCaret={false}
+            caretInFirstColumn={false}
+            hideCaretWhenEmpty
+            size="sm"
+            striped
+          />
+        </Stack>
+      ) : null}
       {!!(uncommon && uncommon.length) && (
         <div style={{ marginTop: 16 }}>
           {uncommon!.map((g, i) => (

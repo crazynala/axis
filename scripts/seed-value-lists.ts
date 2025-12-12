@@ -45,6 +45,8 @@ const categories = [
 const jobTypes = ["Sampling", "Design", "Production", "Fabric Purchase"];
 
 const productTypes = ["Raw", "Finished", "Service", "Fabric", "Trim", "CMT"];
+const assemblyTypes = ["Prod", "Keep", "PP", "SMS"];
+const defectReasons = ["Unspecified"];
 
 const currencies = [
   { code: "EUR", label: "Euro" },
@@ -119,6 +121,8 @@ async function main() {
   await seedCategories();
   await seedSimpleList(ValueListType.JobType, jobTypes);
   await seedSimpleList(ValueListType.ProductType, productTypes);
+  await seedSimpleList(ValueListType.AssemblyType, assemblyTypes);
+  await seedSimpleList(ValueListType.DefectReason, defectReasons);
   await seedCurrencies();
   await seedSimpleList(ValueListType.ShippingMethod, shippingMethods);
   console.log("Seeded value lists");

@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asBool, asNum, pick, fixMojibake } from "./utils";
+import { asBool, asNum, pick, fixMojibake, resetSequence } from "./utils";
 
 export async function importProducts(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -406,6 +406,7 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] products error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "Product");
   return {
     created,
     updated,

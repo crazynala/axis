@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, resetSequence } from "./utils";
 
 export async function importPurchaseOrderLines(
   rows: any[]
@@ -81,5 +81,6 @@ export async function importPurchaseOrderLines(
       Object.values(grouped)
     );
   }
+  await resetSequence(prisma, "PurchaseOrderLine");
   return { created, updated, skipped, errors };
 }

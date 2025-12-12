@@ -10,6 +10,7 @@
     "build": "remix vite:build",
     "seed:admin": "node scripts/seed-admin.js",
     "seed:value-lists": "tsx scripts/seed-value-lists.ts",
+    "seed:locations": "tsx scripts/seed-locations.ts",
     "seed:sale-price-groups": "tsx scripts/seed-sale-price-groups.ts",
     "debug": "node --inspect-brk server.mjs",
     "predev": "prisma generate",

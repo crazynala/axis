@@ -1,6 +1,7 @@
 ### Index Page
 - [ ] Start / End / Status not populated.
 - [ ] Index table widths don't make sense (name is crunched)
+- [ ] !! Job detail record nav is not respecting filter (showing / navigating all records)
 
 ### Detail Page
 
@@ -14,3 +15,4 @@
 - [ ] On job detail route, move the stateChangeButton above the cards, inline with the breadcrumbs but pushed right. The status whiteboard field should be to the left of this, with no label and placeholder text = "Whiteboard"
 - [ ] Stock location must be locked if there are any assembly activities
 - [ ] Statuses on imported assemblies / jobs are not correct
+- [ ] Assembly:Costings "Required" is showing 15.2999999...

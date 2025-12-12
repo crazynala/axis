@@ -24,6 +24,9 @@ export default function AdminIndex() {
             <Link to="/admin/value-lists/ShippingMethod">
               Value Lists: Shipping Method
             </Link>
+            <Link to="/admin/value-lists/DefectReason">
+              Value Lists: Defect Reasons
+            </Link>
             <Link to="/admin/forex/USD/TRY">Forex: USD → TRY</Link>
             <Link to="/admin/dhl-records">DHL Records</Link>
           </Group>

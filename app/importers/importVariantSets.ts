@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, resetSequence } from "./utils";
 
 export async function importVariantSets(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -58,5 +58,6 @@ export async function importVariantSets(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] variant_sets error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "VariantSet");
   return { created, updated, skipped, errors };
 }

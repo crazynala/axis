@@ -1,6 +1,6 @@
 import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, resetSequence } from "./utils";
 
 // Enhanced: progress + richer error meta
 
@@ -80,5 +80,6 @@ export async function importBatches(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] batches error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "Batch");
   return { created, updated, skipped, errors };
 }

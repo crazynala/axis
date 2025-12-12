@@ -70,6 +70,12 @@ export const productAssocFields: FieldConfig[] = [
     widget: "triBool",
     findOp: "equals",
   },
+  {
+    name: "flagIsDisabled",
+    label: "Disabled",
+    widget: "triBool",
+    findOp: "equals",
+  },
 ];
 
 // Pricing & category

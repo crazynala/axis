@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick, coerceFlag } from "./utils";
+import { asNum, pick, coerceFlag, resetSequence } from "./utils";
 
 export async function importCostings(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -32,13 +32,14 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
       costPricePerItem: asNum(pick(r, ["Price|CostWithVAT_PerItem"])) as
         | number
         | null,
-      flagAssembly: coerceFlag(pick(r, ["Flag|Assembly"])),
-      flagDefinedInProduct: coerceFlag(pick(r, ["Flag|DefinedInProduct"])),
+      flagAssembly: coerceFlag(pick(r, ["Flag_Assembly"])),
+      flagDefinedInProduct: coerceFlag(pick(r, ["Flag_DefinedInProduct"])),
       flagIsBillableManual: coerceFlag(pick(r, ["Flag_IsBillable|Manual"])),
       flagIsInvoiceableManual: coerceFlag(
         pick(r, ["Flag_IsInvoiceable|Manual"])
       ),
-      flagStockTracked: coerceFlag(pick(r, ["Flag|StockTracked"])),
+      flagIsDisabled: coerceFlag(pick(r, ["is_Disabled"])),
+      flagStockTracked: coerceFlag(pick(r, ["Flag_StockTracked"])),
     };
 
     try {
@@ -99,5 +100,6 @@ export async function importCostings(rows: any[]): Promise<ImportResult> {
     console.log("[import] costings error summary", Object.values(grouped));
   }
 
+  await resetSequence(prisma, "Costing");
   return { created, updated, skipped, errors };
 }

@@ -6,7 +6,11 @@ import React, {
   useRef,
   useEffect,
 } from "react";
-import { useLocation, useNavigate } from "@remix-run/react";
+import {
+  useInRouterContext,
+  useLocation,
+  useNavigate,
+} from "@remix-run/react";
 import { ActionIcon, Group, Text, Tooltip } from "@mantine/core";
 import {
   IconChevronsLeft,
@@ -62,11 +66,39 @@ export interface RecordContextValue {
 }
 
 const RecordContext = createContext<RecordContextValue | null>(null);
+const noopRecordContextValue: RecordContextValue = {
+  state: null,
+  register: () => {},
+  clear: () => {},
+  appendRecords: () => {},
+  setIdList: () => {},
+  addRows: () => {},
+  currentId: null,
+  setCurrentId: () => {},
+  nextId: () => null,
+  prevId: () => null,
+  getPathForId: () => null,
+};
 
 // ---------------------------
 // Provider
 // ---------------------------
 export const RecordProvider: React.FC<React.PropsWithChildren> = ({
+  children,
+}) => {
+  // Some surfaces (e.g., storybook, isolated popouts) may render without a router.
+  const inRouter = useInRouterContext();
+  if (!inRouter) {
+    return (
+      <RecordContext.Provider value={noopRecordContextValue}>
+        {children}
+      </RecordContext.Provider>
+    );
+  }
+  return <RecordProviderWithRouter>{children}</RecordProviderWithRouter>;
+};
+
+const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
   children,
 }) => {
   const [state, setState] = useState<RecordState | null>(null);

@@ -24,6 +24,7 @@ export type PendingCostingItem = {
   alreadyInvoicedQty: string;
   defaultQuantity: string;
   defaultUnitPrice: string | null;
+  flagIsDisabled?: boolean | null;
 };
 
 export type PendingShipmentItem = {

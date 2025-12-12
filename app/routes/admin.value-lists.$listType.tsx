@@ -40,6 +40,7 @@ const LIST_TYPES = [
   "JobType",
   "Currency",
   "ShippingMethod",
+  "DefectReason",
 ] as const satisfies ValueListType[];
 
 const listTypeLabels: Record<ValueListType, string> = {
@@ -49,6 +50,7 @@ const listTypeLabels: Record<ValueListType, string> = {
   JobType: "Job Type",
   Currency: "Currency",
   ShippingMethod: "Shipping Method",
+  DefectReason: "Defect Reasons",
 };
 
 function parseListType(raw?: string | null): ValueListType {

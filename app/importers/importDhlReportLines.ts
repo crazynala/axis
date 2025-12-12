@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, resetSequence } from "./utils";
 
 export async function importDhlReportLines(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -175,5 +175,6 @@ export async function importDhlReportLines(rows: any[]): Promise<ImportResult> {
       Object.values(grouped)
     );
   }
+  await resetSequence(prisma, "DHLReportLine");
   return { created, updated, skipped, errors };
 }

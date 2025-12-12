@@ -22,6 +22,7 @@ export function buildProductData(form: FormData) {
   str("name");
   str("description");
   str("type");
+  str("whiteboard");
   // numerics
   num("costPrice");
   num("manualSalePrice");
@@ -34,6 +35,7 @@ export function buildProductData(form: FormData) {
   // booleans
   bool("stockTrackingEnabled");
   bool("batchTrackingEnabled");
+  bool("flagIsDisabled");
   // mutual exclusivity enforcement (throwing here will surface as 500; callers may catch if needed)
   // simple runtime check (avoid async import here)
   if (data.manualSalePrice != null && data.manualMargin != null) {

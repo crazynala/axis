@@ -36,8 +36,39 @@ export async function loader({ params }: LoaderFunctionArgs) {
 export async function action({ request, params }: ActionFunctionArgs) {
   const idRaw = params.id;
   const id = idRaw ? Number(idRaw) : NaN;
+  if (!Number.isFinite(id)) return redirect("/invoices");
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  if (intent.startsWith("costing.")) {
+    const costingId = Number(form.get("costingId"));
+    if (!Number.isFinite(costingId)) return redirect(`/invoices/${id}`);
+    if (intent === "costing.enable") {
+      await prisma.costing.update({
+        where: { id: costingId },
+        data: { flagIsDisabled: false },
+      });
+    } else if (intent === "costing.disable") {
+      const costing = await prisma.costing.findUnique({
+        where: { id: costingId },
+        select: { flagDefinedInProduct: true },
+      });
+      if (costing?.flagDefinedInProduct) {
+        await prisma.costing.update({
+          where: { id: costingId },
+          data: { flagIsDisabled: true },
+        });
+      }
+    } else if (intent === "costing.delete") {
+      const costing = await prisma.costing.findUnique({
+        where: { id: costingId },
+        select: { flagDefinedInProduct: true },
+      });
+      if (costing && !costing.flagDefinedInProduct) {
+        await prisma.costing.delete({ where: { id: costingId } });
+      }
+    }
+    return redirect(`/invoices/${id}/add-lines`);
+  }
   if (intent === "invoice.addLines") {
     const itemsRaw = form.get("items") as string | null;
     const items = itemsRaw ? JSON.parse(itemsRaw) : [];

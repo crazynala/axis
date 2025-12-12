@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick, coerceFlag } from "./utils";
+import { asNum, pick, coerceFlag, resetSequence } from "./utils";
 
 export async function importProductLines(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -63,5 +63,6 @@ export async function importProductLines(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] product_lines error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "ProductLine");
   return { created, updated, skipped, errors };
 }

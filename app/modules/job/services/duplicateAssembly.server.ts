@@ -50,6 +50,7 @@ export async function duplicateAssembly(
         flagIsBillableDefaultOrManual: costing.flagIsBillableDefaultOrManual,
         flagIsBillableManual: costing.flagIsBillableManual,
         flagIsInvoiceableManual: costing.flagIsInvoiceableManual,
+        flagIsDisabled: costing.flagIsDisabled,
       })),
     });
   }

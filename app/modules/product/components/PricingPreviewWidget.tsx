@@ -27,8 +27,11 @@ export function useProductPricingPrefs() {
   }, []);
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-    if (customerId != null)
+    if (customerId == null || customerId === "") {
+      window.sessionStorage.removeItem("pricing.customerId");
+    } else {
       window.sessionStorage.setItem("pricing.customerId", customerId);
+    }
     window.sessionStorage.setItem("pricing.qty", String(qty));
     try {
       // Notify other components (e.g., index list) that prefs changed

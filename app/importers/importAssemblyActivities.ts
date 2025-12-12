@@ -1,6 +1,52 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick, parseIntListPreserveGaps } from "./utils";
+import {
+  asDate,
+  asNum,
+  pick,
+  parseIntListPreserveGaps,
+  resetSequence,
+} from "./utils";
+import {
+  ActivityKind,
+  AssemblyStage,
+  DefectDisposition,
+} from "@prisma/client";
+
+function deriveStructuredActivity(
+  rawType: string | null
+): {
+  stage: AssemblyStage | null;
+  kind: ActivityKind | null;
+  defectDisposition: DefectDisposition | null;
+} {
+  if (!rawType) return { stage: null, kind: null, defectDisposition: null };
+  const upper = rawType.trim().toUpperCase();
+  const mapStage = (suffix: string): AssemblyStage => {
+    if (suffix === "CUT") return AssemblyStage.cut;
+    if (suffix === "MAKE") return AssemblyStage.make;
+    if (suffix === "PACK") return AssemblyStage.pack;
+    if (suffix === "QC") return AssemblyStage.qc;
+    if (suffix === "ORDER") return AssemblyStage.order;
+    return AssemblyStage.other;
+  };
+  if (upper.startsWith("TRASH_")) {
+    const suffix = upper.replace("TRASH_", "");
+    return {
+      stage: mapStage(suffix),
+      kind: ActivityKind.defect,
+      defectDisposition: DefectDisposition.scrap,
+    };
+  }
+  if (upper === "CUT" || upper === "MAKE" || upper === "PACK" || upper === "QC") {
+    return {
+      stage: mapStage(upper),
+      kind: ActivityKind.normal,
+      defectDisposition: null,
+    };
+  }
+  return { stage: null, kind: null, defectDisposition: null };
+}
 
 export async function importAssemblyActivities(
   rows: any[]
@@ -23,6 +69,11 @@ export async function importAssemblyActivities(
         "QtyBreakdownList",
       ])
     );
+    const rawActivityType =
+      (pick(r, ["AssemblyActivityType", "ActivityType"]) ?? "")
+        .toString()
+        .trim() || null;
+    const structured = deriveStructuredActivity(rawActivityType);
     const qtySum = qtyBreakdown.reduce(
       (t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t),
       0
@@ -33,10 +84,7 @@ export async function importAssemblyActivities(
       jobId: asNum(pick(r, ["a_JobNo"])) as number | null,
       name: (pick(r, ["Name"]) ?? "").toString().trim() || null,
       description: (pick(r, ["Description"]) ?? "").toString().trim() || null,
-      activityType:
-        (pick(r, ["AssemblyActivityType", "ActivityType"]) ?? "")
-          .toString()
-          .trim() || null,
+      activityType: rawActivityType,
       activityDate: asDate(
         pick(r, ["ActivityDate", "Date", "Activity Date"])
       ) as Date | null,
@@ -61,6 +109,9 @@ export async function importAssemblyActivities(
       qtyFabricConsumedPerUnit: asNum(
         pick(r, ["Qty_FabricConsumedPerUnit"])
       ) as number | null,
+      stage: structured.stage,
+      kind: structured.kind,
+      defectDisposition: structured.defectDisposition,
     };
     try {
       await prisma.assemblyActivity.upsert({
@@ -112,5 +163,6 @@ export async function importAssemblyActivities(
       Object.values(grouped)
     );
   }
+  await resetSequence(prisma, "AssemblyActivity");
   return { created, updated, skipped, errors };
 }

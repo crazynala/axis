@@ -19,6 +19,8 @@ type MinimalCosting = {
   manualMargin?: any;
   salePriceGroup?: { saleRanges?: any[] | null } | null;
   activityUsed?: string | null;
+  flagIsDisabled?: boolean | null;
+  flagDefinedInProduct?: boolean | null;
 };
 
 type RequiredInputs = {
@@ -98,6 +100,8 @@ export function buildCostingRows(options: {
       manualSalePrice:
         c.manualSalePrice != null ? Number(c.manualSalePrice) : null,
       marginPct: c.manualMargin != null ? Number(c.manualMargin) : null,
+      flagIsDisabled: Boolean((c as any).flagIsDisabled),
+      flagDefinedInProduct: Boolean((c as any).flagDefinedInProduct),
     };
     return row;
   });

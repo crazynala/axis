@@ -27,6 +27,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       manualSalePrice: true,
       stockTrackingEnabled: true,
       batchTrackingEnabled: true,
+      customer: { select: { stockLocationId: true } },
       costGroup: {
         select: {
           costRanges: { select: { rangeFrom: true, costPrice: true } },
@@ -35,6 +36,24 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       purchaseTax: { select: { value: true } },
     },
   });
+  const { getProductStockSnapshots } = await import("~/utils/prisma.server");
+  const snapshots = (await getProductStockSnapshots(ids)) as
+    | Array<{
+        productId: number;
+        totalQty: number;
+        byLocation: Array<{
+          locationId: number | null;
+          locationName: string;
+          qty: number;
+        }>;
+      }>
+    | null;
+  const snapMap = new Map<number, any>();
+  if (Array.isArray(snapshots)) {
+    for (const s of snapshots) {
+      snapMap.set(s.productId, s);
+    }
+  }
   const enrichedRows = baseRows.map((r) => {
     let enrichedRow: any = {};
     const priceTiers =
@@ -64,6 +83,16 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       // console.log("Has price tiers:", r.id, priceTiers);
       enrichedRow.c_hasPriceTiers = true;
     }
+    const snap = snapMap.get(r.id);
+    if (snap) {
+      enrichedRow.c_stockQty = snap.totalQty ?? 0;
+      enrichedRow.c_byLocation = (snap.byLocation || []).map((loc: any) => ({
+        location_id: loc.locationId ?? loc.location_id ?? null,
+        location_name: loc.locationName ?? loc.location_name ?? "",
+        qty: loc.qty ?? 0,
+      }));
+    }
+    enrichedRow.customer = r.customer;
     return enrichedRow;
   });
   // console.log("Enriched rows:", enrichedRows);

@@ -34,6 +34,7 @@ import {
   useLoaderData,
   useNavigation,
   useRevalidator,
+  useMatches,
   useSubmit,
 } from "@remix-run/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -74,7 +75,7 @@ import {
 
 const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
   const { runWithDbActivity, prismaBase } = await import(
     "~/utils/prisma.server"
   );
@@ -154,6 +155,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
             locationInId: true,
             locationOutId: true,
             location: { select: { id: true, name: true } },
+            shippingLineId: true,
           },
         },
         batch: { select: { id: true, codeMill: true, codeSartor: true } },
@@ -171,6 +173,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
         locationOutId: true,
         quantity: true,
         notes: true,
+        shippingLineId: true,
       },
       orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 500,
@@ -179,17 +182,20 @@ export async function loader({ params }: LoaderFunctionArgs) {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
-    const [
-      product,
-      productChoices,
-      movements,
-      movementHeaders,
-      salePriceGroups,
-    ] = await Promise.all([
-      productPromise.then((r) => {
-        mark("product");
-        return r;
-      }),
+  const [
+    product,
+    productChoices,
+    movements,
+    movementHeaders,
+    salePriceGroups,
+    usedInProducts,
+    costingAssemblies,
+    shipmentLines,
+  ] = await Promise.all([
+    productPromise.then((r) => {
+      mark("product");
+      return r;
+    }),
       productChoicesPromise.then((r) => {
         mark("productChoices");
         return r;
@@ -199,11 +205,56 @@ export async function loader({ params }: LoaderFunctionArgs) {
         return r;
       }),
       movementHeadersPromise.then((r) => {
-        mark("movementHeaders");
-        return r;
-      }),
-      salePriceGroupsPromise.then((r) => r),
-    ]);
+      mark("movementHeaders");
+      return r;
+    }),
+    salePriceGroupsPromise.then((r) => r),
+    prismaBase.productLine.findMany({
+      where: { childId: id },
+      select: {
+        id: true,
+        parent: { select: { id: true, sku: true, name: true, type: true } },
+      },
+    }),
+    prismaBase.costing.findMany({
+      where: {
+        productId: id,
+        OR: [{ flagIsDisabled: false }, { flagIsDisabled: null }],
+      },
+      select: {
+        assembly: {
+          select: {
+            id: true,
+            name: true,
+            jobId: true,
+            job: { select: { id: true, projectCode: true, name: true } },
+          },
+        },
+      },
+    }),
+    (async () => {
+      const ids = new Set<number>();
+      for (const ml of await movementLinesPromise) {
+        const sid = Number((ml as any)?.movement?.shippingLineId);
+        if (Number.isFinite(sid)) ids.add(sid);
+      }
+      for (const mh of await movementHeadersPromise) {
+        const sid = Number((mh as any)?.shippingLineId);
+        if (Number.isFinite(sid)) ids.add(sid);
+      }
+      if (!ids.size) return [];
+      return prismaBase.shipmentLine.findMany({
+        where: { id: { in: Array.from(ids) } },
+        select: {
+          id: true,
+          shipmentId: true,
+          shipment: {
+            select: { id: true, trackingNo: true, packingSlipCode: true, type: true },
+          },
+        },
+      });
+    })(),
+  ]);
     if (!product) return redirect("/products");
 
     // Resolve location names for in/out in one query (lines + headers)
@@ -254,6 +305,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
       location_name: b.locationName ?? "",
       qty: b.qty ?? 0,
     }));
+    let userLevel: string | null = null;
+    try {
+      const uid = await requireUserId(request);
+      const user = await prismaBase.user.findUnique({
+        where: { id: uid },
+        select: { userLevel: true },
+      });
+      userLevel = (user?.userLevel as string | null) ?? null;
+    } catch {
+      // best-effort; leave null if not logged in
+    }
     return json({
       product,
       stockByLocation,
@@ -263,6 +325,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
       movementHeaders,
       locationNameById,
       salePriceGroups,
+      usedInProducts,
+      costingAssemblies,
+      userLevel,
     });
   }); // end runWithDbActivity wrapper
 }
@@ -291,6 +356,64 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!intent) {
     form = await request.formData();
     intent = String(form.get("_intent") || "");
+  }
+  if (intent === "movement.lookupShipment") {
+    const movementId = Number(
+      (form || (await request.formData())).get("movementId")
+    );
+    if (!Number.isFinite(movementId)) {
+      return json({ error: "Invalid movement id", intent }, { status: 400 });
+    }
+    const movement = await prismaBase.productMovement.findUnique({
+      where: { id: movementId },
+      select: { shippingLineId: true },
+    });
+    const shippingLineId = Number(movement?.shippingLineId);
+    if (!Number.isFinite(shippingLineId)) {
+      return json({ shipmentLine: null, intent });
+    }
+    const sl = await prismaBase.shipmentLine.findUnique({
+      where: { id: shippingLineId },
+      select: {
+        id: true,
+        shipmentId: true,
+        shipment: {
+          select: {
+            id: true,
+            trackingNo: true,
+            packingSlipCode: true,
+            type: true,
+          },
+        },
+      },
+    });
+    return json({ shipmentLine: sl, intent });
+  }
+  if (intent === "movement.delete") {
+    if (!Number.isFinite(id))
+      return json({ error: "Invalid product id" }, { status: 400 });
+    const f = form || (await request.formData());
+    const movementId = Number(f.get("movementId"));
+    if (!Number.isFinite(movementId))
+      return json({ error: "Invalid movement id" }, { status: 400 });
+    const userId = await requireUserId(request);
+    const user = await prismaBase.user.findUnique({
+      where: { id: userId },
+      select: { userLevel: true },
+    });
+    if ((user?.userLevel as string | null) !== "Admin") {
+      return json(
+        { error: "Forbidden", intent: "movement.delete" },
+        { status: 403 }
+      );
+    }
+    await prismaBase.$transaction(async (tx) => {
+      await tx.productMovementLine.deleteMany({ where: { movementId } });
+      await tx.productMovement.deleteMany({ where: { id: movementId } });
+    });
+    const isFetcher = !!request.headers.get("x-remix-fetch");
+    if (isFetcher) return json({ ok: true, intent: "movement.delete" });
+    return redirect(`/products/${id}`);
   }
   // Defer to helpers for data shaping and side-effects
   const { buildProductData } = await import(
@@ -759,7 +882,18 @@ export default function ProductDetailRoute() {
     movementHeaders,
     locationNameById,
     salePriceGroups,
+    usedInProducts,
+    costingAssemblies,
+    shipmentLines,
+    userLevel,
   } = useLoaderData<typeof loader>();
+  const matches = useMatches();
+  const rootData = matches.find((m) => m.id === "root")?.data as
+    | { userLevel?: string | null }
+    | undefined;
+  const effectiveUserLevel = userLevel ?? rootData?.userLevel ?? null;
+  const isAdminUser =
+    !effectiveUserLevel || String(effectiveUserLevel) === "Admin";
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
@@ -810,9 +944,20 @@ export default function ProductDetailRoute() {
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
   const [movementView, setMovementView] = useState<"header" | "line">("line");
   const [showAllMovements, setShowAllMovements] = useState(false);
+  const [movementDetailId, setMovementDetailId] = useState<number | null>(null);
+  const movementActionFetcher = useFetcher();
+  const shipmentLookupFetcher = useFetcher<{ shipmentLine?: any }>();
+  const [pendingDeleteMovementId, setPendingDeleteMovementId] = useState<
+    number | null
+  >(null);
+  const [movementDeleteInput, setMovementDeleteInput] = useState("");
+  const movementDeletePhrase = "ARE YOU SO SURE";
   useEffect(() => {
     // Collapse when navigating to a different product
     setShowAllMovements(false);
+    setMovementDetailId(null);
+    setPendingDeleteMovementId(null);
+    setMovementDeleteInput("");
   }, [product.id]);
   useEffect(() => {
     setDeleteConfirmation("");
@@ -840,6 +985,17 @@ export default function ProductDetailRoute() {
       }
     }
   }, [refreshFetcher.state, refreshFetcher.data, revalidate]);
+  useEffect(() => {
+    if (
+      movementActionFetcher.state === "idle" &&
+      movementActionFetcher.data &&
+      (movementActionFetcher.data as any).ok
+    ) {
+      revalidate();
+      setPendingDeleteMovementId(null);
+      setMovementDeleteInput("");
+    }
+  }, [movementActionFetcher.state, movementActionFetcher.data, revalidate]);
   // Batch filters
   const [batchScope, setBatchScope] = useState<"all" | "current">("current");
   const [batchLocation, setBatchLocation] = useState<string>("all");
@@ -1005,9 +1161,72 @@ export default function ProductDetailRoute() {
     () => (locationNameById as any as Record<number | string, string>) || {},
     [locationNameById]
   );
+  const movementDetail = useMemo(() => {
+    if (!movementDetailId) return null;
+    const header =
+      headers.find((h: any) => Number(h.id) === Number(movementDetailId)) ||
+      null;
+    const movementLinesForMovement = lines.filter(
+      (l: any) => Number(l?.movement?.id) === Number(movementDetailId)
+    );
+    const movement =
+      header || movementLinesForMovement[0]?.movement || (header as any) || null;
+    return {
+      movement,
+      lines: movementLinesForMovement,
+    };
+  }, [headers, lines, movementDetailId]);
+  const detailMovement = movementDetail?.movement ?? null;
+  const detailLines = movementDetail?.lines ?? [];
+  const shipmentLineById = useMemo(() => {
+    const map = new Map<number, any>();
+    (shipmentLines || []).forEach((sl: any) => {
+      if (sl?.id != null) map.set(Number(sl.id), sl);
+    });
+    return map;
+  }, [shipmentLines]);
+  const detailShipment = useMemo(() => {
+    if (!detailMovement) return null;
+    const movementSid = Number((detailMovement as any)?.shippingLineId);
+    if (Number.isFinite(movementSid) && shipmentLineById.has(movementSid)) {
+      return shipmentLineById.get(movementSid);
+    }
+    return null;
+  }, [detailMovement, shipmentLineById]);
+  useEffect(() => {
+    if (!detailMovement) return;
+    if (detailShipment) return;
+    const movementSid = Number((detailMovement as any)?.shippingLineId);
+    if (!Number.isFinite(movementSid)) return;
+    shipmentLookupFetcher.submit(
+      { _intent: "movement.lookupShipment", movementId: String(detailMovement.id) },
+      { method: "post" }
+    );
+  }, [detailMovement, detailShipment, shipmentLookupFetcher]);
+  const detailShipmentFromFetcher =
+    shipmentLookupFetcher.data?.shipmentLine ?? null;
   const assemblies =
     ((product as any)?.primaryAssemblies as any[])?.filter(Boolean) || [];
-  const showInstances = product.type === "Finished" && assemblies.length > 0;
+  const bomParents =
+    (usedInProducts || []).map((pl: any) => pl.parent).filter(Boolean) || [];
+  const costingAsm =
+    (costingAssemblies || [])
+      .map((c: any) => c.assembly)
+      .filter((a: any) => a && a.id != null) || [];
+  const handleDeleteMovement = useCallback(
+    (movementId: number | null | undefined) => {
+      if (!movementId || !isAdminUser) return;
+      const fd = new FormData();
+      fd.set("_intent", "movement.delete");
+      fd.set("movementId", String(movementId));
+      movementActionFetcher.submit(fd, { method: "post" });
+    },
+    [isAdminUser, movementActionFetcher]
+  );
+  const showInstances =
+    assemblies.length > 0 ||
+    bomParents.length > 0 ||
+    costingAsm.length > 0;
 
   return (
     <Stack gap="lg">
@@ -1547,6 +1766,7 @@ export default function ProductDetailRoute() {
                         {movementView === "line" && <Table.Th>Batch</Table.Th>}
                         <Table.Th>Qty</Table.Th>
                         <Table.Th>Notes</Table.Th>
+                        <Table.Th />
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -1576,26 +1796,67 @@ export default function ProductDetailRoute() {
                                       ml.movement.locationInId
                                     : ""}
                                 </Table.Td>
-                                <Table.Td>
-                                  {ml.batch?.codeMill || ml.batch?.codeSartor
-                                    ? `${ml.batch?.codeMill || ""}${
-                                        ml.batch?.codeMill &&
-                                        ml.batch?.codeSartor
-                                          ? " | "
-                                          : ""
-                                      }${ml.batch?.codeSartor || ""}`
-                                    : ml.batch?.id
-                                    ? `${ml.batch.id}`
-                                    : ""}
-                                </Table.Td>
-                                <Table.Td>{ml.quantity ?? ""}</Table.Td>
-                                <Table.Td>{ml.notes || ""}</Table.Td>
-                              </Table.Tr>
-                            )
+                              <Table.Td>
+                                {ml.batch?.codeMill || ml.batch?.codeSartor
+                                  ? `${ml.batch?.codeMill || ""}${
+                                      ml.batch?.codeMill &&
+                                      ml.batch?.codeSartor
+                                        ? " | "
+                                        : ""
+                                    }${ml.batch?.codeSartor || ""}`
+                                  : ml.batch?.id
+                                  ? `${ml.batch.id}`
+                                  : ""}
+                              </Table.Td>
+                              <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                              <Table.Td>{ml.notes || ""}</Table.Td>
+                              <Table.Td width={48}>
+                                <Menu
+                                  withinPortal
+                                  position="bottom-end"
+                                  shadow="sm"
+                                >
+                                  <Menu.Target>
+                                    <ActionIcon
+                                      variant="subtle"
+                                      aria-label="Movement actions"
+                                    >
+                                      <IconMenu2 size={16} />
+                                    </ActionIcon>
+                                  </Menu.Target>
+                                  <Menu.Dropdown>
+                                    <Menu.Item
+                                      onClick={() =>
+                                        setMovementDetailId(ml.movement?.id ?? null)
+                                      }
+                                      disabled={!ml.movement?.id}
+                                    >
+                                      Details
+                                    </Menu.Item>
+                                    {isAdminUser && (
+                                      <Menu.Item
+                                        color="red"
+                                        onClick={() => {
+                                          if (!ml.movement?.id) return;
+                                          setPendingDeleteMovementId(
+                                            ml.movement.id
+                                          );
+                                          setMovementDeleteInput("");
+                                        }}
+                                        disabled={!ml.movement?.id}
+                                      >
+                                        Delete
+                                      </Menu.Item>
+                                    )}
+                                  </Menu.Dropdown>
+                                </Menu>
+                              </Table.Td>
+                            </Table.Tr>
                           )
-                        : (showAllMovements
-                            ? headers
-                            : headers.slice(0, 8)
+                        )
+                      : (showAllMovements
+                          ? headers
+                          : headers.slice(0, 8)
                           ).map((mh: any) => (
                             <Table.Tr key={`hdr-${mh.id}`}>
                               <Table.Td>
@@ -1609,17 +1870,58 @@ export default function ProductDetailRoute() {
                                   ? locById?.[mh.locationOutId] ||
                                     mh.locationOutId
                                   : ""}
-                              </Table.Td>
-                              <Table.Td>
-                                {mh.locationInId != null
-                                  ? locById?.[mh.locationInId] ||
-                                    mh.locationInId
-                                  : ""}
-                              </Table.Td>
-                              <Table.Td>{mh.quantity ?? ""}</Table.Td>
-                              <Table.Td>{mh.notes || ""}</Table.Td>
-                            </Table.Tr>
-                          ))}
+                            </Table.Td>
+                            <Table.Td>
+                              {mh.locationInId != null
+                                ? locById?.[mh.locationInId] ||
+                                  mh.locationInId
+                                : ""}
+                            </Table.Td>
+                            <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                            <Table.Td>{mh.notes || ""}</Table.Td>
+                            <Table.Td width={48}>
+                              <Menu
+                                withinPortal
+                                position="bottom-end"
+                                shadow="sm"
+                              >
+                                <Menu.Target>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    aria-label="Movement actions"
+                                  >
+                                    <IconMenu2 size={16} />
+                                  </ActionIcon>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Item
+                                    onClick={() =>
+                                      setMovementDetailId(mh.id ?? null)
+                                    }
+                                    disabled={!mh.id}
+                                  >
+                                    Details
+                                  </Menu.Item>
+                                  {isAdminUser && (
+                                    <Menu.Item
+                                      color="red"
+                                      onClick={() => {
+                                        if (!mh.id) return;
+                                        setPendingDeleteMovementId(
+                                          mh.id as number
+                                        );
+                                        setMovementDeleteInput("");
+                                      }}
+                                      disabled={!mh.id}
+                                    >
+                                      Delete
+                                    </Menu.Item>
+                                  )}
+                                </Menu.Dropdown>
+                              </Menu>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
                     </Table.Tbody>
                   </Table>
                 </Card.Section>
@@ -1643,55 +1945,259 @@ export default function ProductDetailRoute() {
                     );
                   return null;
                 })()}
+                <Modal
+                  opened={!!movementDetail}
+                  onClose={() => setMovementDetailId(null)}
+                  title={
+                    detailMovement?.id
+                      ? `Movement ${detailMovement.id}`
+                      : "Movement details"
+                  }
+                  size="lg"
+                >
+                  <Stack gap="sm">
+                    <Group justify="space-between">
+                      <Text size="sm">
+                        Date:{" "}
+                        {detailMovement?.date
+                          ? new Date(detailMovement.date).toLocaleString()
+                          : "—"}
+                      </Text>
+                      <Text size="sm">
+                        Type: {detailMovement?.movementType || "—"}
+                      </Text>
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="sm">
+                        Out:{" "}
+                        {detailMovement?.locationOutId != null
+                          ? locById?.[detailMovement.locationOutId] ||
+                            detailMovement.locationOutId
+                          : "—"}
+                      </Text>
+                      <Text size="sm">
+                        In:{" "}
+                        {detailMovement?.locationInId != null
+                          ? locById?.[detailMovement.locationInId] ||
+                            detailMovement.locationInId
+                          : "—"}
+                      </Text>
+                    </Group>
+                    <Text size="sm">
+                      Notes: {detailMovement?.notes || "—"}
+                    </Text>
+                    {detailShipment || detailShipmentFromFetcher ? (
+                      <Stack gap={4}>
+                        <Text fw={600} size="sm">
+                          Shipment (Out)
+                        </Text>
+                        {(() => {
+                          const sl = detailShipment || detailShipmentFromFetcher;
+                          if (!sl) return null;
+                          return (
+                            <>
+                              <Text size="sm">
+                                Shipment:{" "}
+                                {sl.shipmentId != null ? sl.shipmentId : "—"}{" "}
+                                {sl.shipment?.trackingNo
+                                  ? `• AWB ${sl.shipment.trackingNo}`
+                                  : ""}
+                                {sl.shipment?.packingSlipCode
+                                  ? ` • Packing Slip ${sl.shipment.packingSlipCode}`
+                                  : ""}
+                              </Text>
+                              <Text size="sm">
+                                Shipment Line ID: {sl.id}
+                              </Text>
+                            </>
+                          );
+                        })()}
+                      </Stack>
+                    ) : null}
+                    <Text fw={600} size="sm">
+                      Lines
+                    </Text>
+                    {detailLines.length ? (
+                      <Table withColumnBorders>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>ID</Table.Th>
+                            <Table.Th>Product</Table.Th>
+                            <Table.Th>Batch</Table.Th>
+                            <Table.Th>Qty</Table.Th>
+                            <Table.Th>Notes</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {detailLines.map((ln: any) => (
+                            <Table.Tr key={ln.id}>
+                              <Table.Td>{ln.id}</Table.Td>
+                              <Table.Td>{ln.productId ?? "—"}</Table.Td>
+                              <Table.Td>
+                                {ln.batch?.id
+                                  ? ln.batch?.codeMill || ln.batch?.codeSartor
+                                    ? `${ln.batch?.codeMill || ""}${
+                                        ln.batch?.codeMill &&
+                                        ln.batch?.codeSartor
+                                          ? " | "
+                                          : ""
+                                      }${ln.batch?.codeSartor || ""}`
+                                    : ln.batch.id
+                                  : "—"}
+                              </Table.Td>
+                              <Table.Td>{ln.quantity ?? "—"}</Table.Td>
+                              <Table.Td>{ln.notes || "—"}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        No lines found for this movement.
+                      </Text>
+                    )}
+                  </Stack>
+                </Modal>
+                <Modal
+                  opened={pendingDeleteMovementId != null}
+                  onClose={() => setPendingDeleteMovementId(null)}
+                  title="Delete Movement"
+                  centered
+                >
+                  <Stack gap="sm">
+                    <Text size="sm">
+                      To permanently delete movement{" "}
+                      {pendingDeleteMovementId ?? ""}, type{" "}
+                      <strong>{movementDeletePhrase}</strong> below.
+                    </Text>
+                    <TextInput
+                      placeholder={movementDeletePhrase}
+                      value={movementDeleteInput}
+                      onChange={(e) => setMovementDeleteInput(e.currentTarget.value)}
+                    />
+                    <Group justify="flex-end" gap="xs">
+                      <Button
+                        variant="default"
+                        onClick={() => setPendingDeleteMovementId(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        color="red"
+                        loading={movementActionFetcher.state !== "idle"}
+                        disabled={
+                          movementDeleteInput.replace(/\u2019/g, "'").trim() !==
+                          movementDeletePhrase
+                        }
+                        onClick={() => handleDeleteMovement(pendingDeleteMovementId)}
+                      >
+                        Delete
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Modal>
               </Card>
             </Grid.Col>
           </Grid>
         </Tabs.Panel>
         {showInstances ? (
           <Tabs.Panel value="instances" pt="md">
-            <Card withBorder padding="md" bg="transparent">
-              <Card.Section inheritPadding py="xs">
-                <Title order={5}>Assemblies using this product</Title>
-              </Card.Section>
-              <Card.Section>
-                {assemblies.length ? (
-                  <Table withColumnBorders highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Assembly</Table.Th>
-                        <Table.Th>Job</Table.Th>
-                        <Table.Th>Project</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {assemblies.map((a: any) => (
-                        <Table.Tr key={a.id}>
-                          <Table.Td>{a.name || `A${a.id}`}</Table.Td>
-                          <Table.Td>
-                            {a.job ? (
-                              <Link to={`/jobs/${a.job.id}`}>
-                                {a.job.id}
-                              </Link>
-                            ) : (
-                              a.jobId || ""
-                            )}
-                          </Table.Td>
-                          <Table.Td>
-                            {a.job
-                              ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
-                              : ""}
-                          </Table.Td>
+            <Stack gap="md">
+              <Card withBorder padding="md" bg="transparent">
+                <Card.Section inheritPadding py="xs">
+                  <Title order={5}>Products using this item (BOM)</Title>
+                </Card.Section>
+                <Card.Section>
+                  {bomParents.length ? (
+                    <Table withColumnBorders highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>ID</Table.Th>
+                          <Table.Th>SKU</Table.Th>
+                          <Table.Th>Name</Table.Th>
+                          <Table.Th>Type</Table.Th>
                         </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                ) : (
-                  <Text c="dimmed" size="sm">
-                    No assemblies currently use this product.
-                  </Text>
-                )}
-              </Card.Section>
-            </Card>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {bomParents.map((p: any) => (
+                          <Table.Tr key={p.id}>
+                            <Table.Td>
+                              <Link to={`/products/${p.id}`}>{p.id}</Link>
+                            </Table.Td>
+                            <Table.Td>{p.sku || ""}</Table.Td>
+                            <Table.Td>{p.name || ""}</Table.Td>
+                            <Table.Td>{p.type || ""}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  ) : (
+                    <Text c="dimmed" size="sm">
+                      This product is not used in other products.
+                    </Text>
+                  )}
+                </Card.Section>
+              </Card>
+
+              <Card withBorder padding="md" bg="transparent">
+                <Card.Section inheritPadding py="xs">
+                  <Title order={5}>Assemblies using this product</Title>
+                </Card.Section>
+                <Card.Section>
+                  {assemblies.length || costingAsm.length ? (
+                    <Table withColumnBorders highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Assembly</Table.Th>
+                          <Table.Th>Job</Table.Th>
+                          <Table.Th>Project</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {assemblies.map((a: any) => (
+                          <Table.Tr key={`primary-${a.id}`}>
+                            <Table.Td>{a.name || `A${a.id}`}</Table.Td>
+                            <Table.Td>
+                              {a.job ? (
+                                <Link to={`/jobs/${a.job.id}`}>{a.job.id}</Link>
+                              ) : (
+                                a.jobId || ""
+                              )}
+                            </Table.Td>
+                            <Table.Td>
+                              {a.job
+                                ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
+                                : ""}
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                        {costingAsm.map((a: any) => (
+                          <Table.Tr key={`costing-${a.id}`}>
+                            <Table.Td>{a.name || `A${a.id}`}</Table.Td>
+                            <Table.Td>
+                              {a.job ? (
+                                <Link to={`/jobs/${a.job.id}`}>{a.job.id}</Link>
+                              ) : (
+                                a.jobId || ""
+                              )}
+                            </Table.Td>
+                            <Table.Td>
+                              {a.job
+                                ? `${a.job.projectCode || ""} ${a.job.name || ""}`.trim()
+                                : ""}
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  ) : (
+                    <Text c="dimmed" size="sm">
+                      No assemblies currently use this product.
+                    </Text>
+                  )}
+                </Card.Section>
+              </Card>
+            </Stack>
           </Tabs.Panel>
         ) : null}
       </Tabs>

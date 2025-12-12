@@ -17,6 +17,8 @@ export type ProductFindFormValues = {
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
   variantSetId?: number | null;
+  whiteboard?: string | null;
+  flagIsDisabled?: boolean;
   // tags
   tagNames?: string[];
   pricingGroupId?: number | null;
@@ -52,6 +54,8 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     salePriceGroupId: p.salePriceGroupId,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
+    whiteboard: p.whiteboard || "",
+    flagIsDisabled: !!p.flagIsDisabled,
     tagNames: (p.productTags || [])
       .map((pt: any) => pt?.tag?.name)
       .filter(Boolean) as string[],
@@ -74,6 +78,8 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     supplierId: undefined,
     stockTrackingEnabled: undefined,
     batchTrackingEnabled: undefined,
+    whiteboard: "",
+    flagIsDisabled: false,
     costPriceMin: undefined,
     costPriceMax: undefined,
     manualSalePriceMin: undefined,
@@ -119,6 +125,11 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     put("supplierId", values.supplierId);
     put("costGroupId", values.costGroupId);
     put("salePriceGroupId", values.salePriceGroupId);
+    put("whiteboard", values.whiteboard);
+    fd.set(
+      "flagIsDisabled",
+      values.flagIsDisabled ? "true" : "false"
+    );
 
     // booleans (always send explicit true/false)
     fd.set(

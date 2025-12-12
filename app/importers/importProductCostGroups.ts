@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick, fixMojibake } from "./utils";
+import { asNum, pick, fixMojibake, resetSequence } from "./utils";
 
 export async function importProductCostGroups(
   rows: any[]
@@ -75,5 +75,6 @@ export async function importProductCostGroups(
       });
     }
   }
+  await resetSequence(prisma, "ProductCostGroup");
   return { created, updated, skipped, errors } as ImportResult;
 }

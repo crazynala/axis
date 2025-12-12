@@ -17,6 +17,7 @@ const items = [
     to: "/admin/value-lists/ShippingMethod",
     label: "Value Lists: Shipping Method",
   },
+  { to: "/admin/value-lists/DefectReason", label: "Value Lists: Defect Reasons" },
   { to: "/admin/cost-groups", label: "Cost Groups" },
   { to: "/admin/cost-ranges", label: "Cost Ranges" },
   { to: "/admin/sale-price-groups", label: "Sale Price Groups" },

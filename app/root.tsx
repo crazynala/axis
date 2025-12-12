@@ -83,6 +83,7 @@ import {
   IconCalendarDollar,
   IconChartHistogram,
   IconBoxSeam,
+  IconShieldCheck,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
 import {
@@ -319,8 +320,6 @@ export default function App() {
     location.pathname.includes("costings-sheet");
 
   const navTopItems: NavMenuItem[] = [
-    { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
-    { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
     { to: "/jobs", icon: <IconAutomation />, label: "Jobs" },
     {
@@ -330,7 +329,10 @@ export default function App() {
     },
     { to: "/shipments", icon: <IconTruck />, label: "Shipments" },
     { to: "/boxes", icon: <IconBoxSeam />, label: "Boxes" },
-    { kind: "divider", key: "nav-top-after-shipments" },
+    { kind: "divider", key: "nav-top-after-boxes" },
+    { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
+    { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
+    { kind: "divider", key: "nav-top-after-contacts" },
     { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
     { to: "/analytics", icon: <IconChartHistogram />, label: "Analytics" },
@@ -343,6 +345,11 @@ export default function App() {
             to: "/admin/value-lists/Category",
             icon: <IconSettings />,
             label: "Admin",
+          },
+          {
+            to: "/integrity",
+            icon: <IconShieldCheck />,
+            label: "Integrity",
           },
         ]
       : []),

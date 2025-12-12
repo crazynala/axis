@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { prismaBase } from "../utils/prisma.server";
+import { prismaBase } from "../../../utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);

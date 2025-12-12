@@ -1,6 +1,6 @@
 import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, resetSequence } from "./utils";
 import util from "node:util";
 
 const dbgPML = (o: any) =>
@@ -293,5 +293,6 @@ export async function importProductMovementLines(
       Object.values(grouped)
     );
   }
+  await resetSequence(prisma, "ProductMovementLine");
   return { created, updated, skipped, errors };
 }

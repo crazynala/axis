@@ -4,10 +4,16 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Outlet, useFetcher, useRouteLoaderData, useSubmit } from "@remix-run/react";
-import { prisma } from "../utils/prisma.server";
+import {
+  Outlet,
+  useFetcher,
+  useMatches,
+  useRouteLoaderData,
+  useSubmit,
+} from "@remix-run/react";
+import { prisma } from "../../../utils/prisma.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
-import { useRecordContext } from "../base/record/RecordContext";
+import { useRecordContext } from "../../../base/record/RecordContext";
 import {
   Badge,
   Button,
@@ -28,9 +34,9 @@ import {
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm, useWatch } from "react-hook-form";
 import { useEffect, useMemo, useState } from "react";
-import { ShipmentDetailForm } from "../modules/shipment/forms/ShipmentDetailForm";
-import { AttachBoxesModal } from "../modules/shipment/components/AttachBoxesModal";
-import { resolveVariantSourceFromLine } from "../utils/variantBreakdown";
+import { ShipmentDetailForm } from "../forms/ShipmentDetailForm";
+import { AttachBoxesModal } from "../components/AttachBoxesModal";
+import { resolveVariantSourceFromLine } from "../../../utils/variantBreakdown";
 
 const ALLOWED_BOX_STATES = new Set(["open", "sealed"]);
 
@@ -87,6 +93,26 @@ function parseBoxIdList(value: FormDataEntryValue | null): number[] {
   } catch {
     return [];
   }
+}
+
+type ShipmentLoaderData = NonNullable<
+  ReturnType<typeof useRouteLoaderData<typeof loader>>
+>;
+
+function useShipmentLoaderDataSafe(): ShipmentLoaderData {
+  const dataFromModules = useRouteLoaderData<typeof loader>(
+    "modules/shipment/routes/shipments.$id"
+  );
+  const dataFromRoutes = useRouteLoaderData<typeof loader>("routes/shipments.$id");
+  const matches = useMatches();
+  const matchData = matches.find((m) => (m.data as any)?.shipment)?.data as
+    | ShipmentLoaderData
+    | undefined;
+  const data = dataFromModules ?? dataFromRoutes ?? matchData;
+  if (!data) {
+    throw new Error("Shipment loader data missing for shipments.$id");
+  }
+  return data;
 }
 
 type AddBoxItemModalProps = {
@@ -230,7 +256,9 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
     }
     const isBoxMode = (shipmentRecord.packMode || "line") === "box";
     if (shipmentRecord.type !== "Out" || !isBoxMode) {
-      throw new Error("Boxes can only be attached to outbound shipments in box mode");
+      throw new Error(
+        "Boxes can only be attached to outbound shipments in box mode"
+      );
     }
     const boxes = await tx.box.findMany({
       where: { id: { in: normalizedIds } },
@@ -582,7 +610,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
       redirectId = box.shipmentId;
       if (box.shipment?.type !== "Out" || box.shipment?.packMode !== "box") {
-        throw new Error("Adding items only supported for outbound box-mode shipments");
+        throw new Error(
+          "Adding items only supported for outbound box-mode shipments"
+        );
       }
       const packingOnly = mode === "adHoc";
       const isAdHoc = mode === "adHoc";
@@ -679,8 +709,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
         throw new Error("Line not found on shipment box");
       }
       redirectId = line.box.shipmentId ?? redirectId;
-      if (line.box.shipment?.type !== "Out" || line.box.shipment?.packMode !== "box") {
-        throw new Error("Editing only supported for outbound box-mode shipments");
+      if (
+        line.box.shipment?.type !== "Out" ||
+        line.box.shipment?.packMode !== "box"
+      ) {
+        throw new Error(
+          "Editing only supported for outbound box-mode shipments"
+        );
       }
       const qtyDelta =
         !line.packingOnly && Number.isFinite(quantity)
@@ -690,7 +725,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         where: { id: lineId },
         data: {
           quantity: Number.isFinite(quantity) ? quantity : line.quantity,
-          description: line.packingOnly ? description || null : line.description,
+          description: line.packingOnly
+            ? description || null
+            : line.description,
         },
       });
       if (!line.packingOnly && line.shipmentLineId && qtyDelta !== 0) {
@@ -784,9 +821,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       (existingShipment._count?.lines ?? 0) > 0;
     const allowPackModeChange =
       !hasExistingItems && pendingAttachBoxIds.length === 0;
-    const packModeUpdate = allowPackModeChange
-      ? normalizedPackMode
-      : undefined;
+    const packModeUpdate = allowPackModeChange ? normalizedPackMode : undefined;
     const companyIdReceiver = companyIdReceiverRaw
       ? Number(companyIdReceiverRaw)
       : null;
@@ -828,11 +863,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export function ShipmentDetailView() {
-  const {
-    shipment,
-    attachedBoxes = [],
-    availableBoxes = [],
-  } = useRouteLoaderData<typeof loader>("routes/shipments.$id")!;
+  const { shipment, attachedBoxes = [], availableBoxes = [] } =
+    useShipmentLoaderDataSafe();
   const isOutbound = shipment.type === "Out";
   const isBoxMode = (shipment.packMode || "line") === "box";
   const showBoxesTab = isOutbound && isBoxMode;
@@ -1047,7 +1079,10 @@ export function ShipmentDetailView() {
       shouldTouch: true,
     });
   };
-  const handleLineUpdate = (lineId: number, updates: { quantity?: number; description?: string }) => {
+  const handleLineUpdate = (
+    lineId: number,
+    updates: { quantity?: number; description?: string }
+  ) => {
     const fd = new FormData();
     fd.set("_intent", "box.updateLine");
     fd.set("lineId", String(lineId));
@@ -1146,8 +1181,9 @@ export function ShipmentDetailView() {
               </Group>
               {pendingBoxes.length > 0 && (
                 <Text size="sm" c="yellow.7">
-                  {pendingBoxes.length} box{pendingBoxes.length === 1 ? "" : "es"}{" "}
-                  pending – Save to commit or remove to discard.
+                  {pendingBoxes.length} box
+                  {pendingBoxes.length === 1 ? "" : "es"} pending – Save to
+                  commit or remove to discard.
                 </Text>
               )}
               {boxSummaries.length ? (
@@ -1314,7 +1350,8 @@ export function ShipmentDetailView() {
                                                   const next = Number(
                                                     e.currentTarget.value
                                                   );
-                                                  if (Number.isNaN(next)) return;
+                                                  if (Number.isNaN(next))
+                                                    return;
                                                   handleLineUpdate(line.id, {
                                                     quantity: next,
                                                   });
@@ -1348,7 +1385,11 @@ export function ShipmentDetailView() {
                                 Extras
                               </Text>
                               {extraLines.map((line: any) => (
-                                <Group key={line.id} gap="xs" align="flex-start">
+                                <Group
+                                  key={line.id}
+                                  gap="xs"
+                                  align="flex-start"
+                                >
                                   <Badge size="xs" color="gray">
                                     Packing-only
                                   </Badge>

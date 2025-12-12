@@ -1,6 +1,6 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asNum, pick } from "./utils";
+import { asNum, pick, resetSequence } from "./utils";
 
 export async function importAddresses(rows: any[]): Promise<ImportResult> {
   let created = 0,
@@ -52,5 +52,6 @@ export async function importAddresses(rows: any[]): Promise<ImportResult> {
     }
     console.log("[import] addresses error summary", Object.values(grouped));
   }
+  await resetSequence(prisma, "Address");
   return { created, updated, skipped, errors };
 }

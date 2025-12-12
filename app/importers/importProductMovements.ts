@@ -1,6 +1,6 @@
 import { prisma, refreshProductStockSnapshot } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
-import { asDate, asNum, pick } from "./utils";
+import { asDate, asNum, pick, resetSequence } from "./utils";
 import util from "node:util";
 
 const dbgPM = (o: any) =>
@@ -236,5 +236,6 @@ export async function importProductMovements(
     }));
     console.log("[import] product_movements error samples (first 5)", sample);
   }
+  await resetSequence(prisma, "ProductMovement");
   return { created, updated, skipped, errors };
 }

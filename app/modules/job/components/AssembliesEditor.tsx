@@ -12,7 +12,11 @@ import {
   Text,
   TextInput,
   Title,
+  NativeSelect,
+  Select,
+  Textarea,
 } from "@mantine/core";
+import { DatePickerInput } from "@mantine/dates";
 import { IconMenu2 } from "@tabler/icons-react";
 import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
 import {
@@ -86,6 +90,17 @@ export function AssembliesEditor(props: {
     number,
     Record<number, Record<number, number>>
   >;
+  packActivityReferences?: Record<
+    number,
+    {
+      kind: "shipment";
+      shipmentLineId: number;
+      shipmentId: number | null;
+      trackingNo?: string | null;
+      packingSlipCode?: string | null;
+      shipmentType?: string | null;
+    }
+  >;
   activityVariantLabels?: string[]; // optional override of variant labels for activity table columns
   groupContext?: { jobId: number; groupId: number } | null;
   renderStatusBar?: (args: {
@@ -96,6 +111,8 @@ export function AssembliesEditor(props: {
     openBoxes: PackBoxSummary[];
     stockLocation?: { id: number; name: string | null } | null;
   } | null;
+  assemblyTypeOptions?: string[] | null;
+  defectReasons?: Array<{ id: number; label: string | null }>;
 }) {
   const {
     job,
@@ -106,16 +123,26 @@ export function AssembliesEditor(props: {
     saveIntent,
     stateChangeIntent,
     products,
-    activities,
+    activities: activitiesProp,
     activityConsumptionMap,
     activityVariantLabels,
     groupContext,
     renderStatusBar,
     packContext,
+    packActivityReferences,
+    assemblyTypeOptions,
+    defectReasons,
   } = props;
+  const activityList = activitiesProp || [];
   const submit = useSubmit();
   const isGroup = (assemblies?.length ?? 0) > 1;
   const firstAssembly = assemblies[0];
+  const assemblyTypeData = (
+    assemblyTypeOptions || ["Prod", "Keep", "PP", "SMS"]
+  ).map((label) => ({
+    value: label,
+    label,
+  }));
   const [activityModalOpen, setActivityModalOpen] = useState(false);
   const [createActivityType, setCreateActivityType] =
     useState<ActivityModalType>("cut");
@@ -129,14 +156,132 @@ export function AssembliesEditor(props: {
   const [packModalOpen, setPackModalOpen] = useState(false);
   const [deleteActivity, setDeleteActivity] = useState<any | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [defectModalOpen, setDefectModalOpen] = useState(false);
+  const [defectAssemblyId, setDefectAssemblyId] = useState<number | null>(
+    firstAssembly?.id ?? null
+  );
+  const [defectStage, setDefectStage] = useState<string>("cut");
+  const [defectBreakdown, setDefectBreakdown] = useState<number[]>([]);
+  const [defectReasonId, setDefectReasonId] = useState<string>("");
+  const [defectDisposition, setDefectDisposition] = useState<string>("review");
+  const [defectDate, setDefectDate] = useState<Date | null>(new Date());
+  const [defectNotes, setDefectNotes] = useState<string>("");
+  const [defectEditActivityId, setDefectEditActivityId] = useState<
+    number | null
+  >(null);
+  const [factoryAssemblyId, setFactoryAssemblyId] = useState<number | null>(
+    null
+  );
+  const reasonLabelById = useMemo(() => {
+    const map = new Map<number, string>();
+    (defectReasons || []).forEach((r) => {
+      if (r?.id != null) map.set(Number(r.id), r.label || `#${r.id}`);
+    });
+    return map;
+  }, [defectReasons]);
+  const quantityItemsById = useMemo(() => {
+    const map = new Map<number, any>();
+    (quantityItems || []).forEach((q: any) => {
+      if (q?.assemblyId != null) map.set(Number(q.assemblyId), q);
+    });
+    return map;
+  }, [quantityItems]);
+  const defectsByAssembly = useMemo(() => {
+    const rows = new Map<
+      number,
+      Array<{
+        stage: string;
+        reason: string;
+        disposition: string;
+        qty: number;
+        location: string;
+      }>
+    >();
+    const dispositionLabel = (d: string | null | undefined) => {
+      if (!d) return "Review";
+      if (d === "review") return "QC Review";
+      if (d === "scrap") return "Scrap";
+      if (d === "offSpec") return "Off-spec / Donation";
+      if (d === "sample") return "Sample";
+      return d;
+    };
+    const locationLabel = (d: string | null | undefined) => {
+      if (d === "review") return "review";
+      if (d === "scrap") return "scrap";
+      if (d === "offSpec") return "off_spec";
+      if (d === "sample") return "sample";
+      return "";
+    };
+    activityList.forEach((act: any) => {
+      if (act?.kind !== "defect") return;
+      const aid = Number(act?.assemblyId);
+      if (!Number.isFinite(aid)) return;
+      const list = rows.get(aid) || [];
+      list.push({
+        stage: String(act.stage || "other"),
+        reason: reasonLabelById.get(Number(act.defectReasonId)) || "Unspecified",
+        disposition: dispositionLabel(act.defectDisposition),
+        qty: Number(act.quantity ?? 0) || 0,
+        location: locationLabel(act.defectDisposition),
+      });
+      rows.set(aid, list);
+    });
+    return rows;
+  }, [activityList, reasonLabelById]);
+  const summaryByAssembly = useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        ordered: number;
+        packed: number;
+        defects: number;
+        review: number;
+        scrap: number;
+        offSpec: number;
+        sample: number;
+      }
+    >();
+    (assemblies || []).forEach((a) => {
+      const item = quantityItemsById.get(a.id);
+      const ordered =
+        Array.isArray(item?.ordered) && item.ordered.length
+          ? item.ordered.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
+          : Number((a as any).quantity ?? 0) || 0;
+      const packed =
+        Array.isArray(item?.pack) && item.pack.length
+          ? item.pack.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
+          : Number(item?.totals?.pack ?? 0) || 0;
+      const defects = (defectsByAssembly.get(a.id) || []).reduce(
+        (t, r) => t + (Number(r.qty) || 0),
+        0
+      );
+      const dispSum = (key: string) =>
+        (defectsByAssembly.get(a.id) || [])
+          .filter((r) => r.location === key)
+          .reduce((t, r) => t + (Number(r.qty) || 0), 0);
+      map.set(a.id, {
+        ordered,
+        packed,
+        defects,
+        review: dispSum("review"),
+        scrap: dispSum("scrap"),
+        offSpec: dispSum("off_spec"),
+        sample: dispSum("sample"),
+      });
+    });
+    return map;
+  }, [assemblies, quantityItemsById, defectsByAssembly]);
+
   const deleteRequiredPhrase = "I AM SO SURE";
   const editForm = useForm<{
     orderedByAssembly: Record<string, number[]>;
     qpu: Record<string, number>;
     activity: Record<string, string>;
+    costingDisabled: Record<string, boolean>;
     names: Record<string, string>;
     statusNotes: Record<string, string>;
     statuses: Record<string, string>;
+    assemblyTypes: Record<string, string>;
   }>({
     defaultValues: {
       orderedByAssembly: Object.fromEntries(
@@ -158,6 +303,11 @@ export function AssembliesEditor(props: {
             String(c.activityUsed ?? "").toLowerCase(),
           ])
       ) as any,
+      costingDisabled: Object.fromEntries(
+        (assemblies || [])
+          .flatMap((a) => a.costings || [])
+          .map((c: any) => [String(c.id), Boolean((c as any).flagIsDisabled)])
+      ) as any,
       names: Object.fromEntries(
         (assemblies || []).map((a) => [String(a.id), String(a.name || "")])
       ) as any,
@@ -173,6 +323,12 @@ export function AssembliesEditor(props: {
           normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
         ])
       ) as any,
+      assemblyTypes: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          String((a as any).assemblyType || "Prod"),
+        ])
+      ) as any,
     },
   });
   const assembliesById = useMemo(() => {
@@ -184,12 +340,35 @@ export function AssembliesEditor(props: {
     });
     return map;
   }, [assemblies]);
+
+  const handleCostingAction = (
+    costingId: number,
+    action: "enable" | "disable" | "delete"
+  ) => {
+    if (!Number.isFinite(costingId)) return;
+    if (action === "delete") {
+      const fd = new FormData();
+      fd.set("_intent", `costing.${action}`);
+      fd.set("id", costingId.toString());
+      submit(fd, { method: "post" });
+      return;
+    }
+    editForm.setValue(
+      `costingDisabled.${costingId}` as any,
+      action === "disable",
+      { shouldDirty: true, shouldTouch: true }
+    );
+  };
   const modalAssembly =
     (modalAssemblyId != null && assembliesById.get(modalAssemblyId)) ||
     firstAssembly;
   const packModalAssembly =
     (packModalAssemblyId != null && assembliesById.get(packModalAssemblyId)) ||
     null;
+  const costingDisabledMap = editForm.watch("costingDisabled") as Record<
+    string,
+    boolean
+  >;
   const quantityItemsByAssemblyId = useMemo(() => {
     const map = new Map<number, QuantityItem>();
     (quantityItems || []).forEach((item) => {
@@ -240,7 +419,7 @@ export function AssembliesEditor(props: {
       };
     });
   }, [assemblies, isGroup, quantityItems]);
-  const activityRows = activities || [];
+  const activityRows = activityList;
   const modalVariantLabels = modalAssembly?.id
     ? getVariantLabelsForAssembly(modalAssembly.id)
     : activityVariantLabels || [];
@@ -356,6 +535,9 @@ export function AssembliesEditor(props: {
     (editForm.watch("statuses") as Record<string, string | undefined>) || {};
   const watchedStatusNotes =
     (editForm.watch("statusNotes") as Record<string, string | undefined>) || {};
+  const watchedAssemblyTypes =
+    (editForm.watch("assemblyTypes") as Record<string, string | undefined>) ||
+    {};
   const resolveStatusValue = (asmId: number) =>
     normalizeAssemblyState(
       watchedStatuses[String(asmId)] ??
@@ -423,6 +605,7 @@ export function AssembliesEditor(props: {
             a.status,
             a.name,
             (a as any).statusWhiteboard,
+            (a as any).assemblyType,
             (a.qtyOrderedBreakdown || []).join(","),
             (a.costings || [])
               .map(
@@ -473,6 +656,12 @@ export function AssembliesEditor(props: {
           (assemblies || []).map((a) => [
             String(a.id),
             normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+          ])
+        ) as any,
+        assemblyTypes: Object.fromEntries(
+          (assemblies || []).map((a) => [
+            String(a.id),
+            String((a as any).assemblyType || "Prod"),
           ])
         ) as any,
       },
@@ -530,6 +719,12 @@ export function AssembliesEditor(props: {
         (assemblies || []).map((a) => [
           String(a.id),
           normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+        ])
+      ) as any,
+      assemblyTypes: Object.fromEntries(
+        (assemblies || []).map((a) => [
+          String(a.id),
+          String((a as any).assemblyType || "Prod"),
         ])
       ) as any,
     })
@@ -593,6 +788,92 @@ export function AssembliesEditor(props: {
   const closeDeleteModal = () => {
     setDeleteActivity(null);
     setDeleteConfirmation("");
+  };
+
+  const closeDefectModal = () => {
+    setDefectModalOpen(false);
+    setDefectEditActivityId(null);
+  };
+
+  useEffect(() => {
+    if (!defectModalOpen) return;
+    const labels = resolveVariantLabels(
+      defectAssemblyId ?? firstAssembly?.id ?? null
+    );
+    if (!labels || labels.length === 0) return;
+    setDefectBreakdown((prev) => {
+      const next = Array.from({ length: labels.length }, (_, idx) => prev[idx] || 0);
+      return next;
+    });
+  }, [defectModalOpen, defectAssemblyId, firstAssembly?.id]);
+
+  const resolveVariantLabels = (assemblyId: number | null) => {
+    if (!assemblyId) return ["Qty"];
+    const labels =
+      quantityItemsById.get(assemblyId)?.variants?.labels ||
+      firstAssembly?.variantSet?.variants ||
+      [];
+    return labels && labels.length ? labels : ["Qty"];
+  };
+
+  const openDefectModal = (opts?: { assemblyId?: number | null; activity?: any }) => {
+    const targetAssemblyId =
+      opts?.assemblyId ?? defectAssemblyId ?? firstAssembly?.id ?? null;
+    const labels = resolveVariantLabels(targetAssemblyId);
+    const activity = opts?.activity;
+    setDefectAssemblyId(targetAssemblyId);
+    setDefectStage(String(activity?.stage || "cut"));
+    const disp =
+      activity?.defectDisposition && activity.defectDisposition !== "none"
+        ? activity.defectDisposition
+        : "review";
+    setDefectDisposition(String(disp));
+    setDefectReasonId(
+      activity?.defectReasonId != null ? String(activity.defectReasonId) : ""
+    );
+    const incomingBreakdown =
+      (Array.isArray(activity?.qtyBreakdown)
+        ? activity.qtyBreakdown
+        : []) as number[];
+    const padded =
+      labels && labels.length
+        ? Array.from({ length: labels.length }, (_, idx) => incomingBreakdown[idx] || 0)
+        : incomingBreakdown;
+    setDefectBreakdown(padded);
+    setDefectNotes(activity?.notes || "");
+    setDefectDate(activity?.activityDate ? new Date(activity.activityDate) : new Date());
+    setDefectEditActivityId(activity?.id ?? null);
+    setDefectModalOpen(true);
+  };
+
+  const submitDefect = () => {
+    const targetAssemblyId = defectAssemblyId ?? firstAssembly?.id ?? null;
+    if (!targetAssemblyId) return;
+    const arr = Array.isArray(defectBreakdown)
+      ? defectBreakdown.map((n) => (Number.isFinite(Number(n)) ? Number(n) : 0))
+      : [];
+    const qty = arr.reduce((t, n) => t + (Number(n) || 0), 0);
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    const fd = new FormData();
+    if (defectEditActivityId) {
+      fd.set("_intent", "activity.update");
+      fd.set("activityId", String(defectEditActivityId));
+    } else {
+      fd.set("_intent", "activity.create.defect");
+    }
+    fd.set("assemblyId", String(targetAssemblyId));
+    fd.set("stage", defectStage);
+    fd.set("quantity", String(qty));
+    fd.set("qtyBreakdown", JSON.stringify(arr));
+    if (defectDate) fd.set("activityDate", defectDate.toISOString());
+    if (defectReasonId) fd.set("defectReasonId", defectReasonId);
+    if (defectDisposition) fd.set("defectDisposition", defectDisposition);
+    if (defectNotes.trim()) fd.set("notes", defectNotes.trim());
+    submit(fd, { method: "post" });
+    setDefectModalOpen(false);
+    setDefectBreakdown([]);
+    setDefectNotes("");
+    setDefectEditActivityId(null);
   };
 
   const handleConfirmDelete = () => {
@@ -722,6 +1003,10 @@ export function AssembliesEditor(props: {
           const statusLabel =
             assemblyStateConfig.states[normalizedStatus]?.label ||
             normalizedStatus;
+          const assemblyTypeValue =
+            watchedAssemblyTypes[String(a.id)] ||
+            (a as any).assemblyType ||
+            "Prod";
           return (
             <>
               <Grid.Col span={5}>
@@ -743,6 +1028,23 @@ export function AssembliesEditor(props: {
                     }}
                     mod="data-autosize"
                   />
+                  <NativeSelect
+                    data={assemblyTypeData}
+                    label="Assembly Type"
+                    value={assemblyTypeValue}
+                    onChange={(e) => {
+                      editForm.setValue(
+                        `assemblyTypes.${a.id}` as const,
+                        e.currentTarget.value,
+                        { shouldDirty: true, shouldTouch: true }
+                      );
+                    }}
+                    onBlur={(e) => {
+                      sendAssemblyUpdate(a.id, {
+                        assemblyType: e.currentTarget.value || "Prod",
+                      });
+                    }}
+                  />
                   <TextInput
                     readOnly
                     value={((a as any).product?.name as string) || ""}
@@ -758,6 +1060,15 @@ export function AssembliesEditor(props: {
                 </Card>
               </Grid.Col>
               <Grid.Col span={7} key={a.id}>
+                <Group justify="flex-end" mb="xs">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    onClick={() => setFactoryAssemblyId(a.id)}
+                  >
+                    Show factory view
+                  </Button>
+                </Group>
                 <AssemblyQuantitiesCard
                   // title={`Quantities — Assembly ${a.id}`}
                   variants={item.variants}
@@ -827,19 +1138,26 @@ export function AssembliesEditor(props: {
             register={editForm.register}
             fieldNameForQpu={(row) => `qpu.${row.id}`}
             fieldNameForActivityUsed={(row) => `activity.${row.id}`}
+            onCostingAction={handleCostingAction}
             common={
-              ((assemblies || []).flatMap((a) =>
-                buildCostingRows({
-                  assemblyId: a.id,
-                  costings: (a.costings || []) as any,
-                  requiredInputs: {
-                    qtyOrdered: (a as any).c_qtyOrdered ?? 0,
-                    qtyCut: (a as any).c_qtyCut ?? 0,
-                  },
-                  priceMultiplier: Number(priceMultiplier || 1) || 1,
-                  costingStats: costingStats as any,
-                })
-              ) || []) as any
+              ((assemblies || [])
+                .flatMap((a) =>
+                  buildCostingRows({
+                    assemblyId: a.id,
+                    costings: (a.costings || []) as any,
+                    requiredInputs: {
+                      qtyOrdered: (a as any).c_qtyOrdered ?? 0,
+                      qtyCut: (a as any).c_qtyCut ?? 0,
+                    },
+                    priceMultiplier: Number(priceMultiplier || 1) || 1,
+                    costingStats: costingStats as any,
+                  })
+                )
+                .map((row: any) => ({
+                  ...row,
+                  flagIsDisabled:
+                    costingDisabledMap?.[String(row.id)] ?? row.flagIsDisabled,
+                })) || []) as any
             }
             accordionByProduct
           />
@@ -850,6 +1168,15 @@ export function AssembliesEditor(props: {
             <Card.Section inheritPadding py="xs">
               <Group justify="space-between" align="center">
                 <Title order={4}>Activity History</Title>
+                <Button
+                  size="xs"
+                  variant="default"
+                  onClick={() => {
+                    openDefectModal({ assemblyId: firstAssembly?.id ?? null });
+                  }}
+                >
+                  Record Defect
+                </Button>
               </Group>
             </Card.Section>
             <Card.Section>
@@ -929,9 +1256,16 @@ export function AssembliesEditor(props: {
                                       Number(representative?.assemblyId) ||
                                       firstAssembly?.id ||
                                       null;
-                                    setModalAssemblyId(targetAssemblyId);
-                                    setEditActivity(representative);
-                                    setActivityModalOpen(true);
+                                    if (representative?.kind === "defect") {
+                                      openDefectModal({
+                                        assemblyId: targetAssemblyId,
+                                        activity: representative,
+                                      });
+                                    } else {
+                                      setModalAssemblyId(targetAssemblyId);
+                                      setEditActivity(representative);
+                                      setActivityModalOpen(true);
+                                    }
                                   }}
                                 >
                                   Edit
@@ -961,6 +1295,161 @@ export function AssembliesEditor(props: {
         </Grid.Col>
       </Grid>
 
+      <Modal
+        opened={factoryAssemblyId != null}
+        onClose={() => setFactoryAssemblyId(null)}
+        size="xl"
+        title={
+          factoryAssemblyId
+            ? `Factory view — Assembly ${factoryAssemblyId}`
+            : "Factory view"
+        }
+        centered
+      >
+        {factoryAssemblyId ? (
+          (() => {
+            const item = quantityItemsById.get(factoryAssemblyId);
+            const variants = item?.variants?.labels || [];
+            const stageStats = item?.stageStats || {};
+            const defectRows = defectsByAssembly.get(factoryAssemblyId) || [];
+            const summary = summaryByAssembly.get(factoryAssemblyId);
+            const usableArrMap: Record<string, number[]> = {
+              cut: item?.cut || [],
+              make: item?.make || [],
+              pack: item?.pack || [],
+            };
+            const usableTotalMap: Record<string, number | undefined> = {
+              cut: item?.totals?.cut,
+              make: item?.totals?.make,
+              pack: item?.totals?.pack,
+            };
+            const factoryRows = (["cut", "make", "pack"] as const).flatMap(
+              (stage) => {
+                const stats = stageStats?.[stage];
+                if (!stats) return [];
+                const label = stage.toUpperCase();
+                const attemptsArr = stats.attemptsArr || [];
+                const defectArr = stats.defectArr || [];
+                const usableArr = usableArrMap[stage] || stats.usableArr || [];
+                return [
+                  {
+                    label: `${label} Attempts`,
+                    arr: attemptsArr,
+                    total: stats.attemptsTotal,
+                    highlight: false,
+                  },
+                  {
+                    label: `${label} Defects`,
+                    arr: defectArr,
+                    total: stats.defectTotal,
+                    highlight: false,
+                  },
+                  {
+                    label: `${label} Usable`,
+                    arr: usableArr,
+                    total: usableTotalMap[stage] ?? stats.usableTotal,
+                    highlight: true,
+                  },
+                ];
+              }
+            );
+            return (
+              <Stack gap="md">
+                <Card withBorder padding="sm">
+                  <Card.Section inheritPadding py="xs">
+                    <Group justify="space-between" align="center">
+                      <Title order={6} fw={600}>
+                        Factory detail
+                      </Title>
+                      {summary ? (
+                        <Text size="sm" c="dimmed">
+                          {summary.ordered} ordered · {summary.packed} packed/shippable
+                          {summary.review
+                            ? ` · ${summary.review} in QC review`
+                            : ""}
+                          {summary.scrap ? ` · ${summary.scrap} scrapped` : ""}
+                          {summary.offSpec
+                            ? ` · ${summary.offSpec} off-spec/donation`
+                            : ""}
+                          {summary.sample ? ` · ${summary.sample} samples` : ""}
+                        </Text>
+                      ) : null}
+                    </Group>
+                  </Card.Section>
+                  <Table withColumnBorders>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Type</Table.Th>
+                        {variants.map((l: string, idx: number) => (
+                          <Table.Th ta="center" key={`factory-h-${idx}`}>
+                            {l || idx + 1}
+                          </Table.Th>
+                        ))}
+                        <Table.Th>Total</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {factoryRows.map((row) => (
+                        <Table.Tr
+                          key={row.label}
+                          style={
+                            row.highlight
+                              ? { backgroundColor: "#f6f7fb", fontWeight: 600 }
+                              : undefined
+                          }
+                        >
+                          <Table.Td>{row.label}</Table.Td>
+                          {variants.map((_l: string, idx: number) => (
+                            <Table.Td ta="center" key={`${row.label}-${idx}`}>
+                              {row.arr?.[idx] ? row.arr[idx] : "∙"}
+                            </Table.Td>
+                          ))}
+                          <Table.Td>{row.total ?? "∙"}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </Card>
+
+                {defectRows.length ? (
+                  <Card withBorder padding="sm">
+                    <Card.Section inheritPadding py="xs">
+                      <Title order={6} fw={600}>
+                        Defect breakdown
+                      </Title>
+                    </Card.Section>
+                    <Table withColumnBorders>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Stage</Table.Th>
+                          <Table.Th>Reason</Table.Th>
+                          <Table.Th>Disposition</Table.Th>
+                          <Table.Th>Qty</Table.Th>
+                          <Table.Th>Location</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {defectRows.map((row, idx) => (
+                          <Table.Tr key={`defect-${idx}`}>
+                            <Table.Td>{row.stage}</Table.Td>
+                            <Table.Td>{row.reason}</Table.Td>
+                            <Table.Td>{row.disposition}</Table.Td>
+                            <Table.Td>{row.qty}</Table.Td>
+                            <Table.Td>{row.location || "—"}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Card>
+                ) : null}
+              </Stack>
+            );
+          })()
+        ) : (
+          <Text c="dimmed">Select an assembly to view details.</Text>
+        )}
+      </Modal>
+
       {/* Activity Modals */}
       {modalAssembly && (
         <AssemblyActivityModal
@@ -984,8 +1473,15 @@ export function AssembliesEditor(props: {
           initialBreakdown={(editActivity?.qtyBreakdown as any) || null}
           initialConsumption={
             editActivity
-              ? activityConsumptionMap?.[editActivity.id] || {}
+              ? (() => {
+                  return activityConsumptionMap?.[editActivity.id] ?? undefined;
+                })()
               : undefined
+          }
+          packReference={
+            editActivity
+              ? packActivityReferences?.[editActivity.id] || null
+              : null
           }
           overrideIntent={
             !editActivity && isGroup
@@ -1049,6 +1545,160 @@ export function AssembliesEditor(props: {
             </Button>
           </Group>
         </Stack>
+      </Modal>
+      <Modal
+        opened={defectModalOpen}
+        onClose={closeDefectModal}
+        title={defectEditActivityId ? "Edit Defect" : "Record Defect"}
+        centered
+        size="lg"
+      >
+        {(() => {
+          const variantLabels = resolveVariantLabels(
+            defectAssemblyId ?? firstAssembly?.id ?? null
+          );
+          const totalQty =
+            defectBreakdown.reduce(
+              (t, n) => t + (Number(n) || 0),
+              0
+            ) || 0;
+          return (
+        <Stack gap="md">
+          <Group grow gap="md">
+            <Select
+              label="Stage"
+              data={[
+                { value: "cut", label: "Cut" },
+                { value: "make", label: "Make" },
+                { value: "pack", label: "Pack" },
+                { value: "qc", label: "QC" },
+                { value: "other", label: "Other" },
+              ]}
+              value={defectStage}
+              onChange={(val) => setDefectStage(val || "cut")}
+            />
+            <Select
+              label="Disposition"
+              data={[
+                { value: "review", label: "Set aside for QC review" },
+                { value: "scrap", label: "Scrap" },
+                { value: "offSpec", label: "Off-spec / Donation" },
+                { value: "sample", label: "Sample" },
+              ]}
+              value={defectDisposition}
+              onChange={(val) => setDefectDisposition(val || "review")}
+            />
+          </Group>
+          <Group grow gap="md">
+            {isGroup ? (
+              <Select
+                label="Assembly"
+                data={(assemblies || []).map((a) => ({
+                  value: String(a.id),
+                  label: `Assembly ${a.id}`,
+                }))}
+                value={defectAssemblyId ? String(defectAssemblyId) : undefined}
+                onChange={(val) =>
+                  setDefectAssemblyId(
+                    val ? Number(val) : firstAssembly?.id ?? null
+                  )
+                }
+              />
+            ) : (
+              <TextInput
+                label="Assembly"
+                value={
+                  defectAssemblyId
+                    ? `Assembly ${defectAssemblyId}`
+                    : `Assembly ${firstAssembly?.id ?? ""}`
+                }
+                readOnly
+              />
+            )}
+            <DatePickerInput
+              label="Date"
+              value={defectDate}
+              onChange={(value) => setDefectDate(value)}
+              valueFormat="YYYY-MM-DD"
+            />
+          </Group>
+          <Select
+            label="Defect Reason"
+            placeholder="Select reason"
+            data={(defectReasons || []).map((r) => ({
+              value: String(r.id),
+              label: r.label || `#${r.id}`,
+            }))}
+            value={defectReasonId || undefined}
+            onChange={(val) => setDefectReasonId(val || "")}
+            clearable
+          />
+          <Stack gap="xs">
+            <Group justify="space-between" align="center">
+              <Title order={6}>Quantity breakdown</Title>
+              <Text size="sm" c="dimmed">
+                Total: {totalQty}
+              </Text>
+            </Group>
+            <Table withColumnBorders withTableBorder>
+              <Table.Thead>
+                <Table.Tr>
+                  {variantLabels.map((label: string, idx: number) => (
+                    <Table.Th ta="center" key={`defect-head-${idx}`} py={2}>
+                      {label || idx + 1}
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  {variantLabels.map((_label: string, idx: number) => (
+                    <Table.Td p={0} ta="center" key={`defect-cell-${idx}`}>
+                      <TextInput
+                        type="number"
+                        variant="unstyled"
+                        inputMode="numeric"
+                        value={
+                          Number.isFinite(defectBreakdown[idx])
+                            ? String(defectBreakdown[idx])
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const val = Number(e.currentTarget.value);
+                          setDefectBreakdown((prev) => {
+                            const next = [...prev];
+                            next[idx] = Number.isFinite(val) ? val : 0;
+                            return next;
+                          });
+                        }}
+                        styles={{
+                          input: {
+                            textAlign: "center",
+                            padding: "8px 4px",
+                          },
+                        }}
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          </Stack>
+          <Textarea
+            label="Notes"
+            minRows={2}
+            value={defectNotes}
+            onChange={(e) => setDefectNotes(e.currentTarget.value)}
+          />
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={closeDefectModal}>
+              Cancel
+            </Button>
+            <Button onClick={submitDefect}>Save</Button>
+          </Group>
+        </Stack>
+          );
+        })()}
       </Modal>
     </>
   );
