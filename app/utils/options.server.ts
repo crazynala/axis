@@ -4,6 +4,7 @@ import { prisma } from "./prisma.server";
 export type Option = { value: string; label: string };
 export type OptionsData = {
   categoryOptions: Option[];
+  categoryOptionsByGroupCode?: Record<string, Option[]>;
   subcategoryOptions: Option[];
   categoryMetaById?: Record<string, { id: number; code: string; parentCode?: string | null }>;
   productTemplateOptions?: Option[];
@@ -227,6 +228,17 @@ export async function loadOptions(): Promise<OptionsData> {
       },
     ])
   );
+  const categoryOptionsByGroupCode: Record<string, Option[]> = {};
+  for (const c of categories) {
+    if (!c.parentId || !c.parent?.code) continue;
+    const parentCode = c.parent.code.toUpperCase();
+    const list = categoryOptionsByGroupCode[parentCode] || [];
+    list.push({
+      value: String(c.id),
+      label: formatLabel(c.label, c.id, c.code),
+    });
+    categoryOptionsByGroupCode[parentCode] = list;
+  }
 
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
   const customersAllList =
@@ -252,6 +264,7 @@ export async function loadOptions(): Promise<OptionsData> {
         label: parentLabel ? `${parentLabel} – ${label}` : label,
       };
     }),
+    categoryOptionsByGroupCode,
     subcategoryOptions: subcategoryList.map((s) => {
       const label = formatLabel(s.label, s.id, s.code);
       const parentLabel = s.parentId

@@ -2,3 +2,5 @@
 - [ ] Streamline Esc processing
 - [ ] Whenever we render a batch ID because there are no codes, mark with @
 - [ ] Tracking user actions (create, update)
+
+- [ ] Reconsider my forcing of externalStep to be persisted, since it's actually derived?

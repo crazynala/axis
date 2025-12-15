@@ -277,6 +277,15 @@ export function ProductDetailForm({
       ? optionsCtx?.categoryMetaById || globalOptions?.categoryMetaById
       : globalOptions?.categoryMetaById;
   const filteredCategoryOptions = React.useMemo(() => {
+    const rules = rulesForType(typeValue);
+    const group = (rules.categoryGroupCode || "").toUpperCase();
+    const grouped =
+      optionsCtx?.categoryOptionsByGroupCode ||
+      globalOptions?.categoryOptionsByGroupCode ||
+      null;
+    if (grouped && group && grouped[group]?.length) {
+      return grouped[group];
+    }
     const opts =
       categoryOptions ||
       optionsCtx?.categoryOptions ||
@@ -291,8 +300,6 @@ export function ProductDetailForm({
       fromGlobal: !!globalOptions?.categoryMetaById,
       metaKeys: Object.keys(meta || {}).length,
     });
-    const rules = rulesForType(typeValue);
-    const group = rules.categoryGroupCode;
     if (!group) return opts;
     const filtered = opts.filter((o) => {
       const m = meta[String(o.value)];

@@ -23,7 +23,7 @@
 - [ ] Finalize `Costing` shape (`externalStepType`, nullable `leadTimeDays`) and document override semantics.
 - [x] Add nullable `etaDate DateTime?` and `etaDateConfirmed Boolean? @default(false)` to `PurchaseOrderLine`; PO-level ETA derives from earliest populated line ETA.
   - Added via migration `20251216124000_po_line_eta_fields` plus Prisma client regen.
-- [ ] Confirm `AssemblyActivity` has authoritative `stage`, `action`, `externalStepType`, `kind`, and `vendorCompanyId`; `activityType` is fully dropped everywhere.
+- [x] Confirm `AssemblyActivity` has authoritative `stage`, `action`, `externalStepType`, `kind`, and `vendorCompanyId`; `activityType` is fully dropped everywhere.
 - [ ] Verify no DB consumers still rely on `activityType` (views/materialized views/ad-hoc SQL/ETL).
 - [x] Update `AssemblyStage` enum to `order/cut/sew/finish/pack/qc/other` (removing `make`, adding `sew` + `finish`); accept Prisma enum reset if needed since data will be reimported.
   - Covered by migration `20251216133000_add_sew_finish_stage` and regenerated Prisma client.
@@ -78,7 +78,7 @@
 - [x] **Assembly view – external steps strip**: show chips per expected step with status badge, ETA, late indicator, and drawer containing sent/received dates, vendor, qty out/in, defects, lead-time source label (“Costing/Product/Vendor default”), and “Add inferred dates” helper.
   - `ExternalStepsStrip` renders inside `AssembliesEditor` with status badges, ETA chips, low-confidence/late warnings, vendor info, and a drawer table; inference helper UI remains TODO.
   - [ ] “Send to Embroidery/Wash/Dye” modal defaults qty from available sewn qty (when tracked), offers “Record Sew now” helper if missing, and allows continuing without data while flagging low-confidence inference.
-- [ ] **Box packing workflow**: packing is performed exclusively through the Box UI. When adding an assembly to a box, default the suggested qty to `readyToPackQty`, offer a “Use finishing report qty” shortcut (fills with `readyToPackQty`) and a “Use full finish qty” option (fills with `finishGoodQty` for manual overrides), surface “Finish recorded: X” and “Already packed: Y”, and rely on the operator to adjust discrepancies before writing `BoxLine` rows.
+- [ ] **Box packing workflow**: packing is performed exclusively through the Box UI. When adding an assembly to a box, default the suggested qty to `readyToPackQty`, surface “Finish recorded: X” and “Already packed: Y”, and rely on the operator to adjust discrepancies before writing `BoxLine` rows. (Modal now shows finish/packed/ready rows with ready-to-pack autofill; remaining: Box-only enforcement + dashboard rollups.)
 - [ ] **Production Dashboard `/production/dashboard`**:
   - [ ] Tab “At Risk”: columns for External ETA (nearest open step), PO Hold (Yes/No), PO ETA (earliest blocking line); default sort Late → PO Hold → Due soon → Target date.
   - [ ] Tab “Out at Vendor”: show ETA source (Costing/Product/Company) so vendor fallback is visible.

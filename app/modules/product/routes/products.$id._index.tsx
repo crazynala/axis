@@ -59,6 +59,8 @@ import {
 import { requireUserId } from "~/utils/auth.server";
 import { buildWhereFromConfig } from "~/utils/buildWhereFromConfig.server";
 import { ProductDetailForm } from "../components/ProductDetailForm";
+import { deriveExternalStepTypeFromCategoryCode } from "~/modules/product/rules/productTypeRules";
+import { loadOptions } from "~/utils/options.server";
 import { ProductFindManager } from "../components/ProductFindManager";
 import {
   productAssocFields,
@@ -538,6 +540,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const data = buildProductData(form);
+    // Derive/clear externalStepType server-side for service products
+    try {
+      const options = await loadOptions();
+      const meta = options.categoryMetaById?.[String(data.categoryId)];
+      const derived = deriveExternalStepTypeFromCategoryCode(meta?.code);
+      if (String(data.type || "").toUpperCase() === "SERVICE") {
+        if (derived && !data.externalStepType) {
+          data.externalStepType = derived;
+        } else if (!derived && !data.externalStepType) {
+          data.externalStepType = null;
+        }
+      } else {
+        data.externalStepType = null;
+      }
+      console.log("[product update] resolved external step", {
+        id,
+        type: data.type,
+        categoryId: data.categoryId,
+        derived,
+        externalStepType: data.externalStepType,
+      });
+    } catch (err) {
+      console.warn("[product update] failed to derive external step", err);
+    }
     console.log("[product update] payload", {
       id,
       type: data.type,

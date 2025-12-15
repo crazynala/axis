@@ -2,6 +2,7 @@ export type Option = { value: string; label: string };
 export type CategoryMeta = { id: number; code: string; parentCode?: string | null };
 export type OptionsData = {
   categoryOptions: Option[];
+  categoryOptionsByGroupCode?: Record<string, Option[]>;
   subcategoryOptions: Option[];
   categoryMetaById?: Record<string, CategoryMeta>;
   productTemplateOptions?: Option[];
