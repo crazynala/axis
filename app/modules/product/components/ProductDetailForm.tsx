@@ -7,6 +7,11 @@ import {
   type OptionsData,
 } from "../../../base/options/OptionsClient";
 import {
+  deriveExternalStepTypeFromCategoryCode,
+  rulesForType,
+} from "../rules/productTypeRules";
+import { useOptions } from "~/base/options/OptionsContext";
+import {
   productIdentityFields,
   productAssocFields,
   productPricingFields,
@@ -19,14 +24,42 @@ export type ProductDetailFormProps = {
   form: UseFormReturn<any>;
   product?: any; // initial product record when editing
   categoryOptions?: { value: string; label: string }[];
+  subcategoryOptions?: { value: string; label: string }[];
   taxCodeOptions?: { value: string; label: string }[];
+  templateOptions?: { value: string; label: string }[];
+  requireTemplate?: boolean;
+  hideTemplateField?: boolean;
+  templateDefs?: Record<
+    string,
+    {
+      id: number;
+      code: string;
+      label: string | null;
+      productType: string;
+      defaultCategoryId: number | null;
+      defaultSubCategoryId: number | null;
+      defaultExternalStepType?: string | null;
+      requiresSupplier?: boolean | null;
+      requiresCustomer?: boolean | null;
+      defaultStockTracking?: boolean | null;
+      defaultBatchTracking?: boolean | null;
+      skuSeriesKey?: string | null;
+    }
+  >;
 };
 
 export function ProductDetailForm({
   mode,
   form,
   product,
+  categoryOptions,
+  subcategoryOptions,
+  templateOptions,
+  templateDefs,
+  requireTemplate = false,
+  hideTemplateField,
 }: ProductDetailFormProps) {
+  const optionsCtx = useOptions();
   const [tiersOpen, setTiersOpen] = React.useState(false);
   // Live pricing prefs from the PricingPreviewWidget (qty + customer multiplier)
   function usePricingPrefsFromWidget() {
@@ -231,6 +264,102 @@ export function ProductDetailForm({
     return fetched.length > 1;
   }, [product, watchedCostGroupId, costGroupRangesById]);
   const pricingPrefs = usePricingPrefsFromWidget();
+  const templateId = form.watch("templateId");
+  const template =
+    templateId && templateDefs ? templateDefs[String(templateId)] : null;
+  const needsTemplate = Boolean(requireTemplate && !template);
+  const typeValue = form.watch("type");
+  const categoryId = form.watch("categoryId");
+  const externalStepValue = form.watch("externalStepType");
+  const globalOptions = getGlobalOptions();
+  const categoryMetaById =
+    categoryOptions?.length || optionsCtx?.categoryMetaById
+      ? optionsCtx?.categoryMetaById || globalOptions?.categoryMetaById
+      : globalOptions?.categoryMetaById;
+  const filteredCategoryOptions = React.useMemo(() => {
+    const opts =
+      categoryOptions ||
+      optionsCtx?.categoryOptions ||
+      globalOptions?.categoryOptions ||
+      [];
+    const meta =
+      categoryMetaById ||
+      globalOptions?.categoryMetaById ||
+      {};
+    console.log("[product form] category meta available", {
+      fromCtx: !!optionsCtx?.categoryMetaById,
+      fromGlobal: !!globalOptions?.categoryMetaById,
+      metaKeys: Object.keys(meta || {}).length,
+    });
+    const rules = rulesForType(typeValue);
+    const group = rules.categoryGroupCode;
+    if (!group) return opts;
+    const filtered = opts.filter((o) => {
+      const m = meta[String(o.value)];
+      const parent = (m?.parentCode || "").toUpperCase();
+      return parent === group.toUpperCase();
+    });
+    console.log("[product form] category filter", {
+      typeValue,
+      group,
+      opts: opts.length,
+      filtered: filtered.length,
+    });
+    return filtered;
+  }, [categoryOptions, categoryMetaById, typeValue]);
+
+  React.useEffect(() => {
+    if (!template || !requireTemplate) return;
+    form.setValue("type", template.productType, { shouldDirty: true });
+    if (template.defaultCategoryId) {
+      form.setValue("categoryId", template.defaultCategoryId, {
+        shouldDirty: true,
+      });
+    }
+    if (template.defaultSubCategoryId) {
+      form.setValue("subCategoryId", template.defaultSubCategoryId, {
+        shouldDirty: true,
+      });
+    } else {
+      form.setValue("subCategoryId", "", { shouldDirty: true });
+    }
+    form.setValue(
+      "stockTrackingEnabled",
+      template.defaultStockTracking ?? false,
+      { shouldDirty: true }
+    );
+      form.setValue("batchTrackingEnabled", template.defaultBatchTracking ?? false, {
+        shouldDirty: true,
+      });
+    if (template.defaultExternalStepType) {
+      form.setValue("externalStepType", template.defaultExternalStepType, {
+        shouldDirty: true,
+      });
+    }
+  }, [template, form, requireTemplate]);
+
+  React.useEffect(() => {
+    const isService = String(typeValue || "").toUpperCase() === "SERVICE";
+    if (!isService) {
+      form.setValue("externalStepType", null, { shouldDirty: true });
+      return;
+    }
+    const meta = categoryMetaById?.[String(categoryId)];
+    const implied = deriveExternalStepTypeFromCategoryCode(meta?.code);
+    console.log("[product form] external step derive", {
+      typeValue,
+      categoryId,
+      meta,
+      implied,
+      current: form.getValues("externalStepType"),
+    });
+    const current = form.getValues("externalStepType");
+    if (implied && current !== implied) {
+      form.setValue("externalStepType", implied, { shouldDirty: true });
+    } else if (!implied && current) {
+      form.setValue("externalStepType", null, { shouldDirty: true });
+    }
+  }, [typeValue, categoryId, categoryMetaById, form]);
 
   const ctx = React.useMemo(
     () => ({
@@ -238,7 +367,26 @@ export function ProductDetailForm({
       openCostTiersModal: () => setTiersOpen(true),
       product: product || {},
       customer: product?.customer || {},
-      options: getGlobalOptions() || undefined,
+      options: globalOptions
+        ? { ...globalOptions, categoryOptions: filteredCategoryOptions }
+        : optionsCtx
+        ? { ...optionsCtx, categoryOptions: filteredCategoryOptions }
+        : undefined,
+      fieldOptions: {
+        category: filteredCategoryOptions,
+        subcategory:
+          subcategoryOptions ||
+          optionsCtx?.subcategoryOptions ||
+          getGlobalOptions()?.subcategoryOptions ||
+          [],
+        productTemplate:
+          templateOptions ||
+          getGlobalOptions()?.productTemplateOptions?.map((t) => ({
+            value: t.value,
+            label: t.label,
+          })) ||
+          [],
+      },
       // Provide dynamic ranges caches for computeDefault and previews
       salePriceGroupRangesById,
       costGroupRangesById,
@@ -253,6 +401,8 @@ export function ProductDetailForm({
     [
       hasCostTiers,
       product,
+      categoryOptions,
+      subcategoryOptions,
       salePriceGroupRangesById,
       costGroupRangesById,
       pricingPrefs.qty,
@@ -261,36 +411,55 @@ export function ProductDetailForm({
       pricingPrefs.customerId,
       pricingPrefs.margins,
       costPriceLocked,
+      templateOptions,
     ]
   );
 
   return (
     <Grid>
+      <input
+        type="hidden"
+        name="externalStepType"
+        value={externalStepValue ?? ""}
+        data-debug="externalStepType-hidden"
+      />
       <Grid.Col span={{ base: 12, md: 12 }}>
         <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
           <Card withBorder padding="md">
             <RenderGroup
               form={form as any}
-              fields={productIdentityFields as any}
+              fields={
+                hideTemplateField
+                  ? (productIdentityFields.filter(
+                      (f) => f.name !== "templateId"
+                    ) as any)
+                  : (productIdentityFields as any)
+              }
               mode={mode as any}
               ctx={ctx as any}
             />
           </Card>
           <Card withBorder padding="md">
-            <RenderGroup
-              form={form as any}
-              fields={productAssocFields as any}
-              mode={mode as any}
-              ctx={ctx as any}
-            />
+            {needsTemplate ? (
+              <Center mih={120}>Please select a template to continue.</Center>
+            ) : (
+              <RenderGroup
+                form={form as any}
+                fields={productAssocFields as any}
+                mode={mode as any}
+                ctx={ctx as any}
+              />
+            )}
           </Card>
           <Card withBorder padding="md">
-            <RenderGroup
-              form={form as any}
-              fields={productPricingFields as any}
-              mode={mode as any}
-              ctx={ctx as any}
-            />
+            {needsTemplate ? null : (
+              <RenderGroup
+                form={form as any}
+                fields={productPricingFields as any}
+                mode={mode as any}
+                ctx={ctx as any}
+              />
+            )}
             {product?.id ? (
               <Card.Section bg="dark.6" py={5} mt="xs">
                 <Center>

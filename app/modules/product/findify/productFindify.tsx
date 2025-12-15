@@ -22,6 +22,7 @@ export type ProductFindFormValues = {
   whiteboard?: string | null;
   flagIsDisabled?: boolean;
   leadTimeDays?: number | string | null;
+  externalStepType?: string | null;
   // tags
   tagNames?: string[];
   pricingGroupId?: number | null;
@@ -63,6 +64,7 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
       p.leadTimeDays != null && !Number.isNaN(Number(p.leadTimeDays))
         ? Number(p.leadTimeDays)
         : null,
+    externalStepType: p.externalStepType || null,
     tagNames: (p.productTags || [])
       .map((pt: any) => pt?.tag?.name)
       .filter(Boolean) as string[],
@@ -88,6 +90,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     whiteboard: "",
     flagIsDisabled: false,
     leadTimeDays: undefined,
+    externalStepType: undefined,
     costPriceMin: undefined,
     costPriceMax: undefined,
     manualSalePriceMin: undefined,
@@ -96,6 +99,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     componentChildName: undefined,
     componentChildSupplierId: undefined,
     componentChildType: undefined,
+    externalStepType: undefined,
   };
 }
 
@@ -135,6 +139,7 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     put("salePriceGroupId", values.salePriceGroupId);
     put("whiteboard", values.whiteboard);
     put("leadTimeDays", values.leadTimeDays);
+    put("externalStepType", values.externalStepType);
     fd.set(
       "flagIsDisabled",
       values.flagIsDisabled ? "true" : "false"

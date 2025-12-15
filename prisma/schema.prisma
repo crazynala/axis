@@ -93,7 +93,8 @@ model Product {
   costCurrency          String?               @default("USD")
   purchaseTaxId         Int?
   categoryId            Int?
-  subCategory           String?
+  subCategoryId         Int?
+  templateId            Int?
   pricingGroupId        Int?
   manualSalePrice       Decimal?              @db.Decimal(14, 4)
   manualMargin          Decimal?              @db.Decimal(14, 4)
@@ -116,13 +117,16 @@ model Product {
   flagIsDisabled        Boolean               @default(false)
   primaryProductLineId  Int?
   leadTimeDays          Int?
+  externalStepType      ExternalStepType?
   assemblies            Assembly[]
   batches               Batch[]
   boxLines              BoxLine[]
   Costing               Costing[]
   expenses              Expense[]
   invoiceLines          InvoiceLine[]
-  category              ValueList?            @relation("Category", fields: [categoryId], references: [id])
+  category              ValueList?            @relation("ProductCategory", fields: [categoryId], references: [id])
+  subCategory           ValueList?            @relation("ProductSubCategory", fields: [subCategoryId], references: [id])
+  template              ProductTemplate?      @relation(fields: [templateId], references: [id])
   costGroup             ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
   customer              Company?              @relation("Customer", fields: [customerId], references: [id])
   pricingGroup          SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
@@ -182,6 +186,7 @@ model Company {
   invoicePercentOnCut             Decimal?                @db.Decimal(5, 2)
   invoicePercentOnOrder           Decimal?                @db.Decimal(5, 2)
   defaultLeadTimeDays             Int?
+  code                            String?                 @unique
   addresses                       Address[]
   assemblyActivitiesAsVendor      AssemblyActivity[]      @relation("AssemblyActivity_vendorCompany")
   boxes                           Box[]
@@ -230,7 +235,7 @@ model SupplierPricingGroup {
 model ValueList {
   id                    Int                @id @default(autoincrement())
   code                  String?
-  label                 String?
+  label                 String
   value                 Decimal?           @db.Decimal(14, 4)
   createdBy             String?
   modifiedBy            String?
@@ -241,10 +246,38 @@ model ValueList {
   assemblyDefectReasons AssemblyActivity[] @relation("AssemblyActivity_defectReason")
   invoicesTaxCode       Invoice[]          @relation("Inv_TaxCode")
   invoiceLinesTaxCode   InvoiceLine[]      @relation("TaxCode")
-  productsCategory      Product[]          @relation("Category")
-  productsTax           Product[]          @relation("Tax")
-  parent                ValueList?         @relation("ValueListHierarchy", fields: [parentId], references: [id])
-  children              ValueList[]        @relation("ValueListHierarchy")
+  productsCategory              Product[]          @relation("ProductCategory")
+  productsSubCategory           Product[]          @relation("ProductSubCategory")
+  productsTax                   Product[]          @relation("Tax")
+  productTemplatesDefaultCategory   ProductTemplate[] @relation("ProductTemplateDefaultCategory")
+  productTemplatesDefaultSubCategory ProductTemplate[] @relation("ProductTemplateDefaultSubCategory")
+  parent                        ValueList?         @relation("ValueListParent", fields: [parentId], references: [id])
+  children                      ValueList[]        @relation("ValueListParent")
+}
+
+model ProductTemplate {
+  id                    Int               @id @default(autoincrement())
+  code                  String            @unique
+  label                 String
+  productType           ProductType
+  defaultCategoryId     Int?
+  defaultCategory       ValueList?        @relation("ProductTemplateDefaultCategory", fields: [defaultCategoryId], references: [id])
+  defaultSubCategoryId  Int?
+  defaultSubCategory    ValueList?        @relation("ProductTemplateDefaultSubCategory", fields: [defaultSubCategoryId], references: [id])
+  defaultExternalStepType ExternalStepType?
+  requiresSupplier      Boolean           @default(false)
+  requiresCustomer      Boolean           @default(false)
+  defaultStockTracking  Boolean           @default(false)
+  defaultBatchTracking  Boolean           @default(false)
+  skuSeriesKey          String?
+  isActive              Boolean           @default(true)
+  products              Product[]
+}
+
+model SkuSeriesCounter {
+  id        Int    @id @default(autoincrement())
+  seriesKey String @unique
+  nextNum   Int    @default(1)
 }
 
 model Assembly {
@@ -1020,6 +1053,7 @@ enum ProductType {
   Finished
   Trim
   Service
+  Packaging
 }
 
 enum CompanyType {

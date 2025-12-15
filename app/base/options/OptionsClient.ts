@@ -1,7 +1,10 @@
 export type Option = { value: string; label: string };
+export type CategoryMeta = { id: number; code: string; parentCode?: string | null };
 export type OptionsData = {
   categoryOptions: Option[];
   subcategoryOptions: Option[];
+  categoryMetaById?: Record<string, CategoryMeta>;
+  productTemplateOptions?: Option[];
   taxCodeOptions: Option[];
   // Optional: map of tax ValueList id -> numeric rate (e.g., 0.18)
   taxRateById?: Record<string | number, number>;

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo } from "react";
 import type { OptionsData } from "./OptionsClient";
-import { getGlobalOptions } from "./OptionsClient";
+import { getGlobalOptions, setGlobalOptions } from "./OptionsClient";
 
 type OptionsContextValue = OptionsData | null;
 
@@ -15,7 +15,11 @@ export function OptionsProvider({
 }) {
   // Prefer explicit value from root loader; fall back to singleton if missing
   const provided = useMemo<OptionsContextValue>(() => {
-    return value ?? getGlobalOptions() ?? null;
+    if (value) {
+      setGlobalOptions(value);
+      return value;
+    }
+    return getGlobalOptions() ?? null;
   }, [value]);
   return (
     <OptionsContext.Provider value={provided}>

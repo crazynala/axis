@@ -463,100 +463,108 @@ export function renderField(
             };
 
             return (
-              <Combobox
-                store={combobox}
-                withinPortal
-                onOptionSubmit={(val) => {
-                  if (val === "__EMPTY__") {
-                    setFormValue(mode === "find" ? "" : null);
-                    setSearch("");
-                  } else {
-                    setFormValue(val);
-                    const picked = allForLookup.find((o) => o.value === val);
-                    setSearch(picked?.label || "");
-                  }
-                  combobox.closeDropdown();
-                }}
-              >
-                <Combobox.Target>
-                  <TextInput
-                    {...common}
-                    value={combobox.dropdownOpened ? search : selectedLabel}
-                    onMouseDown={() => {
-                      clickedByMouseRef.current = true;
-                    }}
-                    onFocus={(event) => {
-                      setSearch(selectedLabel);
-                      if (clickedByMouseRef.current) {
+              <>
+                <input
+                  type="hidden"
+                  name={field.name}
+                  value={valueStr ?? ""}
+                  aria-hidden
+                />
+                <Combobox
+                  store={combobox}
+                  withinPortal
+                  onOptionSubmit={(val) => {
+                    if (val === "__EMPTY__") {
+                      setFormValue(mode === "find" ? "" : null);
+                      setSearch("");
+                    } else {
+                      setFormValue(val);
+                      const picked = allForLookup.find((o) => o.value === val);
+                      setSearch(picked?.label || "");
+                    }
+                    combobox.closeDropdown();
+                  }}
+                >
+                  <Combobox.Target>
+                    <TextInput
+                      {...common}
+                      value={combobox.dropdownOpened ? search : selectedLabel}
+                      onMouseDown={() => {
+                        clickedByMouseRef.current = true;
+                      }}
+                      onFocus={(event) => {
+                        setSearch(selectedLabel);
+                        if (clickedByMouseRef.current) {
+                          combobox.openDropdown();
+                          combobox.updateSelectedOptionIndex();
+                        } else {
+                          combobox.closeDropdown();
+                        }
+                        clickedByMouseRef.current = false;
+                        event.currentTarget.select();
+                      }}
+                      onChange={(event) => {
+                        setSearch(event.currentTarget.value);
                         combobox.openDropdown();
                         combobox.updateSelectedOptionIndex();
-                      } else {
+                      }}
+                      onBlur={(e) => {
+                        f.onBlur();
                         combobox.closeDropdown();
+                        clickedByMouseRef.current = false;
+                      }}
+                      rightSection={
+                        valueStr != null ||
+                        (mode === "find" && (f.value ?? "") !== "") ? (
+                          <CloseButton
+                            size="sm"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setFormValue(mode === "find" ? "" : null);
+                              setSearch("");
+                            }}
+                          />
+                        ) : undefined
                       }
-                      clickedByMouseRef.current = false;
-                      event.currentTarget.select();
-                    }}
-                    onChange={(event) => {
-                      setSearch(event.currentTarget.value);
-                      combobox.openDropdown();
-                      combobox.updateSelectedOptionIndex();
-                    }}
-                    onBlur={(e) => {
-                      f.onBlur();
-                      combobox.closeDropdown();
-                      clickedByMouseRef.current = false;
-                    }}
-                    rightSection={
-                      valueStr != null ||
-                      (mode === "find" && (f.value ?? "") !== "") ? (
-                        <CloseButton
-                          size="sm"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setFormValue(mode === "find" ? "" : null);
-                            setSearch("");
-                          }}
-                        />
-                      ) : undefined
-                    }
-                    placeholder={
-                      mode === "find"
-                        ? field.findPlaceholder || "any"
-                        : undefined
-                    }
-                    ref={f.ref as any}
-                  />
-                </Combobox.Target>
-                <Combobox.Dropdown>
-                  <div
-                    style={{
-                      maxHeight: 260,
-                      overflowY: "auto",
-                      overscrollBehavior: "contain",
-                    }}
-                    onWheel={(e) => {
-                      // prevent page scroll while interacting with dropdown
-                      e.stopPropagation();
-                    }}
-                  >
-                    <Combobox.Options>
-                      {mode === "find" && (
-                        <Combobox.Option value="__EMPTY__">
-                          (Any)
-                        </Combobox.Option>
-                      )}
-                      {visible.map((o) => (
-                        <Combobox.Option key={o.value} value={o.value}>
-                          {o.label}
-                        </Combobox.Option>
-                      ))}
-                      {visible.length === 0 && (
-                        <Combobox.Empty>Nothing found</Combobox.Empty>
-                      )}
-                    </Combobox.Options>
-                  </div>
-                </Combobox.Dropdown>
-              </Combobox>
+                      placeholder={
+                        mode === "find"
+                          ? field.findPlaceholder || "any"
+                          : undefined
+                      }
+                      ref={f.ref as any}
+                    />
+                  </Combobox.Target>
+                  <Combobox.Dropdown>
+                    <div
+                      style={{
+                        maxHeight: 260,
+                        overflowY: "auto",
+                        overscrollBehavior: "contain",
+                      }}
+                      onWheel={(e) => {
+                        // prevent page scroll while interacting with dropdown
+                        e.stopPropagation();
+                      }}
+                    >
+                      <Combobox.Options>
+                        {mode === "find" && (
+                          <Combobox.Option value="__EMPTY__">
+                            (Any)
+                          </Combobox.Option>
+                        )}
+                        {visible.map((o) => (
+                          <Combobox.Option key={o.value} value={o.value}>
+                            {o.label}
+                          </Combobox.Option>
+                        ))}
+                        {visible.length === 0 && (
+                          <Combobox.Empty>Nothing found</Combobox.Empty>
+                        )}
+                      </Combobox.Options>
+                    </div>
+                  </Combobox.Dropdown>
+                </Combobox>
+              </>
             );
           }}
         />
@@ -669,34 +677,55 @@ export function RenderField({
 }) {
   const options = useOptions();
   const autoCtx: RenderContext | undefined = React.useMemo(() => {
-    if (!options && !ctx) return ctx;
-    const map = (arr?: { value: string; label: string }[]) => arr || [];
-    return {
-      ...ctx,
-      options: options || ctx?.options,
-      fieldOptions: {
-        ...(ctx?.fieldOptions || {}),
-        category: map(options?.categoryOptions),
-        subcategory: map(options?.subcategoryOptions),
-        tax: map(options?.taxCodeOptions),
-        productType: map(options?.productTypeOptions),
-        variantSet: map(options?.variantSetOptions),
-        customer: map(options?.customerOptions),
-        customerAll: map(options?.customerAllOptions),
-        consignee: map(options?.consigneeOptions),
-        consigneeAll: map(options?.consigneeAllOptions),
-        supplier: map(options?.supplierOptions),
-        supplierAll: map(options?.supplierAllOptions),
-        companyAll: map(options?.companyAllOptions),
-        carrier: map(options?.carrierOptions),
-        jobType: map(options?.jobTypeOptions),
-        jobStatus: map(options?.jobStatusOptions),
-        location: map(options?.locationOptions),
-        salePriceGroup: map(options?.salePriceGroupOptions),
-        costGroup: map(options?.costGroupOptions),
-      },
-    };
-  }, [options, ctx]);
+  if (!options && !ctx) return ctx;
+  const map = (arr?: { value: string; label: string }[]) => arr || [];
+  return {
+    ...ctx,
+    options: options || ctx?.options,
+    fieldOptions: {
+      ...(ctx?.fieldOptions || {}),
+      category:
+        ctx?.fieldOptions?.category ?? map(options?.categoryOptions),
+      subcategory:
+        ctx?.fieldOptions?.subcategory ?? map(options?.subcategoryOptions),
+      tax: ctx?.fieldOptions?.tax ?? map(options?.taxCodeOptions),
+      productType:
+        ctx?.fieldOptions?.productType ?? map(options?.productTypeOptions),
+      variantSet:
+        ctx?.fieldOptions?.variantSet ?? map(options?.variantSetOptions),
+      customer:
+        ctx?.fieldOptions?.customer ?? map(options?.customerOptions),
+      customerAll:
+        ctx?.fieldOptions?.customerAll ?? map(options?.customerAllOptions),
+      consignee:
+        ctx?.fieldOptions?.consignee ?? map(options?.consigneeOptions),
+      consigneeAll:
+        ctx?.fieldOptions?.consigneeAll ?? map(options?.consigneeAllOptions),
+      supplier:
+        ctx?.fieldOptions?.supplier ?? map(options?.supplierOptions),
+      supplierAll:
+        ctx?.fieldOptions?.supplierAll ?? map(options?.supplierAllOptions),
+      companyAll:
+        ctx?.fieldOptions?.companyAll ?? map(options?.companyAllOptions),
+      carrier:
+        ctx?.fieldOptions?.carrier ?? map(options?.carrierOptions),
+      jobType:
+        ctx?.fieldOptions?.jobType ?? map(options?.jobTypeOptions),
+      jobStatus:
+        ctx?.fieldOptions?.jobStatus ?? map(options?.jobStatusOptions),
+      location:
+        ctx?.fieldOptions?.location ?? map(options?.locationOptions),
+      salePriceGroup:
+        ctx?.fieldOptions?.salePriceGroup ??
+        map(options?.salePriceGroupOptions),
+      costGroup:
+        ctx?.fieldOptions?.costGroup ?? map(options?.costGroupOptions),
+      productTemplate:
+        ctx?.fieldOptions?.productTemplate ??
+        map(options?.productTemplateOptions),
+    },
+  };
+}, [options, ctx]);
 
   return renderField(form, field, mode, autoCtx);
 }

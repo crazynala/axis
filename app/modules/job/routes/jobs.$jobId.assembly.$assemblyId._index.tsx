@@ -638,9 +638,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const displaySewArr = hasFinishData
       ? minArrays(usableSewArr, usableFinishArr)
       : usableSewArr;
-    const displayFinishArr = hasPackData
-      ? minArrays(usableFinishArr, usablePackArr)
-      : usableFinishArr;
+    const displayFinishArr = usableFinishArr;
     const displayPackArr = hasPackData
       ? usablePackArr
       : Array.from({ length: usableFinishArr.length }, () => 0);
@@ -650,9 +648,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const displaySewTotal = hasFinishData
       ? Math.min(usableSewTotal, usableFinishTotal)
       : usableSewTotal;
-    const displayFinishTotal = hasPackData
-      ? Math.min(usableFinishTotal, usablePackTotal)
-      : usableFinishTotal;
+    const displayFinishTotal = usableFinishTotal;
     const displayPackTotal = hasPackData ? usablePackTotal : 0;
     return {
       assemblyId: a.id,
@@ -1430,6 +1426,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
   if (intent === "activity.create.pack") {
+    const isFetch = request.headers.get("X-Remix-Fetch") === "true";
     const qtyArrStr = String(form.get("qtyBreakdown") || "[]");
     const activityDateStr = String(form.get("activityDate") || "");
     let qtyArr: number[] = [];
@@ -1458,17 +1455,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
     })();
     const boxDescription = (form.get("boxDescription") as string) || null;
     const boxNotes = (form.get("boxNotes") as string) || null;
-    await createPackActivity({
-      assemblyId: targetAssemblyId,
-      jobId,
-      qtyBreakdown: qtyArr,
-      activityDate,
-      boxMode,
-      existingBoxId: existingBoxIdStr ? Number(String(existingBoxIdStr)) : null,
-      warehouseNumber: parsedWarehouse,
-      boxDescription,
-      boxNotes,
-    });
+    try {
+      await createPackActivity({
+        assemblyId: targetAssemblyId,
+        jobId,
+        qtyBreakdown: qtyArr,
+        activityDate,
+        boxMode,
+        existingBoxId: existingBoxIdStr ? Number(String(existingBoxIdStr)) : null,
+        warehouseNumber: parsedWarehouse,
+        boxDescription,
+        boxNotes,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Unable to record pack.";
+      if (isFetch) {
+        return json({ error: message }, { status: 400 });
+      }
+      throw err;
+    }
+    if (isFetch) {
+      return json({ success: true });
+    }
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
   if (intent === "activity.update") {

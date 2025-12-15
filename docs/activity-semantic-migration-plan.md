@@ -5,7 +5,9 @@
 - [ ] Axis is driven by (a) AssemblyActivity for Cut/Sew/Finish/external-step events/defects and (b) BoxLine for packed quantity; no parallel planning tables. We reimport FileMaker data after schema changes instead of backfilling Postgres.
 - [ ] Restore any tasks dropped from the original implementation snapshot so feature parity is preserved.
 - [ ] No new required fields on legacy write paths; legacy imports keep working.
-- [ ] All ETAs and lead times are derived from data (Costing → Product → Company), never hand-entered elsewhere.
+- [ ] All ETAs and lead times are derived from data (Costing → Product → Company)
+  - Lead times are derived (Costing→Product→Company).
+  - PO line ETA is operational truth and may be manually set (with “fill from lead time” as a helper).
 - [ ] Lead times resolve hierarchically: `Costing.leadTimeDays` overrides `Product.leadTimeDays`, which overrides `Company.defaultLeadTimeDays`.
 - [ ] Legacy `activityType` references stay removed; `stage` + `action` + `externalStepType` are authoritative.
 - [ ] Any legacy Postgres data can be dropped/reseeded; prefer clean schema migrations over complicated in-DB backfills.
@@ -186,3 +188,69 @@ Tests / acceptance:
 - Confirm `IMPLICIT_DONE` when Finish exists without external events.
 - Verify Send Out works without Sew (low-confidence flag + “Record Sew now” helper).
 - Ensure packing defaults to `readyToPackQty` and writes `BoxLine` rows.
+
+## 9. Product semantics + templates + SKU + import normalization
+
+- Database / migrations
+  - [ ] Add `Company.code String? @unique` with uppercase 2–10 char validation at app layer; allow null for legacy. Used for vendors and customers (single Company table).
+  - [ ] Add `Product.sku String? @unique` (keep nullable for legacy), extend `Product.type` enum with `Packaging` (stop using `Raw` except for legacy mapping), and keep `Product.type` non-null in UI.
+  - [ ] Normalize categories: keep `Product.categoryId Int?` (leaf ValueList row with `type=Category`, parent=type group; hierarchy is group (parent=null) → category (parent=group) → subcategory (parent=category)); drop `subCategory String?`, add `Product.subCategoryId Int?` with relation `subCategory ValueList? @relation("ProductSubCategory", ...)` and optional backrelation `productsSubCategory`.
+  - [ ] Update ValueList(Category) seed structure to carry stable `code` on every row; children defined as `{ code, label }`, with parentCode links (group codes per ProductType, leaf codes for categories, optional subcategory codes as children).
+  - [ ] Add optional `Product.externalStepType ExternalStepType?` (default expected step for Service products/templates).
+  - [ ] Add `ProductTemplate` model: `code` (unique), `label`, `productType`, `defaultCategoryId`, `defaultSubCategoryId`, `defaultExternalStepType`, `requiresSupplier`, `requiresCustomer`, `defaultStockTracking`, `defaultBatchTracking`, `skuSeriesKey`, `isActive`.
+  - [ ] Add `SkuSeriesCounter` model: `seriesKey` unique, `nextNum` default 1.
+  - [ ] Add `Product.templateId` FK to `ProductTemplate`.
+  - [ ] Create Prisma migrations for: ProductType enum change (+Packaging, stop Raw usage), drop subCategory string/add `subCategoryId`, add `Product.externalStepType`, add `ProductTemplate` + `templateId` relation, and `SkuSeriesCounter`. No DB backfills—reimport FM data to populate codes/templates/SKUs.
+- Core logic / services
+  - [ ] Enforce Product.type required in app logic; gate BOM editing to Finished only.
+  - [ ] Implement SKU generator: accepts template key, vendor/customer/category codes, optional size token, pulls/bumps `SkuSeriesCounter`, retries on uniqueness conflict.
+  - [ ] Define template rules:
+    - [ ] Fabric/Trim/Packaging: default to vendor SKU when present, else template-based SKU.
+    - [ ] Service external: `SV-{STEP}-{VENDORCODE}-{SIZE?}-{NNN}` (step from externalStepType/template).
+    - [ ] Service internal: `SV-IN-{CATEGORYCODE}-{NNN}`.
+    - [ ] CMT: `CMT-{CUSTOMERCODE}-{FINCATCODE}-{NNN}`.
+  - [ ] Implement “Product Template / Classification” resolver: drives allowed categories/subcategories, stock tracking defaults, external/internal service flag, externalStepType default.
+  - [ ] Enforce type semantics in domain services (fail/auto-set):
+    - [ ] CMT: requires `customerId`, no `supplierId`, stock/batch off, can use SalePriceGroup.
+    - [ ] Fabric: requires `supplierId`, no `customerId`, `stockTrackingEnabled=true`, `batchTrackingEnabled=true`, consumed at Cut.
+    - [ ] Trim: requires `supplierId`, stockTrackingEnabled=true, batch optional, consumed Sew/Finish; `customerId` optional.
+    - [ ] Packaging: requires `supplierId`, stockTrackingEnabled=true; replace legacy Raw usage.
+    - [ ] Finished: requires `customerId`, no `supplierId`, BOM-enabled, creates assemblies.
+    - [ ] Service: internal vs external driven by template; external implies supplierId + externalStepType; internal is supplier-optional.
+  - [ ] When generating Costing from BOM/ProductLine, set `costing.externalStepType` from child product/template (or leaf category code mapping OUTSIDE_WASH/DYE/EMBROIDERY); allow manual override but default from BOM.
+  - [ ] Implement ProductTemplate resolver in costing instantiation/import: Service templates auto-set externalStepType; Finished BOM → costing inherits child product externalStepType/template default automatically.
+  - [ ] Keep assembly external-step engine authoritative on `costing.externalStepType` (no change to derived engine).
+- UI / forms
+  - [ ] Company editor: add `code` field (uppercase, 2–10 chars), surface for suppliers/customers with uniqueness errors.
+  - [ ] Product editor/creator:
+    - [ ] Require Product.type; add required Template picker (ProductTemplate table) that pre-fills type/category/subcategory/default flags, stock/batch defaults, externalStepType, and SKU series key.
+    - [ ] Category selector uses leaf ValueList filtered by Product.type group; subcategory selector uses children of selected leaf (can be hidden/disabled until seeded). Clear invalid selections when type/template changes.
+    - [ ] Replace free-text subCategory input with constrained selectors; preserve legacy data in notes only for imports.
+    - [ ] For Service type, require template selection; auto-set external/internal, externalStepType, supplierId requirement, category/subcategory visibility. If leaf is Outside Wash/Dye/Embroidery, auto-set externalStepType and require supplierId in UI.
+    - [ ] For Fabric/Trim/Packaging: enforce supplierId, auto-set stock/batch defaults.
+    - [ ] For Finished/CMT: enforce customerId, hide supplier fields; disable BOM editing unless Finished.
+    - [ ] SKU input with Auto toggle; regenerate on template/type change; show uniqueness errors and conflict retry behavior.
+    - [ ] Add UI guard to prevent selecting legacy Raw; expose Packaging instead.
+- Importer
+  - [ ] When importing Companies, populate `code` from FM if present; leave null otherwise.
+  - [ ] When importing Products:
+    - [ ] Preserve incoming SKU if present; otherwise leave null (no generation during import).
+    - [ ] Map FM types: Raw/packaging → Packaging; Fabric → Fabric; Finished → Finished; Trim → Trim; CMT → CMT; Services/fees → Service.
+    - [ ] Map category/subcategory into ValueList hierarchy: group rows per ProductType (e.g., SERVICE, TRIM, FABRIC, FINISHED, CMT, PACKAGING), leaf category = `categoryId` via `code`, subCategoryId from child rows (none seeded initially). If FM subcategory is unmapped, append to `Product.notes` and emit import warning.
+    - [ ] Add helpers `getCategoryGroupIdByCode`, `getCategoryLeafId(groupCode, leafCode)` with in-memory cache per import run (codes on ValueList rows; children include `code` + `label`).
+    - [ ] Derive `Product.externalStepType` for Service from template/leaf codes: OUTSIDE_WASH → WASH, OUTSIDE_DYE → DYE, OUTSIDE_EMBROIDERY → EMBROIDERY; else null.
+    - [ ] Validation warnings (no hard fail): Fabric/Trim/Packaging missing supplierId; Finished/CMT missing customerId; Service with externalStepType missing supplierId. Emit console table + JSON report with product IDs/SKUs.
+    - [ ] On import, set `Product.templateId` when FM category maps to a seeded template; otherwise leave null.
+  - [ ] When importing ProductLine/BOM and instantiating Costings: default `costing.externalStepType` from child product/template (or leaf code mapping); preserve incoming IDs.
+  - [ ] Post-import validation report: list Service products missing supplierId or externalStepType/template so FM mapping can be fixed and reimported.
+  - [ ] Seed data: add `productTemplates` TS array (at least SV_OUT_WASH, SV_OUT_DYE, SV_OUT_EMB, SV_INTERNAL_PATTERN, FAB_MAIN, TRIM_ZIP, PKG_POLYBAG, FIN_SHIRT, CMT_SHIRT); seed script resolves category IDs via ValueList codes (parentCode + leafCode) and upserts ProductTemplate rows and `SkuSeriesCounter` where `skuSeriesKey` present.
+- Tests / UAT
+  - [ ] Create external Service product via template → supplierId required, SKU auto-generated `SV-{STEP}-{VENDORCODE}-{NNN}` (with size when provided), costing instantiated from BOM carries `externalStepType` automatically.
+  - [ ] Create assembly from finished product BOM containing outside wash line → expected external step appears without manual costing edits.
+  - [ ] SKU generation uniqueness: collide two products on same series → retry and persist unique SKU; manual edit respected when Auto off.
+  - [ ] Vendor/customer codes visible and used in SKUs; null codes allow legacy imports to save.
+  - [ ] Type/category constraints enforced in UI (e.g., Trim cannot pick Finished-only subcategory; Service requires template selection).
+  - [ ] Import finished product + BOM referencing Outside Wash service product: after import service category mapped, externalStepType set, costing on assembly creation has `externalStepType=WASH`, external-step engine shows expected Wash step.
+  - [ ] Legacy products with free-text subcategory import without failure; subcategory stored in notes and warning report produced.
+  - [ ] Product template seeding: `productTemplates` dataset (e.g., SV_OUT_WASH, SV_OUT_DYE, SV_OUT_EMB, SV_INTERNAL_PATTERN, FAB_MAIN, TRIM_ZIP, PKG_POLYBAG, FIN_SHIRT, CMT_SHIRT) resolves category IDs via ValueList codes and upserts templates and `SkuSeriesCounter` where `skuSeriesKey` present.
+  - [ ] Product creation with template picker: selecting template pre-fills type/category/subcategory/externalStepType/stock+batch flags and enforces supplier/customer requiredness; clearing/changing template/type clears invalid category selections.

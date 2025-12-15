@@ -1,6 +1,6 @@
 import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, MetaFunction } from "@remix-run/node";
-import { useNavigation, Form } from "@remix-run/react";
+import { useNavigation, Form, useLoaderData } from "@remix-run/react";
 import {
   Button,
   Group,
@@ -19,8 +19,14 @@ import { DatePickerInput } from "@mantine/dates";
 import { useMemo } from "react";
 import { useOptions } from "~/base/options/OptionsContext";
 import { normalizeJobState } from "~/modules/job/stateUtils";
+import { loadOptions } from "~/utils/options.server";
 
 export const meta: MetaFunction = () => [{ title: "New Job" }];
+
+export async function loader() {
+  const options = await loadOptions();
+  return json({ options });
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
@@ -66,9 +72,10 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NewJobRoute() {
+  const { options: loaderOptions } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const options = useOptions();
+  const options = useOptions() ?? loaderOptions ?? null;
   const form = useForm({
     defaultValues: {
       projectCode: "",

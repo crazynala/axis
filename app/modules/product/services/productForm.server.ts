@@ -3,7 +3,10 @@
 export function buildProductData(form: FormData) {
   const data: any = {};
   const str = (k: string) => {
-    if (form.has(k)) data[k] = (form.get(k) as string)?.trim() || null;
+    if (form.has(k)) {
+      const v = form.get(k) as string;
+      data[k] = v == null ? null : v.trim() || null;
+    }
   };
   const num = (k: string) => {
     if (form.has(k)) {
@@ -29,10 +32,13 @@ export function buildProductData(form: FormData) {
   num("manualMargin");
   num("purchaseTaxId");
   num("categoryId");
+  num("subCategoryId");
+  num("templateId");
   num("customerId");
   num("supplierId");
   num("salePriceGroupId");
   num("leadTimeDays");
+  str("externalStepType");
   // booleans
   bool("stockTrackingEnabled");
   bool("batchTrackingEnabled");

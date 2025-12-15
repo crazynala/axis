@@ -3,10 +3,20 @@ import { calcPrice } from "../calc/calcPrice";
 import { Badge, Group, TextInput, Tooltip } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { Controller, type UseFormReturn } from "react-hook-form";
+import {
+  deriveExternalStepTypeFromCategoryCode,
+  rulesForType,
+} from "../rules/productTypeRules";
 export {
   renderField,
   extractFindValues,
 } from "../../../base/forms/fieldConfigShared";
+
+const EXTERNAL_STEP_OPTIONS = [
+  { value: "EMBROIDERY", label: "Embroidery" },
+  { value: "WASH", label: "Wash" },
+  { value: "DYE", label: "Dye" },
+];
 
 const SUPPLY_ATTENTION_TYPES = new Set(["FABRIC", "TRIM", "SERVICE"]);
 
@@ -75,9 +85,6 @@ export const productIdentityFields: FieldConfig[] = [
     readOnly: true,
     findOp: "equals",
   },
-  { name: "sku", label: "SKU", findOp: "contains" },
-  { name: "name", label: "Name", findOp: "contains" },
-  { name: "description", label: "Description", findOp: "contains" },
   {
     name: "type",
     label: "Type",
@@ -86,6 +93,9 @@ export const productIdentityFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "productType",
   },
+  { name: "sku", label: "SKU", findOp: "contains" },
+  { name: "name", label: "Name", findOp: "contains" },
+  { name: "description", label: "Description", findOp: "contains" },
 ];
 
 // Associations & toggles
@@ -98,11 +108,19 @@ export const productAssocFields: FieldConfig[] = [
     findOp: "equals",
   },
   {
+    name: "subCategoryId",
+    label: "Subcategory",
+    widget: "select",
+    optionsKey: "subcategory",
+    findOp: "equals",
+  },
+  {
     name: "supplierId",
     label: "Supplier",
     widget: "select",
     optionsKey: "supplier",
     findOp: "equals",
+    showIf: ({ form }) => rulesForType(form.watch("type")).showSupplier,
   },
   {
     name: "customerId",
@@ -111,6 +129,7 @@ export const productAssocFields: FieldConfig[] = [
     optionsKey: "customer",
     allOptionsKey: "customerAll",
     findOp: "equals",
+    showIf: ({ form }) => rulesForType(form.watch("type")).showCustomer,
   },
   {
     name: "variantSetId",
@@ -142,6 +161,21 @@ export const productAssocFields: FieldConfig[] = [
     hiddenInModes: ["find"],
     render: ({ form, mode }) =>
       renderLeadTimeInput({ form, mode: mode as "edit" | "create" | "find" }),
+  },
+  {
+    name: "externalStepType",
+    label: "External step type",
+    widget: "select",
+    options: EXTERNAL_STEP_OPTIONS,
+    findOp: "equals",
+    showIf: ({ form, ctx }) => {
+      const rules = rulesForType(form.watch("type"));
+      if (!rules.showExternalStepType) return false;
+      const catId = form.watch("categoryId");
+      const meta = ctx?.options?.categoryMetaById?.[String(catId)];
+      const implied = deriveExternalStepTypeFromCategoryCode(meta?.code);
+      return true;
+    },
   },
 ];
 

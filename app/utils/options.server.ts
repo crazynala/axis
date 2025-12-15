@@ -5,6 +5,8 @@ export type Option = { value: string; label: string };
 export type OptionsData = {
   categoryOptions: Option[];
   subcategoryOptions: Option[];
+  categoryMetaById?: Record<string, { id: number; code: string; parentCode?: string | null }>;
+  productTemplateOptions?: Option[];
   taxCodeOptions: Option[];
   taxRateById?: Record<string | number, number>;
   productTypeOptions: Option[];
@@ -35,12 +37,24 @@ function isFresh(entry: CacheEntry<any> | null) {
   return Date.now() - entry.at < TTL_MS;
 }
 
-function formatLabel(label: string | null | undefined, id: number) {
+function formatLabel(
+  label: string | null | undefined,
+  id: number,
+  code?: string | null
+) {
   const trimmed = label?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : `#${id}`;
+  if (trimmed && trimmed.length > 0) return trimmed;
+  if (code && code.trim().length > 0) return code.trim();
+  return `#${id}`;
 }
 
 export async function loadOptions(): Promise<OptionsData> {
+  if (isFresh(optionsCache)) {
+    if (!optionsCache.value.categoryMetaById) {
+      // force rebuild when new metadata shape is missing
+      optionsCache = null;
+    }
+  }
   if (isFresh(optionsCache)) {
     try {
       const ageMs = Date.now() - (optionsCache!.at || 0);
@@ -84,11 +98,12 @@ export async function loadOptions(): Promise<OptionsData> {
     variantSets,
     salePriceGroups,
     costGroups,
+    productTemplates,
   ] = await Promise.all([
     prisma.valueList.findMany({
       where: { type: ValueListType.Category },
       orderBy: [{ parentId: "asc" }, { label: "asc" }],
-      select: { id: true, label: true, parentId: true },
+      select: { id: true, label: true, parentId: true, code: true, parent: { select: { code: true } } },
     }),
     prisma.valueList.findMany({
       where: { type: ValueListType.Tax },
@@ -181,19 +196,37 @@ export async function loadOptions(): Promise<OptionsData> {
       orderBy: { name: "asc" },
       take: 1000,
     }),
+    prisma.productTemplate.findMany({
+      where: { isActive: true },
+      select: { id: true, code: true, label: true, productType: true },
+      orderBy: [{ productType: "asc" }, { code: "asc" }],
+    }),
   ]);
 
   // Prefer ValueList(ProductType). If empty, fall back to enum defaults.
   const productTypes = productTypesVL.length
     ? productTypesVL.map((pt) => pt.code || pt.label || "")
-    : ["CMT", "Fabric", "Finished", "Trim", "Service"];
+    : ["CMT", "Fabric", "Finished", "Trim", "Service", "Packaging"];
 
   const parentLabelById = new Map<number, string>();
   categories.forEach((cat) => {
-    parentLabelById.set(cat.id, formatLabel(cat.label, cat.id));
+    parentLabelById.set(cat.id, formatLabel(cat.label, cat.id, cat.code));
   });
   const rootCategories = categories.filter((cat) => !cat.parentId);
-  const subcategoryList = categories.filter((cat) => cat.parentId);
+  const categoryLeafList = categories.filter((cat) => cat.parentId);
+  const subcategoryList = categories.filter(
+    (cat) => cat.parentId && rootCategories.some((r) => r.parentId === cat.id)
+  );
+  const categoryMetaById = Object.fromEntries(
+    categories.map((c) => [
+      String(c.id),
+      {
+        id: c.id,
+        code: c.code || "",
+        parentCode: c.parent?.code || null,
+      },
+    ])
+  );
 
   // If filtered customers/suppliers are empty, fall back to all companies to avoid empty pickers.
   const customersAllList =
@@ -209,12 +242,18 @@ export async function loadOptions(): Promise<OptionsData> {
 
   // Build base value object
   const value: OptionsData = {
-    categoryOptions: rootCategories.map((c) => ({
-      value: String(c.id),
-      label: parentLabelById.get(c.id) ?? formatLabel(c.label, c.id),
-    })),
+    categoryOptions: categoryLeafList.map((c) => {
+      const parentLabel = c.parentId
+        ? parentLabelById.get(c.parentId) || `#${c.parentId}`
+        : null;
+      const label = formatLabel(c.label, c.id, c.code);
+      return {
+        value: String(c.id),
+        label: parentLabel ? `${parentLabel} – ${label}` : label,
+      };
+    }),
     subcategoryOptions: subcategoryList.map((s) => {
-      const label = formatLabel(s.label, s.id);
+      const label = formatLabel(s.label, s.id, s.code);
       const parentLabel = s.parentId
         ? parentLabelById.get(s.parentId) || `#${s.parentId}`
         : null;
@@ -223,6 +262,7 @@ export async function loadOptions(): Promise<OptionsData> {
         label: parentLabel ? `${parentLabel} – ${label}` : label,
       };
     }),
+    categoryMetaById,
     taxCodeOptions: taxes.map((t) => ({
       value: String(t.id),
       label: t.label ?? String(t.id),
@@ -286,6 +326,10 @@ export async function loadOptions(): Promise<OptionsData> {
     costGroupOptions: costGroups.map((g) => ({
       value: String(g.id),
       label: g.name ?? String(g.id),
+    })),
+    productTemplateOptions: productTemplates.map((t) => ({
+      value: String(t.id),
+      label: t.label ?? t.code ?? String(t.id),
     })),
   };
 

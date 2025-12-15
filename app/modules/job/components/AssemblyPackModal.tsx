@@ -1,5 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Button,
   Group,
   Radio,
@@ -19,7 +20,8 @@ import {
 } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
 import type { QuantityItem } from "~/modules/job/components/AssembliesEditor";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
-import { useSubmit } from "@remix-run/react";
+import { useFetcher } from "@remix-run/react";
+import { showToastError, showToastSuccess } from "~/utils/toast";
 
 const formatLabel = (label: string | undefined, index: number) =>
   label && label.trim() ? label : `Variant ${index + 1}`;
@@ -54,7 +56,8 @@ export function AssemblyPackModal({
   stockLocationName,
   openBoxes,
 }: AssemblyPackModalProps) {
-  const submit = useSubmit();
+  const fetcher = useFetcher();
+  const [serverError, setServerError] = useState<string | null>(null);
   const baseLabels = useMemo(() => {
     if (variantLabels.length) return variantLabels;
     const fromQuantityItem = quantityItem?.variants?.labels || [];
@@ -62,16 +65,34 @@ export function AssemblyPackModal({
     return [] as string[];
   }, [variantLabels, quantityItem?.variants?.labels]);
 
-  const availableBreakdown = useMemo(() => {
+  const finishBreakdown = useMemo(() => {
     const finish = quantityItem?.finish || [];
+    const len = Math.max(baseLabels.length, finish.length, 1);
+    return Array.from({ length: len }, (_, idx) =>
+      Number(finish[idx] ?? 0) || 0
+    );
+  }, [baseLabels.length, quantityItem?.finish]);
+
+  const packedBreakdown = useMemo(() => {
     const packed = quantityItem?.pack || [];
-    const len = Math.max(baseLabels.length, finish.length, packed.length);
+    const len = Math.max(baseLabels.length, packed.length, 1);
+    return Array.from({ length: len }, (_, idx) =>
+      Number(packed[idx] ?? 0) || 0
+    );
+  }, [baseLabels.length, quantityItem?.pack]);
+
+  const availableBreakdown = useMemo(() => {
+    const len = Math.max(
+      baseLabels.length,
+      finishBreakdown.length,
+      packedBreakdown.length
+    );
     return Array.from({ length: len }, (_, idx) => {
-      const completed = Number(finish[idx] || 0);
-      const alreadyPacked = Number(packed[idx] || 0);
+      const completed = Number(finishBreakdown[idx] || 0);
+      const alreadyPacked = Number(packedBreakdown[idx] || 0);
       return Math.max(0, completed - alreadyPacked);
     });
-  }, [baseLabels.length, quantityItem?.finish, quantityItem?.pack]);
+  }, [baseLabels.length, finishBreakdown, packedBreakdown]);
   const defaultValues = useMemo(() => {
     const base = buildAssemblyActivityDefaultValues({
       mode: "create",
@@ -98,8 +119,13 @@ export function AssemblyPackModal({
   });
 
   useEffect(() => {
+    if (!opened) {
+      setServerError(null);
+      return;
+    }
     if (!opened) return;
     form.reset(defaultValues);
+    setServerError(null);
   }, [opened, defaultValues, form]);
 
   const qtyBreakdownValues =
@@ -128,15 +154,35 @@ export function AssemblyPackModal({
 
   const unitsEntered = sumArray(enteredBreakdown);
   const totalAvailable = sumArray(availableBreakdown);
+  const totalFinish = sumArray(finishBreakdown);
+  const totalPacked = sumArray(packedBreakdown);
   const remainingAfterPack = Math.max(0, totalAvailable - unitsEntered);
   const exceedsAvailable = unitsEntered > totalAvailable;
   const hasUnits = unitsEntered > 0;
   const needsExistingSelection = boxMode === "existing" && !existingBoxId;
   const missingLocation = boxMode === "new" && !stockLocationName;
+  const overfillMessage = useMemo(() => {
+    const overfillIdx = enteredBreakdown.findIndex(
+      (qty, idx) => qty > (availableBreakdown[idx] ?? 0)
+    );
+    if (overfillIdx >= 0) {
+      return `Variant ${overfillIdx + 1}: cannot pack more than ready-to-pack quantity.`;
+    }
+    return null;
+  }, [enteredBreakdown, availableBreakdown]);
+
   const disableSubmit =
-    !hasUnits || exceedsAvailable || needsExistingSelection || missingLocation;
+    fetcher.state === "submitting" ||
+    !hasUnits ||
+    exceedsAvailable ||
+    needsExistingSelection ||
+    missingLocation;
 
   const onSubmit = form.handleSubmit((values) => {
+    if (overfillMessage) {
+      showToastError(overfillMessage);
+      return;
+    }
     const fd = serializeAssemblyActivityValues(values, {
       mode: "create",
       activityType: "pack",
@@ -153,9 +199,19 @@ export function AssemblyPackModal({
       fd.set("boxDescription", values.boxDescription ?? "");
     }
     if (values.boxNotes) fd.set("boxNotes", values.boxNotes);
-    submit(fd, { method: "post" });
-    onClose();
+    fetcher.submit(fd, { method: "post" });
   });
+
+  useEffect(() => {
+    if (fetcher.data?.error) {
+      showToastError(fetcher.data.error);
+    }
+    if (fetcher.data?.success) {
+      showToastSuccess("Packed successfully");
+      onClose();
+    }
+    setServerError(fetcher.data?.error ?? null);
+  }, [fetcher.data, onClose]);
 
   const boxOptions = openBoxes.map((box) => ({
     value: String(box.id),
@@ -195,6 +251,11 @@ export function AssemblyPackModal({
           </Group>
 
           <Stack gap="xs">
+            {serverError ? (
+              <Alert color="red" variant="light">
+                {serverError}
+              </Alert>
+            ) : null}
             <Text fw={600}>{assembly?.name || `Assembly ${assembly?.id}`}</Text>
             <Text size="sm" c="dimmed">
               Product: {(assembly?.product?.name as string) || "Unassigned"}
@@ -203,13 +264,23 @@ export function AssemblyPackModal({
               Location: {stockLocationName || "No stock location"}
             </Text>
             <Text size="sm">
-              Packing {unitsEntered} / {totalAvailable} available units
+              Finish recorded: {totalFinish.toLocaleString()} • Already packed:{" "}
+              {totalPacked.toLocaleString()} • Ready to pack:{" "}
+              {totalAvailable.toLocaleString()}
+            </Text>
+            <Text size="sm">
+              Packing {unitsEntered} / {totalAvailable} ready-to-pack units
             </Text>
             {exceedsAvailable && (
               <Text size="sm" c="red.6">
                 Cannot pack more than available.
               </Text>
             )}
+            {overfillMessage ? (
+              <Text size="sm" c="red.6">
+                {overfillMessage}
+              </Text>
+            ) : null}
             {needsExistingSelection && (
               <Text size="sm" c="red.6">
                 Select a box to continue.
@@ -225,6 +296,7 @@ export function AssemblyPackModal({
           <Table withColumnBorders withTableBorder>
             <Table.Thead>
               <Table.Tr>
+                <Table.Th ta="left">Row</Table.Th>
                 {tableLabels.map((label, index) => (
                   <Table.Th key={`head-${index}`} ta="center">
                     {formatLabel(label, index)}
@@ -234,6 +306,7 @@ export function AssemblyPackModal({
             </Table.Thead>
             <Table.Tbody>
               <Table.Tr>
+                <Table.Td fw={600}>Ready</Table.Td>
                 {tableLabels.map((_, index) => (
                   <Table.Td key={`available-${index}`} ta="center">
                     {availableBreakdown[index] ?? 0}
@@ -241,6 +314,7 @@ export function AssemblyPackModal({
                 ))}
               </Table.Tr>
               <Table.Tr>
+                <Table.Td fw={600}>Pack</Table.Td>
                 {tableLabels.map((_, index) => {
                   const registration = form.register(
                     `qtyBreakdown.${index}.value` as const

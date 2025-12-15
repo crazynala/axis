@@ -5,15 +5,34 @@ import type {
 } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { action as productAction } from "./products.$id._index";
-import { useNavigation, useSubmit } from "@remix-run/react";
-import { Button, Group, Stack, Title } from "@mantine/core";
+import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Button, Card, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
 import { ProductDetailForm } from "../components/ProductDetailForm";
+import { prismaBase } from "~/utils/prisma.server";
+import { GlobalFormProvider, SaveCancelHeader } from "@aa/timber";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
-  // Provide minimal defaults to render the edit form for a new product
+  const productTemplates = await prismaBase.productTemplate.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      code: true,
+      label: true,
+      productType: true,
+      defaultCategoryId: true,
+      defaultSubCategoryId: true,
+      defaultExternalStepType: true,
+      requiresSupplier: true,
+      requiresCustomer: true,
+      defaultStockTracking: true,
+      defaultBatchTracking: true,
+      skuSeriesKey: true,
+    },
+    orderBy: [{ productType: "asc" }, { code: "asc" }],
+  });
   return json({
     product: {
       id: 0,
@@ -26,6 +45,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
     },
+    productTemplates,
   });
 }
 
@@ -41,6 +61,7 @@ export default function NewProductRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
+  const { productTemplates } = useLoaderData<typeof loader>();
   const form = useForm({
     defaultValues: {
       sku: "",
@@ -51,8 +72,15 @@ export default function NewProductRoute() {
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
       leadTimeDays: "",
+      templateId: "",
+      categoryId: "",
+      subCategoryId: "",
     },
   });
+  const pickedTemplateId = form.watch("templateId");
+  const handleTemplatePick = (id: number) => {
+    form.setValue("templateId", id, { shouldDirty: true });
+  };
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const values = form.getValues();
@@ -68,16 +96,51 @@ export default function NewProductRoute() {
     submit(fd, { method: "post" });
   };
   return (
-    <Stack>
-      <Title order={2}>Create New Product</Title>
-      <form onSubmit={onSubmit}>
-        <ProductDetailForm mode="edit" form={form as any} />
-        <Group mt="md">
-          <Button type="submit" disabled={busy}>
-            {busy ? "Saving..." : "Create"}
-          </Button>
+    <GlobalFormProvider>
+      <Stack>
+        <Title order={2}>Create New Product</Title>
+        <SaveCancelHeader />
+        <Group gap="xs" wrap="wrap">
+          {productTemplates.map((t) => {
+            const active = pickedTemplateId === t.id;
+            return (
+              <Button
+                key={t.id}
+                variant={active ? "filled" : "light"}
+                onClick={() => handleTemplatePick(t.id)}
+              >
+                {t.label || t.code}
+              </Button>
+            );
+          })}
         </Group>
-      </form>
-    </Stack>
+        {pickedTemplateId ? (
+          <form onSubmit={onSubmit}>
+            <ProductDetailForm
+              mode="edit"
+              form={form as any}
+              requireTemplate
+              hideTemplateField
+              templateOptions={productTemplates.map((t) => ({
+                value: String(t.id),
+                label: t.label || t.code,
+              }))}
+              templateDefs={Object.fromEntries(
+                productTemplates.map((t) => [String(t.id), t])
+              )}
+            />
+            <Group mt="md">
+              <Button type="submit" disabled={busy}>
+                {busy ? "Saving..." : "Create"}
+              </Button>
+            </Group>
+          </form>
+        ) : (
+          <Card withBorder padding="md">
+            Choose a template above to start a new product.
+          </Card>
+        )}
+      </Stack>
+    </GlobalFormProvider>
   );
 }

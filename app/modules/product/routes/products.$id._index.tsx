@@ -538,6 +538,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ error: "Invalid product id" }, { status: 400 });
     if (!form) form = await request.formData();
     const data = buildProductData(form);
+    console.log("[product update] payload", {
+      id,
+      type: data.type,
+      categoryId: data.categoryId,
+      externalStepType: data.externalStepType,
+    });
     await prismaBase.product.update({ where: { id }, data });
     // Handle tags if provided via global form
     try {

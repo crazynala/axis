@@ -97,6 +97,11 @@ export function ExternalStepsStrip({ steps }: Props) {
                           Low confidence
                         </Badge>
                       ) : null}
+                      {step.expected && !step.leadTimeDays ? (
+                        <Badge variant="light" color="orange">
+                          Lead time missing
+                        </Badge>
+                      ) : null}
                       {step.isLate ? (
                         <Badge variant="light" color="red">
                           Late
