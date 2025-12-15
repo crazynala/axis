@@ -63,15 +63,15 @@ export function AssemblyPackModal({
   }, [variantLabels, quantityItem?.variants?.labels]);
 
   const availableBreakdown = useMemo(() => {
-    const make = quantityItem?.make || [];
+    const finish = quantityItem?.finish || [];
     const packed = quantityItem?.pack || [];
-    const len = Math.max(baseLabels.length, make.length, packed.length);
+    const len = Math.max(baseLabels.length, finish.length, packed.length);
     return Array.from({ length: len }, (_, idx) => {
-      const made = Number(make[idx] || 0);
+      const completed = Number(finish[idx] || 0);
       const alreadyPacked = Number(packed[idx] || 0);
-      return Math.max(0, made - alreadyPacked);
+      return Math.max(0, completed - alreadyPacked);
     });
-  }, [baseLabels.length, quantityItem?.make, quantityItem?.pack]);
+  }, [baseLabels.length, quantityItem?.finish, quantityItem?.pack]);
   const defaultValues = useMemo(() => {
     const base = buildAssemblyActivityDefaultValues({
       mode: "create",

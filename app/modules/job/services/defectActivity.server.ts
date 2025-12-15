@@ -100,7 +100,11 @@ async function maybeCreateDefectMovement(
     },
   });
   let batchId: number | null = null;
-  if (args.stage === AssemblyStage.make) {
+  const normalizedStage = (args.stage as string | null) ?? null;
+  if (
+    normalizedStage === AssemblyStage.finish ||
+    normalizedStage === "make"
+  ) {
     const batch = await tx.batch.findFirst({
       where: {
         productId,

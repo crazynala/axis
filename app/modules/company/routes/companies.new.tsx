@@ -28,6 +28,11 @@ export async function action({ request }: ActionFunctionArgs) {
       String(form.get("invoicePercentOnOrder")).trim() !== ""
         ? Number(form.get("invoicePercentOnOrder"))
         : null,
+    defaultLeadTimeDays:
+      form.get("defaultLeadTimeDays") != null &&
+      String(form.get("defaultLeadTimeDays")).trim() !== ""
+        ? Number(form.get("defaultLeadTimeDays"))
+        : null,
   };
   await prisma.company.create({ data });
   return redirect("/companies");
@@ -48,6 +53,7 @@ export default function NewCompanyRoute() {
       invoiceBillUpon: "Ship",
       invoicePercentOnCut: "",
       invoicePercentOnOrder: "",
+      defaultLeadTimeDays: "",
     },
   });
 
@@ -84,6 +90,15 @@ export default function NewCompanyRoute() {
               String(values.invoicePercentOnOrder) !== ""
             )
               fd.set("invoicePercentOnOrder", String(values.invoicePercentOnOrder));
+            if (
+              values.defaultLeadTimeDays != null &&
+              String(values.defaultLeadTimeDays) !== ""
+            ) {
+              fd.set(
+                "defaultLeadTimeDays",
+                String(values.defaultLeadTimeDays)
+              );
+            }
             submit(fd, { method: "post" });
           })}
         >
@@ -126,6 +141,16 @@ export default function NewCompanyRoute() {
               {...form.register("invoicePercentOnOrder")}
               disabled={!form.watch("isCustomer")}
             />
+            <TextInput
+              label="Default lead time (days)"
+              w={200}
+              type="number"
+              step="1"
+              placeholder="e.g. 14"
+              {...form.register("defaultLeadTimeDays")}
+              disabled={!form.watch("isSupplier")}
+              description="Used when product or costing has no override"
+            />
             <Controller
               name="invoiceBillUpon"
               control={form.control}
@@ -134,7 +159,7 @@ export default function NewCompanyRoute() {
                   label="Bill Upon"
                   data={[
                     { value: "Ship", label: "Ship" },
-                    { value: "Make", label: "Make" },
+                    { value: "Make", label: "Finish" },
                   ]}
                   w={160}
                   disabled={!form.watch("isCustomer")}

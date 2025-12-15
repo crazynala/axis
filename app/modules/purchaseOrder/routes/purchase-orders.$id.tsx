@@ -51,6 +51,12 @@ import {
   resolveVariantSourceFromLine,
 } from "../../../utils/variantBreakdown";
 
+const parseDateInput = (value: unknown): Date | null => {
+  if (!value) return null;
+  const date = new Date(value as any);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   {
     title: data?.purchaseOrder
@@ -84,7 +90,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
           },
         },
       },
-      company: { select: { name: true } },
+      company: { select: { name: true, defaultLeadTimeDays: true } },
       consignee: { select: { name: true } },
       location: { select: { name: true } },
     },
@@ -315,6 +321,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
             const productId = Number(l?.productId);
             if (!Number.isFinite(productId) || productId <= 0) continue;
             const quantityOrdered = Number(l?.quantityOrdered || 0) || 0;
+            const etaDate = parseDateInput(l?.etaDate);
+            const etaDateConfirmed = Boolean(l?.etaDateConfirmed);
             await prisma.purchaseOrderLine.create({
               data: {
                 id: nextLineId++,
@@ -322,6 +330,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 productId,
                 quantityOrdered,
                 quantity: 0,
+                etaDate,
+                etaDateConfirmed,
               },
             });
           }
@@ -342,6 +352,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           if (Number.isFinite(productId) && productId > 0)
             patch.productId = productId;
           patch.quantityOrdered = quantityOrdered;
+          if ("etaDate" in l) {
+            patch.etaDate = parseDateInput(l?.etaDate);
+          }
+          if ("etaDateConfirmed" in l) {
+            patch.etaDateConfirmed = Boolean(l?.etaDateConfirmed);
+          }
           await prisma.purchaseOrderLine.update({
             where: { id: lid },
             data: patch,
@@ -482,6 +498,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
           productId,
           quantityOrdered: qtyOrdered,
           quantity: 0,
+          etaDate: null,
+          etaDateConfirmed: false,
         },
       });
     }
@@ -1180,6 +1198,8 @@ export function PurchaseOrderDetailView() {
       // Seed pricing: prefer manualSalePrice; else compute on server already provided as c_sellPrice
       priceCost: prod?.costPrice ?? 0,
       priceSell: prod?.manualSalePrice ?? prod?.c_sellPrice ?? 0,
+      etaDate: null,
+      etaDateConfirmed: false,
     };
     const currLines = form.getValues("lines") || [];
     form.setValue("lines" as any, [...currLines, newLine], {
@@ -1399,6 +1419,10 @@ export function PurchaseOrderDetailView() {
             status={statusValue}
             productMap={productMap}
             pricingPrefs={pricingPrefs}
+            purchaseDate={purchaseOrder.date ?? null}
+            vendorLeadTimeDays={
+              purchaseOrder.company?.defaultLeadTimeDays ?? null
+            }
           />
         </Card.Section>
         {variantBreakdownGroups.length > 0 && (

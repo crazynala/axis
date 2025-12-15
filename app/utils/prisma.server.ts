@@ -1015,7 +1015,7 @@ type MaybeAssembly = {
 
 function isStage(
   a: { name?: string | null; stage?: string | null },
-  needle: "cut" | "make" | "pack"
+  needle: "cut" | "sew" | "finish" | "pack"
 ) {
   const stage = (a.stage || "").toString().toLowerCase();
   if (stage) return stage === needle;
@@ -1060,11 +1060,13 @@ async function computeAssemblyBreakdowns(
   variantSetId: number | null
 ): Promise<{
   c_qtyCut_Breakdown: number[];
-  c_qtyMake_Breakdown: number[];
+  c_qtySew_Breakdown: number[];
+  c_qtyFinish_Breakdown: number[];
   c_qtyPack_Breakdown: number[];
   c_qtyKeep_Breakdown: number[];
   c_qtyCut: number;
-  c_qtyMake: number;
+  c_qtySew: number;
+  c_qtyFinish: number;
   c_qtyPack: number;
   c_qtyKeep: number;
   c_numVariants: number;
@@ -1108,8 +1110,11 @@ async function computeAssemblyBreakdowns(
   const trashCutArrays = (activities as Act[])
     .filter((a: Act) => isTrashCut(a))
     .map((a: Act) => a.qtyBreakdown);
-  const makeArrays = (activities as Act[])
-    .filter((a: Act) => isStage(a, "make"))
+  const sewArrays = (activities as Act[])
+    .filter((a: Act) => isStage(a, "sew"))
+    .map((a: Act) => a.qtyBreakdown);
+  const finishArrays = (activities as Act[])
+    .filter((a: Act) => isStage(a, "finish"))
     .map((a: Act) => a.qtyBreakdown);
   const packArrays = (activities as Act[])
     .filter((a: Act) => isStage(a, "pack"))
@@ -1125,16 +1130,19 @@ async function computeAssemblyBreakdowns(
     sumArrays(len, cutArrays),
     sumArrays(len, trashCutArrays)
   );
-  const c_qtyMake_Breakdown = sumArrays(len, makeArrays);
+  const c_qtySew_Breakdown = sumArrays(len, sewArrays);
+  const c_qtyFinish_Breakdown = sumArrays(len, finishArrays);
   const c_qtyPack_Breakdown = sumArrays(len, packArrays);
   const c_qtyKeep_Breakdown = sumArrays(len, keepArrays);
   return {
     c_qtyCut_Breakdown,
-    c_qtyMake_Breakdown,
+    c_qtySew_Breakdown,
+    c_qtyFinish_Breakdown,
     c_qtyPack_Breakdown,
     c_qtyKeep_Breakdown,
     c_qtyCut: sumIntArray(c_qtyCut_Breakdown),
-    c_qtyMake: sumIntArray(c_qtyMake_Breakdown),
+    c_qtySew: sumIntArray(c_qtySew_Breakdown),
+    c_qtyFinish: sumIntArray(c_qtyFinish_Breakdown),
     c_qtyPack: sumIntArray(c_qtyPack_Breakdown),
     c_qtyKeep: sumIntArray(c_qtyKeep_Breakdown),
     c_numVariants,

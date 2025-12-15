@@ -1,9 +1,69 @@
 import type { FieldConfig } from "../../../base/forms/fieldConfigShared";
 import { calcPrice } from "../calc/calcPrice";
+import { Badge, Group, TextInput, Tooltip } from "@mantine/core";
+import { IconInfoCircle } from "@tabler/icons-react";
+import { Controller, type UseFormReturn } from "react-hook-form";
 export {
   renderField,
   extractFindValues,
 } from "../../../base/forms/fieldConfigShared";
+
+const SUPPLY_ATTENTION_TYPES = new Set(["FABRIC", "TRIM", "SERVICE"]);
+
+function renderLeadTimeInput({
+  form,
+  mode,
+}: {
+  form: UseFormReturn<any>;
+  mode: "edit" | "create" | "find";
+}) {
+  const value = form.watch("leadTimeDays");
+  const typeValue = form.watch("type");
+  const type = typeof typeValue === "string" ? typeValue.toUpperCase() : "";
+  const highlight = SUPPLY_ATTENTION_TYPES.has(type);
+  const label = (
+    <Group gap={6}>
+      <span>Lead time (days)</span>
+      {highlight && (
+        <Badge color="grape" variant="light" size="sm" radius="sm">
+          Supply-critical
+        </Badge>
+      )}
+    </Group>
+  );
+  return (
+    <Controller
+      control={form.control}
+      name="leadTimeDays"
+      render={({ field }) => (
+        <TextInput
+          key="leadTimeDays"
+          label={label}
+          type="number"
+          inputMode="numeric"
+          placeholder="e.g. 14"
+          value={field.value ?? ""}
+          onChange={(e) => field.onChange(e.currentTarget.value)}
+          rightSection={
+            <Tooltip
+              label="Overrides supplier default lead time"
+              withArrow
+              multiline
+              maw={220}
+            >
+              <IconInfoCircle
+                size={16}
+                stroke={1.5}
+                style={{ cursor: "help" }}
+              />
+            </Tooltip>
+          }
+          disabled={mode === "find"}
+        />
+      )}
+    />
+  );
+}
 
 // Overview / identity fields
 export const productIdentityFields: FieldConfig[] = [
@@ -75,6 +135,13 @@ export const productAssocFields: FieldConfig[] = [
     label: "Disabled",
     widget: "triBool",
     findOp: "equals",
+  },
+  {
+    name: "leadTimeDays",
+    label: "Lead time (days)",
+    hiddenInModes: ["find"],
+    render: ({ form, mode }) =>
+      renderLeadTimeInput({ form, mode: mode as "edit" | "create" | "find" }),
   },
 ];
 

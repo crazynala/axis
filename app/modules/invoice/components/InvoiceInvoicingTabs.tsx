@@ -593,8 +593,8 @@ export function InvoiceInvoicingTabs({
                   <Table.Td>{diag.invoiceCalcDebug.qtyCut}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td>Qty Make</Table.Td>
-                  <Table.Td>{diag.invoiceCalcDebug.qtyMake}</Table.Td>
+                  <Table.Td>Qty Finish</Table.Td>
+                  <Table.Td>{diag.invoiceCalcDebug.qtyFinish}</Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td>Qty Pack</Table.Td>

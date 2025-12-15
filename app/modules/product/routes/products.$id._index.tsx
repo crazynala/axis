@@ -119,7 +119,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
           },
         },
         productTags: { include: { tag: true } },
-        primaryAssemblies: {
+        assemblies: {
           select: {
             id: true,
             name: true,
@@ -1252,7 +1252,7 @@ export default function ProductDetailRoute() {
   const detailShipmentFromFetcher =
     shipmentLookupFetcher.data?.shipmentLine ?? null;
   const assemblies =
-    ((product as any)?.primaryAssemblies as any[])?.filter(Boolean) || [];
+    ((product as any)?.assemblies as any[])?.filter(Boolean) || [];
   const bomParents =
     (usedInProducts || []).map((pl: any) => pl.parent).filter(Boolean) || [];
   const costingAsm =

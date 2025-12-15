@@ -1,1246 +1,1109 @@
 generator client {
-    provider = "prisma-client-js"
-}
-
-model JobTag {
-    id    Int @id @default(autoincrement())
-    jobId Int
-    tagId Int
-
-    job Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-    tag TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([jobId, tagId])
-    @@index([tagId])
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model JobTag {
+  id    Int           @id @default(autoincrement())
+  jobId Int
+  tagId Int
+  job   Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  tag   TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, tagId])
+  @@index([tagId])
 }
 
 model AssemblyTag {
-    id         Int @id @default(autoincrement())
-    assemblyId Int
-    tagId      Int
+  id         Int           @id @default(autoincrement())
+  assemblyId Int
+  tagId      Int
+  assembly   Assembly      @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+  tag        TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-    assembly Assembly      @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
-    tag      TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([assemblyId, tagId])
-    @@index([tagId])
-}
-
-enum ColorScheme {
-    light
-    dark
-}
-
-enum UserLevel {
-    Admin
-    Manager
-    RegularJoe
+  @@unique([assemblyId, tagId])
+  @@index([tagId])
 }
 
 model CostingTag {
-    id        Int @id @default(autoincrement())
-    costingId Int
-    tagId     Int
+  id        Int           @id @default(autoincrement())
+  costingId Int
+  tagId     Int
+  costing   Costing       @relation(fields: [costingId], references: [id], onDelete: Cascade)
+  tag       TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-    costing Costing       @relation(fields: [costingId], references: [id], onDelete: Cascade)
-    tag     TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([costingId, tagId])
-    @@index([tagId])
-}
-
-enum ProductType {
-    CMT
-    Fabric
-    Finished
-    Trim
-    Service
+  @@unique([costingId, tagId])
+  @@index([tagId])
 }
 
 model ShipmentTag {
-    id         Int @id @default(autoincrement())
-    shipmentId Int
-    tagId      Int
+  id         Int           @id @default(autoincrement())
+  shipmentId Int
+  tagId      Int
+  shipment   Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  tag        TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-    shipment Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-    tag      TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([shipmentId, tagId])
-    @@index([tagId])
-}
-
-enum CompanyType {
-    vendor
-    customer
-    other
-}
-
-enum InvoiceBillUpon {
-    Ship
-    Make
+  @@unique([shipmentId, tagId])
+  @@index([tagId])
 }
 
 model PurchaseOrderTag {
-    id              Int @id @default(autoincrement())
-    purchaseOrderId Int
-    tagId           Int
+  id              Int           @id @default(autoincrement())
+  purchaseOrderId Int
+  tagId           Int
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  tag             TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-    purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-    tag           TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([purchaseOrderId, tagId])
-    @@index([tagId])
-}
-
-enum UsageType {
-    cut
-    make
-}
-
-enum ValueListType {
-    Tax
-    Category
-    ProductType
-    JobType
-    Currency
-    ShippingMethod
-    AssemblyType
-    DefectReason
-}
-
-enum AssemblyStage {
-    order
-    cut
-    make
-    pack
-    qc
-    other
-}
-
-enum ActivityKind {
-    normal // good units produced/moved forward
-    defect // units failed QC for this assembly
-    rework // repaired/restored units for this assembly
-}
-
-enum ActivityAction {
-    RECORDED
-    SENT_OUT
-    RECEIVED_IN
-    ADJUSTMENT
-    NOTE
-}
-
-enum ExternalStepType {
-    EMBROIDERY
-    WASH
-    DYE
-}
-
-enum DefectDisposition {
-    none // internal default
-    review // sent to QC review
-    scrap // physically scrapped / trashed
-    offSpec // kept as off-spec stock / donation / staff / testing
-    sample // kept as a sample under this assembly
-}
-
-enum LocationType {
-    warehouse
-    customer_depot
-    wip
-    sample
-    scrap
-    off_spec
-    review
-}
-
-enum BoxState {
-    open
-    sealed
-    shipped
-}
-
-// --- Tagging ---
-enum TagScope {
-    GLOBAL
-    USER
+  @@unique([purchaseOrderId, tagId])
+  @@index([tagId])
 }
 
 model TagDefinition {
-    id        Int      @id @default(autoincrement())
-    name      String
-    scope     TagScope
-    ownerId   Int?
-    color     String?
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id                Int                @id @default(autoincrement())
+  name              String
+  scope             TagScope
+  ownerId           Int?
+  color             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  assemblyTags      AssemblyTag[]
+  costingTags       CostingTag[]
+  jobTags           JobTag[]
+  productTags       ProductTag[]
+  purchaseOrderTags PurchaseOrderTag[]
+  shipmentTags      ShipmentTag[]
+  owner             User?              @relation(fields: [ownerId], references: [id])
 
-    owner User? @relation(fields: [ownerId], references: [id])
-
-    // joins
-    productTags       ProductTag[]
-    jobTags           JobTag[]
-    assemblyTags      AssemblyTag[]
-    costingTags       CostingTag[]
-    shipmentTags      ShipmentTag[]
-    purchaseOrderTags PurchaseOrderTag[]
-
-    @@unique([name, scope, ownerId])
+  @@unique([name, scope, ownerId])
 }
 
 model Product {
-    id                    Int                   @id @default(autoincrement())
-    sku                   String?               @unique
-    name                  String?
-    description           String?
-    type                  ProductType?
-    supplierId            Int?
-    customerId            Int?
-    costPrice             Decimal?              @db.Decimal(14, 4)
-    costCurrency          String?               @default("USD")
-    purchaseTaxId         Int?
-    categoryId            Int?
-    subCategory           String?
-    pricingGroupId        Int?
-    manualSalePrice       Decimal?              @db.Decimal(14, 4)
-    // Optional per-item manual margin (mutually exclusive with manualSalePrice; enforce in app logic)
-    manualMargin          Decimal?              @db.Decimal(14, 4)
-    defaultCostQty        Int                   @default(60)
-    variantSetId          Int?
-    stockTrackingEnabled  Boolean               @default(false)
-    batchTrackingEnabled  Boolean               @default(false)
-    isActive              Boolean?
-    flagIsDisabled        Boolean               @default(false)
-    notes                 String?
-    whiteboard            String?
-    // Unaccented shadow columns for accent-insensitive search
-    nameUnaccented        String?
-    descriptionUnaccented String?
-    notesUnaccented       String?
-    primaryProductLineId  Int?
-    primaryProductLine    ProductLine?          @relation("PrimaryProductLine", fields: [primaryProductLineId], references: [id])
-    supplier              Company?              @relation("Supplier", fields: [supplierId], references: [id])
-    customer              Company?              @relation("Customer", fields: [customerId], references: [id])
-    purchaseTax           ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
-    category              ValueList?            @relation("Category", fields: [categoryId], references: [id])
-    pricingGroup          SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
-    // Optional direct link to a Product Cost Group for pricing defaults
-    costGroupId           Int?
-    costGroup             ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
-    // Optional link to a Sale Price Group for sale tiers
-    salePriceGroupId      Int?
-    salePriceGroup        SalePriceGroup?       @relation(fields: [salePriceGroupId], references: [id])
-    variantSet            VariantSet?           @relation(fields: [variantSetId], references: [id])
-    productLines          ProductLine[]         @relation("ParentProduct")
-    batches               Batch[]
-    productMovements      ProductMovementLine[]
-    Costing               Costing[]
-    ProductLine           ProductLine[]
-    // Removed: Variant back-relation; Variant model dropped
-    // Back-relations
-    invoiceLines          InvoiceLine[]
-    shipmentLines         ShipmentLine[]
-    expenses              Expense[]
-    // Back-relations: Purchase Orders
-    purchaseOrderLines    PurchaseOrderLine[]
-    // Back-relations: Tags
-    productTags           ProductTag[]
-    // Back-relations: Cost ranges (per-product tiered costs)
-    productCostRanges     ProductCostRange[]
-    salePriceRanges       SalePriceRange[]
-    // Metadata
-    createdBy             String?
-    modifiedBy            String?
-    createdAt             DateTime?             @default(now())
-    updatedAt             DateTime?             @updatedAt
-    boxLines              BoxLine[]
-    assemblies            Assembly[]
+  id                    Int                   @id @default(autoincrement())
+  sku                   String?               @unique
+  name                  String?
+  description           String?
+  type                  ProductType?
+  supplierId            Int?
+  customerId            Int?
+  costPrice             Decimal?              @db.Decimal(14, 4)
+  costCurrency          String?               @default("USD")
+  purchaseTaxId         Int?
+  categoryId            Int?
+  subCategory           String?
+  pricingGroupId        Int?
+  manualSalePrice       Decimal?              @db.Decimal(14, 4)
+  manualMargin          Decimal?              @db.Decimal(14, 4)
+  defaultCostQty        Int                   @default(60)
+  variantSetId          Int?
+  stockTrackingEnabled  Boolean               @default(false)
+  batchTrackingEnabled  Boolean               @default(false)
+  isActive              Boolean?
+  notes                 String?
+  nameUnaccented        String?
+  descriptionUnaccented String?
+  notesUnaccented       String?
+  costGroupId           Int?
+  salePriceGroupId      Int?
+  createdBy             String?
+  modifiedBy            String?
+  createdAt             DateTime?             @default(now())
+  updatedAt             DateTime?             @updatedAt
+  whiteboard            String?
+  flagIsDisabled        Boolean               @default(false)
+  primaryProductLineId  Int?
+  leadTimeDays          Int?
+  assemblies            Assembly[]
+  batches               Batch[]
+  boxLines              BoxLine[]
+  Costing               Costing[]
+  expenses              Expense[]
+  invoiceLines          InvoiceLine[]
+  category              ValueList?            @relation("Category", fields: [categoryId], references: [id])
+  costGroup             ProductCostGroup?     @relation(fields: [costGroupId], references: [id])
+  customer              Company?              @relation("Customer", fields: [customerId], references: [id])
+  pricingGroup          SupplierPricingGroup? @relation(fields: [pricingGroupId], references: [id])
+  primaryProductLine    ProductLine?          @relation("PrimaryProductLine", fields: [primaryProductLineId], references: [id])
+  purchaseTax           ValueList?            @relation("Tax", fields: [purchaseTaxId], references: [id])
+  salePriceGroup        SalePriceGroup?       @relation(fields: [salePriceGroupId], references: [id])
+  supplier              Company?              @relation("Supplier", fields: [supplierId], references: [id])
+  variantSet            VariantSet?           @relation(fields: [variantSetId], references: [id])
+  productCostRanges     ProductCostRange[]
+  ProductLine           ProductLine[]
+  productLines          ProductLine[]         @relation("ParentProduct")
+  productMovements      ProductMovementLine[]
+  productTags           ProductTag[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  salePriceRanges       SalePriceRange[]
+  shipmentLines         ShipmentLine[]
 }
 
-// Join tables for tags
 model ProductTag {
-    id        Int      @id @default(autoincrement())
-    productId Int
-    tagId     Int
-    createdAt DateTime @default(now())
+  id        Int           @id @default(autoincrement())
+  productId Int
+  tagId     Int
+  createdAt DateTime      @default(now())
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag       TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-    product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-    tag     TagDefinition @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-    @@unique([productId, tagId])
-    @@index([tagId])
+  @@unique([productId, tagId])
+  @@index([tagId])
 }
 
 model Company {
-    id                              Int                     @id @default(autoincrement())
-    name                            String?
-    address                         String?
-    city                            String?
-    state                           String?
-    zip                             String?
-    country                         String?
-    phone                           String?
-    email                           String?
-    website                         String?
-    notes                           String?
-    // isActive                  Boolean?
-    isCarrier                       Boolean?
-    isCustomer                      Boolean?
-    isConsignee                     Boolean?
-    isSupplier                      Boolean?
-    isInactive                      Boolean?
-    invoicePercentOnCut             Decimal?                @db.Decimal(5, 2)
-    invoicePercentOnOrder           Decimal?                @db.Decimal(5, 2)
-    invoiceBillUpon                 InvoiceBillUpon?        @default(Ship)
-    // Optional default margin override for this vendor (used when computing sale prices)
-    defaultMarginOverride           Decimal?                @db.Decimal(14, 4)
-    // Optional default sale price multiplier for this customer (applies to sale tiers)
-    priceMultiplier                 Decimal?                @db.Decimal(14, 4)
-    // Optional default stock location for this customer; used to initialize Job in/out locations
-    stockLocationId                 Int?
-    stockLocation                   Location?               @relation("Company_stockLocation", fields: [stockLocationId], references: [id])
-    productsSupplied                Product[]               @relation("Supplier")
-    productsPurchased               Product[]               @relation("Customer")
-    pricingGroups                   SupplierPricingGroup[]
-    jobs                            Job[]
-    // Back-relations
-    boxes                           Box[]
-    invoices                        Invoice[]
-    addresses                       Address[]
-    shipmentsAsCarrier              Shipment[]              @relation("CarrierCompany")
-    shipmentsAsReceiver             Shipment[]              @relation("ReceiverCompany")
-    shipmentsAsSender               Shipment[]              @relation("SenderCompany")
-    contacts                        Contact[]
-    // Back-relations: Purchase Orders
-    purchaseOrders                  PurchaseOrder[]
-    purchaseOrdersAsConsignee       PurchaseOrder[]         @relation("POConsignee")
-    // Back-relations: Product Cost Groups
-    productCostGroups               ProductCostGroup[]
-    // Back-relations: Vendor/Customer pricing mappings
-    vendorCustomerPricingAsVendor   VendorCustomerPricing[] @relation("VendorCompany")
-    vendorCustomerPricingAsCustomer VendorCustomerPricing[] @relation("CustomerCompany")
-    assemblyActivitiesAsVendor      AssemblyActivity[]      @relation("AssemblyActivity_vendorCompany")
-    // Metadata
-    createdBy                       String?
-    modifiedBy                      String?
-    createdAt                       DateTime?               @default(now())
-    updatedAt                       DateTime?               @updatedAt
-    // Unaccented shadow columns
-    nameUnaccented                  String?
+  id                              Int                     @id @default(autoincrement())
+  name                            String?
+  address                         String?
+  city                            String?
+  state                           String?
+  zip                             String?
+  country                         String?
+  phone                           String?
+  email                           String?
+  website                         String?
+  notes                           String?
+  isCarrier                       Boolean?
+  isCustomer                      Boolean?
+  isSupplier                      Boolean?
+  isInactive                      Boolean?
+  defaultMarginOverride           Decimal?                @db.Decimal(14, 4)
+  priceMultiplier                 Decimal?                @db.Decimal(14, 4)
+  stockLocationId                 Int?
+  createdBy                       String?
+  modifiedBy                      String?
+  createdAt                       DateTime?               @default(now())
+  updatedAt                       DateTime?               @updatedAt
+  nameUnaccented                  String?
+  isConsignee                     Boolean?
+  invoiceBillUpon                 InvoiceBillUpon?        @default(Ship)
+  invoicePercentOnCut             Decimal?                @db.Decimal(5, 2)
+  invoicePercentOnOrder           Decimal?                @db.Decimal(5, 2)
+  defaultLeadTimeDays             Int?
+  addresses                       Address[]
+  assemblyActivitiesAsVendor      AssemblyActivity[]      @relation("AssemblyActivity_vendorCompany")
+  boxes                           Box[]
+  stockLocation                   Location?               @relation("Company_stockLocation", fields: [stockLocationId], references: [id])
+  contacts                        Contact[]
+  invoices                        Invoice[]
+  jobs                            Job[]
+  productsPurchased               Product[]               @relation("Customer")
+  productsSupplied                Product[]               @relation("Supplier")
+  productCostGroups               ProductCostGroup[]
+  purchaseOrders                  PurchaseOrder[]
+  purchaseOrdersAsConsignee       PurchaseOrder[]         @relation("POConsignee")
+  shipmentsAsCarrier              Shipment[]              @relation("CarrierCompany")
+  shipmentsAsReceiver             Shipment[]              @relation("ReceiverCompany")
+  shipmentsAsSender               Shipment[]              @relation("SenderCompany")
+  pricingGroups                   SupplierPricingGroup[]
+  vendorCustomerPricingAsCustomer VendorCustomerPricing[] @relation("CustomerCompany")
+  vendorCustomerPricingAsVendor   VendorCustomerPricing[] @relation("VendorCompany")
 }
 
 model VariantSet {
-    id            Int            @id @default(autoincrement())
-    name          String?
-    variants      String[]
-    products      Product[]
-    assemblies    Assembly[]
-    // Back-relations
-    shipmentLines ShipmentLine[]
-    // Metadata
-    createdBy     String?
-    modifiedBy    String?
-    createdAt     DateTime?      @default(now())
-    updatedAt     DateTime?      @updatedAt
+  id            Int            @id @default(autoincrement())
+  name          String?
+  variants      String[]
+  createdBy     String?
+  modifiedBy    String?
+  createdAt     DateTime?      @default(now())
+  updatedAt     DateTime?      @updatedAt
+  assemblies    Assembly[]
+  products      Product[]
+  shipmentLines ShipmentLine[]
 }
 
 model SupplierPricingGroup {
-    id         Int       @id @default(autoincrement())
-    name       String?
-    supplierId Int?
-    products   Product[]
-    supplier   Company?  @relation(fields: [supplierId], references: [id])
-    // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime? @default(now())
-    updatedAt  DateTime? @updatedAt
+  id         Int       @id @default(autoincrement())
+  name       String?
+  supplierId Int?
+  createdBy  String?
+  modifiedBy String?
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+  products   Product[]
+  supplier   Company?  @relation(fields: [supplierId], references: [id])
 }
 
 model ValueList {
-    id                    Int                @id @default(autoincrement())
-    code                  String?
-    label                 String?
-    value                 Decimal?           @db.Decimal(14, 4)
-    type                  ValueListType
-    parentId              Int?
-    parent                ValueList?         @relation("ValueListHierarchy", fields: [parentId], references: [id])
-    children              ValueList[]        @relation("ValueListHierarchy")
-    productsTax           Product[]          @relation("Tax")
-    productsCategory      Product[]          @relation("Category")
-    // Back-relations
-    invoiceLinesTaxCode   InvoiceLine[]      @relation("TaxCode")
-    invoicesTaxCode       Invoice[]          @relation("Inv_TaxCode")
-    assemblyDefectReasons AssemblyActivity[] @relation("AssemblyActivity_defectReason")
-    // Back-relations: Purchase Orders
-    // Removed: PurchaseOrderLine taxCode relation; POL now stores taxCode as string
-    // Metadata
-    createdBy             String?
-    modifiedBy            String?
-    createdAt             DateTime?          @default(now())
-    updatedAt             DateTime?          @updatedAt
+  id                    Int                @id @default(autoincrement())
+  code                  String?
+  label                 String?
+  value                 Decimal?           @db.Decimal(14, 4)
+  createdBy             String?
+  modifiedBy            String?
+  createdAt             DateTime?          @default(now())
+  updatedAt             DateTime?          @updatedAt
+  parentId              Int?
+  type                  ValueListType
+  assemblyDefectReasons AssemblyActivity[] @relation("AssemblyActivity_defectReason")
+  invoicesTaxCode       Invoice[]          @relation("Inv_TaxCode")
+  invoiceLinesTaxCode   InvoiceLine[]      @relation("TaxCode")
+  productsCategory      Product[]          @relation("Category")
+  productsTax           Product[]          @relation("Tax")
+  parent                ValueList?         @relation("ValueListHierarchy", fields: [parentId], references: [id])
+  children              ValueList[]        @relation("ValueListHierarchy")
 }
 
 model Assembly {
-    id                  Int                 @id @default(autoincrement())
-    name                String?
-    status              String?
-    quantity            Decimal?            @db.Decimal(14, 4)
-    assemblyType        String?             @default("Prod")
-    // Breakdown of ordered quantities (e.g., sizes): [0,0,11,12,7,1,0]
-    qtyOrderedBreakdown Int[]               @default([])
-    notes               String?
-    statusWhiteboard    String?
-    // Removed: per-assembly Variant linkage; Variant model dropped
-    // Removed direct Batch relation; batches are independent of assemblies
-    job                 Job?                @relation(fields: [jobId], references: [id], name: "Job_Assemblies")
-    jobId               Int?
-    // Optional grouping of assemblies within a job
-    assemblyGroupId     Int?
-    assemblyGroup       AssemblyGroup?      @relation(fields: [assemblyGroupId], references: [id])
-    // Link Assembly to original Product by id and relation
-    productId           Int?
-    product             Product?            @relation(fields: [productId], references: [id])
-    primaryCostingId    Int?
-    primaryCosting      Costing?            @relation("PrimaryAssemblyCosting", fields: [primaryCostingId], references: [id])
-    // Optional link to a Variant Set (may mirror the Product's variant set)
-    variantSetId        Int?
-    variantSet          VariantSet?         @relation(fields: [variantSetId], references: [id])
-    activities          AssemblyActivity[]  @relation("Assembly_Activities")
-    costings            Costing[]
-    batches             Batch[]
-    // Back-relations
-    shipmentLines       ShipmentLine[]
-    // Back-relations: Purchase Order Lines referencing this assembly
-    purchaseOrderLines  PurchaseOrderLine[]
-    // Back-relations: Tags
-    assemblyTags        AssemblyTag[]
-    // Metadata
-    createdBy           String?
-    modifiedBy          String?
-    createdAt           DateTime?           @default(now())
-    updatedAt           DateTime?           @updatedAt
-    // Unaccented shadow columns
-    nameUnaccented      String?
-    notesUnaccented     String?
-    boxLines            BoxLine[]
+  id                  Int                 @id @default(autoincrement())
+  name                String?
+  status              String?
+  quantity            Decimal?            @db.Decimal(14, 4)
+  qtyOrderedBreakdown Int[]               @default([])
+  notes               String?
+  statusWhiteboard    String?
+  jobId               Int?
+  assemblyGroupId     Int?
+  productId           Int?
+  variantSetId        Int?
+  createdBy           String?
+  modifiedBy          String?
+  createdAt           DateTime?           @default(now())
+  updatedAt           DateTime?           @updatedAt
+  nameUnaccented      String?
+  notesUnaccented     String?
+  assemblyType        String?             @default("Prod")
+  primaryCostingId    Int?
+  assemblyGroup       AssemblyGroup?      @relation(fields: [assemblyGroupId], references: [id])
+  job                 Job?                @relation("Job_Assemblies", fields: [jobId], references: [id])
+  primaryCosting      Costing?            @relation("PrimaryAssemblyCosting", fields: [primaryCostingId], references: [id])
+  product             Product?            @relation(fields: [productId], references: [id])
+  variantSet          VariantSet?         @relation(fields: [variantSetId], references: [id])
+  activities          AssemblyActivity[]  @relation("Assembly_Activities")
+  assemblyTags        AssemblyTag[]
+  batches             Batch[]
+  boxLines            BoxLine[]
+  costings            Costing[]
+  purchaseOrderLines  PurchaseOrderLine[]
+  shipmentLines       ShipmentLine[]
 }
 
 model Costing {
-    id                      Int               @id @default(autoincrement())
-    assemblyId              Int?
-    // renamed: componentId -> productId; removed usageType/componentType per new spec
-    productId               Int?
-    quantityPerUnit         Decimal?          @db.Decimal(14, 4)
-    unitCost                Decimal?          @db.Decimal(14, 4)
-    notes                   String?
-    activityUsed            String?
-    costPricePerItem        Decimal?          @db.Decimal(14, 4)
-    salePricePerItem        Decimal?          @db.Decimal(14, 4)
-    // Dynamic pricing context pulled from Product to compute sale prices prior to fixing
-    // Optional link to a Sale Price Group for tiered sale pricing at the time of costing
-    salePriceGroupId        Int?
-    salePriceGroup          SalePriceGroup?   @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
-    // Optional manual overrides captured on the costing
-    manualSalePrice         Decimal?          @db.Decimal(14, 4)
-    manualMargin            Decimal?          @db.Decimal(14, 4)
-    externalStepType        ExternalStepType?
-    leadTimeDays            Int?
-    flagAssembly            Boolean?
-    flagDefinedInProduct    Boolean?
-    flagIsBillableManual    Boolean?
-    flagIsInvoiceableManual Boolean?
-    flagIsDisabled          Boolean?
-    flagStockTracked        Boolean?
-    assembly                Assembly?         @relation(fields: [assemblyId], references: [id])
-    product                 Product?          @relation(fields: [productId], references: [id])
-    primaryForAssemblies    Assembly[]        @relation("PrimaryAssemblyCosting")
-    // Metadata
-    createdBy               String?
-    modifiedBy              String?
-    createdAt               DateTime?         @default(now())
-    updatedAt               DateTime?         @updatedAt
-    // Back-relations
-    invoiceLines            InvoiceLine[]
-    // Back-relations: Tags
-    costingTags             CostingTag[]
+  id                      Int               @id @default(autoincrement())
+  assemblyId              Int?
+  productId               Int?
+  quantityPerUnit         Decimal?          @db.Decimal(14, 4)
+  unitCost                Decimal?          @db.Decimal(14, 4)
+  notes                   String?
+  activityUsed            String?
+  costPricePerItem        Decimal?          @db.Decimal(14, 4)
+  salePricePerItem        Decimal?          @db.Decimal(14, 4)
+  salePriceGroupId        Int?
+  manualSalePrice         Decimal?          @db.Decimal(14, 4)
+  manualMargin            Decimal?          @db.Decimal(14, 4)
+  flagAssembly            Boolean?
+  flagDefinedInProduct    Boolean?
+  flagIsBillableManual    Boolean?
+  flagIsInvoiceableManual Boolean?
+  createdBy               String?
+  modifiedBy              String?
+  createdAt               DateTime?         @default(now())
+  updatedAt               DateTime?         @updatedAt
+  flagStockTracked        Boolean?
+  flagIsDisabled          Boolean?
+  externalStepType        ExternalStepType?
+  leadTimeDays            Int?
+  primaryForAssemblies    Assembly[]        @relation("PrimaryAssemblyCosting")
+  assembly                Assembly?         @relation(fields: [assemblyId], references: [id])
+  product                 Product?          @relation(fields: [productId], references: [id])
+  salePriceGroup          SalePriceGroup?   @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
+  costingTags             CostingTag[]
+  invoiceLines            InvoiceLine[]
 }
 
 model ProductLine {
-    id                 Int       @id @default(autoincrement())
-    parentId           Int?
-    childId            Int?
-    quantity           Decimal?  @db.Decimal(14, 4)
-    unitCost           Decimal?  @db.Decimal(14, 4)
-    unitCostManual     Decimal?  @db.Decimal(14, 4)
-    activityUsed       String?
-    flagAssemblyOmit   Boolean?
-    parent             Product?  @relation("ParentProduct", fields: [parentId], references: [id])
-    child              Product?  @relation(fields: [childId], references: [id])
-    primaryForProducts Product[] @relation("PrimaryProductLine")
-    // Metadata
-    createdBy          String?
-    modifiedBy         String?
-    createdAt          DateTime? @default(now())
-    updatedAt          DateTime? @updatedAt
+  id                 Int       @id @default(autoincrement())
+  parentId           Int?
+  childId            Int?
+  quantity           Decimal?  @db.Decimal(14, 4)
+  unitCost           Decimal?  @db.Decimal(14, 4)
+  unitCostManual     Decimal?  @db.Decimal(14, 4)
+  activityUsed       String?
+  flagAssemblyOmit   Boolean?
+  createdBy          String?
+  modifiedBy         String?
+  createdAt          DateTime? @default(now())
+  updatedAt          DateTime? @updatedAt
+  primaryForProducts Product[] @relation("PrimaryProductLine")
+  child              Product?  @relation(fields: [childId], references: [id])
+  parent             Product?  @relation("ParentProduct", fields: [parentId], references: [id])
 }
 
 model Location {
-    id                    Int                @id @default(autoincrement())
-    name                  String?
-    type                  LocationType?
-    is_active             Boolean?
-    notes                 String?
-    batches               Batch[]
-    ProductMovement       ProductMovement[]
-    assemblyActivitiesIn  AssemblyActivity[] @relation("AssemblyActivity_LocationIn")
-    assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
-    // Back-relations
-    shipments             Shipment[]
-    shipmentLines         ShipmentLine[]
-    boxes                 Box[]
-    // Back-relations: Purchase Orders
-    purchaseOrders        PurchaseOrder[]
-    // Back-relations: Company default stock locations
-    companiesStock        Company[]          @relation("Company_stockLocation")
-    // Back-relation: Jobs that use this location as their consolidated stockLocation
-    jobsStock             Job[]              @relation("Job_stockLocation")
-    // Metadata
-    createdBy             String?
-    modifiedBy            String?
-    createdAt             DateTime?          @default(now())
-    updatedAt             DateTime?          @updatedAt
+  id                    Int                @id @default(autoincrement())
+  name                  String?
+  is_active             Boolean?
+  notes                 String?
+  createdBy             String?
+  modifiedBy            String?
+  createdAt             DateTime?          @default(now())
+  updatedAt             DateTime?          @updatedAt
+  type                  LocationType?
+  assemblyActivitiesIn  AssemblyActivity[] @relation("AssemblyActivity_LocationIn")
+  assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
+  batches               Batch[]
+  boxes                 Box[]
+  companiesStock        Company[]          @relation("Company_stockLocation")
+  jobsStock             Job[]              @relation("Job_stockLocation")
+  ProductMovement       ProductMovement[]
+  purchaseOrders        PurchaseOrder[]
+  shipments             Shipment[]
+  shipmentLines         ShipmentLine[]
 }
 
 model Batch {
-    id                  Int                   @id @default(autoincrement())
-    productId           Int?
-    locationId          Int?
-    jobId               Int?
-    assemblyId          Int?
-    codeMill            String?
-    codeSartor          String?
-    name                String?
-    source              String?
-    quantity            Decimal?              @db.Decimal(14, 4)
-    receivedAt          DateTime?
-    notes               String?
-    product             Product?              @relation(fields: [productId], references: [id])
-    location            Location?             @relation(fields: [locationId], references: [id])
-    job                 Job?                  @relation(fields: [jobId], references: [id])
-    assembly            Assembly?             @relation(fields: [assemblyId], references: [id])
-    ProductMovementLine ProductMovementLine[]
-    // Removed: Variant link; Variant model dropped
-    // Metadata
-    createdBy           String?
-    modifiedBy          String?
-    createdAt           DateTime?             @default(now())
-    updatedAt           DateTime?             @updatedAt
-    boxLines            BoxLine[]
+  id                  Int                   @id @default(autoincrement())
+  productId           Int?
+  locationId          Int?
+  jobId               Int?
+  assemblyId          Int?
+  codeMill            String?
+  codeSartor          String?
+  name                String?
+  source              String?
+  quantity            Decimal?              @db.Decimal(14, 4)
+  receivedAt          DateTime?
+  notes               String?
+  createdBy           String?
+  modifiedBy          String?
+  createdAt           DateTime?             @default(now())
+  updatedAt           DateTime?             @updatedAt
+  assembly            Assembly?             @relation(fields: [assemblyId], references: [id])
+  job                 Job?                  @relation(fields: [jobId], references: [id])
+  location            Location?             @relation(fields: [locationId], references: [id])
+  product             Product?              @relation(fields: [productId], references: [id])
+  boxLines            BoxLine[]
+  ProductMovementLine ProductMovementLine[]
 }
 
 model ProductMovement {
-    id                  Int                   @id @default(autoincrement())
-    movementType        String?
-    date                DateTime?
-    locationId          Int?
-    // New mapped fields (scalars for import mapping)
-    assemblyActivityId  Int?
-    assemblyId          Int?
-    // Support group-level recording of movements
-    assemblyGroupId     Int?
-    costingId           Int?
-    expenseId           Int?
-    jobId               Int?
-    locationInId        Int?
-    locationOutId       Int?
-    shippingType        String?
-    // Optional linkage key for grouping activities/movements
-    groupKey            String?
-    productId           Int?
-    quantity            Decimal?              @db.Decimal(14, 4)
-    purchaseOrderLineId Int?
-    shippingLineId      Int?
-    notes               String?
-    lines               ProductMovementLine[]
-    location            Location?             @relation(fields: [locationId], references: [id])
-    // Metadata
-    createdBy           String?
-    modifiedBy          String?
-    createdAt           DateTime?             @default(now())
-    updatedAt           DateTime?             @updatedAt
+  id                  Int                   @id @default(autoincrement())
+  movementType        String?
+  date                DateTime?
+  locationId          Int?
+  assemblyActivityId  Int?
+  assemblyId          Int?
+  assemblyGroupId     Int?
+  costingId           Int?
+  expenseId           Int?
+  jobId               Int?
+  locationInId        Int?
+  locationOutId       Int?
+  shippingType        String?
+  groupKey            String?
+  productId           Int?
+  quantity            Decimal?              @db.Decimal(14, 4)
+  purchaseOrderLineId Int?
+  shippingLineId      Int?
+  notes               String?
+  createdBy           String?
+  modifiedBy          String?
+  createdAt           DateTime?             @default(now())
+  updatedAt           DateTime?             @updatedAt
+  location            Location?             @relation(fields: [locationId], references: [id])
+  lines               ProductMovementLine[]
 
-    @@index([productId], map: "idx_product_movement_product_id")
-    // Composite index to support ordered scans/filtering by product then date
-    @@index([productId, date, id], map: "idx_product_movement_product_date_id")
+  @@index([productId], map: "idx_product_movement_product_id")
+  @@index([productId, date, id], map: "idx_product_movement_product_date_id")
 }
 
 model ProductMovementLine {
-    id                  Int              @id @default(autoincrement())
-    movementId          Int?
-    productId           Int?
-    batchId             Int?
-    costingId           Int?
-    productMovementId   Int?
-    purchaseOrderLineId Int?
-    quantity            Decimal?         @db.Decimal(14, 4)
-    notes               String?
-    movement            ProductMovement? @relation(fields: [movementId], references: [id])
-    product             Product?         @relation(fields: [productId], references: [id])
-    batch               Batch?           @relation(fields: [batchId], references: [id])
-    // Metadata
-    createdBy           String?
-    modifiedBy          String?
-    createdAt           DateTime?        @default(now())
-    updatedAt           DateTime?        @updatedAt
+  id                  Int              @id @default(autoincrement())
+  movementId          Int?
+  productId           Int?
+  batchId             Int?
+  costingId           Int?
+  productMovementId   Int?
+  purchaseOrderLineId Int?
+  quantity            Decimal?         @db.Decimal(14, 4)
+  notes               String?
+  createdBy           String?
+  modifiedBy          String?
+  createdAt           DateTime?        @default(now())
+  updatedAt           DateTime?        @updatedAt
+  batch               Batch?           @relation(fields: [batchId], references: [id])
+  movement            ProductMovement? @relation(fields: [movementId], references: [id])
+  product             Product?         @relation(fields: [productId], references: [id])
 
-    @@index([productId], map: "idx_product_movement_line_product_id")
+  @@index([productId], map: "idx_product_movement_line_product_id")
 }
 
 model Job {
-    id                      Int                 @id @default(autoincrement())
-    projectCode             String?
-    name                    String?
-    description             String?
-    startDate               DateTime?
-    endDate                 DateTime?
-    status                  String?
-    jobType                 String?
-    isActive                Boolean?
-    notes                   String?
-    statusWhiteboard        String?
-    endCustomerName         String?
-    companyId               Int?
-    company                 Company?            @relation(fields: [companyId], references: [id])
-    // Consolidated stock location for this job
-    stockLocationId         Int?
-    stockLocation           Location?           @relation("Job_stockLocation", fields: [stockLocationId], references: [id])
-    customerOrderDate       DateTime?
-    customerOrderDateManual DateTime?
-    cutSubmissionDate       DateTime?
-    dropDeadDate            DateTime?
-    finishDate              DateTime?
-    finishDateManual        DateTime?
-    firstInvoiceDate        DateTime?
-    targetDate              DateTime?
-    customerPoNum           String?
-    // Removed: Variant back-relation; Variant model dropped
-    assemblyActivities      AssemblyActivity[]
-    assemblies              Assembly[]          @relation("Job_Assemblies")
-    // Back-relations: Assembly groups within this job
-    assemblyGroups          AssemblyGroup[]
-    batches                 Batch[]
-    // Back-relations
-    invoiceLines            InvoiceLine[]
-    shipmentLines           ShipmentLine[]
-    expenses                Expense[]
-    // Back-relations: Purchase Orders
-    purchaseOrderLines      PurchaseOrderLine[]
-    // Back-relations: Tags
-    jobTags                 JobTag[]
-    // Metadata
-    createdBy               String?
-    modifiedBy              String?
-    createdAt               DateTime?           @default(now())
-    updatedAt               DateTime?           @updatedAt
-    // Unaccented shadow columns
-    nameUnaccented          String?
-    descriptionUnaccented   String?
-    boxLines                BoxLine[]
+  id                      Int                 @id @default(autoincrement())
+  projectCode             String?
+  name                    String?
+  description             String?
+  startDate               DateTime?
+  endDate                 DateTime?
+  status                  String?
+  jobType                 String?
+  isActive                Boolean?
+  notes                   String?
+  statusWhiteboard        String?
+  endCustomerName         String?
+  companyId               Int?
+  stockLocationId         Int?
+  customerOrderDate       DateTime?
+  customerOrderDateManual DateTime?
+  cutSubmissionDate       DateTime?
+  dropDeadDate            DateTime?
+  finishDate              DateTime?
+  finishDateManual        DateTime?
+  firstInvoiceDate        DateTime?
+  targetDate              DateTime?
+  customerPoNum           String?
+  createdBy               String?
+  modifiedBy              String?
+  createdAt               DateTime?           @default(now())
+  updatedAt               DateTime?           @updatedAt
+  nameUnaccented          String?
+  descriptionUnaccented   String?
+  assemblies              Assembly[]          @relation("Job_Assemblies")
+  assemblyActivities      AssemblyActivity[]
+  assemblyGroups          AssemblyGroup[]
+  batches                 Batch[]
+  boxLines                BoxLine[]
+  expenses                Expense[]
+  invoiceLines            InvoiceLine[]
+  company                 Company?            @relation(fields: [companyId], references: [id])
+  stockLocation           Location?           @relation("Job_stockLocation", fields: [stockLocationId], references: [id])
+  jobTags                 JobTag[]
+  purchaseOrderLines      PurchaseOrderLine[]
+  shipmentLines           ShipmentLine[]
 }
 
-// Group multiple assemblies within a job (for planning/visual grouping)
 model AssemblyGroup {
-    id         Int        @id @default(autoincrement())
-    jobId      Int?
-    name       String?
-    job        Job?       @relation(fields: [jobId], references: [id])
-    assemblies Assembly[]
-    // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime?  @default(now())
-    updatedAt  DateTime?  @updatedAt
+  id         Int        @id @default(autoincrement())
+  jobId      Int?
+  name       String?
+  createdBy  String?
+  modifiedBy String?
+  createdAt  DateTime?  @default(now())
+  updatedAt  DateTime?  @updatedAt
+  assemblies Assembly[]
+  job        Job?       @relation(fields: [jobId], references: [id])
 }
 
 model SavedView {
-    id         Int      @id @default(autoincrement())
-    module     String
-    name       String
-    params     Json
-    createdAt  DateTime @default(now())
-    updatedAt  DateTime @updatedAt
-    createdBy  String?
-    modifiedBy String?
+  id         Int      @id @default(autoincrement())
+  module     String
+  name       String
+  params     Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+  modifiedBy String?
 }
 
 model AssemblyActivity {
-    id                       Int                @id @default(autoincrement())
-    assemblyId               Int?
-    jobId                    Int?
-    name                     String?
-    description              String?
-    action                   ActivityAction?
-    externalStepType         ExternalStepType?
-    vendorCompanyId          Int?
-    vendorCompany            Company?           @relation("AssemblyActivity_vendorCompany", fields: [vendorCompanyId], references: [id])
-    activityDate             DateTime?
-    // Optional key to link activities performed together across multiple assemblies
-    groupKey                 String?
-    // Removed: deprecated time/status fields per new spec
-    notes                    String?
-    stage                    AssemblyStage?
-    kind                     ActivityKind?
-    defectReasonId           Int?
-    defectDisposition        DefectDisposition? @default(none)
-    productId                Int?
-    locationInId             Int?
-    locationOutId            Int?
-    locationIn               Location?          @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
-    locationOut              Location?          @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
-    quantity                 Decimal?           @db.Decimal(14, 4)
-    qtyFabricConsumed        Decimal?           @db.Decimal(14, 4)
-    qtyFabricConsumedPerUnit Decimal?           @db.Decimal(14, 4)
-    qtyBreakdown             Int[]              @default([])
-    assembly                 Assembly?          @relation(fields: [assemblyId], references: [id], name: "Assembly_Activities")
-    job                      Job?               @relation(fields: [jobId], references: [id])
-    defectReason             ValueList?         @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
-    // Metadata
-    createdBy                String?
-    modifiedBy               String?
-    createdAt                DateTime?          @default(now())
-    updatedAt                DateTime?          @updatedAt
+  id                       Int                @id @default(autoincrement())
+  assemblyId               Int?
+  jobId                    Int?
+  name                     String?
+  description              String?
+  activityDate             DateTime?
+  groupKey                 String?
+  notes                    String?
+  productId                Int?
+  locationInId             Int?
+  locationOutId            Int?
+  quantity                 Decimal?           @db.Decimal(14, 4)
+  qtyFabricConsumed        Decimal?           @db.Decimal(14, 4)
+  qtyFabricConsumedPerUnit Decimal?           @db.Decimal(14, 4)
+  qtyBreakdown             Int[]              @default([])
+  createdBy                String?
+  modifiedBy               String?
+  createdAt                DateTime?          @default(now())
+  updatedAt                DateTime?          @updatedAt
+  defectDisposition        DefectDisposition? @default(none)
+  defectReasonId           Int?
+  kind                     ActivityKind?
+  stage                    AssemblyStage?
+  action                   ActivityAction?
+  externalStepType         ExternalStepType?
+  vendorCompanyId          Int?
+  assembly                 Assembly?          @relation("Assembly_Activities", fields: [assemblyId], references: [id])
+  defectReason             ValueList?         @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
+  job                      Job?               @relation(fields: [jobId], references: [id])
+  locationIn               Location?          @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
+  locationOut              Location?          @relation("AssemblyActivity_LocationOut", fields: [locationOutId], references: [id])
+  vendorCompany            Company?           @relation("AssemblyActivity_vendorCompany", fields: [vendorCompanyId], references: [id])
 
-    @@index([assemblyId, stage, activityDate])
-    @@index([assemblyId, externalStepType, action, activityDate])
-    @@index([vendorCompanyId, activityDate])
+  @@index([assemblyId, stage, activityDate])
+  @@index([assemblyId, externalStepType, action, activityDate])
+  @@index([vendorCompanyId, activityDate])
 }
 
-// --- Auth models ---
 model User {
-    id               Int             @id @default(autoincrement())
-    email            String          @unique
-    passwordHash     String
-    name             String?
-    firstName        String?
-    lastName         String?
-    userLevel        UserLevel       @default(Admin)
-    recordsPerPage   Int             @default(25)
-    isActive         Boolean         @default(true)
-    colorScheme      ColorScheme     @default(light)
-    // Persist UI preference for desktop sidebar open/closed
-    desktopNavOpened Boolean         @default(true)
-    createdAt        DateTime        @default(now())
-    updatedAt        DateTime        @updatedAt
-    resets           PasswordReset[]
-    // Back-relations: Tag owner
-    tagDefinitions   TagDefinition[]
+  id               Int             @id @default(autoincrement())
+  email            String          @unique
+  passwordHash     String
+  name             String?
+  recordsPerPage   Int             @default(25)
+  isActive         Boolean         @default(true)
+  colorScheme      ColorScheme     @default(light)
+  desktopNavOpened Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  firstName        String?
+  lastName         String?
+  userLevel        UserLevel       @default(Admin)
+  resets           PasswordReset[]
+  tagDefinitions   TagDefinition[]
 }
 
 model PasswordReset {
-    id        Int       @id @default(autoincrement())
-    userId    Int
-    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-    otp       String
-    token     String    @unique
-    expiresAt DateTime
-    usedAt    DateTime?
-    createdAt DateTime  @default(now())
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  otp       String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-// --- New data models from FileMaker imports ---
-
 model DHLReportLine {
-    id                         Int       @id // a__Serial maps here
-    accountName                String?
-    awbNumber                  String?
-    billedWeight               Decimal?  @db.Decimal(14, 4)
-    billingAccountNumber       String?
-    billingExchangeRate        Decimal?  @db.Decimal(14, 4)
-    destinationCountryCode     String?
-    destinationCountryName     String?
-    destinationServiceAreaCode String?
-    destinationServiceAreaName String?
-    globalProductCode          String?
-    globalProductName          String?
-    invoiceDate                DateTime?
-    invoiceNumber              String?
-    numberOfPieces             Int?
-    opsConsigneeContactName    String?
-    opsConsigneeName           String?
-    opsConsignorContactName    String?
-    opsConsignorName           String?
-    originCountryCode          String?
-    originCountryName          String?
-    originServiceAreaCode      String?
-    originServiceAreaName      String?
-    relativePeriod             String?
-    shipmentPickUpDate         DateTime?
-    shipmentReference          String?
-    shipperAccountNumber       String?
-    totalRevenueEUR            Decimal?  @db.Decimal(14, 4)
-    totalRevenueLCY            Decimal?  @db.Decimal(14, 4)
-    totalTaxEUR                Decimal?  @db.Decimal(14, 4)
-    totalTaxLCY                Decimal?  @db.Decimal(14, 4)
-    createdAt                  DateTime? @default(now())
-    updatedAt                  DateTime? @updatedAt
+  id                         Int       @id
+  accountName                String?
+  awbNumber                  String?
+  billedWeight               Decimal?  @db.Decimal(14, 4)
+  billingAccountNumber       String?
+  billingExchangeRate        Decimal?  @db.Decimal(14, 4)
+  destinationCountryCode     String?
+  destinationCountryName     String?
+  destinationServiceAreaCode String?
+  destinationServiceAreaName String?
+  globalProductCode          String?
+  globalProductName          String?
+  invoiceDate                DateTime?
+  invoiceNumber              String?
+  numberOfPieces             Int?
+  opsConsigneeContactName    String?
+  opsConsigneeName           String?
+  opsConsignorContactName    String?
+  opsConsignorName           String?
+  originCountryCode          String?
+  originCountryName          String?
+  originServiceAreaCode      String?
+  originServiceAreaName      String?
+  relativePeriod             String?
+  shipmentPickUpDate         DateTime?
+  shipmentReference          String?
+  shipperAccountNumber       String?
+  totalRevenueEUR            Decimal?  @db.Decimal(14, 4)
+  totalRevenueLCY            Decimal?  @db.Decimal(14, 4)
+  totalTaxEUR                Decimal?  @db.Decimal(14, 4)
+  totalTaxLCY                Decimal?  @db.Decimal(14, 4)
+  createdAt                  DateTime? @default(now())
+  updatedAt                  DateTime? @updatedAt
 }
 
 model ForexLine {
-    id           Int      @id @default(autoincrement())
-    date         DateTime
-    price        Float
-    currencyFrom String   @default("USD")
-    currencyTo   String   @default("TRY")
-    createdAt    DateTime @default(now())
-    updatedAt    DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  date         DateTime
+  price        Float
+  currencyFrom String   @default("USD")
+  currencyTo   String   @default("TRY")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-    @@unique([date, currencyFrom, currencyTo])
+  @@unique([date, currencyFrom, currencyTo])
 }
 
 model Invoice {
-    id              Int           @id // a__Serial maps here
-    companyId       Int?
-    invoiceCode     String?       @unique
-    date            DateTime?
-    // Additional imported fields
-    productSkuCopy  String?
-    productNameCopy String?
-    priceCost       Decimal?      @db.Decimal(14, 4)
-    priceSell       Decimal?      @db.Decimal(14, 4)
-    taxCodeId       Int?
-    taxRateCopy     Decimal?      @db.Decimal(14, 4)
-    notes           String?
-    status          String?
-    createdBy       String?
-    createdAt       DateTime?     @default(now())
-    modifiedBy      String?
-    updatedAt       DateTime?     @updatedAt
-    company         Company?      @relation(fields: [companyId], references: [id])
-    taxCode         ValueList?    @relation("Inv_TaxCode", fields: [taxCodeId], references: [id])
-    lines           InvoiceLine[]
+  id              Int           @id
+  companyId       Int?
+  invoiceCode     String?       @unique
+  date            DateTime?
+  productSkuCopy  String?
+  productNameCopy String?
+  priceCost       Decimal?      @db.Decimal(14, 4)
+  priceSell       Decimal?      @db.Decimal(14, 4)
+  taxCodeId       Int?
+  taxRateCopy     Decimal?      @db.Decimal(14, 4)
+  notes           String?
+  status          String?
+  createdBy       String?
+  createdAt       DateTime?     @default(now())
+  modifiedBy      String?
+  updatedAt       DateTime?     @updatedAt
+  company         Company?      @relation(fields: [companyId], references: [id])
+  taxCode         ValueList?    @relation("Inv_TaxCode", fields: [taxCodeId], references: [id])
+  lines           InvoiceLine[]
 }
 
 model InvoiceLine {
-    id                  Int        @id // a__Serial maps here
-    costingId           Int?
-    expenseId           Int?
-    invoiceId           Int?
-    jobId               Int?
-    productId           Int?
-    purchaseOrderLineId Int?
-    shippingIdActual    Int?
-    shippingIdDuty      Int?
-    category            String?
-    details             String?
-    subCategory         String?
-    priceCost           Decimal?   @db.Decimal(14, 4)
-    priceSell           Decimal?   @db.Decimal(14, 4)
-    invoicedPrice       Decimal?   @db.Decimal(14, 4)
-    quantity            Decimal?   @db.Decimal(14, 4)
-    taxCodeId           Int?
-    // Renamed to reflect source import naming
-    taxRateCopy         Decimal?   @db.Decimal(14, 4)
-    invoicedTotalManual Decimal?   @db.Decimal(14, 4)
-    createdBy           String?
-    createdAt           DateTime?  @default(now())
-    modifiedBy          String?
-    updatedAt           DateTime?  @updatedAt
-    invoice             Invoice?   @relation(fields: [invoiceId], references: [id])
-    costing             Costing?   @relation(fields: [costingId], references: [id])
-    expense             Expense?   @relation(fields: [expenseId], references: [id])
-    job                 Job?       @relation(fields: [jobId], references: [id])
-    product             Product?   @relation(fields: [productId], references: [id])
-    taxCode             ValueList? @relation("TaxCode", fields: [taxCodeId], references: [id])
+  id                  Int        @id
+  costingId           Int?
+  expenseId           Int?
+  invoiceId           Int?
+  jobId               Int?
+  productId           Int?
+  purchaseOrderLineId Int?
+  shippingIdActual    Int?
+  shippingIdDuty      Int?
+  category            String?
+  details             String?
+  subCategory         String?
+  priceCost           Decimal?   @db.Decimal(14, 4)
+  priceSell           Decimal?   @db.Decimal(14, 4)
+  quantity            Decimal?   @db.Decimal(14, 4)
+  taxCodeId           Int?
+  taxRateCopy         Decimal?   @db.Decimal(14, 4)
+  invoicedTotalManual Decimal?   @db.Decimal(14, 4)
+  createdBy           String?
+  createdAt           DateTime?  @default(now())
+  modifiedBy          String?
+  updatedAt           DateTime?  @updatedAt
+  invoicedPrice       Decimal?   @db.Decimal(14, 4)
+  costing             Costing?   @relation(fields: [costingId], references: [id])
+  expense             Expense?   @relation(fields: [expenseId], references: [id])
+  invoice             Invoice?   @relation(fields: [invoiceId], references: [id])
+  job                 Job?       @relation(fields: [jobId], references: [id])
+  product             Product?   @relation(fields: [productId], references: [id])
+  taxCode             ValueList? @relation("TaxCode", fields: [taxCodeId], references: [id])
 }
 
 model Expense {
-    id              Int           @id // a__Serial maps here
-    jobId           Int?
-    productId       Int?
-    purchaseOrderId Int?
-    shippingId      Int?
-    category        String?
-    date            DateTime?
-    details         String?
-    memo            String?
-    priceCost       Decimal?      @db.Decimal(14, 4)
-    priceSell       Decimal?      @db.Decimal(14, 4)
-    quantity        Decimal?      @db.Decimal(14, 4)
-    source          String?
-    subcategory     String?
-    createdBy       String?
-    createdAt       DateTime?     @default(now())
-    modifiedBy      String?
-    updatedAt       DateTime?     @updatedAt
-    job             Job?          @relation(fields: [jobId], references: [id])
-    product         Product?      @relation(fields: [productId], references: [id])
-    shipment        Shipment?     @relation(fields: [shippingId], references: [id])
-    // Back-relations
-    invoiceLines    InvoiceLine[]
+  id              Int           @id
+  jobId           Int?
+  productId       Int?
+  purchaseOrderId Int?
+  shippingId      Int?
+  category        String?
+  date            DateTime?
+  details         String?
+  memo            String?
+  priceCost       Decimal?      @db.Decimal(14, 4)
+  priceSell       Decimal?      @db.Decimal(14, 4)
+  quantity        Decimal?      @db.Decimal(14, 4)
+  source          String?
+  subcategory     String?
+  createdBy       String?
+  createdAt       DateTime?     @default(now())
+  modifiedBy      String?
+  updatedAt       DateTime?     @updatedAt
+  job             Job?          @relation(fields: [jobId], references: [id])
+  product         Product?      @relation(fields: [productId], references: [id])
+  shipment        Shipment?     @relation(fields: [shippingId], references: [id])
+  invoiceLines    InvoiceLine[]
 }
 
 model Box {
-    id Int @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
+  code            String?   @unique
+  description     String?
+  warehouseNumber Int?
+  shipmentNumber  Int?
+  locationId      Int?
+  shipmentId      Int?
+  companyId       Int?
+  state           BoxState  @default(open)
+  notes           String?
+  createdBy       String?
+  modifiedBy      String?
+  createdAt       DateTime? @default(now())
+  updatedAt       DateTime? @updatedAt
+  company         Company?  @relation(fields: [companyId], references: [id])
+  location        Location? @relation(fields: [locationId], references: [id])
+  shipment        Shipment? @relation(fields: [shipmentId], references: [id])
+  lines           BoxLine[]
 
-    // Physical/identity info
-    code        String? @unique // optional barcode / human-readable code (BX000123)
-    description String? // e.g. "Doorman jackets, Oct build"
-
-    // Labelling
-    warehouseNumber Int? // e.g. 112 — label used in warehouse
-    shipmentNumber  Int? // e.g. 3 — label used within a specific shipment
-
-    // Context
-    locationId Int? // where the box physically is
-    shipmentId Int? // if attached to a shipment (outbound, or inbound if you want)
-    companyId  Int? // optional: convenience link for filtering
-
-    // Lifecycle
-    state BoxState @default(open)
-    notes String?
-
-    // Relations
-    location Location? @relation(fields: [locationId], references: [id])
-    shipment Shipment? @relation(fields: [shipmentId], references: [id])
-    company  Company?  @relation(fields: [companyId], references: [id])
-    lines    BoxLine[]
-
-    // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime? @default(now())
-    updatedAt  DateTime? @updatedAt
-
-    @@index([locationId])
-    @@index([shipmentId])
-    @@index([companyId])
-    @@index([warehouseNumber])
-    @@index([shipmentNumber, shipmentId])
-    @@index([state, companyId, locationId])
+  @@index([locationId])
+  @@index([shipmentId])
+  @@index([companyId])
+  @@index([warehouseNumber])
+  @@index([shipmentNumber, shipmentId])
+  @@index([state, companyId, locationId])
 }
 
 model BoxLine {
-    id Int @id @default(autoincrement())
+  id             Int           @id @default(autoincrement())
+  boxId          Int
+  productId      Int?
+  batchId        Int?
+  jobId          Int?
+  assemblyId     Int?
+  shipmentLineId Int?
+  quantity       Decimal?      @db.Decimal(14, 4)
+  qtyBreakdown   Int[]         @default([])
+  notes          String?
+  createdBy      String?
+  modifiedBy     String?
+  createdAt      DateTime?     @default(now())
+  updatedAt      DateTime?     @updatedAt
+  description    String?
+  isAdHoc        Boolean?      @default(false)
+  packingOnly    Boolean?      @default(false)
+  assembly       Assembly?     @relation(fields: [assemblyId], references: [id])
+  batch          Batch?        @relation(fields: [batchId], references: [id])
+  box            Box           @relation(fields: [boxId], references: [id])
+  job            Job?          @relation(fields: [jobId], references: [id])
+  product        Product?      @relation(fields: [productId], references: [id])
+  shipmentLine   ShipmentLine? @relation(fields: [shipmentLineId], references: [id])
 
-    boxId          Int
-    productId      Int?
-    batchId        Int?
-    jobId          Int?
-    assemblyId     Int?
-    shipmentLineId Int? // when this line is tied to a shipment line
-
-    // Ad hoc / extras
-    description String? // e.g. "Fabric swatches – styles 2103, 2107, 3260"
-    isAdHoc     Boolean? @default(false)
-    packingOnly Boolean? @default(false) // if true, doesn't generate/adjust ShipmentLines
-
-    quantity     Decimal? @db.Decimal(14, 4)
-    qtyBreakdown Int[]    @default([]) // per size: aligns with Assembly/VariantSet conventions
-    notes        String?
-
-    box          Box           @relation(fields: [boxId], references: [id])
-    product      Product?      @relation(fields: [productId], references: [id])
-    batch        Batch?        @relation(fields: [batchId], references: [id])
-    job          Job?          @relation(fields: [jobId], references: [id])
-    assembly     Assembly?     @relation(fields: [assemblyId], references: [id])
-    shipmentLine ShipmentLine? @relation(fields: [shipmentLineId], references: [id])
-
-    // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime? @default(now())
-    updatedAt  DateTime? @updatedAt
-
-    @@index([boxId])
-    @@index([productId])
-    @@index([batchId])
-    @@index([jobId])
-    @@index([assemblyId])
-    @@index([shipmentLineId])
+  @@index([boxId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([jobId])
+  @@index([assemblyId])
+  @@index([shipmentLineId])
 }
 
 model Shipment {
-    id                 Int            @id // a__Serial maps here
-    addressIdShip      Int?
-    companyIdCarrier   Int?
-    companyIdReceiver  Int?
-    companyIdSender    Int?
-    locationId         Int?
-    contactIdReceiver  Int?
-    date               DateTime?
-    dateReceived       DateTime?
-    packingSlipCode    String?
-    shipmentType       String?
-    status             String?
-    trackingNo         String?
-    type               String? // "In" | "Out"
-    packMode           String?        @default("line") // "line" | "box"
-    memo               String?
-    shippingMethod     String?
-    addressName        String?
-    addressCountry     String?
-    addressCountyState String?
-    addressLine1       String?
-    addressLine2       String?
-    addressLine3       String?
-    addressTownCity    String?
-    addressZipPostCode String?
-    createdBy          String?
-    createdAt          DateTime?      @default(now())
-    modifiedBy         String?
-    updatedAt          DateTime?      @updatedAt
-    location           Location?      @relation(fields: [locationId], references: [id])
-    companyCarrier     Company?       @relation("CarrierCompany", fields: [companyIdCarrier], references: [id])
-    companyReceiver    Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
-    companySender      Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
-    addressShip        Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
-    boxes              Box[]
-    lines              ShipmentLine[]
-    // Back-relations
-    expenses           Expense[]
-    // Back-relations: Tags
-    shipmentTags       ShipmentTag[]
+  id                 Int            @id
+  addressIdShip      Int?
+  companyIdCarrier   Int?
+  companyIdReceiver  Int?
+  companyIdSender    Int?
+  locationId         Int?
+  contactIdReceiver  Int?
+  date               DateTime?
+  dateReceived       DateTime?
+  packingSlipCode    String?
+  shipmentType       String?
+  status             String?
+  trackingNo         String?
+  type               String?
+  memo               String?
+  shippingMethod     String?
+  addressName        String?
+  addressCountry     String?
+  addressCountyState String?
+  addressLine1       String?
+  addressLine2       String?
+  addressLine3       String?
+  addressTownCity    String?
+  addressZipPostCode String?
+  createdBy          String?
+  createdAt          DateTime?      @default(now())
+  modifiedBy         String?
+  updatedAt          DateTime?      @updatedAt
+  packMode           String?        @default("line")
+  boxes              Box[]
+  expenses           Expense[]
+  addressShip        Address?       @relation("Address_shipments", fields: [addressIdShip], references: [id])
+  companyCarrier     Company?       @relation("CarrierCompany", fields: [companyIdCarrier], references: [id])
+  companyReceiver    Company?       @relation("ReceiverCompany", fields: [companyIdReceiver], references: [id])
+  companySender      Company?       @relation("SenderCompany", fields: [companyIdSender], references: [id])
+  location           Location?      @relation(fields: [locationId], references: [id])
+  lines              ShipmentLine[]
+  shipmentTags       ShipmentTag[]
 }
 
 model ShipmentLine {
-    id           Int         @id // a__Serial maps here
-    assemblyId   Int?
-    jobId        Int?
-    locationId   Int?
-    productId    Int?
-    // Renamed from shippingId -> shipmentId
-    shipmentId   Int?
-    variantSetId Int?
-    category     String?
-    details      String?
-    quantity     Decimal?    @db.Decimal(14, 4)
-    qtyBreakdown Int[]       @default([]) // parsed from Qty_Breakdown_List_c
-    status       String?
-    subCategory  String?
-    createdBy    String?
-    createdAt    DateTime?   @default(now())
-    modifiedBy   String?
-    updatedAt    DateTime?   @updatedAt
-    boxLines     BoxLine[]
-    assembly     Assembly?   @relation(fields: [assemblyId], references: [id])
-    job          Job?        @relation(fields: [jobId], references: [id])
-    location     Location?   @relation(fields: [locationId], references: [id])
-    product      Product?    @relation(fields: [productId], references: [id])
-    shipment     Shipment?   @relation(fields: [shipmentId], references: [id])
-    variantSet   VariantSet? @relation(fields: [variantSetId], references: [id])
+  id           Int         @id
+  assemblyId   Int?
+  jobId        Int?
+  locationId   Int?
+  productId    Int?
+  shipmentId   Int?
+  variantSetId Int?
+  category     String?
+  details      String?
+  quantity     Decimal?    @db.Decimal(14, 4)
+  qtyBreakdown Int[]       @default([])
+  status       String?
+  subCategory  String?
+  createdBy    String?
+  createdAt    DateTime?   @default(now())
+  modifiedBy   String?
+  updatedAt    DateTime?   @updatedAt
+  boxLines     BoxLine[]
+  assembly     Assembly?   @relation(fields: [assemblyId], references: [id])
+  job          Job?        @relation(fields: [jobId], references: [id])
+  location     Location?   @relation(fields: [locationId], references: [id])
+  product      Product?    @relation(fields: [productId], references: [id])
+  shipment     Shipment?   @relation(fields: [shipmentId], references: [id])
+  variantSet   VariantSet? @relation(fields: [variantSetId], references: [id])
 }
 
 model Address {
-    id                 Int        @id // a__Serial maps here
-    companyId          Int?
-    contactId          Int?
-    name               String?
-    addressCountry     String?
-    addressCountyState String?
-    addressLine1       String?
-    addressLine2       String?
-    addressLine3       String?
-    addressTownCity    String?
-    addressZipPostCode String?
-    createdBy          String?
-    createdAt          DateTime?  @default(now())
-    modifiedBy         String?
-    updatedAt          DateTime?  @updatedAt
-    company            Company?   @relation(fields: [companyId], references: [id])
-    shipments          Shipment[] @relation("Address_shipments")
-    contacts           Contact[]
+  id                 Int        @id
+  companyId          Int?
+  contactId          Int?
+  name               String?
+  addressCountry     String?
+  addressCountyState String?
+  addressLine1       String?
+  addressLine2       String?
+  addressLine3       String?
+  addressTownCity    String?
+  addressZipPostCode String?
+  createdBy          String?
+  createdAt          DateTime?  @default(now())
+  modifiedBy         String?
+  updatedAt          DateTime?  @updatedAt
+  company            Company?   @relation(fields: [companyId], references: [id])
+  contacts           Contact[]
+  shipments          Shipment[] @relation("Address_shipments")
 }
 
-// --- Contacts ---
 model Contact {
-    id          Int       @id // a__Serial maps here
-    addressId   Int?
-    companyId   Int?
-    email       String?
-    department  String?
-    firstName   String?
-    lastName    String?
-    title       String?
-    phoneDirect String?
-    phoneHome   String?
-    phoneMobile String?
-    position    String?
-    recordType  String? // Employee | Contact | Customer
-    createdBy   String?
-    createdAt   DateTime? @default(now())
-    modifiedBy  String?
-    updatedAt   DateTime? @updatedAt
-    address     Address?  @relation(fields: [addressId], references: [id])
-    company     Company?  @relation(fields: [companyId], references: [id])
+  id          Int       @id
+  addressId   Int?
+  companyId   Int?
+  email       String?
+  department  String?
+  firstName   String?
+  lastName    String?
+  title       String?
+  phoneDirect String?
+  phoneHome   String?
+  phoneMobile String?
+  position    String?
+  recordType  String?
+  createdBy   String?
+  createdAt   DateTime? @default(now())
+  modifiedBy  String?
+  updatedAt   DateTime? @updatedAt
+  address     Address?  @relation(fields: [addressId], references: [id])
+  company     Company?  @relation(fields: [companyId], references: [id])
 }
-
-// --- Purchase Orders ---
 
 model PurchaseOrder {
-    id                 Int                 @id // a__Serial maps here
-    companyId          Int?
-    consigneeCompanyId Int?
-    locationId         Int?
-    date               DateTime?
-    memo               String?
-    status             String?
-    createdBy          String?
-    createdAt          DateTime?           @default(now())
-    modifiedBy         String?
-    updatedAt          DateTime?           @updatedAt
-    company            Company?            @relation(fields: [companyId], references: [id])
-    consignee          Company?            @relation("POConsignee", fields: [consigneeCompanyId], references: [id])
-    location           Location?           @relation(fields: [locationId], references: [id])
-    lines              PurchaseOrderLine[]
-    // Back-relations: Tags
-    purchaseOrderTags  PurchaseOrderTag[]
+  id                 Int                 @id
+  companyId          Int?
+  consigneeCompanyId Int?
+  locationId         Int?
+  date               DateTime?
+  memo               String?
+  status             String?
+  createdBy          String?
+  createdAt          DateTime?           @default(now())
+  modifiedBy         String?
+  updatedAt          DateTime?           @updatedAt
+  company            Company?            @relation(fields: [companyId], references: [id])
+  consignee          Company?            @relation("POConsignee", fields: [consigneeCompanyId], references: [id])
+  location           Location?           @relation(fields: [locationId], references: [id])
+  lines              PurchaseOrderLine[]
+  purchaseOrderTags  PurchaseOrderTag[]
 }
 
 model PurchaseOrderLine {
-    id              Int            @id // a__Serial maps here
-    purchaseOrderId Int?
-    jobId           Int?
-    // Optional link to assembly (for import mapping a_AssemblyID)
-    assemblyId      Int?
-    productId       Int?
-    productSkuCopy  String?
-    productNameCopy String?
-    priceCost       Decimal?       @db.Decimal(14, 4)
-    priceSell       Decimal?       @db.Decimal(14, 4)
-    qtyShipped      Decimal?       @db.Decimal(14, 4)
-    qtyReceived     Decimal?       @db.Decimal(14, 4)
-    quantity        Decimal?       @db.Decimal(14, 4)
-    quantityOrdered Decimal?       @db.Decimal(14, 4)
-    taxCode         String?
-    taxRate         Decimal?       @db.Decimal(14, 4)
-    createdBy       String?
-    createdAt       DateTime?      @default(now())
-    modifiedBy      String?
-    updatedAt       DateTime?      @updatedAt
-    purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
-    job             Job?           @relation(fields: [jobId], references: [id])
-    assembly        Assembly?      @relation(fields: [assemblyId], references: [id])
-    product         Product?       @relation(fields: [productId], references: [id])
-    // Removed: relation to ValueList for tax code; use string taxCode and map via (type, code) when needed
+  id               Int            @id
+  purchaseOrderId  Int?
+  jobId            Int?
+  assemblyId       Int?
+  productId        Int?
+  productSkuCopy   String?
+  productNameCopy  String?
+  priceCost        Decimal?       @db.Decimal(14, 4)
+  priceSell        Decimal?       @db.Decimal(14, 4)
+  qtyShipped       Decimal?       @db.Decimal(14, 4)
+  qtyReceived      Decimal?       @db.Decimal(14, 4)
+  quantity         Decimal?       @db.Decimal(14, 4)
+  quantityOrdered  Decimal?       @db.Decimal(14, 4)
+  taxCode          String?
+  taxRate          Decimal?       @db.Decimal(14, 4)
+  createdBy        String?
+  createdAt        DateTime?      @default(now())
+  modifiedBy       String?
+  updatedAt        DateTime?      @updatedAt
+  etaDate          DateTime?
+  etaDateConfirmed Boolean?       @default(false)
+  assembly         Assembly?      @relation(fields: [assemblyId], references: [id])
+  job              Job?           @relation(fields: [jobId], references: [id])
+  product          Product?       @relation(fields: [productId], references: [id])
+  purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 }
 
-// --- Product Cost Pricing ---
-
 model ProductCostGroup {
-    id              Int                @id @default(autoincrement())
-    supplierId      Int?
-    currency        String?
-    name            String?
-    costPrice       Decimal?           @db.Decimal(14, 4)
-    sellPriceManual Decimal?           @db.Decimal(14, 4)
-    supplier        Company?           @relation(fields: [supplierId], references: [id])
-    // Back-relations: Cost ranges belonging to this group
-    costRanges      ProductCostRange[]
-    // Back-relations: Products directly assigned to this group
-    products        Product[]
-    // Metadata
-    createdBy       String?
-    modifiedBy      String?
-    createdAt       DateTime?          @default(now())
-    updatedAt       DateTime?          @updatedAt
+  id              Int                @id @default(autoincrement())
+  supplierId      Int?
+  currency        String?
+  name            String?
+  costPrice       Decimal?           @db.Decimal(14, 4)
+  sellPriceManual Decimal?           @db.Decimal(14, 4)
+  createdBy       String?
+  modifiedBy      String?
+  createdAt       DateTime?          @default(now())
+  updatedAt       DateTime?          @updatedAt
+  products        Product[]
+  supplier        Company?           @relation(fields: [supplierId], references: [id])
+  costRanges      ProductCostRange[]
 
-    @@index([supplierId])
+  @@index([supplierId])
 }
 
 model ProductCostRange {
-    id              Int               @id @default(autoincrement())
-    productId       Int?
-    costGroupId     Int?
-    costPrice       Decimal?          @db.Decimal(14, 4)
-    sellPriceManual Decimal?          @db.Decimal(14, 4)
-    rangeFrom       Int?
-    rangeTo         Int?
-    product         Product?          @relation(fields: [productId], references: [id])
-    costGroup       ProductCostGroup? @relation(fields: [costGroupId], references: [id])
-    // Metadata
-    createdBy       String?
-    modifiedBy      String?
-    createdAt       DateTime?         @default(now())
-    updatedAt       DateTime?         @updatedAt
+  id              Int               @id @default(autoincrement())
+  productId       Int?
+  costGroupId     Int?
+  costPrice       Decimal?          @db.Decimal(14, 4)
+  sellPriceManual Decimal?          @db.Decimal(14, 4)
+  rangeFrom       Int?
+  rangeTo         Int?
+  createdBy       String?
+  modifiedBy      String?
+  createdAt       DateTime?         @default(now())
+  updatedAt       DateTime?         @updatedAt
+  costGroup       ProductCostGroup? @relation(fields: [costGroupId], references: [id])
+  product         Product?          @relation(fields: [productId], references: [id])
 
-    // Note: Exactly one of productId or costGroupId should be set; invariant enforced in application/import logic
-    @@index([productId])
-    @@index([costGroupId])
+  @@index([productId])
+  @@index([costGroupId])
 }
 
-// --- Sale Price Groups (explicit sale tiers separate from cost groups) ---
-
 model SalePriceGroup {
-    id         Int              @id @default(autoincrement())
-    name       String?
-    currency   String?
-    // Back-relations: Products directly assigned to this sale group
-    products   Product[]
-    // Back-relations: Ranges belonging to this group
-    saleRanges SalePriceRange[]
-    // Back-relations: Costings referencing this sale group at time of pricing
-    costings   Costing[]        @relation("Costing_SalePriceGroup")
-    // Metadata
-    createdBy  String?
-    modifiedBy String?
-    createdAt  DateTime?        @default(now())
-    updatedAt  DateTime?        @updatedAt
+  id         Int              @id @default(autoincrement())
+  name       String?
+  currency   String?
+  createdBy  String?
+  modifiedBy String?
+  createdAt  DateTime?        @default(now())
+  updatedAt  DateTime?        @updatedAt
+  costings   Costing[]        @relation("Costing_SalePriceGroup")
+  products   Product[]
+  saleRanges SalePriceRange[]
 }
 
 model SalePriceRange {
-    id          Int             @id @default(autoincrement())
-    productId   Int?
-    saleGroupId Int?
-    // Sale price for this tier (pre-tax, in group currency)
-    price       Decimal?        @db.Decimal(14, 4)
-    rangeFrom   Int?
-    rangeTo     Int?
-    product     Product?        @relation(fields: [productId], references: [id])
-    saleGroup   SalePriceGroup? @relation(fields: [saleGroupId], references: [id])
-    // Metadata
-    createdBy   String?
-    modifiedBy  String?
-    createdAt   DateTime?       @default(now())
-    updatedAt   DateTime?       @updatedAt
+  id          Int             @id @default(autoincrement())
+  productId   Int?
+  saleGroupId Int?
+  price       Decimal?        @db.Decimal(14, 4)
+  rangeFrom   Int?
+  rangeTo     Int?
+  createdBy   String?
+  modifiedBy  String?
+  createdAt   DateTime?       @default(now())
+  updatedAt   DateTime?       @updatedAt
+  product     Product?        @relation(fields: [productId], references: [id])
+  saleGroup   SalePriceGroup? @relation(fields: [saleGroupId], references: [id])
 
-    // Exactly one of productId or saleGroupId should be set; enforce in application logic
-    @@index([productId])
-    @@index([saleGroupId])
+  @@index([productId])
+  @@index([saleGroupId])
 }
 
-// --- Pricing overrides & settings ---
-
-// Pair-specific pricing between a vendor (supplier) and a customer
 model VendorCustomerPricing {
-    id             Int      @id @default(autoincrement())
-    vendorId       Int
-    customerId     Int
-    // Optional override margin to use instead of defaults when computing sale price
-    marginOverride Decimal? @db.Decimal(14, 4)
-    // Metadata
-    createdAt      DateTime @default(now())
-    updatedAt      DateTime @updatedAt
+  id             Int      @id @default(autoincrement())
+  vendorId       Int
+  customerId     Int
+  marginOverride Decimal? @db.Decimal(14, 4)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  customer       Company  @relation("CustomerCompany", fields: [customerId], references: [id], onDelete: Cascade)
+  vendor         Company  @relation("VendorCompany", fields: [vendorId], references: [id], onDelete: Cascade)
 
-    vendor   Company @relation("VendorCompany", fields: [vendorId], references: [id], onDelete: Cascade)
-    customer Company @relation("CustomerCompany", fields: [customerId], references: [id], onDelete: Cascade)
-
-    @@unique([vendorId, customerId])
-    @@index([customerId])
+  @@unique([vendorId, customerId])
+  @@index([customerId])
 }
 
-// Simple application-wide settings registry
 model Setting {
-    key       String   @id
-    value     String?
-    number    Decimal? @db.Decimal(14, 4)
-    json      Json?
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  key       String   @id
+  value     String?
+  number    Decimal? @db.Decimal(14, 4)
+  json      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum ColorScheme {
+  light
+  dark
+}
+
+enum UserLevel {
+  Admin
+  Manager
+  RegularJoe
+}
+
+enum ProductType {
+  CMT
+  Fabric
+  Finished
+  Trim
+  Service
+}
+
+enum CompanyType {
+  vendor
+  customer
+  other
+}
+
+enum InvoiceBillUpon {
+  Ship
+  Make
+}
+
+enum UsageType {
+  cut
+  make
+}
+
+enum ValueListType {
+  Tax
+  Category
+  ProductType
+  JobType
+  Currency
+  ShippingMethod
+  AssemblyType
+  DefectReason
+}
+
+enum AssemblyStage {
+  order
+  cut
+  sew
+  finish
+  pack
+  qc
+  other
+}
+
+enum ActivityKind {
+  normal
+  defect
+  rework
+}
+
+enum ActivityAction {
+  RECORDED
+  SENT_OUT
+  RECEIVED_IN
+  ADJUSTMENT
+  NOTE
+}
+
+enum ExternalStepType {
+  EMBROIDERY
+  WASH
+  DYE
+}
+
+enum DefectDisposition {
+  none
+  scrap
+  offSpec
+  sample
+  review
+}
+
+enum LocationType {
+  warehouse
+  customer_depot
+  wip
+  sample
+  scrap
+  off_spec
+  review
+}
+
+enum BoxState {
+  open
+  sealed
+  shipped
+}
+
+enum TagScope {
+  GLOBAL
+  USER
 }

@@ -33,16 +33,28 @@ function deriveStructuredActivity(
       externalStepType: null,
     };
   const upper = rawType.trim().toUpperCase();
+  const normalized = upper.replace(/\s+/g, "_");
   const mapStage = (suffix: string): AssemblyStage => {
-    if (suffix === "CUT") return AssemblyStage.cut;
-    if (suffix === "MAKE") return AssemblyStage.make;
-    if (suffix === "PACK") return AssemblyStage.pack;
-    if (suffix === "QC") return AssemblyStage.qc;
-    if (suffix === "ORDER") return AssemblyStage.order;
-    return AssemblyStage.other;
+    switch (suffix) {
+      case "CUT":
+        return "cut" as AssemblyStage;
+      case "SEW":
+        return "sew" as AssemblyStage;
+      case "MAKE":
+      case "FINISH":
+        return "finish" as AssemblyStage;
+      case "PACK":
+        return "pack" as AssemblyStage;
+      case "QC":
+        return "qc" as AssemblyStage;
+      case "ORDER":
+        return "order" as AssemblyStage;
+      default:
+        return "other" as AssemblyStage;
+    }
   };
-  if (upper.startsWith("TRASH_")) {
-    const suffix = upper.replace("TRASH_", "");
+  if (normalized.startsWith("TRASH_")) {
+    const suffix = normalized.replace("TRASH_", "");
     return {
       stage: mapStage(suffix),
       kind: ActivityKind.defect,
@@ -51,15 +63,29 @@ function deriveStructuredActivity(
       externalStepType: null,
     };
   }
-  if (upper === "CUT" || upper === "MAKE" || upper === "PACK" || upper === "QC") {
+  if (
+    normalized === "CUT" ||
+    normalized === "SEW" ||
+    normalized === "MAKE" ||
+    normalized === "FINISH" ||
+    normalized === "PACK" ||
+    normalized === "QC" ||
+    normalized === "KEEP"
+  ) {
     return {
-      stage: mapStage(upper),
+      stage: normalized === "KEEP" ? AssemblyStage.other : mapStage(normalized),
       kind: ActivityKind.normal,
       defectDisposition: null,
       action: ActivityAction.RECORDED,
       externalStepType: null,
     };
   }
+  console.warn(
+    "[importAssemblyActivities] Unrecognized AssemblyActivityType",
+    rawType,
+    "normalized=",
+    normalized
+  );
   return {
     stage: null,
     kind: null,
@@ -95,6 +121,13 @@ export async function importAssemblyActivities(
         .toString()
         .trim() || null;
     const structured = deriveStructuredActivity(rawActivityType);
+    if (id === 10551) {
+      console.log(
+        "[importAssemblyActivities] debug id=10551",
+        rawActivityType,
+        structured
+      );
+    }
     const qtySum = qtyBreakdown.reduce(
       (t: number, n: number) => (Number.isFinite(n) ? t + (n | 0) : t),
       0

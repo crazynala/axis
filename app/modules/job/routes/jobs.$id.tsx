@@ -1045,7 +1045,7 @@ export function JobDetailView() {
                 <Table.Th>Variant Set</Table.Th>
                 <Table.Th># Ordered</Table.Th>
                 <Table.Th>Cut</Table.Th>
-                <Table.Th>Make</Table.Th>
+                <Table.Th>Finish</Table.Th>
                 <Table.Th>Pack</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Whiteboard</Table.Th>
@@ -1267,7 +1267,7 @@ export function JobDetailView() {
                           {(a as any).c_qtyCut ?? 0}
                         </Button>
                       </Table.Td>
-                      <Table.Td>{(a as any).c_qtyMake ?? ""}</Table.Td>
+                      <Table.Td>{(a as any).c_qtyFinish ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
                       <Table.Td>
                         {(!isGroupedRow || isGroupLeader) && (

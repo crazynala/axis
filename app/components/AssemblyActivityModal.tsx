@@ -66,7 +66,7 @@ export function AssemblyActivityModal(props: {
   assembly: any;
   productVariantSet?: { variants: string[] } | null;
   costings: Costing[];
-  activityType: "cut" | "make" | "pack";
+  activityType: "cut" | "finish" | "pack";
   mode?: "create" | "edit";
   activityId?: number;
   initialDate?: Date | string | null;
@@ -131,7 +131,7 @@ export function AssemblyActivityModal(props: {
     (((assembly as any).c_qtyLeftToCut_Breakdown || []) as number[]) || [];
   const defaultBreakdown = useMemo(() => {
     const len = labels.length; // strictly respect effective variant columns
-    if (activityType === "make") {
+    if (activityType === "finish") {
       return Array.from({ length: len }, (_, i) =>
         Math.max(0, Number(alreadyCut[i] || 0) || 0)
       );
@@ -167,7 +167,7 @@ export function AssemblyActivityModal(props: {
       );
       const labels = rawLabels.slice(0, effectiveLen);
       const def = Array.from({ length: effectiveLen }, (_, i) => {
-        if (activityType === "make") {
+        if (activityType === "finish") {
           return Math.max(0, Number(g.cut?.[i] || 0) || 0);
         }
         const ord = Number(g.ordered?.[i] || 0) || 0;
@@ -470,8 +470,8 @@ export function AssemblyActivityModal(props: {
           ? "Edit Activity"
           : activityType === "cut"
           ? "Record Cut"
-          : activityType === "make"
-          ? "Record Make"
+          : activityType === "finish"
+          ? "Record Finish"
           : "Record Activity"
       }
       size="xxl"

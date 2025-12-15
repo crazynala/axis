@@ -44,22 +44,25 @@ import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
 import { JumpLink } from "~/components/JumpLink";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
+import { ExternalStepsStrip } from "~/modules/job/components/ExternalStepsStrip";
+import type { DerivedExternalStep } from "~/modules/job/types/externalSteps";
 
 export type QuantityItem = {
   assemblyId: number;
   variants: { labels: string[]; numVariants: number };
   ordered: number[];
   cut: number[];
-  make: number[];
+  sew: number[];
+  finish: number[];
   pack: number[];
-  totals: { cut: number; make: number; pack: number };
+  totals: { cut: number; sew: number; finish: number; pack: number };
 };
 
 type MinimalCosting = Parameters<
   typeof buildCostingRows
 >[0]["costings"][number];
 
-type ActivityModalType = "cut" | "make" | "pack";
+type ActivityModalType = "cut" | "finish" | "pack";
 
 export function AssembliesEditor(props: {
   job?: { id: number; name?: string | null } | null;
@@ -116,6 +119,7 @@ export function AssembliesEditor(props: {
   } | null;
   assemblyTypeOptions?: string[] | null;
   defectReasons?: Array<{ id: number; label: string | null }>;
+  externalStepsByAssembly?: Record<number, DerivedExternalStep[] | undefined> | null;
 }) {
   const {
     job,
@@ -136,6 +140,7 @@ export function AssembliesEditor(props: {
     assemblyTypeOptions,
     defectReasons,
     primaryCostingIdByAssembly,
+    externalStepsByAssembly,
   } = props;
   const activityList = activitiesProp || [];
   const submit = useSubmit();
@@ -164,7 +169,7 @@ export function AssembliesEditor(props: {
   const [defectAssemblyId, setDefectAssemblyId] = useState<number | null>(
     firstAssembly?.id ?? null
   );
-  const [defectStage, setDefectStage] = useState<string>("make");
+  const [defectStage, setDefectStage] = useState<string>("finish");
   const [defectBreakdown, setDefectBreakdown] = useState<number[]>([]);
   const [defectReasonId, setDefectReasonId] = useState<string>("");
   const [defectDisposition, setDefectDisposition] = useState<string>("review");
@@ -592,19 +597,19 @@ export function AssembliesEditor(props: {
         return merged.join(" | ");
       })()
     : "";
-  const canRecordMakeForAssembly = (assemblyId: number) => {
+  const canRecordFinishForAssembly = (assemblyId: number) => {
     const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
     if (!totals) return false;
     const cut = Number(totals.cut ?? 0) || 0;
-    const make = Number(totals.make ?? 0) || 0;
-    return cut > make;
+    const finish = Number(totals.finish ?? 0) || 0;
+    return cut > finish;
   };
   const canRecordPackForAssembly = (assemblyId: number) => {
     const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
     if (!totals) return false;
-    const make = Number(totals.make ?? 0) || 0;
+    const finish = Number(totals.finish ?? 0) || 0;
     const pack = Number(totals.pack ?? 0) || 0;
-    return make > pack;
+    return finish > pack;
   };
   const assembliesResetKey = useMemo(
     () =>
@@ -796,10 +801,10 @@ export function AssembliesEditor(props: {
 
   const resolveActivityType = (activity: any | null): ActivityModalType => {
     const stage = String(activity?.stage || "").toLowerCase();
-    if (stage === "make") return "make";
+    if (stage === "finish" || stage === "make") return "finish";
     if (stage === "pack") return "pack";
     const raw = String(activity?.name || "").toLowerCase();
-    if (raw.includes("make")) return "make";
+    if (raw.includes("finish") || raw.includes("make")) return "finish";
     if (raw.includes("pack")) return "pack";
     return "cut";
   };
@@ -869,17 +874,20 @@ export function AssembliesEditor(props: {
     const stats = item?.stageStats;
     if (!stats) return null;
     const cut = (stats.cut?.usableArr as number[]) || [];
-    const make = (stats.make?.usableArr as number[]) || [];
+    const sew = (stats.sew?.usableArr as number[]) || [];
+    const finish = (stats.finish?.usableArr as number[]) || [];
     const pack = (stats.pack?.usableArr as number[]) || [];
-    const len = Math.max(cut.length, make.length, pack.length);
+    const len = Math.max(cut.length, sew.length, finish.length, pack.length);
     const arr = Array.from({ length: len }, (_, idx) => {
       const c = Number(cut[idx] ?? 0) || 0;
-      const m = Number(make[idx] ?? 0) || 0;
+      const s = Number(sew[idx] ?? 0) || 0;
+      const f = Number(finish[idx] ?? 0) || 0;
       const p = Number(pack[idx] ?? 0) || 0;
       const stg = stage.toLowerCase();
-      if (stg === "cut") return Math.max(0, c - m);
-      if (stg === "make") return Math.max(0, m - p);
-      if (stg === "pack") return Math.max(0, m);
+      if (stg === "cut") return Math.max(0, c - s);
+      if (stg === "sew") return Math.max(0, s - f);
+      if (stg === "finish") return Math.max(0, f - p);
+      if (stg === "pack") return Math.max(0, f);
       return 0;
     });
     const total = arr.reduce((t, n) => t + (Number(n) || 0), 0);
@@ -892,7 +900,8 @@ export function AssembliesEditor(props: {
     const labels = resolveVariantLabels(targetAssemblyId);
     const activity = opts?.activity;
     setDefectAssemblyId(targetAssemblyId);
-    setDefectStage(String(activity?.stage || "make"));
+    const stageRaw = String(activity?.stage || "finish").toLowerCase();
+    setDefectStage(stageRaw === "make" ? "finish" : stageRaw);
     const disp =
       activity?.defectDisposition && activity.defectDisposition !== "none"
         ? activity.defectDisposition
@@ -962,10 +971,10 @@ export function AssembliesEditor(props: {
     setActivityModalOpen(true);
   };
 
-  const handleRecordMake = (assemblyId: number) => {
-    if (!canRecordMakeForAssembly(assemblyId)) return;
+  const handleRecordFinish = (assemblyId: number) => {
+    if (!canRecordFinishForAssembly(assemblyId)) return;
     setModalAssemblyId(assemblyId ?? firstAssembly?.id ?? null);
-    setCreateActivityType("make");
+    setCreateActivityType("finish");
     setEditActivity(null);
     setActivityModalOpen(true);
   };
@@ -1077,6 +1086,10 @@ export function AssembliesEditor(props: {
             watchedAssemblyTypes[String(a.id)] ||
             (a as any).assemblyType ||
             "Prod";
+          const externalStepRows =
+            externalStepsByAssembly == null
+              ? null
+              : externalStepsByAssembly[a.id] || [];
           return (
             <Fragment key={a.id}>
               <Grid.Col span={5}>
@@ -1143,47 +1156,56 @@ export function AssembliesEditor(props: {
                 </Card>
               </Grid.Col>
               <Grid.Col span={7}>
-                <Group justify="flex-end" mb="xs">
-                  <Button
-                    size="xs"
-                    variant="default"
-                    onClick={() => setFactoryAssemblyId(a.id)}
-                  >
-                    Show factory view
-                  </Button>
-                </Group>
-                <AssemblyQuantitiesCard
-                  // title={`Quantities — Assembly ${a.id}`}
-                  variants={item.variants}
-                  items={[
-                    {
-                      label: `Assembly ${a.id}`,
-                      ordered: item.ordered,
-                      cut: item.cut,
-                      make: item.make,
-                      pack: item.pack,
-                      totals: item.totals,
-                    },
-                  ]}
-                  editableOrdered
-                  hideInlineActions
-                  orderedValue={editForm.watch(
-                    `orderedByAssembly.${a.id}` as any
-                  )}
-                  onChangeOrdered={(arr) =>
-                    editForm.setValue(`orderedByAssembly.${a.id}` as any, arr, {
-                      shouldDirty: true,
-                      shouldTouch: true,
-                    })
-                  }
-                  actionColumn={{
-                    onRecordCut: () => handleRecordCut(a.id),
-                    onRecordMake: () => handleRecordMake(a.id),
-                    recordMakeDisabled: !canRecordMakeForAssembly(a.id),
-                    onRecordPack: () => handleRecordPack(a.id),
-                    recordPackDisabled: !canRecordPackForAssembly(a.id),
-                  }}
-                />
+                <Stack gap="sm">
+                  {externalStepRows !== null ? (
+                    <ExternalStepsStrip steps={externalStepRows} />
+                  ) : null}
+                  <Group justify="flex-end">
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => setFactoryAssemblyId(a.id)}
+                    >
+                      Show factory view
+                    </Button>
+                  </Group>
+                  <AssemblyQuantitiesCard
+                    variants={item.variants}
+                    items={[
+                      {
+                        label: `Assembly ${a.id}`,
+                        ordered: item.ordered,
+                        cut: item.cut,
+                        sew: item.sew,
+                        finish: item.finish,
+                        pack: item.pack,
+                        totals: item.totals,
+                      },
+                    ]}
+                    editableOrdered
+                    hideInlineActions
+                    orderedValue={editForm.watch(
+                      `orderedByAssembly.${a.id}` as any
+                    )}
+                    onChangeOrdered={(arr) =>
+                      editForm.setValue(
+                        `orderedByAssembly.${a.id}` as any,
+                        arr,
+                        {
+                          shouldDirty: true,
+                          shouldTouch: true,
+                        }
+                      )
+                    }
+                    actionColumn={{
+                      onRecordCut: () => handleRecordCut(a.id),
+                      onRecordFinish: () => handleRecordFinish(a.id),
+                      recordFinishDisabled: !canRecordFinishForAssembly(a.id),
+                      onRecordPack: () => handleRecordPack(a.id),
+                      recordPackDisabled: !canRecordPackForAssembly(a.id),
+                    }}
+                  />
+                </Stack>
               </Grid.Col>
             </Fragment>
           );
@@ -1406,16 +1428,19 @@ export function AssembliesEditor(props: {
             const summary = summaryByAssembly.get(factoryAssemblyId);
             const usableArrMap: Record<string, number[]> = {
               cut: item?.cut || [],
-              make: item?.make || [],
+              sew: item?.sew || [],
+              finish: item?.finish || [],
               pack: item?.pack || [],
             };
             const usableTotalMap: Record<string, number | undefined> = {
               cut: item?.totals?.cut,
-              make: item?.totals?.make,
+              sew: item?.totals?.sew,
+              finish: item?.totals?.finish,
               pack: item?.totals?.pack,
             };
-            const factoryRows = (["cut", "make", "pack"] as const).flatMap(
-              (stage) => {
+            const factoryRows = (
+              ["cut", "sew", "finish", "pack"] as const
+            ).flatMap((stage) => {
                 const stats = stageStats?.[stage];
                 if (!stats) return [];
                 const label = stage.toUpperCase();
@@ -1576,8 +1601,8 @@ export function AssembliesEditor(props: {
           }
           overrideIntent={
             !editActivity && isGroup
-              ? modalActivityType === "make"
-                ? "group.activity.create.make"
+              ? modalActivityType === "finish"
+                ? "group.activity.create.finish"
                 : "group.activity.create.cut"
               : undefined
           }
@@ -1669,7 +1694,8 @@ export function AssembliesEditor(props: {
               label="Stage"
               data={[
                 { value: "cut", label: "Cut" },
-                { value: "make", label: "Make" },
+                { value: "sew", label: "Sew" },
+                { value: "finish", label: "Finish" },
                 { value: "pack", label: "Pack" },
                 { value: "qc", label: "QC" },
                 { value: "other", label: "Other" },

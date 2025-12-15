@@ -102,15 +102,15 @@ type PackActivityInput = {
 };
 
 function buildAvailableForPack(
-  make: number[],
+  finish: number[],
   packed: number[],
   desiredLength: number
 ): number[] {
-  const len = Math.max(make.length, packed.length, desiredLength);
+  const len = Math.max(finish.length, packed.length, desiredLength);
   return Array.from({ length: len }, (_, idx) => {
-    const made = Number(make[idx] ?? 0) || 0;
+    const finished = Number(finish[idx] ?? 0) || 0;
     const alreadyPacked = Number(packed[idx] ?? 0) || 0;
-    return Math.max(0, made - alreadyPacked);
+    return Math.max(0, finished - alreadyPacked);
   });
 }
 
@@ -142,14 +142,16 @@ export async function createPackActivity(input: PackActivityInput) {
 
   const jobCompanyId = assembly.job?.companyId ?? null;
   const jobLocationId = assembly.job?.stockLocationId ?? null;
-  const currentMake = normalizeBreakdown((assembly as any).c_qtyMake_Breakdown);
+  const currentFinish = normalizeBreakdown(
+    (assembly as any).c_qtyFinish_Breakdown
+  );
   const currentPack = normalizeBreakdown((assembly as any).c_qtyPack_Breakdown);
   const available = buildAvailableForPack(
-    currentMake,
+    currentFinish,
     currentPack,
     normalizedBreakdown.length
   );
-  console.log("Current Make", currentMake);
+  console.log("Current Finish", currentFinish);
   console.log("Current Pack", currentPack);
   console.log("Available", available);
   console.log("Normalized Breakdown", normalizedBreakdown);

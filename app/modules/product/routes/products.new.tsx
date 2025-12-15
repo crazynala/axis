@@ -50,6 +50,7 @@ export default function NewProductRoute() {
       manualSalePrice: undefined as any,
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
+      leadTimeDays: "",
     },
   });
   const onSubmit = (e: React.FormEvent) => {

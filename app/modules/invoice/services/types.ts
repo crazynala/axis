@@ -8,10 +8,10 @@ export type PendingCostingItem = {
   costingName?: string | null;
   description: string;
   invoiceCalcDebug?: {
-    billUpon: "Ship" | "Make";
+    billUpon: "Ship" | "Finish";
     qtyOrdered: number;
     qtyCut: number;
-    qtyMake: number;
+    qtyFinish: number;
     qtyPack: number;
     pctCut: number;
     pctOrder: number;

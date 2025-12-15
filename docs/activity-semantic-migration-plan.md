@@ -2,7 +2,7 @@
 
 ## 0. Guiding rules
 
-- [ ]Axis is driven by (a) AssemblyActivity for Cut/Sew/Finish/external-step events/defects and (b) BoxLine for packed quantity; no parallel planning tables. We reimport FileMaker data after schema changes instead of backfilling Postgres.
+- [ ] Axis is driven by (a) AssemblyActivity for Cut/Sew/Finish/external-step events/defects and (b) BoxLine for packed quantity; no parallel planning tables. We reimport FileMaker data after schema changes instead of backfilling Postgres.
 - [ ] Restore any tasks dropped from the original implementation snapshot so feature parity is preserved.
 - [ ] No new required fields on legacy write paths; legacy imports keep working.
 - [ ] All ETAs and lead times are derived from data (Costing → Product → Company), never hand-entered elsewhere.
@@ -10,32 +10,41 @@
 - [ ] Legacy `activityType` references stay removed; `stage` + `action` + `externalStepType` are authoritative.
 - [ ] Any legacy Postgres data can be dropped/reseeded; prefer clean schema migrations over complicated in-DB backfills.
 - [ ] Packing truth comes from `BoxLine` rows; `stage=pack/qc` events exist for history/defects only.
+- [ ] Interactive forms wire into the RHF + `SaveCancelHeader` pattern (with dirty tracking) unless impossible; new fields must register with RHF so change detection/saves stay consistent.
 
 ## 1. Database (schema + migrations)
 
-- [ ] Add nullable `defaultLeadTimeDays Int?` to `Company`; regenerate Prisma client.
-- [ ] Add nullable `leadTimeDays Int?` to `Product`; use for fabric/trim/service supply overrides.
+- [x] Add nullable `defaultLeadTimeDays Int?` to `Company`; regenerate Prisma client.
+  - Completed via migration `20251216120000_lead_time_overrides`; surfaced in company forms for vendor defaults.
+- [x] Add nullable `leadTimeDays Int?` to `Product`; use for fabric/trim/service supply overrides.
+  - Covered by the same migration; Product detail form now binds to the Prisma field.
 - [ ] Finalize `Costing` shape (`externalStepType`, nullable `leadTimeDays`) and document override semantics.
-- [ ] Add nullable `etaDate DateTime?` and `etaDateConfirmed Boolean? @default(false)` to `PurchaseOrderLine`; PO-level ETA derives from earliest populated line ETA.
+- [x] Add nullable `etaDate DateTime?` and `etaDateConfirmed Boolean? @default(false)` to `PurchaseOrderLine`; PO-level ETA derives from earliest populated line ETA.
+  - Added via migration `20251216124000_po_line_eta_fields` plus Prisma client regen.
 - [ ] Confirm `AssemblyActivity` has authoritative `stage`, `action`, `externalStepType`, `kind`, and `vendorCompanyId`; `activityType` is fully dropped everywhere.
 - [ ] Verify no DB consumers still rely on `activityType` (views/materialized views/ad-hoc SQL/ETL).
-- [ ] Update `AssemblyStage` enum to `order/cut/sew/finish/pack/qc/other` (removing `make`, adding `sew` + `finish`); accept Prisma enum reset if needed since data will be reimported.
+- [x] Update `AssemblyStage` enum to `order/cut/sew/finish/pack/qc/other` (removing `make`, adding `sew` + `finish`); accept Prisma enum reset if needed since data will be reimported.
+  - Covered by migration `20251216133000_add_sew_finish_stage` and regenerated Prisma client.
 - [ ] Ship Prisma migrations for new columns + stage enum change (enum change may require DB reset; we reimport).
 - [ ] Smoke-test legacy imports after the migration to ensure nullable defaults keep them valid.
 - [ ] Document that importer re-run is the “data migration”; do not attempt in-DB backfills when enums/columns shift.
 
 ## 2. Application code – core logic
 
-- [ ] Implement `resolveLeadTimeDays({ costing, product, company })` that enforces Costing → Product → Company fallback; return `null` when nothing is set.
-- [ ] Reuse the resolver for external step ETA computation, PO ETA suggestions, and dashboard “late” determinations.
-- [ ] Update downstream code to handle new stages sew and finish (and removal of make).
-- [ ] Extend the derived external-step engine:
-  - [ ] Determine expected steps from `Costing.externalStepType`.
-  - [ ] Track status transitions `SENT_OUT → RECEIVED_IN → DONE`, `SENT_OUT`-only flows (`IN_PROGRESS`), and implicit done when FINISH exists without steps.
-  - [ ] Surface `sentDate`, `receivedDate`, inferred windows, optional `qtyOut`/`qtyIn`, and `defectQty` for `kind=DEFECT`.
-  - [ ] Attach ETA via the lead-time resolver; `isLate` only when ETA exists, the step was sent out, nothing has been received, and today is past the ETA (`IMPLICIT_DONE` is never late).
-  - [ ] Unit-test lead-time precedence (costing override, product override, company fallback, and null → no ETA + never late).
-  - [ ] Update inferred windows so external steps live between `SEW` and `FINISH` whenever data is available.
+- [x] Implement `resolveLeadTimeDays({ costing, product, company })` that enforces Costing → Product → Company fallback; return `null` when nothing is set.
+  - Helper lives in `app/utils/leadTime.ts` and now returns both the numeric value and its source label for downstream consumers.
+- [x] Reuse the resolver for external step ETA computation, PO ETA suggestions, and dashboard “late” determinations.
+  - PO line “Fill ETA” and the new external-step engine both funnel through `resolveLeadTimeDetail`; dashboard hooks will piggyback on the same data source once we wire tab logic.
+- [x] Update downstream code to handle new stages sew and finish (and removal of make).
+  - Assembly/job services, importer-derived rollups, dashboard metrics, ledger views, and factory modals now expose Cut/Sew/Finish semantics instead of legacy Make.
+- [x] Extend the derived external-step engine:
+  - [x] Determine expected steps from `Costing.externalStepType`.
+  - [x] Track status transitions `SENT_OUT → RECEIVED_IN → DONE`, `SENT_OUT`-only flows (`IN_PROGRESS`), and implicit done when FINISH exists without steps.
+  - [x] Surface `sentDate`, `receivedDate`, inferred windows, optional `qtyOut`/`qtyIn`, and `defectQty` for `kind=DEFECT`.
+  - [x] Attach ETA via the lead-time resolver; `isLate` only when ETA exists, the step was sent out, nothing has been received, and today is past the ETA (`IMPLICIT_DONE` is never late).
+  - [x] Unit-test lead-time precedence (costing override, product override, company fallback, and null → no ETA + never late).
+  - [x] Update inferred windows so external steps live between `SEW` and `FINISH` whenever data is available.
+  - Implemented via `app/modules/job/services/externalSteps.server.ts` with loader wiring so assembly detail pages now receive per-assembly derived data.
 - [ ] Update dashboard/business logic to consume the derived engine for hold/late signals.
 - [ ] Ensure pack/qc defects affect readiness metrics and downstream dashboards by combining finish rollups, `BoxLine` packed quantities, and defect adjustments consistently.
 - [ ] Flesh out the sew availability calculator (`sewnAvailableQty`) for send-out flows, including low-confidence handling when sew is inferred from finish.
@@ -58,10 +67,14 @@
 
 ## 3. UI updates
 
-- [ ] **Purchase orders**: line editor gains inline ETA date picker, confirmed checkbox/badge, and “Fill ETA from lead time” action (Product → Company fallback). Show status badges (Received / Due soon ≤7 days / Late when ETA passed and not received); surface PO holds and risk flags.
-- [ ] **Product editor**: add “Lead time (days)” under Supply/Production with tooltip “Overrides supplier default lead time”; highlight on fabrics/trims/services.
-- [ ] **Company editor**: add “Default lead time (days)” for vendor/supplier companies with tooltip “Used when product or costing has no override”.
-- [ ] **Assembly view – external steps strip**: show chips per expected step with status badge, ETA, late indicator, and drawer containing sent/received dates, vendor, qty out/in, defects, lead-time source label (“Costing/Product/Vendor default”), and “Add inferred dates” helper.
+- [x] **Purchase orders**: line editor gains inline ETA date picker, confirmed checkbox/badge, and “Fill ETA from lead time” action (Product → Company fallback). Show status badges (Received / Due soon ≤7 days / Late when ETA passed and not received); surface PO holds and risk flags.
+  - Implemented ETA fields + confirmations on editable PO lines with derived status badges and auto-fill tied to product/vendor lead times; final view mirrors badges/read-only ETA for verification.
+- [x] **Product editor**: add “Lead time (days)” under Supply/Production with tooltip “Overrides supplier default lead time”; highlight on fabrics/trims/services.
+  - Field renders with a tooltip + “Supply-critical” badge when type ∈ {Fabric, Trim, Service}.
+- [x] **Company editor**: add “Default lead time (days)” for vendor/supplier companies with tooltip “Used when product or costing has no override”.
+  - Visible whenever `isSupplier` is checked and propagates through the detail and “New Company” forms.
+- [x] **Assembly view – external steps strip**: show chips per expected step with status badge, ETA, late indicator, and drawer containing sent/received dates, vendor, qty out/in, defects, lead-time source label (“Costing/Product/Vendor default”), and “Add inferred dates” helper.
+  - `ExternalStepsStrip` renders inside `AssembliesEditor` with status badges, ETA chips, low-confidence/late warnings, vendor info, and a drawer table; inference helper UI remains TODO.
   - [ ] “Send to Embroidery/Wash/Dye” modal defaults qty from available sewn qty (when tracked), offers “Record Sew now” helper if missing, and allows continuing without data while flagging low-confidence inference.
 - [ ] **Box packing workflow**: packing is performed exclusively through the Box UI. When adding an assembly to a box, default the suggested qty to `readyToPackQty`, offer a “Use finishing report qty” shortcut (fills with `readyToPackQty`) and a “Use full finish qty” option (fills with `finishGoodQty` for manual overrides), surface “Finish recorded: X” and “Already packed: Y”, and rely on the operator to adjust discrepancies before writing `BoxLine` rows.
 - [ ] **Production Dashboard `/production/dashboard`**:
@@ -70,6 +83,7 @@
   - [ ] Tab “Needs Action”: “Next Action” logic now flags (a) expected external step with no `SENT_OUT` while CUT exists, (b) `SENT_OUT` past ETA (Follow up vendor), (c) PO line late (Resolve PO).
   - [ ] Provide dashboard multi-select for batch `Send Out` / `Receive In`, plus a keyboard-first modal for those actions.
 - [ ] Update all UI labels to present MAKE as “Finish” and align iconography (primary costing icon reflects RHF state without saving) across assembly/dashboard views.
+  - Assembly detail/editor, pack modal, quantities cards, and production ledger now render “Finish”. Remaining modules still need an audit.
 - [ ] Remove remaining temporary debug logs in the UI layer.
 - [ ] Ensure pack/QC defect badges are visible anywhere readiness/risk is surfaced (assembly, dashboard, PO context).
 - [ ] Assembly / Production “Quick Record”
@@ -126,6 +140,7 @@ Canonical semantics:
 - Assembly stages are `order/cut/sew/finish/pack/qc/other`. We retain `pack/qc` for defect logging, but “packed qty” comes solely from boxes, not stage=pack rows.
 - `FINISH` is the critical gate backed by daily finishing reports; it implies sewing + required external steps + QC have passed. Packing may uncover new QC issues later.
 - External steps (Embroidery/Wash/Dye) belong to finishing; expected steps derive from `Costing.externalStepType` and are collapsed per `ExternalStepType`.
+  - Ops reminder: a costing must explicitly set its `externalStepType` (e.g. Washing) for the assembly UI to expect a vendor step; product type = Service or manually entering an ETA is not enough.
 
 Quantities (reuse everywhere):
 

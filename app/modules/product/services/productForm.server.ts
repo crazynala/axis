@@ -32,6 +32,7 @@ export function buildProductData(form: FormData) {
   num("customerId");
   num("supplierId");
   num("salePriceGroupId");
+  num("leadTimeDays");
   // booleans
   bool("stockTrackingEnabled");
   bool("batchTrackingEnabled");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Controller, useWatch } from "react-hook-form";
 import type { UseFormReturn } from "react-hook-form";
 import {
@@ -8,10 +8,19 @@ import {
   Table,
   ActionIcon,
   Menu,
+  Button,
+  Checkbox,
+  Badge,
+  Text,
+  Tooltip,
+  Stack,
 } from "@mantine/core";
+import { DateInput } from "@mantine/dates";
 import { IconMenu2 } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
 import { calcPrice } from "~/modules/product/calc/calcPrice";
 import { formatUSD } from "~/utils/format";
+import { resolveLeadTimeDays } from "~/utils/leadTime";
 
 type Props = {
   form: UseFormReturn<any>;
@@ -23,6 +32,8 @@ type Props = {
     globalDefaultMargin?: number | null;
     priceMultiplier?: number | null;
   } | null;
+  purchaseDate?: string | Date | null;
+  vendorLeadTimeDays?: number | null;
 };
 
 export function PurchaseOrderLinesTable({
@@ -30,11 +41,23 @@ export function PurchaseOrderLinesTable({
   status,
   productMap,
   pricingPrefs,
+  purchaseDate,
+  vendorLeadTimeDays,
 }: Props) {
   const lines: any[] =
     useWatch({ control: form.control, name: "lines" }) ||
     (form.getValues("lines") as any[]) ||
     [];
+
+  const purchaseDateValue = useMemo(() => {
+    if (!purchaseDate) return null;
+    const date = new Date(purchaseDate as any);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }, [purchaseDate]);
+  const vendorDefaultLeadTimeDays =
+    vendorLeadTimeDays != null && Number.isFinite(Number(vendorLeadTimeDays))
+      ? Number(vendorLeadTimeDays)
+      : null;
 
   const isDraft = status === "DRAFT";
   const isComplete = status === "COMPLETE" || status === "CANCELED";
@@ -174,30 +197,96 @@ export function PurchaseOrderLinesTable({
     );
   }, [isDraft, lines]);
 
+  const toDate = (value: any): Date | null => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const formatEta = (value: any) => {
+    const date = toDate(value);
+    if (!date) return "—";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const getStatusInfo = (line: any, eta: Date | null) => {
+    const qtyOrdered = Number(line?.quantityOrdered ?? 0);
+    const qtyReceived = Number(line?.qtyReceived ?? 0);
+    if (qtyOrdered > 0 && qtyReceived >= qtyOrdered) {
+      return { label: "Received", color: "green" as const };
+    }
+    if (!eta) return null;
+    const diffDays = Math.floor(
+      (eta.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays < 0) return { label: "Late", color: "red" as const };
+    if (diffDays <= 7) return { label: "Due soon", color: "yellow" as const };
+    return null;
+  };
+
+  const getLeadTimeDaysForLine = useCallback(
+    (line: any): number | null => {
+      const product =
+        productMap[Number(line?.productId || 0)] || line?.product || null;
+      const productContext = product
+        ? { leadTimeDays: product.leadTimeDays }
+        : undefined;
+      const companyContext =
+        vendorDefaultLeadTimeDays != null
+          ? { defaultLeadTimeDays: vendorDefaultLeadTimeDays }
+          : undefined;
+      return resolveLeadTimeDays({
+        product: productContext,
+        company: companyContext,
+      });
+    },
+    [productMap, vendorDefaultLeadTimeDays]
+  );
+
+  const handleFillEta = useCallback(
+    (idx: number) => {
+      const line = lines[idx];
+      if (!line) return;
+      const leadTimeDays = getLeadTimeDaysForLine(line);
+      if (!leadTimeDays) {
+        notifications.show({
+          title: "Missing lead time",
+          message: "Set a product or vendor lead time to auto-fill ETA.",
+          color: "yellow",
+        });
+        return;
+      }
+      const baseDate = purchaseDateValue ?? new Date();
+      const eta = new Date(baseDate);
+      eta.setHours(0, 0, 0, 0);
+      eta.setDate(eta.getDate() + leadTimeDays);
+      form.setValue(`lines.${idx}.etaDate` as any, eta.toISOString(), {
+        shouldDirty: true,
+      });
+    },
+    [form, getLeadTimeDaysForLine, lines, purchaseDateValue]
+  );
+
   return (
     <>
       {isDraft ? (
         <Table withColumnBorders>
-          {/* Column widths: 7 fixed numeric columns at 9ch each; SKU/Name share remainder 33%/67% */}
           <colgroup>
             <col style={{ width: "8ch" }} />
-            {/* ID */}
-            <col style={{ width: "calc((100% - 80ch) * 0.33)" }} />
-            {/* SKU */}
-            <col style={{ width: "calc((100% - 80ch) * 0.67)" }} />
-            {/* Name */}
+            <col style={{ width: "calc((100% - 104ch) * 0.28)" }} />
+            <col style={{ width: "calc((100% - 104ch) * 0.72)" }} />
+            <col style={{ width: "11ch" }} />
+            <col style={{ width: "18ch" }} />
             <col style={{ width: "12ch" }} />
-            {/* Order Qty */}
-            <col style={{ width: "12ch" }} />
-            {/* Cost */}
-            <col style={{ width: "12ch" }} />
-            {/* Tax */}
-            <col style={{ width: "12ch" }} />
-            {/* Ext (Cost) */}
-            <col style={{ width: "12ch" }} />
-            {/* Sell */}
-            <col style={{ width: "12ch" }} />
-            {/* Ext (Sell) */}
+            <col style={{ width: "11ch" }} />
+            <col style={{ width: "9ch" }} />
+            <col style={{ width: "11ch" }} />
+            <col style={{ width: "9ch" }} />
+            <col style={{ width: "11ch" }} />
+            <col style={{ width: "6ch" }} />
           </colgroup>
           <Table.Thead>
             <Table.Tr>
@@ -205,13 +294,14 @@ export function PurchaseOrderLinesTable({
               <Table.Th>SKU</Table.Th>
               <Table.Th>Name</Table.Th>
               <Table.Th>Order Qty</Table.Th>
+              <Table.Th>ETA</Table.Th>
+              <Table.Th>Status</Table.Th>
               <Table.Th>Cost</Table.Th>
               <Table.Th>Tax</Table.Th>
               <Table.Th>Ext</Table.Th>
               <Table.Th>Sell</Table.Th>
               <Table.Th>Ext</Table.Th>
               <Table.Th></Table.Th>
-              {/* row actions */}
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -227,6 +317,9 @@ export function PurchaseOrderLinesTable({
                 (lp as any).isManualSell ||
                 pm?.manualSalePrice != null ||
                 pm?.c_isSellPriceManual === true;
+              const etaDateValue = toDate(r.etaDate);
+              const statusInfo = getStatusInfo(r, etaDateValue);
+              const canAutofill = getLeadTimeDaysForLine(r) != null;
               return (
                 <Table.Tr key={r.id ?? idx}>
                   <Table.Td>{r.id}</Table.Td>
@@ -241,6 +334,75 @@ export function PurchaseOrderLinesTable({
                         <NumberInput {...field} hideControls min={0} w="100%" />
                       )}
                     />
+                  </Table.Td>
+                  <Table.Td>
+                    <Stack gap={4}>
+                      <Controller
+                        name={`lines.${idx}.etaDate`}
+                        control={form.control}
+                        defaultValue={r.etaDate ?? null}
+                        render={({ field }) => (
+                          <DateInput
+                            value={
+                              field.value ? new Date(field.value as any) : null
+                            }
+                            onChange={(value) =>
+                              field.onChange(
+                                value
+                                  ? new Date(value as any).toISOString()
+                                  : null
+                              )
+                            }
+                            valueFormat="MMM DD, YYYY"
+                            clearable
+                            popoverProps={{ withinPortal: true }}
+                            disabled={!isDraft}
+                          />
+                        )}
+                      />
+                      <Group gap={6} wrap="wrap">
+                        <Controller
+                          name={`lines.${idx}.etaDateConfirmed`}
+                          control={form.control}
+                          defaultValue={!!r.etaDateConfirmed}
+                          render={({ field }) => (
+                            <Checkbox
+                              label="Confirmed"
+                              checked={!!field.value}
+                              onChange={(e) =>
+                                field.onChange(e.currentTarget.checked)
+                              }
+                              disabled={!isDraft}
+                            />
+                          )}
+                        />
+                        <Tooltip
+                          label="Set a product or vendor lead time"
+                          disabled={canAutofill}
+                          withinPortal
+                        >
+                          <Button
+                            size="compact-xs"
+                            variant="default"
+                            onClick={() => handleFillEta(idx)}
+                            disabled={!isDraft || !canAutofill}
+                          >
+                            Fill from lead time
+                          </Button>
+                        </Tooltip>
+                      </Group>
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    {statusInfo ? (
+                      <Badge color={statusInfo.color} variant="light">
+                        {statusInfo.label}
+                      </Badge>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        —
+                      </Text>
+                    )}
                   </Table.Td>
                   <Table.Td>{formatUSD(lp.cost)}</Table.Td>
                   <Table.Td>
@@ -306,6 +468,9 @@ export function PurchaseOrderLinesTable({
               </Table.Td>
               <Table.Td />
               <Table.Td />
+              <Table.Td />
+              <Table.Td />
+              <Table.Td />
               <Table.Td>
                 <strong>{formatUSD(draftTotals?.cost ?? 0)}</strong>
               </Table.Td>
@@ -313,6 +478,7 @@ export function PurchaseOrderLinesTable({
               <Table.Td>
                 <strong>{formatUSD(draftTotals?.sell ?? 0)}</strong>
               </Table.Td>
+              <Table.Td />
             </Table.Tr>
           </Table.Tbody>
         </Table>
@@ -334,6 +500,10 @@ export function PurchaseOrderLinesTable({
             {/* Shipped */}
             <col style={{ width: "9ch" }} />
             {/* Received */}
+            <col style={{ width: "14ch" }} />
+            {/* ETA */}
+            <col style={{ width: "9ch" }} />
+            {/* Status */}
             <col style={{ width: "9ch" }} />
             {/* Cost */}
             <col style={{ width: "9ch" }} />
@@ -350,6 +520,8 @@ export function PurchaseOrderLinesTable({
               <Table.Th>Actual Qty</Table.Th>
               <Table.Th>Shipped</Table.Th>
               <Table.Th>Received</Table.Th>
+              <Table.Th>ETA</Table.Th>
+              <Table.Th>Status</Table.Th>
               <Table.Th>Cost</Table.Th>
               <Table.Th>Sell</Table.Th>
               <Table.Th></Table.Th>
@@ -367,6 +539,8 @@ export function PurchaseOrderLinesTable({
                 (lp as any).isManualSell ||
                 pm?.manualSalePrice != null ||
                 pm?.c_isSellPriceManual === true;
+              const etaDateValue = toDate(r.etaDate);
+              const statusInfo = getStatusInfo(r, etaDateValue);
               return (
                 <Table.Tr key={r.id ?? idx}>
                   <Table.Td>{r.id}</Table.Td>
@@ -391,6 +565,27 @@ export function PurchaseOrderLinesTable({
                   </Table.Td>
                   <Table.Td>{r.qtyShipped ?? 0}</Table.Td>
                   <Table.Td>{r.qtyReceived ?? 0}</Table.Td>
+                  <Table.Td>
+                    <Stack gap={4}>
+                      <Text size="sm">{formatEta(r.etaDate)}</Text>
+                      {r.etaDateConfirmed && (
+                        <Badge color="blue" variant="light" size="sm">
+                          Confirmed
+                        </Badge>
+                      )}
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    {statusInfo ? (
+                      <Badge color={statusInfo.color} variant="light">
+                        {statusInfo.label}
+                      </Badge>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        —
+                      </Text>
+                    )}
+                  </Table.Td>
                   <Table.Td>{formatUSD(lp.cost)}</Table.Td>
                   <Table.Td>
                     <Group gap={6} wrap="nowrap" align="center">

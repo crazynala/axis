@@ -110,7 +110,7 @@ function computeInvoiceableUnits(costing: {
   assembly: {
     quantity?: any;
     c_qtyCut?: number | null;
-    c_qtyMake?: number | null;
+    c_qtyFinish?: number | null;
     c_qtyPack?: number | null;
     c_qtyKeep?: number | null;
     job?: {
@@ -123,11 +123,15 @@ function computeInvoiceableUnits(costing: {
   } | null;
 }) {
   const rules = costing.assembly?.job?.company;
+  const billUponRaw = (rules?.invoiceBillUpon as string | null) || "Ship";
   const billUpon =
-    (rules?.invoiceBillUpon as string | null) === "Make" ? "Make" : "Ship";
+    billUponRaw.toLowerCase() === "make" ||
+    billUponRaw.toLowerCase() === "finish"
+      ? "Finish"
+      : "Ship";
   const qtyOrdered = Number(costing.assembly?.quantity ?? 0) || 0;
   const qtyCut = Number((costing.assembly as any)?.c_qtyCut ?? 0) || 0;
-  const qtyMake = Number((costing.assembly as any)?.c_qtyMake ?? 0) || 0;
+  const qtyFinish = Number((costing.assembly as any)?.c_qtyFinish ?? 0) || 0;
   const qtyPack = Number((costing.assembly as any)?.c_qtyPack ?? 0) || 0;
   const qtyKeep = Number((costing.assembly as any)?.c_qtyKeep ?? 0) || 0;
   const status = ((costing.assembly as any)?.status || "").toString().toUpperCase();
@@ -138,8 +142,8 @@ function computeInvoiceableUnits(costing: {
 
   // FM-aligned logic
   const fullQty =
-    !flagShipped && billUpon === "Make"
-      ? Math.max(0, qtyMake - qtyKeep)
+    !flagShipped && billUpon === "Finish"
+      ? Math.max(0, qtyFinish - qtyKeep)
       : qtyPack;
 
   let invoiceable = fullQty;
@@ -168,7 +172,7 @@ function computeInvoiceableUnits(costing: {
       billUpon,
       qtyOrdered,
       qtyCut,
-      qtyMake,
+      qtyFinish,
       qtyPack,
       qtyKeep,
       pctCut: normalizePct(rules?.invoicePercentOnCut),
@@ -201,7 +205,7 @@ async function isCostingBillable(costing: {
       } | null;
     } | null;
     c_qtyCut?: number | null;
-    c_qtyMake?: number | null;
+    c_qtyFinish?: number | null;
     c_qtyPack?: number | null;
   } | null;
 }): Promise<boolean> {

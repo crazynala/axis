@@ -17,7 +17,7 @@ type AnalyticsData = {
   bucket: Bucket;
   // Time-series (single series)
   itemsCut: SeriesPoint[];
-  itemsMade: SeriesPoint[];
+  itemsFinished: SeriesPoint[];
   invoicedTotals: SeriesPoint[];
   // Inventory time series (stacked by location too)
   fabricInventoryTotal: SeriesPoint[];
@@ -127,12 +127,15 @@ async function getItemsCut(range: Range, bucket: Bucket): Promise<SeriesPoint[]>
   return points;
 }
 
-async function getItemsMade(range: Range, bucket: Bucket): Promise<SeriesPoint[]> {
+async function getItemsFinished(
+  range: Range,
+  bucket: Bucket
+): Promise<SeriesPoint[]> {
   const points: SeriesPoint[] = [];
   for (const b of iterateBuckets(range, bucket)) {
     const agg = await prisma.assemblyActivity.aggregate({
       where: {
-        stage: AssemblyStage.make,
+        stage: AssemblyStage.finish,
         activityDate: { gte: b.start, lte: b.end },
       },
       _sum: { quantity: true },
@@ -230,9 +233,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const range: Range = { start: start ? startOfDay(start) : defaultStart, end: end ? endOfDay(end) : defaultEnd };
   const bucket = chooseBucket(range);
 
-  const [itemsCut, itemsMade, invoicedTotals, fabric] = await Promise.all([
+  const [itemsCut, itemsFinished, invoicedTotals, fabric] = await Promise.all([
     getItemsCut(range, bucket),
-    getItemsMade(range, bucket),
+    getItemsFinished(range, bucket),
     getInvoicedTotals(range, bucket),
     getFabricInventory(range, bucket),
   ]);
@@ -241,7 +244,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     range,
     bucket,
     itemsCut,
-    itemsMade,
+    itemsFinished,
     invoicedTotals,
     fabricInventoryTotal: fabric.total,
     fabricInventoryByLocation: fabric.byLocation,
@@ -354,10 +357,10 @@ export default function AnalyticsRoute() {
           />
         </Paper>
         <Paper p="md" withBorder>
-          <Title order={4}>Items made</Title>
+          <Title order={4}>Items finished</Title>
           <AreaChart
             h={220}
-            data={data.itemsMade}
+            data={data.itemsFinished}
             dataKey="x"
             series={[{ name: "y", color: "teal.6" }]}
             curveType="linear"

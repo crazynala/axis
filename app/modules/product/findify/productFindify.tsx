@@ -10,15 +10,18 @@ export type ProductFindFormValues = {
   type: string | null;
   costPrice?: number | null;
   manualSalePrice?: number | null;
+  manualMargin?: number | null;
   purchaseTaxId?: number | null;
   categoryId?: number | null;
   customerId?: number | null;
   supplierId?: number | null;
+  costGroupId?: number | null;
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
   variantSetId?: number | null;
   whiteboard?: string | null;
   flagIsDisabled?: boolean;
+  leadTimeDays?: number | string | null;
   // tags
   tagNames?: string[];
   pricingGroupId?: number | null;
@@ -56,6 +59,10 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     batchTrackingEnabled: !!p.batchTrackingEnabled,
     whiteboard: p.whiteboard || "",
     flagIsDisabled: !!p.flagIsDisabled,
+    leadTimeDays:
+      p.leadTimeDays != null && !Number.isNaN(Number(p.leadTimeDays))
+        ? Number(p.leadTimeDays)
+        : null,
     tagNames: (p.productTags || [])
       .map((pt: any) => pt?.tag?.name)
       .filter(Boolean) as string[],
@@ -80,6 +87,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     batchTrackingEnabled: undefined,
     whiteboard: "",
     flagIsDisabled: false,
+    leadTimeDays: undefined,
     costPriceMin: undefined,
     costPriceMax: undefined,
     manualSalePriceMin: undefined,
@@ -126,6 +134,7 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     put("costGroupId", values.costGroupId);
     put("salePriceGroupId", values.salePriceGroupId);
     put("whiteboard", values.whiteboard);
+    put("leadTimeDays", values.leadTimeDays);
     fd.set(
       "flagIsDisabled",
       values.flagIsDisabled ? "true" : "false"

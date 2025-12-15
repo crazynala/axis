@@ -27,6 +27,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       manualSalePrice: true,
       stockTrackingEnabled: true,
       batchTrackingEnabled: true,
+      leadTimeDays: true,
       customer: { select: { stockLocationId: true } },
       costGroup: {
         select: {

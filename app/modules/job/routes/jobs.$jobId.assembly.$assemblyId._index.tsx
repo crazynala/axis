@@ -16,8 +16,8 @@ import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import {
   createCutActivity,
-  createMakeActivity,
-  ensureMakeInventoryArtifacts,
+  createFinishActivity,
+  ensureFinishInventoryArtifacts,
 } from "../../../utils/activity.server";
 import { createPackActivity } from "~/modules/job/services/boxPacking.server";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
@@ -35,6 +35,7 @@ import {
   ActivityKind,
   ActivityAction,
 } from "@prisma/client";
+import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -58,7 +59,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
           company: { select: { id: true, priceMultiplier: true } },
         },
       },
-      product: { select: { id: true, sku: true, name: true } },
+      product: {
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          leadTimeDays: true,
+          supplier: {
+            select: { id: true, name: true, defaultLeadTimeDays: true },
+          },
+        },
+      },
       variantSet: true,
       primaryCosting: {
         select: { id: true, product: { select: { name: true, sku: true } } },
@@ -70,10 +81,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
               id: true,
               sku: true,
               name: true,
+              leadTimeDays: true,
               stockTrackingEnabled: true,
               batchTrackingEnabled: true,
               salePriceGroup: { select: { id: true, saleRanges: true } },
               salePriceRanges: true,
+              supplier: {
+                select: { id: true, name: true, defaultLeadTimeDays: true },
+              },
             },
           },
           salePriceGroup: { select: { id: true, saleRanges: true } },
@@ -265,7 +280,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
   if (assemblyIds.length) {
     activities = await prisma.assemblyActivity.findMany({
       where: { assemblyId: { in: assemblyIds } },
-      include: { job: true },
+      include: {
+        job: true,
+        vendorCompany: { select: { id: true, name: true } },
+      },
       orderBy: [{ activityDate: "desc" }, { id: "desc" }],
     });
   }
@@ -274,20 +292,28 @@ export async function loader({ params }: LoaderFunctionArgs) {
     let kind = (act?.kind as string | null) ?? null;
     let disp =
       (act?.defectDisposition as string | null) ?? (DefectDisposition.none as any);
+    if (stage) stage = stage.toString().toLowerCase();
     if (!stage) {
       const name = String(act?.name || "").toLowerCase();
       if (name.includes("cut")) stage = "cut";
-      else if (name.includes("make")) stage = "make";
+      else if (name.includes("sew")) stage = "sew";
+      else if (name.includes("finish") || name.includes("make")) stage = "finish";
       else if (name.includes("pack")) stage = "pack";
       else if (name.includes("qc")) stage = "qc";
       else stage = "other";
     }
+    if (stage === "make") stage = "finish";
+    if (stage === "trim") stage = "sew";
+    if (stage === "embroidery") stage = "finish";
+    if (kind) kind = kind.toString().toLowerCase();
     if (!kind) {
       kind = ActivityKind.normal;
     }
     const action =
       act?.action ||
-      (stage && ["cut", "make", "pack"].includes(stage) ? ActivityAction.RECORDED : null);
+      (stage && ["cut", "sew", "finish", "pack"].includes(stage)
+        ? ActivityAction.RECORDED
+        : null);
     return { ...act, stage, kind, defectDisposition: disp, action };
   };
   activities = (activities || []).map(normalizeActivity);
@@ -430,12 +456,12 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
   const computeStageStats = (
     acts: any[] | undefined,
-    stage: "cut" | "make" | "pack",
+    stage: "cut" | "sew" | "finish" | "pack",
     fallbackArr: number[],
     fallbackTotal: number
   ) => {
-    if (stage === "make") {
-      console.log("[factory debug] computeStageStats make: incoming", {
+    if (stage === "finish") {
+      console.log("[factory debug] computeStageStats finish: incoming", {
         stageActsCount: (acts || []).filter((a) => a?.stage === stage).length,
         fallbackArr,
         fallbackTotal,
@@ -447,6 +473,16 @@ export async function loader({ params }: LoaderFunctionArgs) {
     let defectTotal = 0;
     const stageActs = (acts || []).filter((a) => a?.stage === stage);
     if (!stageActs.length) {
+      if ((acts || []).length) {
+        const sampleAssemblyId = (acts?.[0] as any)?.assemblyId ?? null;
+        console.log("[factory debug] missing stage acts", {
+          stage,
+          availableStages: Array.from(
+            new Set((acts || []).map((a) => String(a?.stage || "")))
+          ),
+          assemblyId: sampleAssemblyId,
+        });
+      }
       return {
         goodArr: fallbackArr,
         defectArr: [],
@@ -458,8 +494,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
         attemptsTotal: fallbackTotal,
       };
     }
-    if (stage === "make") {
-      console.log("[factory debug] computeStageStats make", {
+    if (stage === "finish") {
+      console.log("[factory debug] computeStageStats finish", {
         stageActs: stageActs.map((a) => ({
           id: a.id,
           qty: a.quantity,
@@ -533,7 +569,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }
     const acts = activitiesByAssembly.get(a.id) || [];
     const fallbackCutArr = ((a as any).c_qtyCut_Breakdown || []) as number[];
-    const fallbackMakeArr = ((a as any).c_qtyMake_Breakdown || []) as number[];
+    const fallbackSewArr = ((a as any).c_qtySew_Breakdown || []) as number[];
+    const fallbackFinishArr = ((a as any).c_qtyFinish_Breakdown ||
+      []) as number[];
     const fallbackPackArr = ((a as any).c_qtyPack_Breakdown || []) as number[];
     const cutStats = computeStageStats(
       acts,
@@ -541,11 +579,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
       fallbackCutArr,
       Number((a as any).c_qtyCut || 0) || 0
     );
-    const makeStats = computeStageStats(
+    const sewStats = computeStageStats(
       acts,
-      "make",
-      fallbackMakeArr,
-      Number((a as any).c_qtyMake || 0) || 0
+      "sew",
+      fallbackSewArr,
+      Number((a as any).c_qtySew || 0) || 0
+    );
+    const finishStats = computeStageStats(
+      acts,
+      "finish",
+      fallbackFinishArr,
+      Number((a as any).c_qtyFinish || 0) || 0
     );
     const packStats = computeStageStats(
       acts,
@@ -555,31 +599,60 @@ export async function loader({ params }: LoaderFunctionArgs) {
     );
     // Pipeline usable counts: downstream stages cap upstream usable units
     const usableCutArr = cutStats.usableArr;
-    const usableMakeArr = minArrays(makeStats.usableArr, usableCutArr);
+    const hasSewData =
+      (sewStats?.attemptsTotal || 0) > 0 ||
+      (fallbackSewArr || []).some((n) => Number(n) > 0);
+    const hasFinishData =
+      (finishStats?.attemptsTotal || 0) > 0 ||
+      (fallbackFinishArr || []).some((n) => Number(n) > 0);
+    const sewArrRaw = sewStats.usableArr;
+    const finishArrRaw = finishStats.usableArr;
+    const usableSewArr = hasSewData
+      ? minArrays(sewArrRaw, usableCutArr)
+      : sewArrRaw;
+    const sewLimitBase = hasSewData ? usableSewArr : usableCutArr;
+    const usableFinishArr = hasFinishData
+      ? minArrays(finishArrRaw, sewLimitBase)
+      : finishArrRaw;
     const hasPackData =
       (packStats?.attemptsTotal || 0) > 0 ||
       (Array.isArray(fallbackPackArr) &&
         fallbackPackArr.some((n) => Number(n) || 0));
     const usablePackArr = hasPackData
-      ? minArrays(packStats.usableArr, usableMakeArr)
-      : usableMakeArr;
+      ? minArrays(packStats.usableArr, usableFinishArr)
+      : usableFinishArr;
     const usableCutTotal = cutStats.usableTotal;
-    const usableMakeTotal = Math.min(makeStats.usableTotal, usableCutTotal);
+    const usableSewTotal = hasSewData
+      ? Math.min(sewStats.usableTotal, usableCutTotal)
+      : sewStats.usableTotal;
+    const usableFinishTotal = hasSewData
+      ? Math.min(finishStats.usableTotal, usableSewTotal)
+      : Math.min(finishStats.usableTotal, usableCutTotal);
     const usablePackTotal = hasPackData
-      ? Math.min(packStats.usableTotal, usableMakeTotal)
-      : usableMakeTotal;
+      ? Math.min(packStats.usableTotal, usableFinishTotal)
+      : usableFinishTotal;
     // Display values are capped by downstream throughput to reflect "usable for assembly"
-    const displayCutArr = minArrays(usableCutArr, usableMakeArr);
-    const displayMakeArr = hasPackData
-      ? minArrays(usableMakeArr, usablePackArr)
-      : usableMakeArr;
+    const displayCutArr = hasSewData
+      ? minArrays(usableCutArr, usableSewArr)
+      : usableCutArr;
+    const displaySewArr = hasFinishData
+      ? minArrays(usableSewArr, usableFinishArr)
+      : usableSewArr;
+    const displayFinishArr = hasPackData
+      ? minArrays(usableFinishArr, usablePackArr)
+      : usableFinishArr;
     const displayPackArr = hasPackData
       ? usablePackArr
-      : Array.from({ length: usableMakeArr.length }, () => 0);
-    const displayCutTotal = Math.min(usableCutTotal, usableMakeTotal);
-    const displayMakeTotal = hasPackData
-      ? Math.min(usableMakeTotal, usablePackTotal)
-      : usableMakeTotal;
+      : Array.from({ length: usableFinishArr.length }, () => 0);
+    const displayCutTotal = hasSewData
+      ? Math.min(usableCutTotal, usableSewTotal)
+      : usableCutTotal;
+    const displaySewTotal = hasFinishData
+      ? Math.min(usableSewTotal, usableFinishTotal)
+      : usableSewTotal;
+    const displayFinishTotal = hasPackData
+      ? Math.min(usableFinishTotal, usablePackTotal)
+      : usableFinishTotal;
     const displayPackTotal = hasPackData ? usablePackTotal : 0;
     return {
       assemblyId: a.id,
@@ -591,28 +664,43 @@ export async function loader({ params }: LoaderFunctionArgs) {
       },
       ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
       cut: displayCutArr,
-      make: displayMakeArr,
+      sew: displaySewArr,
+      finish: displayFinishArr,
       pack: displayPackArr,
       totals: {
         cut: displayCutTotal,
-        make: displayMakeTotal,
+        sew: displaySewTotal,
+        finish: displayFinishTotal,
         pack: displayPackTotal,
       },
       stageStats: {
         cut: cutStats,
-        make: makeStats,
+        sew: sewStats,
+        finish: finishStats,
         pack: packStats,
       },
     };
+  });
+
+  const quantityByAssembly = new Map<number, { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }>();
+  for (const item of quantityItems) {
+    if (!item?.assemblyId) continue;
+    quantityByAssembly.set(item.assemblyId, { totals: item.totals });
+  }
+
+  const externalStepsByAssembly = buildExternalStepsByAssembly({
+    assemblies: assemblies as any,
+    activitiesByAssembly,
+    quantityByAssembly,
   });
 
   console.log(
     "[factory debug] make stage summary",
     quantityItems.map((q) => ({
       assemblyId: q.assemblyId,
-      make: q.make,
+      finish: q.finish,
       totals: q.totals,
-      stageStats: q.stageStats?.make,
+      stageStats: q.stageStats?.finish,
     }))
   );
 
@@ -624,7 +712,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
         items: quantityItems.map((q) => ({
           assemblyId: q.assemblyId,
           cut: q.cut,
-          make: q.make,
+          sew: q.sew,
+          finish: q.finish,
           pack: q.pack,
           totals: q.totals,
         })),
@@ -655,6 +744,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     assemblyTypes,
     defectReasons,
     primaryCostingIdByAssembly,
+    externalStepsByAssembly,
   });
 }
 
@@ -693,15 +783,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const acts = await prisma.assemblyActivity.findMany({
       where: {
         assemblyId: opts.assemblyId,
-        stage: { in: [AssemblyStage.cut, AssemblyStage.make, AssemblyStage.pack] },
+        stage: {
+          in: [
+            AssemblyStage.cut,
+            AssemblyStage.sew,
+            AssemblyStage.finish,
+            AssemblyStage.pack,
+          ],
+        },
       },
-      select: { id: true, stage: true, kind: true, qtyBreakdown: true, quantity: true },
+      select: {
+        id: true,
+        stage: true,
+        kind: true,
+        qtyBreakdown: true,
+        quantity: true,
+      },
     });
     const cutArr: number[] = [];
-    const makeArr: number[] = [];
+    const sewArr: number[] = [];
+    const finishArr: number[] = [];
     const packArr: number[] = [];
     const cutDefArr: number[] = [];
-    const makeDefArr: number[] = [];
+    const sewDefArr: number[] = [];
+    const finishDefArr: number[] = [];
     const apply = (target: number[], act: any, sign = 1) => {
       const arr = normalizeBreakdown(
         Array.isArray(act?.qtyBreakdown) ? (act.qtyBreakdown as number[]) : [],
@@ -715,25 +820,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
         if (act.kind === "defect") apply(cutDefArr, act, 1);
         else apply(cutArr, act, 1);
       }
-      if (act.stage === AssemblyStage.make) {
-        if (act.kind === "defect") apply(makeDefArr, act, 1);
-        else apply(makeArr, act, 1);
+      if (act.stage === AssemblyStage.sew) {
+        if (act.kind === "defect") apply(sewDefArr, act, 1);
+        else apply(sewArr, act, 1);
+      }
+      if (act.stage === AssemblyStage.finish) {
+        if (act.kind === "defect") apply(finishDefArr, act, 1);
+        else apply(finishArr, act, 1);
       }
       if (act.stage === AssemblyStage.pack) {
         apply(packArr, act, 1);
       }
     });
     const availableCut: number[] = [];
-    const availableMake: number[] = [];
-    const len = Math.max(cutArr.length, cutDefArr.length, makeArr.length, makeDefArr.length, packArr.length, opts.breakdown.length);
+    const availableSew: number[] = [];
+    const availableFinish: number[] = [];
+    const len = Math.max(
+      cutArr.length,
+      cutDefArr.length,
+      sewArr.length,
+      sewDefArr.length,
+      finishArr.length,
+      finishDefArr.length,
+      packArr.length,
+      opts.breakdown.length
+    );
     for (let i = 0; i < len; i++) {
       const cut = Number(cutArr[i] ?? 0) || 0;
       const cutDef = Number(cutDefArr[i] ?? 0) || 0;
-      const make = Number(makeArr[i] ?? 0) || 0;
-      const makeDef = Number(makeDefArr[i] ?? 0) || 0;
+      const sew = Number(sewArr[i] ?? 0) || 0;
+      const sewDef = Number(sewDefArr[i] ?? 0) || 0;
+      const finish = Number(finishArr[i] ?? 0) || 0;
+      const finishDef = Number(finishDefArr[i] ?? 0) || 0;
       const pack = Number(packArr[i] ?? 0) || 0;
-      availableCut[i] = cut - cutDef - make;
-      availableMake[i] = make - makeDef - pack;
+      availableCut[i] = cut - cutDef - sew;
+      availableSew[i] = sew - sewDef - finish;
+      availableFinish[i] = finish - finishDef - pack;
     }
     const errs: string[] = [];
     if (opts.stage === AssemblyStage.cut) {
@@ -743,10 +865,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       });
     }
-    if (opts.stage === AssemblyStage.make) {
+    if (opts.stage === AssemblyStage.sew) {
       opts.breakdown.forEach((val, idx) => {
-        if (val > Math.max(0, availableMake[idx] ?? 0)) {
-          errs.push(`Make defect at variant ${idx + 1} exceeds available make (${Math.max(0, availableMake[idx] ?? 0)})`);
+        if (val > Math.max(0, availableSew[idx] ?? 0)) {
+          errs.push(`Sew defect at variant ${idx + 1} exceeds available sew (${Math.max(0, availableSew[idx] ?? 0)})`);
+        }
+      });
+    }
+    if (opts.stage === AssemblyStage.finish) {
+      opts.breakdown.forEach((val, idx) => {
+        if (val > Math.max(0, availableFinish[idx] ?? 0)) {
+          errs.push(
+            `Finish defect at variant ${idx + 1} exceeds available finish (${Math.max(0, availableFinish[idx] ?? 0)})`
+          );
         }
       });
     }
@@ -876,7 +1007,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
-  if (intent === "group.activity.create.make") {
+  if (intent === "group.activity.create.finish") {
     const idsRaw = String(form.get("assemblyIds") || "");
     const ids = idsRaw
       .split(",")
@@ -911,7 +1042,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     } catch {
       // ignore malformed payloads; fallback to empty breakdowns
     }
-    console.log("[assembly.activity] group.create.make", {
+    console.log("[assembly.activity] group.create.finish", {
       jobId,
       assemblyIds: targetAssemblyIds,
       activityDate: activityDate.toISOString(),
@@ -922,7 +1053,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     for (let index = 0; index < targetAssemblyIds.length; index++) {
       const targetId = targetAssemblyIds[index];
       const qtyBreakdown = qtyByAssembly.get(targetId) || [];
-      await createMakeActivity({
+      await createFinishActivity({
         assemblyId: targetId,
         jobId,
         activityDate,
@@ -1268,7 +1399,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
   }
-  if (intent === "activity.create.make") {
+  if (intent === "activity.create.finish") {
     const qtyArrStr = String(form.get("qtyBreakdown") || "[]");
     const activityDateStr = String(form.get("activityDate") || "");
     let qtyArr: number[] = [];
@@ -1282,13 +1413,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const activityDate = activityDateStr
       ? new Date(activityDateStr)
       : new Date();
-    console.log("[assembly.activity] create.make", {
+    console.log("[assembly.activity] create.finish", {
       jobId,
       assemblyId,
       activityDate: activityDate.toISOString(),
       qtyBreakdownLen: qtyArr.length,
     });
-    await createMakeActivity({
+    await createFinishActivity({
       assemblyId,
       jobId,
       activityDate,
@@ -1535,7 +1666,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           }
         }
       } else if (normalizedType.includes("make")) {
-        await ensureMakeInventoryArtifacts(tx, {
+        await ensureFinishInventoryArtifacts(tx, {
           activityId: activityId,
           assemblyId: targetAssemblyId,
           jobId: targetJobId,
@@ -1566,8 +1697,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
       case "cut":
         stageEnum = AssemblyStage.cut;
         break;
+      case "sew":
+        stageEnum = AssemblyStage.sew;
+        break;
+      case "finish":
       case "make":
-        stageEnum = AssemblyStage.make;
+        stageEnum = AssemblyStage.finish;
         break;
       case "pack":
         stageEnum = AssemblyStage.pack;
@@ -1792,6 +1927,7 @@ export default function JobAssemblyRoute() {
           renderStatusBar={renderGroupStatusBar}
           packContext={data.packContext as any}
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
+          externalStepsByAssembly={data.externalStepsByAssembly as any}
         />
       </Stack>
     );
@@ -1864,6 +2000,7 @@ export default function JobAssemblyRoute() {
         renderStatusBar={renderSingleStatusBar}
         packContext={data.packContext as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
+        externalStepsByAssembly={data.externalStepsByAssembly as any}
       />
     </Stack>
   );

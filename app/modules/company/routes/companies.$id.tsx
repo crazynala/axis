@@ -93,6 +93,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         String(form.get("invoicePercentOnOrder")).trim() !== ""
           ? Number(form.get("invoicePercentOnOrder"))
           : null,
+      defaultLeadTimeDays:
+        form.get("defaultLeadTimeDays") != null &&
+        String(form.get("defaultLeadTimeDays")).trim() !== ""
+          ? Number(form.get("defaultLeadTimeDays"))
+          : null,
     } as any;
     // Stock location: empty string clears to null
     if (form.has("stockLocationId")) {
@@ -173,6 +178,7 @@ export function CompanyDetailView() {
     invoiceBillUpon?: string | null;
     invoicePercentOnCut?: number | string | null;
     invoicePercentOnOrder?: number | string | null;
+    defaultLeadTimeDays?: number | string | null;
   }>({
     defaultValues: {
       id: company.id,
@@ -200,6 +206,10 @@ export function CompanyDetailView() {
       invoicePercentOnOrder:
         (company as any).invoicePercentOnOrder != null
           ? Number((company as any).invoicePercentOnOrder)
+          : null,
+      defaultLeadTimeDays:
+        (company as any).defaultLeadTimeDays != null
+          ? Number((company as any).defaultLeadTimeDays)
           : null,
     },
   });
@@ -235,6 +245,10 @@ export function CompanyDetailView() {
         (company as any).invoicePercentOnOrder != null
           ? Number((company as any).invoicePercentOnOrder)
           : null,
+      defaultLeadTimeDays:
+        (company as any).defaultLeadTimeDays != null
+          ? Number((company as any).defaultLeadTimeDays)
+          : null,
     };
 
     form.reset(next, { keepDirty: false });
@@ -255,6 +269,7 @@ export function CompanyDetailView() {
     invoiceBillUpon?: string | null;
     invoicePercentOnCut?: number | string | null;
     invoicePercentOnOrder?: number | string | null;
+    defaultLeadTimeDays?: number | string | null;
   };
   const save = (values: FormValues) => {
     const fd = new FormData();
@@ -293,6 +308,15 @@ export function CompanyDetailView() {
       String(values.invoicePercentOnOrder) !== ""
     )
       fd.set("invoicePercentOnOrder", String(values.invoicePercentOnOrder));
+    if (
+      Object.prototype.hasOwnProperty.call(values, "defaultLeadTimeDays")
+    ) {
+      const raw: any = (values as any).defaultLeadTimeDays;
+      fd.set(
+        "defaultLeadTimeDays",
+        raw === undefined || raw === null || raw === "" ? "" : String(raw)
+      );
+    }
     submit(fd, { method: "post" });
   };
 

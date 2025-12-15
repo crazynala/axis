@@ -35,6 +35,21 @@ import {
 import { formatUSD } from "~/utils/format";
 import { JumpLink } from "~/components/JumpLink";
 
+const ACTIVITY_USAGE_OPTIONS = [
+  { value: "cut", label: "Cut" },
+  { value: "sew", label: "Sew" },
+  { value: "finish", label: "Finish" },
+];
+
+const normalizeActivityUsage = (value?: string | null) => {
+  const v = (value || "").toLowerCase();
+  if (v === "make") return "finish";
+  if (v === "finish") return "finish";
+  if (v === "sew") return "sew";
+  if (v === "cut") return "cut";
+  return "";
+};
+
 export type CostingRow = {
   id: number;
   productId: number | null;
@@ -44,7 +59,7 @@ export type CostingRow = {
   isSingle?: boolean;
   sku?: string | null;
   name?: string | null;
-  /** Per-activity usage type: "cut" or "make" */
+  /** Per-activity usage type: "cut", "sew", or "finish" */
   activityUsed?: string | null;
   quantityPerUnit?: number | null;
   unitCost?: number | null;
@@ -276,10 +291,8 @@ export function AssemblyCostingsTable(props: {
           >
             {showActivityInput ? (
               <NativeSelect
-                data={[
-                  { value: "cut", label: "Cut" },
-                  { value: "make", label: "Make" },
-                ]}
+                data={ACTIVITY_USAGE_OPTIONS}
+                defaultValue={normalizeActivityUsage(c.activityUsed) || undefined}
                 variant="unstyled"
                 {...register!(fieldNameForActivityUsed!(c))}
                 rightSectionWidth={0}
@@ -292,11 +305,11 @@ export function AssemblyCostingsTable(props: {
               />
             ) : (
               <Text style={disabledStyle(c)}>
-                {c.activityUsed === "cut"
-                  ? "Cut"
-                  : c.activityUsed === "make"
-                  ? "Make"
-                  : ""}
+                {
+                  ACTIVITY_USAGE_OPTIONS.find(
+                    (opt) => opt.value === normalizeActivityUsage(c.activityUsed)
+                  )?.label
+                }
               </Text>
             )}
           </Table.Td>
@@ -605,10 +618,8 @@ export function AssemblyCostingsTable(props: {
         if (activityEditable(c)) {
           return (
             <NativeSelect
-              data={[
-                { value: "cut", label: "Cut" },
-                { value: "make", label: "Make" },
-              ]}
+              data={ACTIVITY_USAGE_OPTIONS}
+              defaultValue={normalizeActivityUsage(c.activityUsed) || undefined}
               variant="unstyled"
               {...register!(fieldNameForActivityUsed!(c))}
               rightSectionWidth={0}
@@ -624,11 +635,11 @@ export function AssemblyCostingsTable(props: {
         if (isChildRow(c)) return "";
         return (
           <span style={disabledStyle(c)}>
-            {c.activityUsed === "cut"
-              ? "Cut"
-              : c.activityUsed === "make"
-              ? "Make"
-              : ""}
+            {
+              ACTIVITY_USAGE_OPTIONS.find(
+                (opt) => opt.value === normalizeActivityUsage(c.activityUsed)
+              )?.label
+            }
           </span>
         );
       },

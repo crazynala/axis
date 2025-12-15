@@ -161,7 +161,7 @@ export async function createCutActivity(options: {
   return result;
 }
 
-type MakeInventoryParams = {
+type FinishInventoryParams = {
   activityId: number;
   assemblyId: number;
   jobId: number;
@@ -170,9 +170,9 @@ type MakeInventoryParams = {
   groupKey?: string | null;
 };
 
-export async function ensureMakeInventoryArtifacts(
+export async function ensureFinishInventoryArtifacts(
   tx: Prisma.TransactionClient,
-  params: MakeInventoryParams
+  params: FinishInventoryParams
 ) {
   const {
     activityId,
@@ -182,11 +182,11 @@ export async function ensureMakeInventoryArtifacts(
     activityDate,
     groupKey,
   } = params;
-  const totalMake = (qtyBreakdown || []).reduce(
+  const totalFinish = (qtyBreakdown || []).reduce(
     (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
     0
   );
-  if (totalMake <= 0) return;
+  if (totalFinish <= 0) return;
 
   const [assembly, job] = await Promise.all([
     tx.assembly.findUnique({
@@ -205,7 +205,7 @@ export async function ensureMakeInventoryArtifacts(
   ]);
   if (!assembly || !assembly.productId || !job) {
     console.warn(
-      "[activity.make] Missing assembly/job/product context; skipping inventory movement",
+      "[activity.finish] Missing assembly/job/product context; skipping inventory movement",
       { activityId, assemblyId, jobId }
     );
     return;
@@ -237,7 +237,7 @@ export async function ensureMakeInventoryArtifacts(
         locationId: job.stockLocationId ?? undefined,
         name: batchName,
         receivedAt: activityDate,
-        source: "Assembly Make",
+        source: "Assembly Finish",
       },
     });
   } else {
@@ -260,8 +260,8 @@ export async function ensureMakeInventoryArtifacts(
       assemblyActivityId: activityId,
       productId: assembly.productId,
       locationInId: job.stockLocationId ?? undefined,
-      quantity: totalMake,
-      notes: "Assembly make output",
+      quantity: totalFinish,
+      notes: "Assembly finish output",
       groupKey: groupKey ?? null,
     },
   });
@@ -272,13 +272,13 @@ export async function ensureMakeInventoryArtifacts(
       productMovementId: movement.id,
       productId: assembly.productId,
       batchId: batch.id,
-      quantity: Math.abs(totalMake),
-      notes: "Assembly make output",
+      quantity: Math.abs(totalFinish),
+      notes: "Assembly finish output",
     },
   });
 }
 
-export async function createMakeActivity(options: {
+export async function createFinishActivity(options: {
   assemblyId: number;
   jobId: number;
   activityDate: Date;
@@ -296,33 +296,33 @@ export async function createMakeActivity(options: {
     groupKey,
     refreshStockSnapshot = true,
   } = options;
-  const totalMake = (qtyBreakdown || []).reduce(
+  const totalFinish = (qtyBreakdown || []).reduce(
     (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
     0
   );
-  console.log("[activity] createMakeActivity begin", {
+  console.log("[activity] createFinishActivity begin", {
     assemblyId,
     jobId,
     activityDate: activityDate?.toISOString?.() || activityDate,
-    totalMake,
+    totalMake: totalFinish,
   });
   const activity = await prisma.$transaction(async (tx) => {
     const created = await tx.assemblyActivity.create({
       data: {
         assemblyId,
         jobId,
-        name: "Make",
-        stage: AssemblyStage.make,
+        name: "Finish",
+        stage: AssemblyStage.finish,
         kind: ActivityKind.normal,
         action: ActivityAction.RECORDED,
         activityDate,
         qtyBreakdown: qtyBreakdown as any,
-        quantity: totalMake,
+        quantity: totalFinish,
         notes: notes ?? null,
         groupKey: groupKey ?? null,
       },
     });
-    await ensureMakeInventoryArtifacts(tx, {
+    await ensureFinishInventoryArtifacts(tx, {
       activityId: created.id,
       assemblyId,
       jobId,

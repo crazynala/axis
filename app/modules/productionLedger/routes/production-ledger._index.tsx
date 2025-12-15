@@ -27,7 +27,8 @@ type Row = {
   primaryCostingName: string | null;
   ordered: number;
   cut: number;
-  make: number;
+  sew: number;
+  finish: number;
   pack: number;
 };
 
@@ -109,7 +110,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         null,
       ordered,
       cut: Number(sums.cut ?? 0),
-      make: Number(sums.make ?? 0),
+      sew: Number(sums.sew ?? 0),
+      finish: Number(sums.finish ?? 0),
       pack: Number(sums.pack ?? 0),
     };
   });
@@ -165,7 +167,13 @@ export default function ProductionLedgerIndexRoute() {
         render: (r: any) => r.ordered ?? 0,
       },
       { accessor: "cut", title: "Cut", width: 90, render: (r: any) => r.cut ?? 0 },
-      { accessor: "make", title: "Made", width: 90, render: (r: any) => r.make ?? 0 },
+      { accessor: "sew", title: "Sew", width: 90, render: (r: any) => r.sew ?? 0 },
+      {
+        accessor: "finish",
+        title: "Finish",
+        width: 90,
+        render: (r: any) => r.finish ?? 0,
+      },
       { accessor: "pack", title: "Packed", width: 90, render: (r: any) => r.pack ?? 0 },
     ],
     []

@@ -20,9 +20,10 @@ type SingleQuantities = {
   label: string;
   ordered: number[];
   cut: number[];
-  make: number[];
+  sew: number[];
+  finish: number[];
   pack: number[];
-  totals: { cut: number; make: number; pack: number };
+  totals: { cut: number; sew: number; finish: number; pack: number };
 };
 
 export function AssemblyQuantitiesCard({
@@ -52,8 +53,8 @@ export function AssemblyQuantitiesCard({
   hideInlineActions?: boolean;
   actionColumn?: {
     onRecordCut?: () => void;
-    onRecordMake?: () => void;
-    recordMakeDisabled?: boolean;
+    onRecordFinish?: () => void;
+    recordFinishDisabled?: boolean;
     onRecordPack?: () => void;
     recordPackDisabled?: boolean;
   };
@@ -63,7 +64,7 @@ export function AssemblyQuantitiesCard({
   const hasActionColumn = Boolean(
     actionColumn &&
       (actionColumn.onRecordCut ||
-        actionColumn.onRecordMake ||
+        actionColumn.onRecordFinish ||
         actionColumn.onRecordPack)
   );
   const rawLabels = variants.labels;
@@ -83,9 +84,10 @@ export function AssemblyQuantitiesCard({
   const dataMaxLen = (items || []).reduce((m, it) => {
     const l0 = Array.isArray(it?.ordered) ? it.ordered.length : 0;
     const l1 = Array.isArray(it?.cut) ? it.cut.length : 0;
-    const l2 = Array.isArray(it?.make) ? it.make.length : 0;
-    const l3 = Array.isArray(it?.pack) ? it.pack.length : 0;
-    return Math.max(m, l0, l1, l2, l3);
+    const l2 = Array.isArray(it?.sew) ? it.sew.length : 0;
+    const l3 = Array.isArray(it?.finish) ? it.finish.length : 0;
+    const l4 = Array.isArray(it?.pack) ? it.pack.length : 0;
+    return Math.max(m, l0, l1, l2, l3, l4);
   }, 0);
   // Prefer explicit numVariants when provided; else use labels length or data length fallback
   const baseLen =
@@ -252,30 +254,47 @@ export function AssemblyQuantitiesCard({
                   )}
                 </Table.Tr>
                 <Table.Tr>
-                  <Table.Td>Make</Table.Td>
+                  <Table.Td>Sew</Table.Td>
                   {cols.map((_l, i) => (
-                    <Table.Td key={`make-${idx}-${i}`} align="center">
-                      {fmt(it.make[i])}
+                    <Table.Td key={`sew-${idx}-${i}`} align="center">
+                      {fmt(it.sew[i])}
                     </Table.Td>
                   ))}
                   <Table.Td
                     align="center"
                     style={{ verticalAlign: "baseline" }}
                   >
-                    {fmt(it.totals.make)}
+                    {fmt(it.totals.sew)}
+                  </Table.Td>
+                  {hasActionColumn && (
+                    <Table.Td align="center" style={{ verticalAlign: "middle" }} />
+                  )}
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td>Finish</Table.Td>
+                  {cols.map((_l, i) => (
+                    <Table.Td key={`finish-${idx}-${i}`} align="center">
+                      {fmt(it.finish[i])}
+                    </Table.Td>
+                  ))}
+                  <Table.Td
+                    align="center"
+                    style={{ verticalAlign: "baseline" }}
+                  >
+                    {fmt(it.totals.finish)}
                   </Table.Td>
                   {hasActionColumn && (
                     <Table.Td
                       align="center"
                       style={{ verticalAlign: "middle" }}
                     >
-                      {idx === 0 && actionColumn.onRecordMake ? (
-                        <Tooltip label="Record Make" withArrow>
+                      {idx === 0 && actionColumn.onRecordFinish ? (
+                        <Tooltip label="Record Finish" withArrow>
                           <ActionIcon
                             variant="subtle"
-                            aria-label="Record make"
-                            onClick={actionColumn.onRecordMake}
-                            disabled={actionColumn.recordMakeDisabled}
+                            aria-label="Record finish"
+                            onClick={actionColumn.onRecordFinish}
+                            disabled={actionColumn.recordFinishDisabled}
                           >
                             <IconSettings size={16} />
                           </ActionIcon>
