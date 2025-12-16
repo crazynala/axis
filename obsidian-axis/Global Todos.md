@@ -4,3 +4,5 @@
 - [ ] Tracking user actions (create, update)
 
 - [ ] Reconsider my forcing of externalStep to be persisted, since it's actually derived?
+
+- [ ] Client cache needs to be refreshed, eg after setting consignee on a company

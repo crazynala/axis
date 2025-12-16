@@ -31,6 +31,7 @@ import {
   IconTrash,
   IconCircleCheck,
   IconCircleOff,
+  IconRefresh,
 } from "@tabler/icons-react";
 import { formatUSD } from "~/utils/format";
 import { JumpLink } from "~/components/JumpLink";
@@ -107,7 +108,7 @@ export function AssemblyCostingsTable(props: {
   /** Handler for costing actions (enable/disable/delete) */
   onCostingAction?: (
     costingId: number,
-    action: "enable" | "disable" | "delete"
+    action: "enable" | "disable" | "delete" | "refresh"
   ) => void;
   /** Map of assemblyId -> primaryCostingId */
   primaryCostingIdByAssembly?: Record<number, number | null>;
@@ -197,6 +198,8 @@ export function AssemblyCostingsTable(props: {
 
   const renderActionsMenu = (row: CostingRow) => {
     if (!onCostingAction) return null;
+    const canRefresh =
+      row.flagDefinedInProduct && row.productId != null && Number.isFinite(row.productId as any);
     return (
       <Menu withinPortal position="bottom-end" shadow="sm">
         <Menu.Target>
@@ -205,6 +208,14 @@ export function AssemblyCostingsTable(props: {
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
+          {canRefresh ? (
+            <Menu.Item
+              leftSection={<IconRefresh size={14} />}
+              onClick={() => onCostingAction(row.id, "refresh")}
+            >
+              Refresh Product
+            </Menu.Item>
+          ) : null}
           {row.flagIsDisabled ? (
             <Menu.Item
               leftSection={<IconCircleCheck size={14} />}

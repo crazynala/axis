@@ -29,7 +29,7 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
     }
     const companyId = asNum(pick(r, ["a_CompanyID"])) as number | null;
     const locationId = asNum(pick(r, ["a_LocationID|In"])) as number | null;
-    const status = (pick(r, ["JobType"]) ?? "").toString().trim() || null;
+    const jobType = (pick(r, ["JobType"]) ?? "").toString().trim() || null;
     const endCustomerName =
       (pick(r, ["EndCustomerName"]) ?? "").toString().trim() || null;
     const customerOrderDate = asDate(
@@ -50,7 +50,7 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
       projectCode: projectCode || null,
       name: name || null,
       endCustomerName,
-      status,
+      jobType,
       customerOrderDate,
       cutSubmissionDate,
       dropDeadDate,

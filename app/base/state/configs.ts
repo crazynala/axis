@@ -227,7 +227,7 @@ export const assemblyStateConfig: StateConfig = {
       "CANCELED",
     ],
     PARTIAL_CUT: ["FULLY_CUT", "ON_HOLD", "COMPLETE", "CANCELED"],
-    FULLY_CUT: ["COMPLETE", "ON_HOLD", "CANCELED"],
+    FULLY_CUT: ["PARTIAL_CUT", "COMPLETE", "ON_HOLD", "CANCELED"],
     COMPLETE: [],
     CANCELED: [],
   },

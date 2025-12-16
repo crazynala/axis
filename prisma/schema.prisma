@@ -141,6 +141,8 @@ model Product {
   productMovements      ProductMovementLine[]
   productTags           ProductTag[]
   purchaseOrderLines    PurchaseOrderLine[]
+  materialDemands       MaterialDemand[]
+  supplyReservations    SupplyReservation[]
   salePriceRanges       SalePriceRange[]
   shipmentLines         ShipmentLine[]
 }
@@ -310,6 +312,8 @@ model Assembly {
   batches             Batch[]
   boxLines            BoxLine[]
   costings            Costing[]
+  materialDemands     MaterialDemand[]
+  supplyReservations  SupplyReservation[]
   purchaseOrderLines  PurchaseOrderLine[]
   shipmentLines       ShipmentLine[]
 }
@@ -345,6 +349,47 @@ model Costing {
   salePriceGroup          SalePriceGroup?   @relation("Costing_SalePriceGroup", fields: [salePriceGroupId], references: [id])
   costingTags             CostingTag[]
   invoiceLines            InvoiceLine[]
+  materialDemands         MaterialDemand[]
+}
+
+model MaterialDemand {
+  id             Int                    @id @default(autoincrement())
+  assemblyId     Int
+  productId      Int
+  costingId      Int?
+  qtyRequired    Decimal?               @db.Decimal(14, 4)
+  uom            String?
+  source         MaterialDemandSource?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  assembly       Assembly               @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+  product        Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  costing        Costing?               @relation(fields: [costingId], references: [id])
+
+  @@index([assemblyId])
+  @@index([productId])
+  @@unique([assemblyId, productId, costingId])
+}
+
+model SupplyReservation {
+  id                  Int                 @id @default(autoincrement())
+  assemblyId          Int
+  productId           Int
+  purchaseOrderLineId Int?
+  inventoryBatchId    Int?
+  qtyReserved         Decimal             @db.Decimal(14, 4)
+  note                String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  assembly            Assembly            @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+  product             Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchaseOrderLine   PurchaseOrderLine?  @relation(fields: [purchaseOrderLineId], references: [id])
+  inventoryBatch      Batch?              @relation(fields: [inventoryBatchId], references: [id])
+
+  @@index([assemblyId])
+  @@index([productId])
+  @@index([purchaseOrderLineId])
+  @@index([inventoryBatchId])
 }
 
 model ProductLine {
@@ -410,6 +455,7 @@ model Batch {
   product             Product?              @relation(fields: [productId], references: [id])
   boxLines            BoxLine[]
   ProductMovementLine ProductMovementLine[]
+  supplyReservations  SupplyReservation[]
 }
 
 model ProductMovement {
@@ -943,6 +989,7 @@ model PurchaseOrderLine {
   job              Job?           @relation(fields: [jobId], references: [id])
   product          Product?       @relation(fields: [productId], references: [id])
   purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  supplyReservations SupplyReservation[]
 }
 
 model ProductCostGroup {
@@ -1065,6 +1112,12 @@ enum CompanyType {
 enum InvoiceBillUpon {
   Ship
   Make
+}
+
+enum MaterialDemandSource {
+  BOM
+  IMPORT
+  MANUAL
 }
 
 enum UsageType {

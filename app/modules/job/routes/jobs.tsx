@@ -203,8 +203,12 @@ export async function loader(_args: LoaderFunctionArgs) {
       orderBy: { id: "asc" },
       select: {
         id: true,
-        name: true,
         projectCode: true,
+        name: true,
+        jobType: true,
+        startDate: true,
+        endDate: true,
+        status: true,
         company: { select: { name: true } },
       },
     });

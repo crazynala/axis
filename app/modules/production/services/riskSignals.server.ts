@@ -3,6 +3,7 @@ import type {
   ExternalLeadTimeSource,
 } from "~/modules/job/types/externalSteps";
 import type { AssemblyRollup } from "./rollups.server";
+import type { AssemblyMaterialCoverage } from "./materialCoverage.server";
 
 export type RiskAssemblyInput = {
   id: number;
@@ -13,6 +14,8 @@ export type RiskAssemblyInput = {
 export type PurchaseOrderLineSummary = {
   id: number;
   etaDate: Date | null;
+  productId?: number | null;
+  purchaseOrderId?: number | null;
   qtyOrdered: number;
   qtyReceived: number;
 };
@@ -53,6 +56,7 @@ export function buildRiskSignals(options: {
   rollups: Map<number, AssemblyRollup>;
   externalStepsByAssembly: Record<number, DerivedExternalStep[] | undefined>;
   purchaseOrdersByAssembly: Map<number, PurchaseOrderLineSummary[]>;
+  materialCoverage?: Map<number, AssemblyMaterialCoverage>;
   today?: Date;
 }): Map<number, AssemblyRiskSignals> {
   const today = options.today ?? new Date();
@@ -108,13 +112,40 @@ export function buildRiskSignals(options: {
       }
     });
 
-    const poEval = evaluatePoLines({
-      lines: poLines,
-      targetDate: assembly.jobTargetDate,
-      todayStart,
-    });
-    if (poEval.poNextActions.length) {
-      nextActions.push(...poEval.poNextActions);
+    const coverage = options.materialCoverage?.get(assembly.id) ?? null;
+    const poEval =
+      coverage ??
+      evaluatePoLines({
+        lines: poLines,
+        targetDate: assembly.jobTargetDate,
+        todayStart,
+      });
+    if (
+      "poNextActions" in poEval &&
+      Array.isArray((poEval as any).poNextActions)
+    ) {
+      nextActions.push(...((poEval as any).poNextActions as NextAction[]));
+    }
+    if (coverage?.held) {
+      coverage.materials.forEach((material) => {
+        if (material.qtyUncovered > 0) {
+          nextActions.push({
+            kind: "RESOLVE_PO",
+            label: `Assign PO for ${material.productName ?? "material"}`,
+            detail: `Uncovered ${material.qtyUncovered}`,
+          });
+        }
+        material.reservations
+          .filter((r) => r.type === "PO" && r.status === "BLOCKED")
+          .forEach((r) => {
+            if (!r.purchaseOrderLineId) return;
+            nextActions.push({
+              kind: "RESOLVE_PO",
+              label: `Resolve PO line #${r.purchaseOrderLineId}`,
+              detail: r.reason,
+            });
+          });
+      });
     }
 
     const vendorSteps = steps
@@ -135,10 +166,22 @@ export function buildRiskSignals(options: {
       externalEtaStepLabel: nearestEta?.label ?? null,
       hasExternalLate,
       externalDueSoon,
-      poHold: poEval.poHold,
-      poHoldReason: poEval.poHoldReason,
-      poBlockingEta: poEval.poBlockingEta,
-      poBlockingLineId: poEval.poBlockingLineId,
+      poHold:
+        "held" in poEval
+          ? (poEval as AssemblyMaterialCoverage).held
+          : poEval.poHold,
+      poHoldReason:
+        "reasons" in poEval && poEval.reasons.length
+          ? poEval.reasons[0]?.message ?? null
+          : (poEval as any).poHoldReason ?? null,
+      poBlockingEta:
+        "materials" in poEval
+          ? findBlockingEta(poEval as AssemblyMaterialCoverage)
+          : (poEval as any).poBlockingEta ?? null,
+      poBlockingLineId:
+        "materials" in poEval
+          ? findBlockingLineId(poEval as AssemblyMaterialCoverage)
+          : (poEval as any).poBlockingLineId ?? null,
       nextActions,
       vendorSteps,
     });
@@ -226,6 +269,28 @@ function startOfDay(date: Date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function findBlockingEta(coverage: AssemblyMaterialCoverage): string | null {
+  for (const material of coverage.materials) {
+    const blocked = material.reservations.find(
+      (r) => r.type === "PO" && r.status === "BLOCKED" && r.etaDate
+    );
+    if (blocked?.etaDate) return blocked.etaDate;
+  }
+  return null;
+}
+
+function findBlockingLineId(
+  coverage: AssemblyMaterialCoverage
+): number | null {
+  for (const material of coverage.materials) {
+    const blocked = material.reservations.find(
+      (r) => r.type === "PO" && r.status === "BLOCKED"
+    );
+    if (blocked?.purchaseOrderLineId) return blocked.purchaseOrderLineId;
+  }
+  return null;
 }
 
 function toDate(value: string | Date | null | undefined): Date {

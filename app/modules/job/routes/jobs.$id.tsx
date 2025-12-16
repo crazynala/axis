@@ -325,7 +325,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
       if (nextStatus) {
         await applyJobStateTransition(prisma, id, nextStatus);
       }
-      if (assemblyStatusMap.size || assemblyWhiteboardMap.size || assemblyTypeMap.size) {
+      if (
+        assemblyStatusMap.size ||
+        assemblyWhiteboardMap.size ||
+        assemblyTypeMap.size
+      ) {
         const asmIds = Array.from(
           new Set([
             ...assemblyStatusMap.keys(),
@@ -335,7 +339,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         );
         const assemblies = await prisma.assembly.findMany({
           where: { id: { in: asmIds }, jobId: id },
-          select: { id: true, status: true, statusWhiteboard: true, assemblyType: true },
+          select: {
+            id: true,
+            status: true,
+            statusWhiteboard: true,
+            assemblyType: true,
+          },
         });
         let statusUpdates = 0;
         const updates = assemblies
@@ -388,6 +397,83 @@ export async function action({ request, params }: ActionFunctionArgs) {
       throw err;
     }
     return redirect(`/jobs/${id}`);
+  }
+  if (intent === "job.duplicate") {
+    const original = await prisma.job.findUnique({
+      where: { id },
+      include: { assemblies: true },
+    });
+    if (!original) return redirect("/jobs");
+    const { assemblies, assemblyGroups, ...rest } = original as any;
+    const data: any = { ...rest };
+    delete data.id;
+    delete data.createdAt;
+    delete data.updatedAt;
+    delete data.assemblies;
+    delete data.assemblyGroups;
+    data.projectCode = data.projectCode ? `${data.projectCode} - COPY` : "COPY";
+    const newJob = await prisma.job.create({ data });
+    for (const asm of assemblies || []) {
+      const pid = asm.productId;
+      if (!pid) continue;
+      const newAsmId = await createAssemblyFromProductAndSeedCostings(
+        newJob.id,
+        pid
+      );
+      if (!newAsmId) continue;
+      await prisma.assembly.update({
+        where: { id: newAsmId },
+        data: {
+          name: asm.name,
+          qtyOrderedBreakdown: (asm as any).qtyOrderedBreakdown ?? [],
+          c_qtyOrdered: (asm as any).c_qtyOrdered ?? null,
+          c_qtyCut: (asm as any).c_qtyCut ?? null,
+          status: asm.status ?? null,
+          statusWhiteboard: asm.statusWhiteboard ?? null,
+          variantSetId: asm.variantSetId ?? null,
+        },
+      });
+    }
+    return redirect(`/jobs/${newJob.id}`);
+  }
+  if (intent === "job.delete") {
+    const confirmText = String(form.get("confirm") ?? "");
+    const phrase = "THIS IS SO DANGEROUS. CALL ME CRAZY.";
+    if (confirmText !== phrase) {
+      return redirect(`/jobs/${id}?deleteError=confirm`);
+    }
+    const assemblies = await prisma.assembly.findMany({
+      where: { jobId: id },
+      select: { id: true },
+    });
+    const asmIds = assemblies.map((a) => a.id);
+    if (asmIds.length) {
+      const activityCount = await prisma.assemblyActivity.count({
+        where: { assemblyId: { in: asmIds } },
+      });
+      if (activityCount > 0) {
+        return redirect(`/jobs/${id}?deleteError=activity`);
+      }
+      await prisma.purchaseOrderLine.updateMany({
+        where: { assemblyId: { in: asmIds } },
+        data: { assemblyId: null },
+      });
+      await prisma.shipmentLine.updateMany({
+        where: { assemblyId: { in: asmIds } },
+        data: { assemblyId: null },
+      });
+      await prisma.boxLine.updateMany({
+        where: { assemblyId: { in: asmIds } },
+        data: { assemblyId: null },
+      });
+      await prisma.costing.updateMany({
+        where: { assemblyId: { in: asmIds } },
+        data: { assemblyId: null },
+      });
+      await prisma.assembly.deleteMany({ where: { id: { in: asmIds } } });
+    }
+    await prisma.job.delete({ where: { id } });
+    return redirect("/jobs");
   }
   if (intent === "assembly.createFromProduct") {
     const productId = Number(form.get("productId"));
@@ -553,6 +639,13 @@ export function JobDetailView() {
   const { setCurrentId } = useRecordContext();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
+  const submit = useSubmit();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const deletePhrase = "THIS IS SO DANGEROUS. CALL ME CRAZY.";
+  const hasAssemblyActivity = Object.values(activityCounts || {}).some(
+    (n) => (n || 0) > 0
+  );
   useEffect(() => {
     setCurrentId(job.id);
   }, [job.id, setCurrentId]);
@@ -602,8 +695,29 @@ export function JobDetailView() {
     );
     navigate(`/jobs/${job.id}`, { replace: true });
   }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("deleteError");
+    if (!err) return;
+    const messages: Record<string, { title: string; message: string }> = {
+      confirm: {
+        title: "Delete job blocked",
+        message: "Confirmation text did not match.",
+      },
+      activity: {
+        title: "Delete job blocked",
+        message: "Assemblies with recorded activity cannot be deleted.",
+      },
+    };
+    const meta =
+      messages[err] ||
+      ({
+        title: "Delete job blocked",
+        message: "Unable to delete job.",
+      } as const);
+    notifications.show({ color: "red", ...meta });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
   const nav = useNavigation();
-  const submit = useSubmit();
   const busy = nav.state !== "idle";
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -969,6 +1083,45 @@ export function JobDetailView() {
             }
             config={jobStateConfig}
           />
+          <Menu position="bottom-end" withArrow>
+            <Menu.Target>
+              <ActionIcon variant="subtle" size="sm" aria-label="Job actions">
+                <IconMenu2 size={18} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                component={Link}
+                to="/jobs/new"
+                leftSection={<IconCopy size={14} />}
+              >
+                New Job
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconCopy size={14} />}
+                onClick={() => {
+                  const fd = new FormData();
+                  fd.set("_intent", "job.duplicate");
+                  submit(fd, { method: "post" });
+                }}
+              >
+                Duplicate Job
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconTrash size={14} />}
+                color="red"
+                disabled={hasAssemblyActivity}
+                title={
+                  hasAssemblyActivity
+                    ? "Cannot delete: assemblies have recorded activity"
+                    : undefined
+                }
+                onClick={() => setDeleteOpen(true)}
+              >
+                Delete Job
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
       </Group>
 
@@ -1558,6 +1711,51 @@ export function JobDetailView() {
             </Group>
           </form>
         )}
+      </HotkeyAwareModal>
+
+      <HotkeyAwareModal
+        opened={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="Delete Job"
+        centered
+      >
+        <Stack gap="sm">
+          <Text c="red">
+            Deleting a job will remove its assemblies and costings. Assemblies
+            with activity cannot be deleted.
+          </Text>
+          <TextInput
+            label={`Type "${deletePhrase}" to confirm`}
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.currentTarget.value)}
+            disabled={hasAssemblyActivity}
+          />
+          {hasAssemblyActivity ? (
+            <Text size="sm" c="dimmed">
+              Assemblies with recorded activity are present. Clear activity
+              before deleting.
+            </Text>
+          ) : null}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              disabled={
+                hasAssemblyActivity || deleteConfirm.trim() !== deletePhrase
+              }
+              onClick={() => {
+                const fd = new FormData();
+                fd.set("_intent", "job.delete");
+                fd.set("confirm", deleteConfirm.trim());
+                submit(fd, { method: "post" });
+              }}
+            >
+              Delete Job
+            </Button>
+          </Group>
+        </Stack>
       </HotkeyAwareModal>
 
       <HotkeyAwareModal

@@ -30,6 +30,10 @@
 - [ ] Ship Prisma migrations for new columns + stage enum change (enum change may require DB reset; we reimport).
 - [ ] Smoke-test legacy imports after the migration to ensure nullable defaults keep them valid.
 - [ ] Document that importer re-run is the “data migration”; do not attempt in-DB backfills when enums/columns shift.
+- [ ] Add global material coverage tolerance settings (defaults) and nullable assembly-level overrides:
+  - [ ] Add AppSetting.materialCoverageTolerancePct Decimal? and AppSetting.materialCoverageToleranceAbs Decimal? (or a single JSON AppSetting.materialCoverageToleranceJson) with sensible defaults for Fabric/Trim/Packaging.
+  - [ ] Add Assembly.materialCoverageTolerancePct Decimal? and Assembly.materialCoverageToleranceAbs Decimal? (nullable override; when set, supersedes global).
+  - [ ] Keep nullable so legacy imports/writes remain valid; no backfills required.
 
 ## 2. Application code – core logic
 
@@ -66,6 +70,17 @@
   - [ ] Do not derive “packed” from AssemblyActivity(stage=pack); packed state is computed from packedQty (BoxLine). stage=pack is defect/history only.
 - [x] Define isPoHeld as: “Assembly/job is PO-held if there exists at least one required material/service PO line (based on costings tied to products or explicit links) that is not received and has ETA after target/needed date.”
 - [x] If “required PO line” mappings are still WIP, ship an MVP definition: PO hold when any linked PO line has `qtyReceived < qtyOrdered` and (`etaDate` missing or past due).
+- [ ] Implement resolveCoverageTolerance({ assembly, productType }):
+  - [ ] Returns { abs, pct, source } using Assembly override when present, else global defaults.
+- [ ] Update computeCoverageState to compute both uncoveredQty and uncoveredQtyAfterTolerance:
+  - [ ] toleranceQty = max(toleranceAbs, requiredQty \* tolerancePct)
+  - [ ] effectiveUncovered = max(uncoveredQty - toleranceQty, 0)
+  - [ ] Define status tiers:
+    - [ ] PO_HOLD when effectiveUncovered > 0 (and not otherwise blocked by ETA rules)
+    - [ ] POTENTIAL_UNDERCUT when uncoveredQty > 0 but effectiveUncovered == 0 (subtle warning only)
+- [ ] Add acceptGap action helper:
+  - [ ] Clicking “Accept gap” sets the Assembly override tolerance so toleranceQty >= uncoveredQty for that material row (store as materialCoverageToleranceAbs bump or compute a new abs value).
+  - [ ] Persist audit note in the operation log (who/when, prior vs new tolerance) so accepted undercuts are traceable without mutating costings.
 
 ## 3. UI updates
 
@@ -95,6 +110,35 @@
     - [ ] qty default = “remaining to progress” (computed)
     - [ ] optional breakdown editor
     - [ ] minimal required fields only
+- [ ]Production Dashboard / Materials Short + At Risk drawers:
+- [ ]Render a subtle chip for POTENTIAL_UNDERCUT (no hard-hold styling; tooltip shows “Uncovered within tolerance” and the tolerance used).
+- [ ]Add row action “Accept gap” that auto-adjusts the assembly-level tolerance override (RHF + SaveCancelHeader compliant).
+- [ ]Add an assembly-level “Coverage tolerance” control (advanced section; default collapsed) showing global vs overridden values and a “Reset to global” action.
+
+## X. Materials demand + reservations
+
+- [x] Add `MaterialDemand` model (assemblyId, productId, costingId?, qtyRequired, uom, source, created/updated) with indexes on assembly/product and unique on assembly+product+costing.
+- [x] Add `SupplyReservation` model (assemblyId, productId, purchaseOrderLineId?, inventoryBatchId?, qtyReserved, note, created/updated) with indexes on assembly/product/poLine/batch.
+- [ ] Add nullable rollup helper fields on PO lines if needed (derivable; currently computed on the fly).
+- [x] Implement `computeMaterialDemand` fallback from BOM/costings when no stored demand rows exist.
+- [x] Implement `computeCoverageState`/`loadMaterialCoverage` to join demand + reservations, compute uncovered qty, blocking PO lines (missing ETA/past due/after target), and attach earliest ETA + blocking IDs.
+- [x] Update PO hold logic to rely on coverage (held when uncovered > 0 or all PO reservations blocked) and surface structured reasons.
+- [x] Production Dashboard: PO Hold chip opens drawer with material/reservation details; new “Materials Short / Needs PO Assignment” tab lists uncovered materials per assembly.
+- [x] Eligibility guard: a costing contributes demand only when it is enabled, product exists and is stock-tracked, product type ∈ {Fabric, Trim, Packaging/raw}, qty > 0, and consumption stage is valid (Fabric → Cut; Trim → Sew/Finish).
+- [x] Fabric demand uses remaining-to-cut (orderQty − cutGoodQty, min 0); fully-cut assemblies emit no new fabric demand. Shared material demand service added for reuse across dashboard/assembly detail.
+- [x] Dashboard “Assign to PO” modal creates `SupplyReservation` rows for uncovered materials; PO lines are surfaced by explicit assembly/job links or matching productId.
+- [ ] Wire assembly detail material demand view to the shared material demand service to avoid drift.
+- [ ] Add PO line drawer view showing “Reserved for assemblies” with edit/remove; wire fast “Assign to PO” modal that defaults qty to uncovered and enforces remaining-unreserved guard.
+- [ ] Import/export: accept MaterialDemand rows when present; leave reservations empty by default; include reservations in exports (optional).
+- [ ] UAT: shortages across assemblies, overbooking guard, ETA-driven hold messaging, dashboard integration of reasons.
+- [ ] Align PO-hold logic when demand is empty (e.g., FULLY_CUT assemblies): show PO lines and allow manual assignment even when uncovered=0, and avoid PO HOLD when coverage reports no demand.
+- [ ] Add coverage/debug row in drawer even when demand is zero so PO linking is still possible (FULLY_CUT/manual overrides).
+- [ ] Apply tolerance when surfacing PO HOLD counts so not every assembly is flagged:
+  - [ ] PO HOLD count uses effectiveUncovered (post-tolerance), while the drawer still shows raw uncoveredQty + toleranceQty for transparency.
+- [ ] UAT: tolerance + accept-gap behavior
+  - [ ] Global tolerance causes small uncovered gaps (e.g. 5m on 185m) to show POTENTIAL_UNDERCUT instead of PO_HOLD.
+  - [ ] Assembly override can tighten tolerance to 0 (undercut not allowed) and immediately escalates to PO_HOLD.
+  - [ ] “Accept gap” bumps assembly tolerance and clears PO_HOLD → POTENTIAL_UNDERCUT (or clears entirely when desired), with audit trail.
 
 ## 4. Import / export
 

@@ -358,9 +358,16 @@ export function AssembliesEditor(props: {
 
   const handleCostingAction = (
     costingId: number,
-    action: "enable" | "disable" | "delete"
+    action: "enable" | "disable" | "delete" | "refresh"
   ) => {
     if (!Number.isFinite(costingId)) return;
+    if (action === "refresh") {
+      const fd = new FormData();
+      fd.set("_intent", "costing.refreshProduct");
+      fd.set("id", costingId.toString());
+      submit(fd, { method: "post" });
+      return;
+    }
     if (action === "delete") {
       const fd = new FormData();
       fd.set("_intent", `costing.${action}`);
