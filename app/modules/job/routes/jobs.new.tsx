@@ -105,7 +105,7 @@ export default function NewJobRoute() {
           ]}
         />
       </Group>
-      <Form method="post" onSubmit={form.handleSubmit(() => {})}>
+      <Form method="post">
         <SimpleGrid cols={2} spacing="md">
           <Card withBorder padding="md">
             <Card.Section inheritPadding py="xs">

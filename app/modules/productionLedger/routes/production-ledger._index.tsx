@@ -187,9 +187,19 @@ export default function ProductionLedgerIndexRoute() {
             { label: "Production Ledger", href: appendHref("/production-ledger") },
           ]}
         />
-        <Button size="xs" variant="default" onClick={() => navigate(0)}>
-          Refresh
-        </Button>
+        <Group gap="xs">
+          <Button
+            size="xs"
+            variant="light"
+            component={Link}
+            to="/production/dashboard"
+          >
+            Dashboard
+          </Button>
+          <Button size="xs" variant="default" onClick={() => navigate(0)}>
+            Refresh
+          </Button>
+        </Group>
       </Group>
       <FindRibbonAuto views={[]} activeView={null} />
       <Card withBorder padding="sm">

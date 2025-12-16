@@ -47,16 +47,16 @@
   - [x] Unit-test lead-time precedence (costing override, product override, company fallback, and null → no ETA + never late).
   - [x] Update inferred windows so external steps live between `SEW` and `FINISH` whenever data is available.
   - Implemented via `app/modules/job/services/externalSteps.server.ts` with loader wiring so assembly detail pages now receive per-assembly derived data.
-- [ ] Update dashboard/business logic to consume the derived engine for hold/late signals.
-- [ ] Ensure pack/qc defects affect readiness metrics and downstream dashboards by combining finish rollups, `BoxLine` packed quantities, and defect adjustments consistently.
-- [ ] Flesh out the sew availability calculator (`sewnAvailableQty`) for send-out flows, including low-confidence handling when sew is inferred from finish.
+- [x] Update dashboard/business logic to consume the derived engine for hold/late signals.
+- [x] Ensure pack/qc defects affect readiness metrics and downstream dashboards by combining finish rollups, `BoxLine` packed quantities, and defect adjustments consistently.
+- [x] Flesh out the sew availability calculator (`sewnAvailableQty`) for send-out flows, including low-confidence handling when sew is inferred from finish.
 - [ ] If user clicks Send Out and Sew is missing:
   - [ ] allow continuing
   - [ ] mark the external-step record as `lowConfidence=true` in the derived model (no DB field needed)
   - [ ] optionally prompt: “Record Sew now for the same qty?” (one-click creates a Sew RECORDED activity)
 - [ ] For SENT_OUT / RECEIVED_IN activities:
   - [ ] require externalStepType and strongly encourage vendorCompanyId (UI-required; DB still nullable)
-- [ ] Standard rollups – define once and reuse everywhere:
+- [x] Standard rollups – define once and reuse everywhere:
   - [ ] `cutGoodQty = Σ AssemblyActivity(stage=cut, kind=normal, action=RECORDED)` (minus adjustments if supported)
   - [ ] `sewGoodQty = Σ AssemblyActivity(stage=sew, kind=normal, action=RECORDED)`
   - [ ] `finishGoodQty = Σ AssemblyActivity(stage=finish, kind=normal, action=RECORDED)`
@@ -64,8 +64,8 @@
   - [ ] `packDefectQty = Σ AssemblyActivity(stage ∈ {pack,qc}, kind=defect, action=RECORDED)`
   - [ ] `readyToPackQty = max(finishGoodQty - packedQty, 0)`
   - [ ] Do not derive “packed” from AssemblyActivity(stage=pack); packed state is computed from packedQty (BoxLine). stage=pack is defect/history only.
-- [ ] Define isPoHeld as: “Assembly/job is PO-held if there exists at least one required material/service PO line (based on costings tied to products or explicit links) that is not received and has ETA after target/needed date.”
-- [ ] If “required PO line” mappings are still WIP, ship an MVP definition: PO hold when any linked PO line has `qtyReceived < qtyOrdered` and (`etaDate` missing or past due).
+- [x] Define isPoHeld as: “Assembly/job is PO-held if there exists at least one required material/service PO line (based on costings tied to products or explicit links) that is not received and has ETA after target/needed date.”
+- [x] If “required PO line” mappings are still WIP, ship an MVP definition: PO hold when any linked PO line has `qtyReceived < qtyOrdered` and (`etaDate` missing or past due).
 
 ## 3. UI updates
 
@@ -79,10 +79,10 @@
   - `ExternalStepsStrip` renders inside `AssembliesEditor` with status badges, ETA chips, low-confidence/late warnings, vendor info, and a drawer table; inference helper UI remains TODO.
   - [ ] “Send to Embroidery/Wash/Dye” modal defaults qty from available sewn qty (when tracked), offers “Record Sew now” helper if missing, and allows continuing without data while flagging low-confidence inference.
 - [ ] **Box packing workflow**: packing is performed exclusively through the Box UI. When adding an assembly to a box, default the suggested qty to `readyToPackQty`, surface “Finish recorded: X” and “Already packed: Y”, and rely on the operator to adjust discrepancies before writing `BoxLine` rows. (Modal now shows finish/packed/ready rows with ready-to-pack autofill; remaining: Box-only enforcement + dashboard rollups.)
-- [ ] **Production Dashboard `/production/dashboard`**:
-  - [ ] Tab “At Risk”: columns for External ETA (nearest open step), PO Hold (Yes/No), PO ETA (earliest blocking line); default sort Late → PO Hold → Due soon → Target date.
-  - [ ] Tab “Out at Vendor”: show ETA source (Costing/Product/Company) so vendor fallback is visible.
-  - [ ] Tab “Needs Action”: “Next Action” logic now flags (a) expected external step with no `SENT_OUT` while CUT exists, (b) `SENT_OUT` past ETA (Follow up vendor), (c) PO line late (Resolve PO).
+- [x] **Production Dashboard `/production/dashboard`**:
+  - [x] Tab “At Risk”: columns for External ETA (nearest open step), PO Hold (Yes/No), PO ETA (earliest blocking line); default sort Late → PO Hold → Due soon → Target date.
+  - [x] Tab “Out at Vendor”: show ETA source (Costing/Product/Company) so vendor fallback is visible.
+  - [x] Tab “Needs Action”: “Next Action” logic now flags (a) expected external step with no `SENT_OUT` while CUT exists, (b) `SENT_OUT` past ETA (Follow up vendor), (c) PO line late (Resolve PO).
   - [ ] Provide dashboard multi-select for batch `Send Out` / `Receive In`, plus a keyboard-first modal for those actions.
 - [ ] Update all UI labels to present MAKE as “Finish” and align iconography (primary costing icon reflects RHF state without saving) across assembly/dashboard views.
   - Assembly detail/editor, pack modal, quantities cards, and production ledger now render “Finish”. Remaining modules still need an audit.
@@ -254,3 +254,6 @@ Tests / acceptance:
   - [ ] Legacy products with free-text subcategory import without failure; subcategory stored in notes and warning report produced.
   - [ ] Product template seeding: `productTemplates` dataset (e.g., SV_OUT_WASH, SV_OUT_DYE, SV_OUT_EMB, SV_INTERNAL_PATTERN, FAB_MAIN, TRIM_ZIP, PKG_POLYBAG, FIN_SHIRT, CMT_SHIRT) resolves category IDs via ValueList codes and upserts templates and `SkuSeriesCounter` where `skuSeriesKey` present.
   - [ ] Product creation with template picker: selecting template pre-fills type/category/subcategory/externalStepType/stock+batch flags and enforces supplier/customer requiredness; clearing/changing template/type clears invalid category selections.
+- Production dashboard lives at `/production/dashboard`; Production Ledger screen now has a “Dashboard” button linking out. Next step is blending the UIs once ops confirms the new tabs meet daily needs.
+- Canonical rollup service and risk-signal service back both the dashboard and future consumers. Ready-to-pack uses finishNet (finish minus pack defects); sew availability falls back to finish with `lowConfidence=true` when sew data is missing.
+- PO-hold MVP logic flags any linked PO line (assembly-level or job-level fallback) with outstanding qty when ETA is missing/past due/after target; UI labels the badge as “PO HOLD (MVP)” until mappings tighten.
