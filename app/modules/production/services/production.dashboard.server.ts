@@ -12,6 +12,10 @@ import {
   type AssemblyMaterialCoverage,
 } from "~/modules/production/services/materialCoverage.server";
 import {
+  loadCoverageToleranceDefaults,
+  type CoverageToleranceDefaults,
+} from "~/modules/materials/services/coverageTolerance.server";
+import {
   buildRiskSignals,
   type AssemblyRiskSignals,
   type PurchaseOrderLineSummary,
@@ -19,9 +23,16 @@ import {
 } from "~/modules/production/services/riskSignals.server";
 import { getProductStockSnapshots } from "~/utils/prisma.server";
 
+type LoaderPurchaseOrderLineSummary = Omit<
+  PurchaseOrderLineSummary,
+  "etaDate"
+> & { etaDate: string | null };
+
 export type LoaderAssembly = {
   id: number;
   name: string | null;
+  materialCoverageTolerancePct: number | null;
+  materialCoverageToleranceAbs: number | null;
   job: {
     id: number;
     projectCode: string | null;
@@ -36,11 +47,13 @@ export type LoaderAssembly = {
   risk: AssemblyRiskSignals;
   externalSteps: DerivedExternalStep[];
   materialCoverage: AssemblyMaterialCoverage | null;
+  poLines: LoaderPurchaseOrderLineSummary[];
 };
 
 export type LoaderData = {
   asOf: string;
   assemblies: LoaderAssembly[];
+  toleranceDefaults: CoverageToleranceDefaults;
 };
 
 export const activeAssemblyFilter = {
@@ -102,13 +115,14 @@ const assemblyIncludes = {
 } as const;
 
 export async function loadDashboardData(take: number): Promise<LoaderData> {
+  const toleranceDefaults = await loadCoverageToleranceDefaults();
   const assemblies = await prisma.assembly.findMany({
     where: activeAssemblyFilter,
     include: assemblyIncludes,
     orderBy: [{ job: { targetDate: "asc" } }, { id: "asc" }],
     take,
   });
-  const hydrated = await hydrateAssemblies(assemblies);
+  const hydrated = await hydrateAssemblies(assemblies, toleranceDefaults);
   console.log("[production.dashboard.server] load", {
     take,
     assemblies: assemblies.length,
@@ -117,6 +131,7 @@ export async function loadDashboardData(take: number): Promise<LoaderData> {
   return {
     asOf: new Date().toISOString(),
     assemblies: hydrated,
+    toleranceDefaults,
   };
 }
 
@@ -124,16 +139,18 @@ export async function fetchDashboardRows(
   targetIds: number[]
 ): Promise<LoaderAssembly[]> {
   if (!targetIds.length) return [];
+  const toleranceDefaults = await loadCoverageToleranceDefaults();
   const assemblies = await prisma.assembly.findMany({
     where: { id: { in: targetIds }, ...activeAssemblyFilter },
     include: assemblyIncludes,
     orderBy: [{ job: { targetDate: "asc" } }, { id: "asc" }],
   });
-  return await hydrateAssemblies(assemblies);
+  return await hydrateAssemblies(assemblies, toleranceDefaults);
 }
 
 async function hydrateAssemblies(
-  assemblies: any[]
+  assemblies: any[],
+  toleranceDefaults: CoverageToleranceDefaults
 ): Promise<LoaderAssembly[]> {
   if (!assemblies.length) return [];
 
@@ -247,6 +264,23 @@ async function hydrateAssemblies(
     assemblies: assemblies as any,
     rollups,
     stockByProduct,
+    toleranceDefaults,
+  });
+  const reservedByPoLine = new Map<number, number>();
+  materialCoverage.forEach((coverage) => {
+    coverage.materials.forEach((material) => {
+      material.reservations
+        .filter(
+          (res) => res.type === "PO" && res.purchaseOrderLineId != null
+        )
+        .forEach((res) => {
+          const lineId = res.purchaseOrderLineId as number;
+          reservedByPoLine.set(
+            lineId,
+            (reservedByPoLine.get(lineId) || 0) + Number(res.qtyReserved || 0)
+          );
+        });
+    });
   });
 
   const poLinesByAssembly = new Map<number, PurchaseOrderLineSummary[]>();
@@ -308,20 +342,27 @@ async function hydrateAssemblies(
       }
       if (!targets.length) return;
       const qtyOrdered = toNumber(line.quantityOrdered ?? line.quantity);
-    const qtyReceived = toNumber(line.qtyReceived);
-    targets.forEach((assemblyId) => {
-      const arr = poLinesByAssembly.get(assemblyId) || [];
-      arr.push({
-        id: line.id,
-        productId: line.productId ?? null,
-        purchaseOrderId: line.purchaseOrderId ?? null,
-        etaDate: line.etaDate ? new Date(line.etaDate) : null,
-        qtyOrdered,
-        qtyReceived,
+      const qtyReceived = toNumber(line.qtyReceived);
+      const reservedQty = reservedByPoLine.get(line.id) ?? 0;
+      const availableQty = Math.max(
+        (qtyOrdered ?? 0) - (qtyReceived ?? 0) - reservedQty,
+        0
+      );
+      targets.forEach((assemblyId) => {
+        const arr = poLinesByAssembly.get(assemblyId) || [];
+        arr.push({
+          id: line.id,
+          productId: line.productId ?? null,
+          purchaseOrderId: line.purchaseOrderId ?? null,
+          etaDate: line.etaDate ? new Date(line.etaDate) : null,
+          qtyOrdered,
+          qtyReceived,
+          reservedQty,
+          availableQty,
+        });
+        poLinesByAssembly.set(assemblyId, arr);
       });
-      poLinesByAssembly.set(assemblyId, arr);
     });
-  });
   }
 
   const riskAssemblies: RiskAssemblyInput[] = assemblies.map((assembly) => ({
@@ -341,6 +382,14 @@ async function hydrateAssemblies(
   return assemblies.map((assembly) => ({
     id: assembly.id,
     name: assembly.name,
+    materialCoverageTolerancePct:
+      assembly.materialCoverageTolerancePct != null
+        ? Number(assembly.materialCoverageTolerancePct)
+        : null,
+    materialCoverageToleranceAbs:
+      assembly.materialCoverageToleranceAbs != null
+        ? Number(assembly.materialCoverageToleranceAbs)
+        : null,
     job: assembly.job
       ? {
           id: assembly.job.id,
@@ -376,7 +425,10 @@ async function hydrateAssemblies(
     externalSteps: externalStepsByAssembly[assembly.id] ?? [],
     status: assembly.status ?? null,
     materialCoverage: materialCoverage.get(assembly.id) ?? null,
-    poLines: poLinesByAssembly.get(assembly.id) ?? [],
+    poLines: (poLinesByAssembly.get(assembly.id) ?? []).map((line) => ({
+      ...line,
+      etaDate: line.etaDate ? line.etaDate.toISOString() : null,
+    })),
   }));
 }
 

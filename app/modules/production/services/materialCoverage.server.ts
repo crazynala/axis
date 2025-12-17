@@ -1,4 +1,4 @@
-import type { MaterialDemandSource } from "@prisma/client";
+import type { MaterialDemandSource, ProductType } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 import type { AssemblyRollup } from "~/modules/production/services/rollups.server";
 import {
@@ -6,9 +6,19 @@ import {
   type AssemblyDemandInput,
   type MaterialDemandRow,
 } from "~/modules/materials/services/materialDemand.server";
+import {
+  computeToleranceQty,
+  loadCoverageToleranceDefaults,
+  resolveCoverageTolerance,
+  type CoverageToleranceDefaults,
+  type CoverageToleranceResult,
+  type CoverageToleranceSource,
+} from "~/modules/materials/services/coverageTolerance.server";
 
 type AssemblyLite = AssemblyDemandInput & {
   job?: { targetDate?: Date | string | null; dropDeadDate?: Date | string | null };
+  materialCoverageTolerancePct?: number | string | null;
+  materialCoverageToleranceAbs?: number | string | null;
 };
 
 export type MaterialReservationRow = {
@@ -32,10 +42,12 @@ export type MaterialReservationRow = {
 export type MaterialCoverageItem = {
   productId: number;
   productName: string | null;
+  productType: ProductType | string | null;
   qtyRequired: number | null;
   qtyReservedToPo: number;
   qtyReservedToBatch: number;
   qtyUncovered: number;
+  qtyUncoveredAfterTolerance: number;
   locStock: number;
   totalStock: number;
   coveredByOnHand: number;
@@ -43,17 +55,24 @@ export type MaterialCoverageItem = {
   reservations: MaterialReservationRow[];
   blockingPoLineIds: number[];
   earliestEta: string | null;
+  tolerance: CoverageToleranceResult & { qty: number };
+  status: MaterialCoverageStatus;
   calc?: MaterialDemandRow["calc"] | null;
 };
 
 export type MaterialHoldReason = {
   productId: number;
   qtyUncovered: number;
+  effectiveQty?: number;
+  toleranceQty?: number;
+  status?: MaterialCoverageStatus;
   reservedPoLineIds: number[];
   suggestedPoLineIds: number[];
   earliestEta: string | null;
   message: string;
 };
+
+export type MaterialCoverageStatus = "OK" | "POTENTIAL_UNDERCUT" | "PO_HOLD";
 
 export type AssemblyMaterialCoverage = {
   assemblyId: number;
@@ -66,15 +85,19 @@ export async function loadMaterialCoverage({
   assemblies,
   rollups,
   stockByProduct,
+  toleranceDefaults,
   today = new Date(),
 }: {
   assemblies: AssemblyLite[];
   rollups?: Map<number, AssemblyRollup>;
   stockByProduct?: Map<number, any>;
+  toleranceDefaults?: CoverageToleranceDefaults;
   today?: Date;
 }): Promise<Map<number, AssemblyMaterialCoverage>> {
   const result = new Map<number, AssemblyMaterialCoverage>();
   if (!assemblies.length) return result;
+  const defaults =
+    toleranceDefaults ?? (await loadCoverageToleranceDefaults());
 
   const assemblyIds = assemblies.map((a) => a.id);
   const neededDateByAssembly = new Map<number, Date | null>();
@@ -87,12 +110,12 @@ export async function loadMaterialCoverage({
 
   const demandRows = await prisma.materialDemand.findMany({
     where: { assemblyId: { in: assemblyIds } },
-    include: { product: { select: { id: true, name: true } } },
+    include: { product: { select: { id: true, name: true, type: true } } },
   });
   const reservations = await prisma.supplyReservation.findMany({
     where: { assemblyId: { in: assemblyIds } },
     include: {
-      product: { select: { id: true, name: true } },
+      product: { select: { id: true, name: true, type: true } },
       purchaseOrderLine: {
         select: {
           id: true,
@@ -114,6 +137,7 @@ export async function loadMaterialCoverage({
       assemblyId: row.assemblyId,
       productId: row.productId,
       productName: row.product?.name ?? null,
+      productType: (row.product?.type as ProductType | string | null) ?? null,
       costingId: row.costingId ?? null,
       qtyRequired: toNumber(row.qtyRequired),
       uom: row.uom ?? null,
@@ -150,10 +174,12 @@ export async function loadMaterialCoverage({
       materials.set(demand.productId, {
         productId: demand.productId,
         productName: demand.productName,
+        productType: demand.productType ?? null,
         qtyRequired: demand.qtyRequired,
         qtyReservedToPo: 0,
         qtyReservedToBatch: 0,
         qtyUncovered: 0,
+        qtyUncoveredAfterTolerance: 0,
         locStock: 0,
         totalStock: 0,
         coveredByOnHand: 0,
@@ -161,6 +187,8 @@ export async function loadMaterialCoverage({
         reservations: [],
         blockingPoLineIds: [],
         earliestEta: null,
+        tolerance: { abs: 0, pct: 0, source: "GLOBAL_DEFAULT", qty: 0 },
+        status: "OK",
         calc: demand.calc ?? null,
       });
     });
@@ -222,10 +250,12 @@ export async function loadMaterialCoverage({
         item = {
           productId,
           productName,
+          productType: res.product?.type ?? null,
           qtyRequired: null,
           qtyReservedToPo: 0,
           qtyReservedToBatch: 0,
           qtyUncovered: 0,
+          qtyUncoveredAfterTolerance: 0,
           locStock: 0,
           totalStock: 0,
           coveredByOnHand: 0,
@@ -233,9 +263,14 @@ export async function loadMaterialCoverage({
           reservations: [],
           blockingPoLineIds: [],
           earliestEta: null,
-          calc: demandRows[0]?.calc ?? null,
+          tolerance: { abs: 0, pct: 0, source: "GLOBAL_DEFAULT", qty: 0 },
+          status: "OK",
+          calc: demands[0]?.calc ?? null,
         };
         materials.set(productId, item);
+      }
+      if (!item.productType && res.product?.type) {
+        item.productType = res.product?.type ?? null;
       }
 
       item.reservations.push(reservation);
@@ -286,6 +321,19 @@ export async function loadMaterialCoverage({
       const coveredByReservations = Math.min(remainingAfterOnHand, totalReserved);
       item.coveredByReservations = coveredByReservations;
       item.qtyUncovered = Math.max(remainingAfterOnHand - totalReserved, 0);
+      const tolerance = resolveCoverageTolerance({
+        assembly,
+        productType: item.productType,
+        defaults,
+      });
+      const toleranceQty = computeToleranceQty({
+        abs: tolerance.abs,
+        pct: tolerance.pct,
+        requiredQty: required,
+      });
+      const effectiveUncovered = Math.max(item.qtyUncovered - toleranceQty, 0);
+      item.tolerance = { ...tolerance, qty: toleranceQty };
+      item.qtyUncoveredAfterTolerance = effectiveUncovered;
 
       const hasPoReservations = item.reservations.some(
         (r) => r.type === "PO" && r.purchaseOrderLineId != null
@@ -298,23 +346,46 @@ export async function loadMaterialCoverage({
         .map((r) => r.purchaseOrderLineId)
         .filter((id): id is number => Boolean(id));
 
+      let status: MaterialCoverageStatus = "OK";
       if (required > 0) {
         if (item.qtyUncovered > 0) {
-          held = true;
-          reasons.push({
-            productId: item.productId,
-            qtyUncovered: item.qtyUncovered,
-            reservedPoLineIds: blockedPoLineIds,
-            suggestedPoLineIds: [],
-            earliestEta: item.earliestEta,
-            message: `Uncovered qty for ${item.productName ?? "material"}`,
-          });
+          if (effectiveUncovered > 0) {
+            held = true;
+            status = "PO_HOLD";
+            reasons.push({
+              productId: item.productId,
+              qtyUncovered: item.qtyUncovered,
+              effectiveQty: effectiveUncovered,
+              toleranceQty,
+              status,
+              reservedPoLineIds: blockedPoLineIds,
+              suggestedPoLineIds: [],
+              earliestEta: item.earliestEta,
+              message: `Uncovered qty for ${item.productName ?? "material"}`,
+            });
+          } else {
+            status = "POTENTIAL_UNDERCUT";
+            reasons.push({
+              productId: item.productId,
+              qtyUncovered: item.qtyUncovered,
+              effectiveQty: 0,
+              toleranceQty,
+              status,
+              reservedPoLineIds: blockedPoLineIds,
+              suggestedPoLineIds: [],
+              earliestEta: item.earliestEta,
+              message: `Uncovered within tolerance for ${
+                item.productName ?? "material"
+              }`,
+            });
+          }
         } else if (
           remainingAfterOnHand > 0 &&
           hasPoReservations &&
           !hasUnblockedPo
         ) {
           held = true;
+          status = "PO_HOLD";
           reasons.push({
             productId: item.productId,
             qtyUncovered: 0,
@@ -325,7 +396,11 @@ export async function loadMaterialCoverage({
           });
         }
       }
+      if (status !== "PO_HOLD" && blockedPoLineIds.length) {
+        status = "PO_HOLD";
+      }
       item.blockingPoLineIds = blockedPoLineIds;
+      item.status = status;
     });
 
     const coverage: AssemblyMaterialCoverage = {

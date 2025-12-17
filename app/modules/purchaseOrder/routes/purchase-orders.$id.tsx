@@ -9,6 +9,7 @@ import {
   useFetcher,
   useRouteLoaderData,
   useSubmit,
+  useRevalidator,
 } from "@remix-run/react";
 import {
   prisma,
@@ -27,6 +28,7 @@ import {
   Text,
   Menu,
   ActionIcon,
+  Drawer,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
@@ -123,11 +125,49 @@ export async function loader({ params }: LoaderFunctionArgs) {
       }
     }
   }
-  const linesWithComputed = (purchaseOrder.lines || []).map((l: any) => ({
-    ...l,
-    qtyReceived: receivedByLine.get(l.id) || 0,
-    qtyShipped: shippedByLine.get(l.id) || 0,
-  }));
+  const lineReservations = lineIds.length
+    ? await prisma.supplyReservation.findMany({
+        where: { purchaseOrderLineId: { in: lineIds } },
+        include: {
+          assembly: {
+            select: {
+              id: true,
+              name: true,
+              job: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: [{ id: "asc" }],
+      })
+    : [];
+  const reservationsByLine = new Map<number, any[]>();
+  lineReservations.forEach((res) => {
+    const lineId = res.purchaseOrderLineId;
+    if (!lineId) return;
+    const arr = reservationsByLine.get(lineId) || [];
+    arr.push({
+      ...res,
+      qtyReserved: Number(res.qtyReserved || 0),
+    });
+    reservationsByLine.set(lineId, arr);
+  });
+  const linesWithComputed = (purchaseOrder.lines || []).map((l: any) => {
+    const qtyReceived = receivedByLine.get(l.id) || 0;
+    const qtyOrdered = Number(l.quantityOrdered ?? l.quantity ?? 0) || 0;
+    const reservations = reservationsByLine.get(l.id) || [];
+    const reservedQty = reservations.reduce(
+      (sum, res) => sum + (Number(res.qtyReserved) || 0),
+      0
+    );
+    return {
+      ...l,
+      qtyReceived,
+      qtyShipped: shippedByLine.get(l.id) || 0,
+      reservations,
+      reservedQty,
+      availableQty: Math.max(qtyOrdered - qtyReceived - reservedQty, 0),
+    };
+  });
 
   const poWithComputed = {
     ...purchaseOrder,
@@ -224,6 +264,100 @@ export async function action({ request, params }: ActionFunctionArgs) {
       data: { id: nextId, ...data, status: (data as any).status ?? "DRAFT" },
     } as any);
     return redirect(`/purchase-orders/${created.id}`);
+  }
+
+  if (intent === "reservation.update") {
+    const reservationId = Number(form.get("reservationId"));
+    const qtyRaw = form.get("qty");
+    const noteRaw = form.get("note");
+    if (!Number.isFinite(reservationId)) {
+      return json({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const qty =
+      qtyRaw == null || String(qtyRaw).trim() === ""
+        ? 0
+        : Number(qtyRaw);
+    if (!Number.isFinite(qty) || qty < 0) {
+      return json({ ok: false, error: "invalid_qty" }, { status: 400 });
+    }
+    const reservation = await prisma.supplyReservation.findUnique({
+      where: { id: reservationId },
+      select: {
+        id: true,
+        qtyReserved: true,
+        purchaseOrderLineId: true,
+        purchaseOrderLine: {
+          select: {
+            purchaseOrderId: true,
+            quantityOrdered: true,
+            quantity: true,
+            qtyReceived: true,
+          },
+        },
+      },
+    });
+    if (
+      !reservation ||
+      reservation.purchaseOrderLine?.purchaseOrderId !== id
+    ) {
+      return json({ ok: false, error: "missing" }, { status: 404 });
+    }
+    const qtyOrdered =
+      Number(
+        reservation.purchaseOrderLine?.quantityOrdered ??
+          reservation.purchaseOrderLine?.quantity ??
+          0
+      ) || 0;
+    const qtyReceived =
+      Number(reservation.purchaseOrderLine?.qtyReceived ?? 0) || 0;
+    const otherTotals = await prisma.supplyReservation.aggregate({
+      _sum: { qtyReserved: true },
+      where: {
+        purchaseOrderLineId: reservation.purchaseOrderLineId ?? undefined,
+        NOT: { id: reservationId },
+      },
+    });
+    const otherReserved = Number(otherTotals._sum.qtyReserved ?? 0);
+    const maxAllowed = Math.max(qtyOrdered - qtyReceived - otherReserved, 0);
+    if (qty > maxAllowed) {
+      return json(
+        { ok: false, error: "exceeds_available", available: maxAllowed },
+        { status: 400 }
+      );
+    }
+    await prisma.supplyReservation.update({
+      where: { id: reservationId },
+      data: {
+        qtyReserved: qty,
+        note:
+          typeof noteRaw === "string" && noteRaw.trim()
+            ? noteRaw.trim()
+            : null,
+      },
+    });
+    return json({ ok: true });
+  }
+
+  if (intent === "reservation.delete") {
+    const reservationId = Number(form.get("reservationId"));
+    if (!Number.isFinite(reservationId)) {
+      return json({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const reservation = await prisma.supplyReservation.findUnique({
+      where: { id: reservationId },
+      select: {
+        id: true,
+        purchaseOrderLine: { select: { purchaseOrderId: true } },
+      },
+    });
+    if (
+      !reservation ||
+      reservation.purchaseOrderLine?.purchaseOrderId !== id
+    ) {
+      return json({ ok: false, error: "missing" }, { status: 404 });
+    }
+    await prisma.supplyReservation.delete({ where: { id: reservationId } });
+    return json({ ok: true });
   }
 
   if (intent === "po.update") {
@@ -989,12 +1123,29 @@ export function PurchaseOrderDetailView() {
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   const deleteFetcher = useFetcher<{ error?: string }>();
+  const reservationFetcher = useFetcher<{ ok?: boolean; error?: string }>();
+  const revalidator = useRevalidator();
   // console.log("PO detail", purchaseOrder, totals);
 
   // Register current id in RecordContext
   useEffect(() => {
     setCurrentId(purchaseOrder.id);
   }, [purchaseOrder.id, setCurrentId]);
+  const [reservationLine, setReservationLine] = useState<any | null>(null);
+  useEffect(() => {
+    if (
+      reservationFetcher.state === "idle" &&
+      reservationFetcher.data &&
+      reservationFetcher.data.ok
+    ) {
+      revalidator.revalidate();
+      setReservationLine(null);
+    }
+  }, [
+    reservationFetcher.state,
+    reservationFetcher.data,
+    revalidator,
+  ]);
 
   const form = useForm({ defaultValues: purchaseOrder });
   const { isDirty } = form.formState;
@@ -1423,6 +1574,7 @@ export function PurchaseOrderDetailView() {
             vendorLeadTimeDays={
               purchaseOrder.company?.defaultLeadTimeDays ?? null
             }
+            onOpenReservations={setReservationLine}
           />
         </Card.Section>
         {variantBreakdownGroups.length > 0 && (
@@ -1568,12 +1720,212 @@ export function PurchaseOrderDetailView() {
           qtyReceived: l.qtyReceived,
         }))}
       />
+      <Drawer
+        opened={!!reservationLine}
+        onClose={() => setReservationLine(null)}
+        position="right"
+        size="lg"
+        title={
+          reservationLine
+            ? `Reservations – Line ${reservationLine.id}`
+            : "Reservations"
+        }
+      >
+        {reservationLine ? (
+          <LineReservationsPanel
+            line={reservationLine}
+            fetcher={reservationFetcher}
+            submitting={reservationFetcher.state !== "idle"}
+          />
+        ) : null}
+      </Drawer>
     </Stack>
   );
 }
 
 export default function PurchaseOrderDetailLayout() {
   return <Outlet />;
+}
+
+function LineReservationsPanel({
+  line,
+  fetcher,
+  submitting,
+}: {
+  line: any;
+  fetcher: ReturnType<typeof useFetcher>;
+  submitting: boolean;
+}) {
+  const [localValues, setLocalValues] = useState<
+    Record<number, { qty: string; note: string }>
+  >({});
+  useEffect(() => {
+    const next: Record<number, { qty: string; note: string }> = {};
+    (line.reservations || []).forEach((res: any) => {
+      next[res.id] = {
+        qty: String(Number(res.qtyReserved) || 0),
+        note: res.note ?? "",
+      };
+    });
+    setLocalValues(next);
+  }, [line.id, line.reservations]);
+  const formatQty = (value: number | null | undefined) => {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return "0";
+    return num.toLocaleString();
+  };
+  const reservedQty =
+    Number(line.reservedQty ?? 0) ||
+    (line.reservations || []).reduce(
+      (sum: number, res: any) => sum + (Number(res.qtyReserved) || 0),
+      0
+    );
+  const remainingQty =
+    line.availableQty != null
+      ? Number(line.availableQty) || 0
+      : Math.max(
+          (Number(line.quantityOrdered || 0) || 0) -
+            (Number(line.qtyReceived || 0) || 0) -
+            reservedQty,
+          0
+        );
+  const updateValue = (
+    id: number,
+    field: "qty" | "note",
+    value: string
+  ) => {
+    setLocalValues((prev) => ({
+      ...prev,
+      [id]: {
+        qty: field === "qty" ? value : prev[id]?.qty ?? "",
+        note: field === "note" ? value : prev[id]?.note ?? "",
+      },
+    }));
+  };
+  const handleUpdate = (reservationId: number) => {
+    const entry = localValues[reservationId];
+    if (!entry) return;
+    const fd = new FormData();
+    fd.set("_intent", "reservation.update");
+    fd.set("reservationId", String(reservationId));
+    fd.set("qty", entry.qty ?? "0");
+    fd.set("note", entry.note ?? "");
+    fetcher.submit(fd, { method: "post" });
+  };
+  const handleDelete = (reservationId: number) => {
+    const fd = new FormData();
+    fd.set("_intent", "reservation.delete");
+    fd.set("reservationId", String(reservationId));
+    fetcher.submit(fd, { method: "post" });
+  };
+  const currentActionId =
+    fetcher.formData && fetcher.formData.has("reservationId")
+      ? Number(fetcher.formData.get("reservationId"))
+      : null;
+  const currentIntent = fetcher.formData?.get("_intent") ?? null;
+  const isUpdating = (id: number) =>
+    fetcher.state !== "idle" &&
+    currentIntent === "reservation.update" &&
+    currentActionId === id;
+  const isDeleting = (id: number) =>
+    fetcher.state !== "idle" &&
+    currentIntent === "reservation.delete" &&
+    currentActionId === id;
+
+  return (
+    <Stack gap="sm">
+      <Text size="sm" c="dimmed">
+        Ordered {formatQty(line.quantityOrdered)} · Received{" "}
+        {formatQty(line.qtyReceived)} · Reserved {formatQty(reservedQty)} ·
+        Remaining {formatQty(remainingQty)}
+      </Text>
+      {fetcher.data?.error ? (
+        <Text size="sm" c="red">
+          {String(fetcher.data.error)}
+        </Text>
+      ) : null}
+      {(line.reservations || []).length === 0 ? (
+        <Text c="dimmed">No reservations yet.</Text>
+      ) : (
+        <Stack gap="sm">
+          {(line.reservations || []).map((res: any) => {
+            const entry = localValues[res.id] || { qty: "", note: "" };
+            return (
+              <Card key={res.id} withBorder padding="sm">
+                <Stack gap="xs">
+                  <Group justify="space-between" align="flex-start">
+                    <Stack gap={2}>
+                      <Text fw={600}>
+                        Assembly A{res.assembly?.id ?? "—"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {res.assembly?.name || "—"}
+                        {res.assembly?.job
+                          ? ` • Job ${res.assembly.job.id}${
+                              res.assembly.job.name
+                                ? ` (${res.assembly.job.name})`
+                                : ""
+                            }`
+                          : ""}
+                      </Text>
+                    </Stack>
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        variant="light"
+                        loading={isUpdating(res.id)}
+                        onClick={() => handleUpdate(res.id)}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="xs"
+                        color="red"
+                        variant="subtle"
+                        loading={isDeleting(res.id)}
+                        onClick={() => handleDelete(res.id)}
+                      >
+                        Remove
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Group gap="sm" grow>
+                    <NumberInput
+                      label="Reserved qty"
+                      value={Number(entry.qty ?? 0)}
+                      onChange={(val) =>
+                        updateValue(
+                          res.id,
+                          "qty",
+                          val != null ? String(val) : "0"
+                        )
+                      }
+                      min={0}
+                      disabled={submitting}
+                    />
+                    <TextInput
+                      label="Note"
+                      value={entry.note}
+                      onChange={(e) =>
+                        updateValue(res.id, "note", e.currentTarget.value)
+                      }
+                      disabled={submitting}
+                    />
+                  </Group>
+                  <Text size="xs" c="dimmed">
+                    Reserved {formatQty(res.qtyReserved)} · Created{" "}
+                    {res.createdAt
+                      ? new Date(res.createdAt as any).toLocaleString()
+                      : "—"}
+                  </Text>
+                </Stack>
+              </Card>
+            );
+          })}
+        </Stack>
+      )}
+    </Stack>
+  );
 }
 
 function MovementDeleteMenu({

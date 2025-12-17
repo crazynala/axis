@@ -4,9 +4,15 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import {
+  useFetcher,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+  useRevalidator,
+} from "@remix-run/react";
 import { Group, Stack } from "@mantine/core";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, useMemo, useCallback } from "react";
 import {
   prisma,
   prismaBase,
@@ -36,6 +42,10 @@ import {
   ActivityAction,
 } from "@prisma/client";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
+import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
+import { loadMaterialCoverage } from "~/modules/production/services/materialCoverage.server";
+import { loadCoverageToleranceDefaults } from "~/modules/materials/services/coverageTolerance.server";
+import { loadAssemblyRollups } from "~/modules/production/services/rollups.server";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -689,6 +699,16 @@ export async function loader({ params }: LoaderFunctionArgs) {
     activitiesByAssembly,
     quantityByAssembly,
   });
+  const toleranceDefaults = await loadCoverageToleranceDefaults();
+  const rollups = assemblyIds.length
+    ? await loadAssemblyRollups(assemblyIds)
+    : new Map<number, any>();
+  const materialCoverage = await loadMaterialCoverage({
+    assemblies: assemblies as any,
+    rollups,
+    stockByProduct,
+    toleranceDefaults,
+  });
 
   console.log(
     "[factory debug] make stage summary",
@@ -741,6 +761,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
     defectReasons,
     primaryCostingIdByAssembly,
     externalStepsByAssembly,
+    toleranceDefaults,
+    materialCoverageByAssembly: assemblies.map((assembly: any) => ({
+      assemblyId: assembly.id,
+      coverage: materialCoverage.get(assembly.id) ?? null,
+    })),
   });
 }
 
@@ -1970,6 +1995,9 @@ export default function JobAssemblyRoute() {
 
   const nav = useNavigation();
   const submit = useSubmit();
+  const acceptGapFetcher = useFetcher<{ ok?: boolean }>();
+  const toleranceFetcher = useFetcher<{ ok?: boolean }>();
+  const revalidator = useRevalidator();
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
     if (isGroup) setCurrentId(idKey);
@@ -1980,6 +2008,77 @@ export default function JobAssemblyRoute() {
   // Path building now automatic (replace last path segment with id); no custom builder needed.
   const [cutOpen, setCutOpen] = useState(false);
   const [editActivity, setEditActivity] = useState<null | any>(null);
+  useEffect(() => {
+    if (
+      (acceptGapFetcher.state === "idle" && acceptGapFetcher.data) ||
+      (toleranceFetcher.state === "idle" && toleranceFetcher.data)
+    ) {
+      revalidator.revalidate();
+    }
+  }, [
+    acceptGapFetcher.state,
+    acceptGapFetcher.data,
+    toleranceFetcher.state,
+    toleranceFetcher.data,
+    revalidator,
+  ]);
+  const coverageByAssembly = useMemo(() => {
+    const map = new Map<number, any>();
+    (data.materialCoverageByAssembly || []).forEach((entry: any) => {
+      if (entry?.assemblyId != null) {
+        map.set(entry.assemblyId, entry.coverage ?? null);
+      }
+    });
+    return map;
+  }, [data.materialCoverageByAssembly]);
+  const handleAcceptGap = useCallback(
+    (assemblyId: number, productId: number) => {
+      const fd = new FormData();
+      fd.set("_intent", "acceptGap");
+      fd.set("assemblyId", String(assemblyId));
+      fd.set("productId", String(productId));
+      acceptGapFetcher.submit(fd, {
+        method: "post",
+        action: "/production/dashboard",
+      });
+    },
+    [acceptGapFetcher]
+  );
+  const handleToleranceSave = useCallback(
+    (assemblyId: number, abs: number | null, pct: number | null) => {
+      const fd = new FormData();
+      fd.set("_intent", "updateTolerance");
+      fd.set("assemblyId", String(assemblyId));
+      if (pct != null && Number.isFinite(pct)) {
+        fd.set("pct", String(pct));
+      }
+      if (abs != null && Number.isFinite(abs)) {
+        fd.set("abs", String(abs));
+      }
+      toleranceFetcher.submit(fd, {
+        method: "post",
+        action: "/production/dashboard",
+      });
+    },
+    [toleranceFetcher]
+  );
+  const handleToleranceReset = useCallback(
+    (assemblyId: number) => {
+      const fd = new FormData();
+      fd.set("_intent", "updateTolerance");
+      fd.set("assemblyId", String(assemblyId));
+      fd.set("reset", "1");
+      toleranceFetcher.submit(fd, {
+        method: "post",
+        action: "/production/dashboard",
+      });
+    },
+    [toleranceFetcher]
+  );
+  const acceptGapTargetProductId =
+    acceptGapFetcher.state !== "idle"
+      ? Number(acceptGapFetcher.formData?.get("productId"))
+      : null;
 
   const handleSubmitOrdered = (arr: number[]) => {
     const fd = new FormData();
@@ -2111,6 +2210,18 @@ export default function JobAssemblyRoute() {
         packContext={data.packContext as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
         externalStepsByAssembly={data.externalStepsByAssembly as any}
+      />
+      <MaterialCoverageDetails
+        assemblyId={assembly.id}
+        coverage={coverageByAssembly.get(assembly.id) ?? null}
+        toleranceDefaults={data.toleranceDefaults}
+        toleranceAbs={assembly.materialCoverageToleranceAbs ?? null}
+        tolerancePct={assembly.materialCoverageTolerancePct ?? null}
+        onAcceptGap={handleAcceptGap}
+        acceptingProductId={acceptGapTargetProductId}
+        onUpdateTolerance={handleToleranceSave}
+        onResetTolerance={handleToleranceReset}
+        toleranceSaving={toleranceFetcher.state !== "idle"}
       />
     </Stack>
   );

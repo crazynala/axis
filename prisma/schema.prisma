@@ -302,6 +302,8 @@ model Assembly {
   notesUnaccented     String?
   assemblyType        String?             @default("Prod")
   primaryCostingId    Int?
+  materialCoverageTolerancePct Decimal?   @db.Decimal(8, 6)
+  materialCoverageToleranceAbs Decimal?   @db.Decimal(14, 4)
   assemblyGroup       AssemblyGroup?      @relation(fields: [assemblyGroupId], references: [id])
   job                 Job?                @relation("Job_Assemblies", fields: [jobId], references: [id])
   primaryCosting      Costing?            @relation("PrimaryAssemblyCosting", fields: [primaryCostingId], references: [id])

@@ -1,11 +1,17 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
+import {
+  ActivityAction,
+  ActivityKind,
+  AssemblyStage,
+} from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 import { Link, useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Badge,
   Button,
   Card,
+  Collapse,
   Drawer,
   Modal,
   TextInput,
@@ -15,15 +21,18 @@ import {
   Table,
   Tabs,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { BreadcrumbSet } from "@aa/timber";
 import { requireUserId } from "~/utils/auth.server";
 import { useRegisterNavLocation } from "~/hooks/useNavLocation";
-import type {
-  LoaderAssembly,
-  LoaderData,
+import {
+  fetchDashboardRows,
+  type LoaderAssembly,
+  type LoaderData,
 } from "~/modules/production/services/production.dashboard.server";
+import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import type { AssemblyRiskSignals } from "~/modules/production/services/riskSignals.server";
 
 const LEAD_TIME_SOURCE_LABELS: Record<string, string> = {
@@ -63,7 +72,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: LoaderFunctionArgs) {
-  await requireUserId(request);
+  const userId = await requireUserId(request);
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
   if (intent === "assignReservation") {
@@ -92,8 +101,20 @@ export async function action({ request }: LoaderFunctionArgs) {
     }
     const qtyOrdered = Number(poLine.quantityOrdered ?? poLine.quantity ?? 0) || 0;
     const qtyReceived = Number(poLine.qtyReceived ?? 0) || 0;
-    const remaining = Math.max(qtyOrdered - qtyReceived, 0);
-    const reserveQty = Math.min(qty, remaining || qty);
+    const reservedTotals = await prisma.supplyReservation.aggregate({
+      _sum: { qtyReserved: true },
+      where: { purchaseOrderLineId: poLineId },
+    });
+    const existingReserved =
+      Number(reservedTotals._sum.qtyReserved ?? 0) || 0;
+    const remaining = Math.max(qtyOrdered - qtyReceived - existingReserved, 0);
+    if (!(remaining > 0)) {
+      return json({ ok: false, error: "no_remaining" }, { status: 400 });
+    }
+    const reserveQty = Math.min(qty, remaining);
+    if (!(reserveQty > 0)) {
+      return json({ ok: false, error: "invalid_qty" }, { status: 400 });
+    }
     await prisma.supplyReservation.create({
       data: {
         assemblyId,
@@ -104,12 +125,99 @@ export async function action({ request }: LoaderFunctionArgs) {
     });
     return json({ ok: true });
   }
+  if (intent === "acceptGap") {
+    const assemblyId = Number(form.get("assemblyId"));
+    const productId = Number(form.get("productId"));
+    if (!Number.isFinite(assemblyId) || !Number.isFinite(productId)) {
+      return json({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const rows = await fetchDashboardRows([assemblyId]);
+    const assembly = rows[0];
+    if (!assembly?.materialCoverage) {
+      return json({ ok: false, error: "missing" }, { status: 404 });
+    }
+    const material = assembly.materialCoverage.materials.find(
+      (m) => m.productId === productId
+    );
+    if (!material) {
+      return json({ ok: false, error: "material_missing" }, { status: 404 });
+    }
+    const uncovered = Number(material.qtyUncovered ?? 0) || 0;
+    if (!(uncovered > 0)) {
+      return json({ ok: false, error: "no_gap" }, { status: 400 });
+    }
+    const priorAbs =
+      assembly.materialCoverageToleranceAbs != null
+        ? Number(assembly.materialCoverageToleranceAbs)
+        : null;
+    const nextAbs = Math.max(priorAbs ?? 0, uncovered);
+    const actor = await resolveUserLabel(userId);
+    const productLabel =
+      material.productName ?? `product ${material.productId ?? productId}`;
+    const noteParts = [
+      `Accepted coverage gap for ${productLabel} (#${productId})`,
+      `raw gap ${formatNumber(uncovered)}`,
+      `abs ${formatNumber(priorAbs)} → ${formatNumber(nextAbs)}`,
+    ];
+    await prisma.$transaction([
+      prisma.assembly.update({
+        where: { id: assemblyId },
+        data: { materialCoverageToleranceAbs: nextAbs },
+      }),
+      prisma.assemblyActivity.create({
+        data: {
+          assemblyId,
+          jobId: assembly.job?.id ?? null,
+          stage: AssemblyStage.order,
+          action: ActivityAction.NOTE,
+          kind: ActivityKind.normal,
+          activityDate: new Date(),
+          notes: noteParts.join(" • "),
+          createdBy: actor,
+        },
+      }),
+    ]);
+    return json({ ok: true });
+  }
+  if (intent === "updateTolerance") {
+    const assemblyId = Number(form.get("assemblyId"));
+    const reset = form.get("reset") === "1";
+    if (!Number.isFinite(assemblyId)) {
+      return json({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const pctRaw = form.get("pct");
+    const absRaw = form.get("abs");
+    const pctVal =
+      !reset && pctRaw != null && pctRaw !== ""
+        ? Number(pctRaw)
+        : null;
+    const absVal =
+      !reset && absRaw != null && absRaw !== ""
+        ? Number(absRaw)
+        : null;
+    await prisma.assembly.update({
+      where: { id: assemblyId },
+      data: {
+        materialCoverageTolerancePct:
+          pctVal != null && Number.isFinite(pctVal) && pctVal >= 0
+            ? pctVal
+            : null,
+        materialCoverageToleranceAbs:
+          absVal != null && Number.isFinite(absVal) && absVal >= 0
+            ? absVal
+            : null,
+      },
+    });
+    return json({ ok: true });
+  }
   return json({ ok: false }, { status: 400 });
 }
 
 export default function ProductionDashboardRoute() {
   const data = useLoaderData<LoaderData>();
-  const assemblies = Array.isArray(data?.assemblies) ? data.assemblies : [];
+  const assemblies = Array.isArray(data?.assemblies)
+    ? (data.assemblies as LoaderAssembly[])
+    : [];
   console.log("[production.dashboard] client data", {
     assemblies: assemblies.length,
     type: typeof data?.assemblies,
@@ -123,8 +231,11 @@ export default function ProductionDashboardRoute() {
     uncovered: number;
   } | null>(null);
   const assignFetcher = useFetcher();
+  const acceptGapFetcher = useFetcher();
+  const toleranceFetcher = useFetcher();
   const navigate = useNavigate();
   useRegisterNavLocation({ moduleKey: "production-dashboard" });
+  const toleranceDefaults = data.toleranceDefaults;
 
   const handleAssignSubmit = useCallback(
     (lineId: number, qty: number) => {
@@ -146,6 +257,62 @@ export default function ProductionDashboardRoute() {
       navigate(0);
     }
   }, [assignFetcher.state, assignFetcher.data, navigate]);
+  useEffect(() => {
+    if (
+      (acceptGapFetcher.state === "idle" && acceptGapFetcher.data) ||
+      (toleranceFetcher.state === "idle" && toleranceFetcher.data)
+    ) {
+      navigate(0);
+    }
+  }, [
+    acceptGapFetcher.state,
+    acceptGapFetcher.data,
+    toleranceFetcher.state,
+    toleranceFetcher.data,
+    navigate,
+  ]);
+
+  const handleAcceptGap = useCallback(
+    (assemblyId: number, productId: number) => {
+      const fd = new FormData();
+      fd.set("_intent", "acceptGap");
+      fd.set("assemblyId", String(assemblyId));
+      fd.set("productId", String(productId));
+      acceptGapFetcher.submit(fd, { method: "post" });
+    },
+    [acceptGapFetcher]
+  );
+
+  const handleToleranceSave = useCallback(
+    (assemblyId: number, abs: number | null, pct: number | null) => {
+      const fd = new FormData();
+      fd.set("_intent", "updateTolerance");
+      fd.set("assemblyId", String(assemblyId));
+      if (pct != null && Number.isFinite(pct)) {
+        fd.set("pct", String(pct));
+      }
+      if (abs != null && Number.isFinite(abs)) {
+        fd.set("abs", String(abs));
+      }
+      toleranceFetcher.submit(fd, { method: "post" });
+    },
+    [toleranceFetcher]
+  );
+
+  const handleToleranceReset = useCallback(
+    (assemblyId: number) => {
+      const fd = new FormData();
+      fd.set("_intent", "updateTolerance");
+      fd.set("assemblyId", String(assemblyId));
+      fd.set("reset", "1");
+      toleranceFetcher.submit(fd, { method: "post" });
+    },
+    [toleranceFetcher]
+  );
+  const acceptGapTargetProductId =
+    acceptGapFetcher.state !== "idle"
+      ? Number(acceptGapFetcher.formData?.get("productId"))
+      : null;
 
   const atRiskRows = useMemo(() => {
     const rows = assemblies.slice();
@@ -274,8 +441,12 @@ export default function ProductionDashboardRoute() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {atRiskRows.map((row) => (
-                  <Table.Tr key={row.id}>
+                {atRiskRows.map((row) => {
+                  const potentialCount = countPotentialMaterials(
+                    row.materialCoverage
+                  );
+                  return (
+                    <Table.Tr key={row.id}>
                     <Table.Td>
                       <Stack gap={0}>
                         {row.job ? (
@@ -319,25 +490,42 @@ export default function ProductionDashboardRoute() {
                         : "—"}
                     </Table.Td>
                     <Table.Td>
-                      {row.risk.poHold ? (
-                        <Stack gap={2}>
-                          <Badge
-                            color="yellow"
-                            variant="filled"
-                            size="sm"
-                            style={{ cursor: "pointer" }}
-                            onClick={() => setPoHoldFocus(row)}
-                          >
-                            PO HOLD{" "}
-                            {countBlockingMaterials(row.materialCoverage) || ""}
-                          </Badge>
-                          <Text size="xs" c="dimmed">
-                            {row.risk.poHoldReason || "Blocking PO line"}
-                          </Text>
-                        </Stack>
-                      ) : (
-                        <Text size="sm">—</Text>
-                      )}
+                      <Stack gap={4}>
+                        {row.risk.poHold ? (
+                          <Stack gap={2}>
+                            <Badge
+                              color="yellow"
+                              variant="filled"
+                              size="sm"
+                              style={{ cursor: "pointer" }}
+                              onClick={() => setPoHoldFocus(row)}
+                            >
+                              PO HOLD{" "}
+                              {countBlockingMaterials(row.materialCoverage) ||
+                                ""}
+                            </Badge>
+                            <Text size="xs" c="dimmed">
+                              {row.risk.poHoldReason || "Blocking PO line"}
+                            </Text>
+                          </Stack>
+                        ) : null}
+                        {potentialCount ? (
+                          <Tooltip label="Uncovered gap within tolerance">
+                            <Badge
+                              color="gray"
+                              variant="light"
+                              size="sm"
+                              style={{ cursor: "pointer" }}
+                              onClick={() => setPoHoldFocus(row)}
+                            >
+                              Within tolerance {potentialCount}
+                            </Badge>
+                          </Tooltip>
+                        ) : null}
+                        {!row.risk.poHold && !potentialCount ? (
+                          <Text size="sm">—</Text>
+                        ) : null}
+                      </Stack>
                     </Table.Td>
                     <Table.Td>
                       {row.risk.poBlockingEta
@@ -383,8 +571,9 @@ export default function ProductionDashboardRoute() {
                         </Button>
                       ) : null}
                     </Table.Td>
-                  </Table.Tr>
-                ))}
+                    </Table.Tr>
+                  );
+                })}
               </Table.Tbody>
             </Table>
             {!atRiskRows.length ? (
@@ -575,9 +764,36 @@ export default function ProductionDashboardRoute() {
                       {formatQuantity(material.qtyReservedToBatch)}
                     </Table.Td>
                     <Table.Td>
-                      <Badge color="red" size="sm">
-                        {formatQuantity(material.qtyUncovered)}
-                      </Badge>
+                      <Stack gap={2}>
+                        {material.status === "PO_HOLD" ? (
+                          <Badge color="red" size="sm">
+                            Hold {formatQuantity(material.qtyUncoveredAfterTolerance)}
+                          </Badge>
+                        ) : material.status === "POTENTIAL_UNDERCUT" ? (
+                          <Tooltip
+                            label={`Raw ${formatQuantity(
+                              material.qtyUncovered
+                            )} · Tol ${formatQuantity(
+                              material.tolerance.qty
+                            )} (${getToleranceSourceLabel(
+                              material.tolerance.source
+                            )})`}
+                          >
+                            <Badge color="gray" size="sm" variant="light">
+                              Within tolerance
+                            </Badge>
+                          </Tooltip>
+                        ) : (
+                          <Badge color="green" size="sm">
+                            Covered
+                          </Badge>
+                        )}
+                        <Text size="xs" c="dimmed">
+                          Raw {formatQuantity(material.qtyUncovered)} · Tol{" "}
+                          {formatQuantity(material.tolerance.qty)} → Eff{" "}
+                          {formatQuantity(material.qtyUncoveredAfterTolerance)}
+                        </Text>
+                      </Stack>
                     </Table.Td>
                     <Table.Td>
                       {material.earliestEta
@@ -614,7 +830,18 @@ export default function ProductionDashboardRoute() {
         size="lg"
       >
         {poHoldFocus ? (
-          <MaterialCoverageDetails assembly={poHoldFocus} />
+          <MaterialCoverageDetails
+            assemblyId={poHoldFocus.id}
+            coverage={poHoldFocus.materialCoverage}
+            toleranceDefaults={toleranceDefaults}
+            toleranceAbs={poHoldFocus.materialCoverageToleranceAbs}
+            tolerancePct={poHoldFocus.materialCoverageTolerancePct}
+            onAcceptGap={handleAcceptGap}
+            acceptingProductId={acceptGapTargetProductId}
+            onUpdateTolerance={handleToleranceSave}
+            onResetTolerance={handleToleranceReset}
+            toleranceSaving={toleranceFetcher.state !== "idle"}
+          />
         ) : null}
       </Drawer>
 
@@ -635,142 +862,22 @@ function getTargetDate(assembly: LoaderAssembly) {
   return Number.isFinite(dt.getTime()) ? dt : null;
 }
 
-function MaterialCoverageDetails({ assembly }: { assembly: LoaderAssembly }) {
-  const coverage = assembly.materialCoverage;
-  if (!coverage) {
-    return <Text c="dimmed">No material coverage data loaded.</Text>;
-  }
-  if (!coverage.materials.length) {
-    return <Text c="dimmed">No material demand or reservations recorded.</Text>;
-  }
-  return (
-    <Stack gap="sm">
-      {coverage.reasons.length ? (
-        <Text size="sm" c="dimmed">
-          {coverage.reasons[0]?.message}
-        </Text>
-      ) : null}
-      {coverage.materials.map((material) => (
-        <Card key={`${assembly.id}-${material.productId}`} withBorder padding="sm">
-          <Stack gap="xs">
-            <Group justify="space-between" align="center">
-              <Stack gap={2}>
-                <Text fw={600}>
-                  {material.productName ??
-                    `Product ${material.productId}`}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Required {formatQuantity(material.qtyRequired ?? 0)} · On hand{" "}
-                  {formatQuantity(material.locStock)} (loc) /{" "}
-                  {formatQuantity(material.totalStock)} (total) · PO{" "}
-                  {formatQuantity(material.qtyReservedToPo)} · Batch{" "}
-                  {formatQuantity(material.qtyReservedToBatch)}
-                </Text>
-              </Stack>
-              {material.qtyUncovered > 0 ? (
-                <Badge color="red" size="sm">
-                  Uncovered {formatQuantity(material.qtyUncovered)}
-                </Badge>
-              ) : material.blockingPoLineIds.length ? (
-                <Badge color="yellow" size="sm">
-                  ETA blocked
-                </Badge>
-              ) : (
-                <Badge color="green" size="sm">
-                  Covered
-                </Badge>
-              )}
-            </Group>
-            {material.calc ? (
-              <Text size="xs" c="dimmed">
-                Calc: order {formatQuantity(material.calc.orderQty ?? 0)} · cut{" "}
-                {formatQuantity(material.calc.cutGoodQty ?? 0)} · remaining to
-                cut {formatQuantity(material.calc.remainingToCut ?? 0)} · qty/unit{" "}
-                {formatQuantity(material.calc.qtyPerUnit ?? 0)} → required{" "}
-                {formatQuantity(material.qtyRequired ?? 0)}
-                {material.calc.statusHint
-                  ? ` (${material.calc.statusHint})`
-                  : ""}
-              </Text>
-            ) : null}
-            <Table
-              highlightOnHover
-              horizontalSpacing="sm"
-              verticalSpacing="xs"
-              withColumnBorders
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Source</Table.Th>
-                  <Table.Th>Qty</Table.Th>
-                  <Table.Th>On hand</Table.Th>
-                  <Table.Th>Covered</Table.Th>
-                  <Table.Th>ETA</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Notes</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                <Table.Tr>
-                  <Table.Td>On hand (loc / total)</Table.Td>
-                  <Table.Td>—</Table.Td>
-                  <Table.Td>
-                    {formatQuantity(material.locStock)} /{" "}
-                    {formatQuantity(material.totalStock)}
-                  </Table.Td>
-                  <Table.Td>
-                    On-hand {formatQuantity(material.coveredByOnHand)} · Res{" "}
-                    {formatQuantity(material.coveredByReservations)}
-                  </Table.Td>
-                  <Table.Td>—</Table.Td>
-                  <Table.Td>—</Table.Td>
-                  <Table.Td>—</Table.Td>
-                </Table.Tr>
-                {material.reservations.map((res) => (
-                  <Table.Tr key={res.id}>
-                    <Table.Td>
-                      {res.type === "PO"
-                        ? `PO line #${res.purchaseOrderLineId ?? "—"}`
-                        : `Batch #${res.inventoryBatchId ?? "—"}`}
-                    </Table.Td>
-                    <Table.Td>{formatQuantity(res.qtyReserved)}</Table.Td>
-                    <Table.Td>—</Table.Td>
-                    <Table.Td>Res {formatQuantity(res.qtyReserved)}</Table.Td>
-                    <Table.Td>{formatDate(res.etaDate)}</Table.Td>
-                    <Table.Td>
-                      {res.status === "BLOCKED" ? (
-                        <Badge color="yellow" size="sm">
-                          {res.reason || "Blocked"}
-                        </Badge>
-                      ) : (
-                        <Badge color="green" size="sm">
-                          OK
-                        </Badge>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">
-                        {res.note || "—"}
-                      </Text>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Stack>
-        </Card>
-      ))}
-    </Stack>
-  );
-}
-
 function countBlockingMaterials(
   coverage: LoaderAssembly["materialCoverage"]
 ): number {
   if (!coverage) return 0;
   return coverage.materials.filter(
     (material) =>
-      (material.qtyUncovered ?? 0) > 0 || material.blockingPoLineIds.length > 0
+      material.status === "PO_HOLD" || material.blockingPoLineIds.length > 0
+  ).length;
+}
+
+function countPotentialMaterials(
+  coverage: LoaderAssembly["materialCoverage"]
+): number {
+  if (!coverage) return 0;
+  return coverage.materials.filter(
+    (material) => material.status === "POTENTIAL_UNDERCUT"
   ).length;
 }
 
@@ -799,6 +906,33 @@ function AssignToPoModal({
       setPoLineId(null);
     }
   }, [target]);
+  const computeRemaining = useCallback((line: any) => {
+    if (!line) return 0;
+    const ordered = Number(line.qtyOrdered || 0) || 0;
+    const received = Number(line.qtyReceived || 0) || 0;
+    const reserved = Number(line.reservedQty || 0) || 0;
+    if (line.availableQty != null && Number.isFinite(line.availableQty)) {
+      return Math.max(Number(line.availableQty) || 0, 0);
+    }
+    return Math.max(ordered - received - reserved, 0);
+  }, []);
+
+  useEffect(() => {
+    if (!poLineId) return;
+    if (!target) return;
+    const line = (target.assembly.poLines || []).find(
+      (l: any) => l.id === poLineId
+    );
+    if (!line) return;
+    const remaining = computeRemaining(line);
+    setQty((prev) => {
+      const safePrev = Number(prev || 0);
+      if (!Number.isFinite(safePrev) || safePrev <= 0) {
+        return remaining || 0;
+      }
+      return Math.min(safePrev, remaining || 0);
+    });
+  }, [poLineId, target, computeRemaining]);
 
   if (!target) return null;
   const { assembly, productId, productName, uncovered } = target;
@@ -806,8 +940,12 @@ function AssignToPoModal({
     (assembly.poLines || []).filter(
       (line) =>
         (line.productId ?? null) === productId &&
-        Math.max((line.qtyOrdered || 0) - (line.qtyReceived || 0), 0) > 0
+        computeRemaining(line) > 0
     ) || [];
+  const selectedLine = options.find((line) => line.id === poLineId) || null;
+  const remainingForSelected = selectedLine
+    ? computeRemaining(selectedLine)
+    : null;
 
   return (
     <Modal
@@ -833,11 +971,18 @@ function AssignToPoModal({
             ...options.map((line) => ({
               value: String(line.id),
               label: `PO#${line.purchaseOrderId ?? line.id} • Remaining ${formatQuantity(
-                Math.max((line.qtyOrdered || 0) - (line.qtyReceived || 0), 0)
-              )} • ETA ${formatDate(line.etaDate)}`,
+                computeRemaining(line)
+              )} • Reserved ${formatQuantity(line.reservedQty ?? 0)} • ETA ${formatDate(
+                line.etaDate
+              )}`,
             })),
           ]}
         />
+        {remainingForSelected != null ? (
+          <Text size="xs" c="dimmed">
+            Available qty: {formatQuantity(remainingForSelected)}
+          </Text>
+        ) : null}
         <TextInput
           label="Quantity to reserve"
           value={qty}
@@ -864,6 +1009,22 @@ function AssignToPoModal({
       </Stack>
     </Modal>
   );
+}
+
+async function resolveUserLabel(userId: number) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true, firstName: true, lastName: true },
+  });
+  const display =
+    user?.name ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
+  return display || user?.email || `user:${userId}`;
+}
+
+function formatNumber(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "0";
+  return `${Math.round(Number(value) * 100) / 100}`;
 }
 
 function renderExternalStatus(risk: AssemblyRiskSignals) {
@@ -929,6 +1090,24 @@ function formatQuantity(value: number | null | undefined) {
   const num = Number(value ?? 0);
   if (!Number.isFinite(num)) return "0";
   return num.toLocaleString();
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(Number(value))) return "0%";
+  const num = Number(value) * 100;
+  return `${Math.round(num * 10) / 10}%`;
+}
+
+function getToleranceSourceLabel(source: string | null | undefined) {
+  switch (source) {
+    case "ASSEMBLY":
+      return "Assembly override";
+    case "GLOBAL_TYPE":
+      return "Global (type)";
+    case "GLOBAL_DEFAULT":
+    default:
+      return "Global default";
+  }
 }
 
 function stepTime(value: string | null) {

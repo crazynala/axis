@@ -34,6 +34,7 @@ type Props = {
   } | null;
   purchaseDate?: string | Date | null;
   vendorLeadTimeDays?: number | null;
+  onOpenReservations?: (line: any) => void;
 };
 
 export function PurchaseOrderLinesTable({
@@ -43,6 +44,7 @@ export function PurchaseOrderLinesTable({
   pricingPrefs,
   purchaseDate,
   vendorLeadTimeDays,
+  onOpenReservations,
 }: Props) {
   const lines: any[] =
     useWatch({ control: form.control, name: "lines" }) ||
@@ -61,6 +63,33 @@ export function PurchaseOrderLinesTable({
 
   const isDraft = status === "DRAFT";
   const isComplete = status === "COMPLETE" || status === "CANCELED";
+
+  const getReservedQty = useCallback((line: any) => {
+    if (!line) return 0;
+    if (line.reservedQty != null) return Number(line.reservedQty) || 0;
+    return (line.reservations || []).reduce(
+      (sum: number, res: any) => sum + (Number(res.qtyReserved) || 0),
+      0
+    );
+  }, []);
+  const getRemainingQty = useCallback(
+    (line: any) => {
+      if (!line) return 0;
+      if (line.availableQty != null) {
+        return Math.max(Number(line.availableQty) || 0, 0);
+      }
+      const ordered = Number(line.quantityOrdered || 0) || 0;
+      const received = Number(line.qtyReceived || 0) || 0;
+      return Math.max(ordered - received - getReservedQty(line), 0);
+    },
+    [getReservedQty]
+  );
+
+  const formatQuantity = (value: number | null | undefined) => {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return "0";
+    return num.toLocaleString();
+  };
 
   const getLivePrices = (productId?: number, qtyOrdered?: number) => {
     const pid = Number(productId || 0);
@@ -334,6 +363,10 @@ export function PurchaseOrderLinesTable({
                         <NumberInput {...field} hideControls min={0} w="100%" />
                       )}
                     />
+                    <Text size="xs" c="dimmed">
+                      Reserved {formatQuantity(getReservedQty(r))} · Remaining{" "}
+                      {formatQuantity(getRemainingQty(r))}
+                    </Text>
                   </Table.Td>
                   <Table.Td>
                     <Stack gap={4}>
@@ -441,6 +474,11 @@ export function PurchaseOrderLinesTable({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
+                        {onOpenReservations ? (
+                          <Menu.Item onClick={() => onOpenReservations(r)}>
+                            Manage reservations
+                          </Menu.Item>
+                        ) : null}
                         <Menu.Item
                           color="red"
                           disabled={isComplete}
@@ -546,7 +584,13 @@ export function PurchaseOrderLinesTable({
                   <Table.Td>{r.id}</Table.Td>
                   <Table.Td>{r.sku ?? r.product?.sku ?? ""}</Table.Td>
                   <Table.Td>{r.name ?? r.product?.name ?? ""}</Table.Td>
-                  <Table.Td>{r.quantityOrdered ?? 0}</Table.Td>
+                  <Table.Td>
+                    {r.quantityOrdered ?? 0}
+                    <Text size="xs" c="dimmed">
+                      Reserved {formatQuantity(getReservedQty(r))} · Remaining{" "}
+                      {formatQuantity(getRemainingQty(r))}
+                    </Text>
+                  </Table.Td>
                   <Table.Td>
                     <Controller
                       name={`lines.${idx}.quantity`}
@@ -610,6 +654,11 @@ export function PurchaseOrderLinesTable({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
+                        {onOpenReservations ? (
+                          <Menu.Item onClick={() => onOpenReservations(r)}>
+                            Manage reservations
+                          </Menu.Item>
+                        ) : null}
                         <Menu.Item
                           color="red"
                           disabled={isComplete || !isDraft}

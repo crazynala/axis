@@ -6,6 +6,7 @@ export type MaterialDemandRow = {
   assemblyId: number;
   productId: number;
   productName: string | null;
+  productType?: ProductType | string | null;
   costingId: number | null;
   qtyRequired: number | null;
   uom: string | null;
@@ -16,6 +17,8 @@ export type MaterialDemandRow = {
     remainingToCut?: number | null;
     qtyPerUnit?: number | null;
     stage?: string | null;
+    status?: string | null;
+    statusHint?: string | null;
   };
 };
 
@@ -88,6 +91,7 @@ export function buildDerivedDemandRows(
       assemblyId: assembly.id,
       productId,
       productName: costing.product?.name ?? null,
+      productType: type,
       costingId: costing.id,
       qtyRequired,
       uom: null,

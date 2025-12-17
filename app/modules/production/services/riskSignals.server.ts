@@ -18,6 +18,8 @@ export type PurchaseOrderLineSummary = {
   purchaseOrderId?: number | null;
   qtyOrdered: number;
   qtyReceived: number;
+  reservedQty?: number;
+  availableQty?: number;
 };
 
 export type NextAction =
@@ -128,11 +130,16 @@ export function buildRiskSignals(options: {
     }
     if (coverage?.held) {
       coverage.materials.forEach((material) => {
-        if (material.qtyUncovered > 0) {
+        if (
+          material.status === "PO_HOLD" &&
+          (material.qtyUncoveredAfterTolerance ?? material.qtyUncovered) > 0
+        ) {
           nextActions.push({
             kind: "RESOLVE_PO",
             label: `Assign PO for ${material.productName ?? "material"}`,
-            detail: `Uncovered ${material.qtyUncovered}`,
+            detail: `Uncovered ${formatQty(
+              material.qtyUncoveredAfterTolerance ?? material.qtyUncovered
+            )} (raw ${formatQty(material.qtyUncovered)})`,
           });
         }
         material.reservations
@@ -291,6 +298,14 @@ function findBlockingLineId(
     if (blocked?.purchaseOrderLineId) return blocked.purchaseOrderLineId;
   }
   return null;
+}
+
+function formatQty(value: number | string | null | undefined) {
+  if (value == null) return "0";
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return "0";
+  const rounded = Math.round(num * 100) / 100;
+  return `${rounded}`;
 }
 
 function toDate(value: string | Date | null | undefined): Date {
