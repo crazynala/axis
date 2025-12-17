@@ -251,6 +251,7 @@ export function AssemblyCostingsTable(props: {
       const primaryId =
         primaryCostingIdByAssembly?.[Number(c.assemblyId ?? 0) || 0] ?? null;
       const isPrimary = primaryId != null && primaryId === c.id;
+      const missingPrimary = primaryId == null;
       if (process.env.NODE_ENV !== "production") {
         // temp debug: log primary resolution per row
         // eslint-disable-next-line no-console
@@ -266,7 +267,13 @@ export function AssemblyCostingsTable(props: {
           <Table.Td width={40}>
             <ActionIcon
               variant="subtle"
-              color={isPrimary ? "var(--mantine-color-bright)" : "gray"}
+              color={
+                isPrimary
+                  ? "var(--mantine-color-bright)"
+                  : missingPrimary
+                  ? "red"
+                  : "gray"
+              }
               aria-label="Primary costing"
               onClick={() =>
                 !isPrimary &&
@@ -275,7 +282,9 @@ export function AssemblyCostingsTable(props: {
                 onSetPrimaryCosting(c.id, Number(c.assemblyId))
               }
               disabled={isPrimary}
-              style={{ opacity: isPrimary ? 1 : 0.5 }}
+              style={{
+                opacity: isPrimary || missingPrimary ? 1 : 0.5,
+              }}
               size="xs"
             >
               {isPrimary ? <IconTagFilled /> : <IconTag />}
@@ -568,10 +577,17 @@ export function AssemblyCostingsTable(props: {
         const primaryId =
           primaryCostingIdByAssembly?.[Number(c.assemblyId ?? 0) || 0] ?? null;
         const isPrimary = primaryId != null && primaryId === c.id;
+        const missingPrimary = primaryId == null;
         return (
           <ActionIcon
             variant="subtle"
-            color={isPrimary ? "var(--mantine-color-text)" : "gray"}
+            color={
+              isPrimary
+                ? "var(--mantine-color-text)"
+                : missingPrimary
+                ? "red"
+                : "gray"
+            }
             aria-label="Primary costing"
             onClick={() =>
               !isPrimary &&
@@ -580,7 +596,9 @@ export function AssemblyCostingsTable(props: {
               onSetPrimaryCosting(c.id, Number(c.assemblyId))
             }
             // disabled={isPrimary}
-            style={{ opacity: isPrimary ? 1 : 0.5 }}
+            style={{
+              opacity: isPrimary || missingPrimary ? 1 : 0.5,
+            }}
             size="xs"
           >
             {isPrimary ? <IconTagFilled /> : <IconTag />}

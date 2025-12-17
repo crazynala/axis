@@ -22,7 +22,7 @@ import {
   Modal,
   Tabs,
 } from "@mantine/core";
-import { IconMenu2 } from "@tabler/icons-react";
+import { IconBug, IconMenu2 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -73,6 +73,8 @@ import {
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
+import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
+import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
 
 // BOM spreadsheet modal removed; see /products/:id/bom page
 
@@ -348,6 +350,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       });
     }
     let userLevel: string | null = null;
+    let canDebug = false;
     try {
       const uid = await requireUserId(request);
       const user = await prismaBase.user.findUnique({
@@ -355,6 +358,8 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
         select: { userLevel: true },
       });
       userLevel = (user?.userLevel as string | null) ?? null;
+      const debugAccess = await getDebugAccessForUser(uid);
+      canDebug = debugAccess.canDebug;
     } catch {
       // best-effort; leave null if not logged in
     }
@@ -370,6 +375,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
       usedInProducts,
       costingAssemblies,
       userLevel,
+      canDebug,
     });
   }); // end runWithDbActivity wrapper
 }
@@ -958,6 +964,7 @@ export default function ProductDetailRoute() {
     costingAssemblies,
     shipmentLines,
     userLevel,
+    canDebug,
   } = useLoaderData<typeof loader>();
   const matches = useMatches();
   const rootData = matches.find((m) => m.id === "root")?.data as
@@ -969,6 +976,8 @@ export default function ProductDetailRoute() {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const debugFetcher = useFetcher();
+  const [debugOpen, setDebugOpen] = useState(false);
   // Sync RecordContext currentId for global navigation consistency
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
@@ -1383,6 +1392,17 @@ export default function ProductDetailRoute() {
               >
                 Duplicate Product
               </Menu.Item>
+              {canDebug ? (
+                <Menu.Item
+                  leftSection={<IconBug size={14} />}
+                  onClick={() => {
+                    setDebugOpen(true);
+                    debugFetcher.load(`/products/${product.id}/debug`);
+                  }}
+                >
+                  Debug
+                </Menu.Item>
+              ) : null}
               <Menu.Item
                 onClick={() =>
                   refreshFetcher.submit(
@@ -1407,6 +1427,13 @@ export default function ProductDetailRoute() {
         </Group>
       </Group>
       <ProductFindManager />
+      <DebugDrawer
+        opened={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        title={`Debug – Product ${product.id}`}
+        payload={debugFetcher.data as any}
+        loading={debugFetcher.state !== "idle"}
+      />
       <Form id="product-form" method="post">
         {/* Isolate global form init into a dedicated child to reduce HMR churn */}
         <GlobalFormInit form={editForm as any} onSave={saveUpdate} />

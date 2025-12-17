@@ -68,9 +68,18 @@ export function PurchaseOrderLinesTable({
     if (!line) return 0;
     if (line.reservedQty != null) return Number(line.reservedQty) || 0;
     return (line.reservations || []).reduce(
-      (sum: number, res: any) => sum + (Number(res.qtyReserved) || 0),
+      (sum: number, res: any) =>
+        res.settledAt ? sum : sum + (Number(res.qtyReserved) || 0),
       0
     );
+  }, []);
+  const resolveExpectedQty = useCallback((line: any) => {
+    if (!line) return 0;
+    const qty = Number(line.quantity ?? 0) || 0;
+    const ordered = Number(line.quantityOrdered ?? 0) || 0;
+    if (qty > 0) return qty;
+    if (ordered > 0) return ordered;
+    return qty || ordered || 0;
   }, []);
   const getRemainingQty = useCallback(
     (line: any) => {
@@ -78,11 +87,11 @@ export function PurchaseOrderLinesTable({
       if (line.availableQty != null) {
         return Math.max(Number(line.availableQty) || 0, 0);
       }
-      const ordered = Number(line.quantityOrdered || 0) || 0;
+      const expected = resolveExpectedQty(line);
       const received = Number(line.qtyReceived || 0) || 0;
-      return Math.max(ordered - received - getReservedQty(line), 0);
+      return Math.max(expected - received - getReservedQty(line), 0);
     },
-    [getReservedQty]
+    [getReservedQty, resolveExpectedQty]
   );
 
   const formatQuantity = (value: number | null | undefined) => {
@@ -242,9 +251,9 @@ export function PurchaseOrderLinesTable({
   };
 
   const getStatusInfo = (line: any, eta: Date | null) => {
-    const qtyOrdered = Number(line?.quantityOrdered ?? 0);
+    const qtyExpected = resolveExpectedQty(line);
     const qtyReceived = Number(line?.qtyReceived ?? 0);
-    if (qtyOrdered > 0 && qtyReceived >= qtyOrdered) {
+    if (qtyExpected > 0 && qtyReceived >= qtyExpected) {
       return { label: "Received", color: "green" as const };
     }
     if (!eta) return null;

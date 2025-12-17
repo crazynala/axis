@@ -1,12 +1,15 @@
 import {
   ActionIcon,
+  Alert,
   Button,
   Card,
+  Checkbox,
   Divider,
   Grid,
   Group,
   Menu,
   Modal,
+  NumberInput,
   Stack,
   Table,
   Text,
@@ -29,7 +32,7 @@ import {
 } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useSubmit } from "@remix-run/react";
+import { useFetcher, useRevalidator, useSubmit } from "@remix-run/react";
 import { AssemblyQuantitiesCard } from "~/modules/job/components/AssemblyQuantitiesCard";
 import { AssemblyCostingsTable } from "~/modules/job/components/AssemblyCostingsTable";
 import { Link } from "@remix-run/react";
@@ -46,6 +49,7 @@ import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 import { ExternalStepsStrip } from "~/modules/job/components/ExternalStepsStrip";
 import type { DerivedExternalStep } from "~/modules/job/types/externalSteps";
+import type { CompanyOption } from "~/modules/company/components/CompanySelect";
 
 export type QuantityItem = {
   assemblyId: number;
@@ -120,6 +124,8 @@ export function AssembliesEditor(props: {
   assemblyTypeOptions?: string[] | null;
   defectReasons?: Array<{ id: number; label: string | null }>;
   externalStepsByAssembly?: Record<number, DerivedExternalStep[] | undefined> | null;
+  rollupsByAssembly?: Record<number, any> | null;
+  vendorOptionsByStep?: Record<string, CompanyOption[]> | null;
 }) {
   const {
     job,
@@ -141,9 +147,13 @@ export function AssembliesEditor(props: {
     defectReasons,
     primaryCostingIdByAssembly,
     externalStepsByAssembly,
+    rollupsByAssembly,
+    vendorOptionsByStep,
   } = props;
   const activityList = activitiesProp || [];
   const submit = useSubmit();
+  const externalStepFetcher = useFetcher<{ ok?: boolean; error?: string }>();
+  const revalidator = useRevalidator();
   const isGroup = (assemblies?.length ?? 0) > 1;
   const firstAssembly = assemblies[0];
   const assemblyTypeData = (
@@ -178,6 +188,22 @@ export function AssembliesEditor(props: {
   const [defectEditActivityId, setDefectEditActivityId] = useState<
     number | null
   >(null);
+  const [externalStepAction, setExternalStepAction] = useState<{
+    mode: "send" | "receive";
+    assemblyId: number;
+    step: DerivedExternalStep;
+  } | null>(null);
+  const [externalStepQty, setExternalStepQty] = useState<number>(0);
+  const [externalStepDate, setExternalStepDate] = useState<Date | null>(
+    new Date()
+  );
+  const [externalStepVendorId, setExternalStepVendorId] = useState<number | null>(
+    null
+  );
+  const [externalStepUnknownVendor, setExternalStepUnknownVendor] =
+    useState(false);
+  const [externalStepRecordSew, setExternalStepRecordSew] = useState(false);
+  const [externalStepError, setExternalStepError] = useState<string | null>(null);
   const [factoryAssemblyId, setFactoryAssemblyId] = useState<number | null>(
     null
   );
@@ -237,6 +263,100 @@ export function AssembliesEditor(props: {
     });
     return rows;
   }, [activityList, reasonLabelById]);
+
+  const rollupByAssembly = rollupsByAssembly || {};
+
+  useEffect(() => {
+    if (externalStepFetcher.data?.ok) {
+      setExternalStepAction(null);
+      setExternalStepError(null);
+      revalidator.revalidate();
+    } else if (externalStepFetcher.data?.error) {
+      setExternalStepError(String(externalStepFetcher.data.error));
+    }
+  }, [externalStepFetcher.data, revalidator]);
+
+  const openExternalStepModal = (
+    assemblyId: number,
+    step: DerivedExternalStep,
+    mode: "send" | "receive"
+  ) => {
+    const rollup = rollupByAssembly[assemblyId];
+    const defaultQty =
+      mode === "send"
+        ? Number(rollup?.sewnAvailableQty ?? 0) || 0
+        : Math.max(
+            (Number(step.qtyOut ?? 0) || 0) - (Number(step.qtyIn ?? 0) || 0),
+            0
+          );
+    setExternalStepAction({ mode, assemblyId, step });
+    setExternalStepQty(defaultQty);
+    setExternalStepDate(new Date());
+    setExternalStepVendorId(step.vendor?.id ?? null);
+    setExternalStepUnknownVendor(false);
+    setExternalStepRecordSew(false);
+    setExternalStepError(null);
+  };
+
+  const handleExternalStepSubmit = () => {
+    if (!externalStepAction) return;
+    const qty = Number(externalStepQty ?? 0) || 0;
+    const vendorId = externalStepVendorId;
+    const unknownVendor = externalStepUnknownVendor;
+    if (!unknownVendor && !vendorId) {
+      setExternalStepError("Vendor is required (or choose Unknown vendor).");
+      return;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setExternalStepError("Quantity must be greater than 0.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set(
+      "_intent",
+      externalStepAction.mode === "send"
+        ? "externalStep.send"
+        : "externalStep.receive"
+    );
+    fd.set("assemblyId", String(externalStepAction.assemblyId));
+    fd.set("externalStepType", externalStepAction.step.type);
+    if (externalStepDate) {
+      fd.set("activityDate", externalStepDate.toISOString());
+    }
+    fd.set("qty", String(qty));
+    if (vendorId) fd.set("vendorCompanyId", String(vendorId));
+    if (unknownVendor) fd.set("vendorUnknown", "1");
+    if (externalStepAction.mode === "send" && externalStepRecordSew) {
+      fd.set("recordSewNow", "1");
+    }
+    externalStepFetcher.submit(fd, { method: "post" });
+  };
+
+  const externalStepRollup = externalStepAction
+    ? rollupByAssembly[externalStepAction.assemblyId]
+    : null;
+  const sewMissing =
+    externalStepAction?.mode === "send" &&
+    (Number(externalStepRollup?.sewGoodQty ?? 0) || 0) <= 0;
+  const vendorSelectData = useMemo(() => {
+    if (!externalStepAction) return [];
+    const baseOptions =
+      vendorOptionsByStep?.[externalStepAction.step.type] || [];
+    const map = new Map<number, CompanyOption>();
+    baseOptions.forEach((opt) => map.set(opt.value, opt));
+    const activeVendor = externalStepAction.step.vendor;
+    if (activeVendor && !map.has(activeVendor.id)) {
+      map.set(activeVendor.id, {
+        value: activeVendor.id,
+        label: activeVendor.name?.trim() || `Company ${activeVendor.id}`,
+        isSupplier: true,
+      });
+    }
+    return Array.from(map.values()).map((opt) => ({
+      value: String(opt.value),
+      label: opt.label,
+    }));
+  }, [externalStepAction, vendorOptionsByStep]);
   const summaryByAssembly = useMemo(() => {
     const map = new Map<
       number,
@@ -1165,7 +1285,15 @@ export function AssembliesEditor(props: {
               <Grid.Col span={7}>
                 <Stack gap="sm">
                   {externalStepRows !== null ? (
-                    <ExternalStepsStrip steps={externalStepRows} />
+                    <ExternalStepsStrip
+                      steps={externalStepRows}
+                      onSendOut={(step) =>
+                        openExternalStepModal(a.id, step, "send")
+                      }
+                      onReceiveIn={(step) =>
+                        openExternalStepModal(a.id, step, "receive")
+                      }
+                    />
                   ) : null}
                   <Group justify="flex-end">
                     <Button
@@ -1414,6 +1542,115 @@ export function AssembliesEditor(props: {
           </Card>
         </Grid.Col>
       </Grid>
+
+      <HotkeyAwareModalRoot
+        opened={externalStepAction != null}
+        onClose={() => setExternalStepAction(null)}
+        centered
+        size="lg"
+      >
+        <Modal.Overlay />
+        <Modal.Content>
+          <Modal.Header>
+            <Group justify="space-between" w="100%">
+              <Title order={5}>
+                {externalStepAction?.mode === "send" ? "Send out" : "Receive in"} –{" "}
+                {externalStepAction?.step.label || "External step"}
+              </Title>
+            </Group>
+          </Modal.Header>
+          <Modal.Body>
+            <Stack gap="sm">
+              {sewMissing ? (
+                <Alert color="yellow" title="Sew missing">
+                  <Stack gap="xs">
+                    <Text size="sm">
+                      This assembly has no Sew recorded. You can continue, but
+                      the step will be marked low confidence.
+                    </Text>
+                    <Checkbox
+                      label="Record Sew now for the same qty"
+                      checked={externalStepRecordSew}
+                      onChange={(e) =>
+                        setExternalStepRecordSew(e.currentTarget.checked)
+                      }
+                    />
+                  </Stack>
+                </Alert>
+              ) : null}
+              {externalStepError ? (
+                <Text size="sm" c="red">
+                  {externalStepError}
+                </Text>
+              ) : null}
+              <Group grow align="flex-end">
+                <NumberInput
+                  label={
+                    externalStepAction?.mode === "receive"
+                      ? "Qty received"
+                      : "Qty sent out"
+                  }
+                  value={externalStepQty}
+                  onChange={(val) =>
+                    setExternalStepQty(
+                      typeof val === "number" ? val : Number(val) || 0
+                    )
+                  }
+                  min={0}
+                />
+                <DatePickerInput
+                  label="Date"
+                  value={externalStepDate}
+                  onChange={setExternalStepDate}
+                />
+              </Group>
+              <Group grow align="flex-end">
+                <Select
+                  label="Vendor"
+                  placeholder="Select vendor"
+                  data={vendorSelectData}
+                  searchable
+                  clearable
+                  value={externalStepVendorId ? String(externalStepVendorId) : null}
+                  onChange={(val) => {
+                    setExternalStepVendorId(
+                      val == null || val === "" ? null : Number(val)
+                    );
+                    if (val) setExternalStepUnknownVendor(false);
+                  }}
+                  disabled={externalStepUnknownVendor}
+                />
+                <Checkbox
+                  label="Unknown vendor (allow)"
+                  checked={externalStepUnknownVendor}
+                  onChange={(e) => {
+                    const next = e.currentTarget.checked;
+                    setExternalStepUnknownVendor(next);
+                    if (next) setExternalStepVendorId(null);
+                  }}
+                />
+              </Group>
+              <Group justify="flex-end" mt="sm">
+                <Button
+                  variant="default"
+                  onClick={() => setExternalStepAction(null)}
+                  disabled={externalStepFetcher.state !== "idle"}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleExternalStepSubmit}
+                  loading={externalStepFetcher.state !== "idle"}
+                >
+                  {externalStepAction?.mode === "send"
+                    ? "Send out"
+                    : "Receive in"}
+                </Button>
+              </Group>
+            </Stack>
+          </Modal.Body>
+        </Modal.Content>
+      </HotkeyAwareModalRoot>
 
       <Modal
         opened={factoryAssemblyId != null}

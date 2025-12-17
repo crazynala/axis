@@ -14,14 +14,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     where: { id: jobId },
     include: {
       assemblies: {
-        select: { id: true, name: true, status: true },
-        orderBy: { id: "asc" },
-      },
-      assemblyGroups: {
-        select: {
-          id: true,
-          assemblies: { select: { id: true }, orderBy: { id: "asc" } },
-        },
+        select: { id: true, name: true, status: true, assemblyGroupId: true },
         orderBy: { id: "asc" },
       },
     },
@@ -30,70 +23,28 @@ export async function loader({ params }: LoaderFunctionArgs) {
   return json({
     job: { id: job.id, name: job.name },
     assemblies: job.assemblies,
-    groups: job.assemblyGroups,
   });
 }
 
 export default function JobAssemblyMasterRecordRoute() {
-  const { job, assemblies, groups } = useLoaderData<typeof loader>();
+  const { job, assemblies } = useLoaderData<typeof loader>();
   const { setRecordSet, setIdList, addRows } = useRecords();
   const rows = useMemo(() => {
     const asmList = (assemblies || []) as Array<{
       id: number;
       name: string | null;
       status: string | null;
+      assemblyGroupId: number | null;
     }>;
-    const groupList = (groups || []) as Array<{
-      id: number;
-      assemblies: Array<{ id: number }>;
-    }>;
-    // Build group membership maps
-    const groupMembers = new Map<number, number[]>(); // groupId -> sorted member ids
-    const memberToGroup = new Map<number, number>(); // assemblyId -> groupId
-    for (const g of groupList) {
-      const ids = (g.assemblies || [])
-        .map((x) => Number(x.id))
-        .sort((a, b) => a - b);
-      if (!ids.length) continue;
-      groupMembers.set(g.id, ids);
-      for (const id of ids) memberToGroup.set(id, g.id);
-    }
-    // Map for assembly lookup
-    const rowById = new Map<number, { id: number; name: any; status: any }>();
-    for (const a of asmList) rowById.set(Number(a.id), a as any);
-    // Sorted assembly ids for display order
-    const sortedIds = Array.from(rowById.keys()).sort((a, b) => a - b);
-    // Walk sorted ids; when encountering a group member, emit one group row once; otherwise emit singleton
-    const visited = new Set<number>();
-    const out: any[] = [];
-    for (const id of sortedIds) {
-      if (visited.has(id)) continue;
-      const gId = memberToGroup.get(id) ?? null;
-      if (gId != null) {
-        const members = groupMembers.get(gId) || [id];
-        // mark all members visited
-        for (const mid of members) visited.add(mid);
-        out.push({
-          idKey: members.join(","),
-          ids: members,
-          name: `Group ${gId}`,
-          status: null,
-          label: `G${gId}`,
-        });
-      } else {
-        const a = rowById.get(id)!;
-        out.push({
-          idKey: String(a.id),
-          ids: [a.id],
-          name: a.name,
-          status: a.status,
-          label: `A${a.id}`,
-        });
-        visited.add(id);
-      }
-    }
-    return out;
-  }, [assemblies, groups]);
+    return asmList.map((a) => ({
+      idKey: String(a.id),
+      ids: [a.id],
+      name: a.name,
+      status: a.status,
+      label: `A${a.id}`,
+      assemblyGroupId: a.assemblyGroupId ?? null,
+    }));
+  }, [assemblies]);
   const ids = useMemo(() => rows.map((r: any) => r.idKey), [rows]);
   useEffect(() => {
     // Use module 'jobs' so hotkeys and path checks align with first path segment.

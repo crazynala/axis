@@ -13,6 +13,7 @@
 - [ ] Any legacy Postgres data can be dropped/reseeded; prefer clean schema migrations over complicated in-DB backfills.
 - [ ] Packing truth comes from `BoxLine` rows; `stage=pack/qc` events exist for history/defects only.
 - [ ] Interactive forms wire into the RHF + `SaveCancelHeader` pattern (with dirty tracking) unless impossible; new fields must register with RHF so change detection/saves stay consistent.
+- [ ] Risk signals must be surfaced at the row level when they change operator behavior (drawer is for detail, not discovery).
 
 ## 1. Database (schema + migrations)
 
@@ -54,12 +55,12 @@
 - [x] Update dashboard/business logic to consume the derived engine for hold/late signals.
 - [x] Ensure pack/qc defects affect readiness metrics and downstream dashboards by combining finish rollups, `BoxLine` packed quantities, and defect adjustments consistently.
 - [x] Flesh out the sew availability calculator (`sewnAvailableQty`) for send-out flows, including low-confidence handling when sew is inferred from finish.
-- [ ] If user clicks Send Out and Sew is missing:
-  - [ ] allow continuing
-  - [ ] mark the external-step record as `lowConfidence=true` in the derived model (no DB field needed)
-  - [ ] optionally prompt: “Record Sew now for the same qty?” (one-click creates a Sew RECORDED activity)
-- [ ] For SENT_OUT / RECEIVED_IN activities:
-  - [ ] require externalStepType and strongly encourage vendorCompanyId (UI-required; DB still nullable)
+- [x] If user clicks Send Out and Sew is missing:
+  - [x] allow continuing
+  - [x] mark the external-step record as `lowConfidence=true` in the derived model (no DB field needed)
+  - [x] optionally prompt: “Record Sew now for the same qty?” (one-click creates a Sew RECORDED activity)
+- [x] For SENT_OUT / RECEIVED_IN activities:
+  - [x] require externalStepType and strongly encourage vendorCompanyId (UI-required; DB still nullable)
 - [x] Standard rollups – define once and reuse everywhere:
   - [ ] `cutGoodQty = Σ AssemblyActivity(stage=cut, kind=normal, action=RECORDED)` (minus adjustments if supported)
   - [ ] `sewGoodQty = Σ AssemblyActivity(stage=sew, kind=normal, action=RECORDED)`
@@ -92,13 +93,31 @@
   - Visible whenever `isSupplier` is checked and propagates through the detail and “New Company” forms.
 - [x] **Assembly view – external steps strip**: show chips per expected step with status badge, ETA, late indicator, and drawer containing sent/received dates, vendor, qty out/in, defects, lead-time source label (“Costing/Product/Vendor default”), and “Add inferred dates” helper.
   - `ExternalStepsStrip` renders inside `AssembliesEditor` with status badges, ETA chips, low-confidence/late warnings, vendor info, and a drawer table; inference helper UI remains TODO.
-  - [ ] “Send to Embroidery/Wash/Dye” modal defaults qty from available sewn qty (when tracked), offers “Record Sew now” helper if missing, and allows continuing without data while flagging low-confidence inference.
-- [ ] **Box packing workflow**: packing is performed exclusively through the Box UI. When adding an assembly to a box, default the suggested qty to `readyToPackQty`, surface “Finish recorded: X” and “Already packed: Y”, and rely on the operator to adjust discrepancies before writing `BoxLine` rows. (Modal now shows finish/packed/ready rows with ready-to-pack autofill; remaining: Box-only enforcement + dashboard rollups.)
+  - [x] “Send to Embroidery/Wash/Dye” modal defaults qty from available sewn qty (when tracked), offers “Record Sew now” helper if missing, and allows continuing without data while flagging low-confidence inference.
+- [x] 3.X. Box-only packing enforcement + readiness (milestone-ready)
+  - [x] Packed qty is sourced from `BoxLine` only; pack-stage activities no longer drive totals.
+  - [x] “Add to box” defaults qty to `readyToPackQty`; shows Finish/Already packed/Ready to pack metrics.
+  - [x] Warn on qty > readyToPackQty and allow override with confirmation + reason note.
+  - [x] Dashboard/assembly rollups use `readyToPackQty` from finish minus packed.
 - [x] **Production Dashboard `/production/dashboard`**:
   - [x] Tab “At Risk”: columns for External ETA (nearest open step), PO Hold (Yes/No), PO ETA (earliest blocking line); default sort Late → PO Hold → Due soon → Target date.
   - [x] Tab “Out at Vendor”: show ETA source (Costing/Product/Company) so vendor fallback is visible.
   - [x] Tab “Needs Action”: “Next Action” logic now flags (a) expected external step with no `SENT_OUT` while CUT exists, (b) `SENT_OUT` past ETA (Follow up vendor), (c) PO line late (Resolve PO).
-  - [ ] Provide dashboard multi-select for batch `Send Out` / `Receive In`, plus a keyboard-first modal for those actions.
+  - [x] Provide dashboard multi-select for batch `Send Out` / `Receive In`, plus a keyboard-first modal for those actions.
+- [x] Dashboard risk chips: surface supply-integrity signals at row level
+  - [x] In `/production/dashboard` (At Risk + Materials Short rows), allow multiple chips so coverage tier does not hide supply-integrity issues.
+  - [x] If any linked PO line is OVER-RESERVED, show an OVER-RESERVED chip at row level.
+  - [x] If any linked PO line covering required qty is ETA BLOCKED, show an ETA BLOCKED chip at row level.
+  - [x] Chip priority order (highest → lowest) for row display/sorting: OVER-RESERVED → ETA BLOCKED → PO HOLD → DUE SOON → Within tolerance → Covered.
+  - [x] Tooltips include the delta and PO line number (e.g., “Over-reserved by 10 on PO line #123”).
+- [x] 3.Y. Legacy shipment support via imported Boxes (idempotent)
+  - [x] Importer creates a “legacy box” per shipment and `BoxLine` rows per shipment line.
+  - [x] Idempotent re-import via `Box.importKey` (`FM_SHIPMENT:{shipmentId}`) upsert + replace lines.
+  - [x] UI badge: “Legacy box (imported)”.
+- [ ] 3.Z. UAT box-only + legacy imports
+  - [ ] Reimport twice: same shipment upserts to same box, no duplicates.
+  - [ ] Packed qty derives from BoxLines; dashboards update after box changes.
+  - [ ] Finish recorded → readyToPackQty > 0 → Add to box defaults correctly.
 - [ ] Update all UI labels to present MAKE as “Finish” and align iconography (primary costing icon reflects RHF state without saving) across assembly/dashboard views.
   - Assembly detail/editor, pack modal, quantities cards, and production ledger now render “Finish”. Remaining modules still need an audit.
 - [ ] Remove remaining temporary debug logs in the UI layer.
@@ -129,6 +148,33 @@
 - [x] Dashboard “Assign to PO” modal creates `SupplyReservation` rows for uncovered materials; PO lines are surfaced by explicit assembly/job links or matching productId.
 - [x] Wire assembly detail material demand view to the shared material demand service to avoid drift.
 - [x] Add PO line drawer view showing “Reserved for assemblies” with edit/remove; wire fast “Assign to PO” modal that defaults qty to uncovered and enforces remaining-unreserved guard.
+- [x] X.Y. Coverage semantics for PO quantity (expected supply)
+  - [x] Define PO line supply semantics: `quantity` is final expected (received + expected-to-receive), `quantityOrdered` is historical only.
+  - [x] Coverage/reservations cap against `quantity` (fallback to `quantityOrdered` when expected is unset).
+  - [x] Derived fields: reservedTotal, remainingExpected, unreceivedExpected (computed, not stored).
+  - [x] Lateness/risk uses ETA when `qtyReceived < quantity`.
+  - [x] Over-reservation detection (`reservedTotal > quantity`) with “OVER-RESERVED” chip in the reservation drawer and quick trim action.
+- [x] X.Z. Coverage status tiers when supply is expected (ETA-driven)
+  - [x] Distinguish PO coverage as “expected” (not yet received); ETA risk drives status.
+  - [x] Define “blocked” when expected supply is late/unknown (eta missing/past/after target while unreceivedExpected > 0).
+  - [x] PO_HOLD when effectiveUncovered > 0 OR all PO reservations covering required are blocked by ETA.
+  - [x] DUE_SOON when covered but the earliest PO ETA is within 7 days of target (or within 7 days of today when no target).
+  - [x] POTENTIAL_UNDERCUT remains purely about uncovered within tolerance (no ETA component).
+- [x] X.AA. Demand-empty / FULLY_CUT edge states (keep history, no false holds)
+  - [x] When demand is empty, do not show PO_HOLD; still render a coverage history section.
+  - [x] Reservations show “SETTLED” when requiredQty == 0 (derived status; no DB change).
+  - [x] Placeholder copy updated to: “No active material demand. Any linked reservations will appear below as history.”
+- [x] X.AB. PO line quantity reductions (short-ship) handling
+  - [x] When quantity drops below reservedTotal, mark line as OVER-RESERVED.
+  - [x] Reservation drawer “Trim reservations to expected” (reduce newest first).
+  - [x] “Settle reservation(s)” for assemblies with requiredQty == 0 (history-only; no active reserved total).
+  - [x] Persist an operation log entry for trims/settles (who/when, prior vs new reserved totals).
+  - [x] Warning banner in material coverage details when OVER-RESERVED or ETA BLOCKED is present.
+  - [x] Banner includes one-click Trim action with preview (“Will trim X from newest reservations first”).
+- [ ] X.AC. UAT coverage edge cases
+  - [ ] Partial receipt / expected inbound: quantity=201, qtyReceived=59, ETA next week → no PO_HOLD but show DUE_SOON/LATE as appropriate.
+  - [ ] FULLY_CUT with reservations: demand 0 → no PO_HOLD; reservations show SETTLED history.
+  - [ ] Reduce PO quantity below reserved: line shows OVER-RESERVED; trim action reduces and remainingExpected updates.
 - [ ] Import/export: accept MaterialDemand rows when present; leave reservations empty by default; include reservations in exports (optional).
 - [ ] UAT: shortages across assemblies, overbooking guard, ETA-driven hold messaging, dashboard integration of reasons.
 - [ ] Align PO-hold logic when demand is empty (e.g., FULLY_CUT assemblies): show PO lines and allow manual assignment even when uncovered=0, and avoid PO HOLD when coverage reports no demand.
@@ -167,9 +213,15 @@
 - [ ] **Implicit embroidery**: cut + finish recorded, no embroidery events → status `IMPLICIT_DONE`, not late.
 - [ ] **Late vendor**: send embroidery out, let ETA pass → dashboard shows Late + “Follow up vendor”; assembly chip red.
 - [ ] **PO hold**: PO line ETA past target date → assembly shows PO HOLD, external step ETA suppressed/flagged as blocked.
+- [ ] **Over-reserved visibility (row-level)**: set expectedQty < reservedTotal (e.g., expected 170, reserved 180) → At Risk row shows OVER-RESERVED chip; drawer banner shows “Over-reserved by 10” with Trim action; trimming clears the chip.
+- [ ] **ETA blocked visibility (row-level)**: ensure a covering PO line has missing ETA while unreceivedExpected > 0 → At Risk row shows ETA BLOCKED chip; drawer banner calls out the line.
 - [ ] **Cut/Finish/Pack/Defect sanity**: walk through create/edit flows for each activity end-to-end to confirm statuses, ETA derivations, and ledger writes.
 - [ ] **Sample import round-trip**: import, edit, and export a sample to verify new schema survives back-and-forth without `activityType` regressions.
 - [ ] **Send-out modal nudges**: verify sew-recording helper, low-confidence messaging, and qty defaults when sew is explicit vs inferred.
+- [ ] **Send Out / Receive In (single)**: missing Sew warning allows continue, Record Sew now works, and chip shows low confidence when appropriate.
+- [ ] **Batch Send Out**: select 5 rows → defaults qty, vendor required, creates activities, chips update.
+- [ ] **Batch Receive In**: select vendor rows → defaults qty (qtyOut − qtyIn), creates activities, clears late flag.
+- [ ] **Vendor missing**: verify UI blocks unless “Unknown vendor” explicitly chosen.
 - [ ] **Pack/QC defects**: finish + pack defect should surface readiness badge and adjust dashboard rollups.
 - [ ] **External steps inference**: cut + finish only still shows `IMPLICIT_DONE` external steps with no late state.
 

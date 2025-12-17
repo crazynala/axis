@@ -81,11 +81,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
         _sum: { quantity: true },
       })
     : [];
+  const packedSums = ids.length
+    ? await prisma.boxLine.groupBy({
+        by: ["assemblyId"],
+        where: { assemblyId: { in: ids }, packingOnly: { not: true } },
+        _sum: { quantity: true },
+      })
+    : [];
   const sumsByAssembly = new Map<number, Record<string, number>>();
   activitySums.forEach((row) => {
     const m = sumsByAssembly.get(row.assemblyId) || {};
     m[row.stage] = Number(row._sum.quantity ?? 0) || 0;
     sumsByAssembly.set(row.assemblyId, m);
+  });
+  const packedByAssembly = new Map<number, number>();
+  packedSums.forEach((row) => {
+    if (!row.assemblyId) return;
+    packedByAssembly.set(
+      row.assemblyId,
+      Number(row._sum.quantity ?? 0) || 0
+    );
   });
 
   const rows: Row[] = assemblies.map((a) => {
@@ -112,7 +127,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       cut: Number(sums.cut ?? 0),
       sew: Number(sums.sew ?? 0),
       finish: Number(sums.finish ?? 0),
-      pack: Number(sums.pack ?? 0),
+      pack: packedByAssembly.get(a.id) ?? 0,
     };
   });
 

@@ -5,14 +5,21 @@ import type {
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
+  useActionData,
   useFetcher,
   useLoaderData,
   useNavigation,
   useSubmit,
   useRevalidator,
 } from "@remix-run/react";
-import { Group, Stack } from "@mantine/core";
-import { useEffect, useState, type ReactNode, useMemo, useCallback } from "react";
+import { Badge, Button, Drawer, Group, Menu, Stack, Table, Text } from "@mantine/core";
+import {
+  useEffect,
+  useState,
+  type ReactNode,
+  useMemo,
+  useCallback,
+} from "react";
 import {
   prisma,
   prismaBase,
@@ -20,6 +27,8 @@ import {
 } from "~/utils/prisma.server";
 import { BreadcrumbSet, getLogger } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
+import { requireUserId } from "~/utils/auth.server";
+import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import {
   createCutActivity,
   createFinishActivity,
@@ -40,16 +49,28 @@ import {
   DefectDisposition,
   ActivityKind,
   ActivityAction,
+  ExternalStepType,
 } from "@prisma/client";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
 import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import { loadMaterialCoverage } from "~/modules/production/services/materialCoverage.server";
 import { loadCoverageToleranceDefaults } from "~/modules/materials/services/coverageTolerance.server";
 import { loadAssemblyRollups } from "~/modules/production/services/rollups.server";
+import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import { IconBug, IconMenu2 } from "@tabler/icons-react";
+import {
+  loadSupplierOptionsByExternalStepTypes,
+} from "~/modules/company/services/companyOptions.server";
+import { showToastError } from "~/utils/toast";
+import {
+  createPooledCutEvent,
+  deleteAssemblyGroupEvent,
+} from "~/modules/job/services/assemblyGroupEvents.server";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
-export async function loader({ params }: LoaderFunctionArgs) {
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  const userId = await requireUserId(request);
   const jobId = Number(params.jobId);
   const raw = String(params.assemblyId || "");
   const idList = raw
@@ -84,6 +105,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
       primaryCosting: {
         select: { id: true, product: { select: { name: true, sku: true } } },
       },
+      assemblyGroup: {
+        select: { id: true, name: true },
+      },
       costings: {
         include: {
           product: {
@@ -91,6 +115,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
               id: true,
               sku: true,
               name: true,
+              type: true,
               leadTimeDays: true,
               stockTrackingEnabled: true,
               batchTrackingEnabled: true,
@@ -148,16 +173,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
     }));
   }
 
-  // If a single-assembly path actually belongs to a group, redirect to canonical group path
-  if (!isMulti && (assemblies[0] as any).assemblyGroupId) {
-    const grp = await prisma.assemblyGroup.findUnique({
-      where: { id: Number((assemblies[0] as any).assemblyGroupId) },
-      include: { assemblies: { select: { id: true }, orderBy: { id: "asc" } } },
-    });
-    const ids = (grp?.assemblies || []).map((a: any) => a.id);
-    if (ids.length > 1) {
-      return redirect(`/jobs/${jobId}/assembly/${ids.join(",")}`);
-    }
+  if (isMulti) {
+    return redirect(`/jobs/${jobId}/assembly/${idList[0]}`);
   }
 
   // Fallback: product variant sets per assembly.productId
@@ -190,11 +207,65 @@ export async function loader({ params }: LoaderFunctionArgs) {
     select: { id: true, label: true },
     orderBy: { label: "asc" },
   });
+  const groupInfo =
+    !isMulti && (assemblies[0] as any)?.assemblyGroupId
+      ? await prisma.assemblyGroup.findUnique({
+          where: { id: Number((assemblies[0] as any).assemblyGroupId) },
+          select: {
+            id: true,
+            name: true,
+            assemblies: {
+              select: { id: true, name: true, status: true },
+              orderBy: { id: "asc" },
+            },
+          },
+        })
+      : null;
 
   // Minimal job info
   const job = await prisma.job.findUnique({
     where: { id: jobId },
     select: { id: true, name: true },
+  });
+
+  const boxLines = idList.length
+    ? await prisma.boxLine.findMany({
+        where: { assemblyId: { in: idList }, packingOnly: { not: true } },
+        select: { assemblyId: true, qtyBreakdown: true, quantity: true },
+        orderBy: { id: "asc" },
+      })
+    : [];
+  const packedByAssembly = new Map<
+    number,
+    { breakdown: number[]; total: number }
+  >();
+  const addPackBreakdown = (assemblyId: number, breakdown: number[]) => {
+    const current = packedByAssembly.get(assemblyId) || {
+      breakdown: [],
+      total: 0,
+    };
+    const next = [...current.breakdown];
+    const len = Math.max(next.length, breakdown.length);
+    for (let i = 0; i < len; i++) {
+      const prev = Number(next[i] ?? 0) || 0;
+      const val = Number(breakdown[i] ?? 0) || 0;
+      next[i] = prev + val;
+    }
+    const total = next.reduce((sum, n) => sum + (Number(n) || 0), 0);
+    packedByAssembly.set(assemblyId, { breakdown: next, total });
+  };
+  boxLines.forEach((line) => {
+    if (!line?.assemblyId) return;
+    const rawBreakdown = Array.isArray(line.qtyBreakdown)
+      ? (line.qtyBreakdown as number[])
+      : [];
+    const fallback =
+      rawBreakdown.length === 0 && line.quantity != null
+        ? [Number(line.quantity) || 0]
+        : [];
+    const breakdown = rawBreakdown.length ? rawBreakdown : fallback;
+    if (!breakdown.length) return;
+    addPackBreakdown(line.assemblyId, breakdown);
   });
 
   // Compute stock stats for all costings across assemblies
@@ -301,13 +372,15 @@ export async function loader({ params }: LoaderFunctionArgs) {
     let stage = (act?.stage as string | null) ?? null;
     let kind = (act?.kind as string | null) ?? null;
     let disp =
-      (act?.defectDisposition as string | null) ?? (DefectDisposition.none as any);
+      (act?.defectDisposition as string | null) ??
+      (DefectDisposition.none as any);
     if (stage) stage = stage.toString().toLowerCase();
     if (!stage) {
       const name = String(act?.name || "").toLowerCase();
       if (name.includes("cut")) stage = "cut";
       else if (name.includes("sew")) stage = "sew";
-      else if (name.includes("finish") || name.includes("make")) stage = "finish";
+      else if (name.includes("finish") || name.includes("make"))
+        stage = "finish";
       else if (name.includes("pack")) stage = "pack";
       else if (name.includes("qc")) stage = "qc";
       else stage = "other";
@@ -470,29 +543,12 @@ export async function loader({ params }: LoaderFunctionArgs) {
     fallbackArr: number[],
     fallbackTotal: number
   ) => {
-    if (stage === "finish") {
-      console.log("[factory debug] computeStageStats finish: incoming", {
-        stageActsCount: (acts || []).filter((a) => a?.stage === stage).length,
-        fallbackArr,
-        fallbackTotal,
-      });
-    }
     const goodArr: number[] = [];
     const defectArr: number[] = [];
     let goodTotal = 0;
     let defectTotal = 0;
     const stageActs = (acts || []).filter((a) => a?.stage === stage);
     if (!stageActs.length) {
-      if ((acts || []).length) {
-        const sampleAssemblyId = (acts?.[0] as any)?.assemblyId ?? null;
-        console.log("[factory debug] missing stage acts", {
-          stage,
-          availableStages: Array.from(
-            new Set((acts || []).map((a) => String(a?.stage || "")))
-          ),
-          assemblyId: sampleAssemblyId,
-        });
-      }
       return {
         goodArr: fallbackArr,
         defectArr: [],
@@ -503,19 +559,6 @@ export async function loader({ params }: LoaderFunctionArgs) {
         usableTotal: fallbackTotal,
         attemptsTotal: fallbackTotal,
       };
-    }
-    if (stage === "finish") {
-      console.log("[factory debug] computeStageStats finish", {
-        stageActs: stageActs.map((a) => ({
-          id: a.id,
-          qty: a.quantity,
-          qtyBreakdown: a.qtyBreakdown,
-          stage: a.stage,
-          kind: a.kind,
-        })),
-        fallbackArr,
-        fallbackTotal,
-      });
     }
     const applyArr = (target: number[], source: number[], sign: number) => {
       const len = Math.max(target.length, source.length);
@@ -582,7 +625,9 @@ export async function loader({ params }: LoaderFunctionArgs) {
     const fallbackSewArr = ((a as any).c_qtySew_Breakdown || []) as number[];
     const fallbackFinishArr = ((a as any).c_qtyFinish_Breakdown ||
       []) as number[];
-    const fallbackPackArr = ((a as any).c_qtyPack_Breakdown || []) as number[];
+    const packedSnapshot = packedByAssembly.get(a.id);
+    const fallbackPackArr = (packedSnapshot?.breakdown || []) as number[];
+    const fallbackPackTotal = Number(packedSnapshot?.total ?? 0) || 0;
     const cutStats = computeStageStats(
       acts,
       "cut",
@@ -602,10 +647,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
       Number((a as any).c_qtyFinish || 0) || 0
     );
     const packStats = computeStageStats(
-      acts,
+      [],
       "pack",
       fallbackPackArr,
-      Number((a as any).c_qtyPack || 0) || 0
+      fallbackPackTotal
     );
     // Pipeline usable counts: downstream stages cap upstream usable units
     const usableCutArr = cutStats.usableArr;
@@ -688,7 +733,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
     };
   });
 
-  const quantityByAssembly = new Map<number, { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }>();
+  const quantityByAssembly = new Map<
+    number,
+    { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }
+  >();
   for (const item of quantityItems) {
     if (!item?.assemblyId) continue;
     quantityByAssembly.set(item.assemblyId, { totals: item.totals });
@@ -703,46 +751,28 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const rollups = assemblyIds.length
     ? await loadAssemblyRollups(assemblyIds)
     : new Map<number, any>();
+  const rollupsByAssembly = Object.fromEntries(
+    Array.from(rollups.entries()).map(([id, rollup]) => [id, rollup])
+  );
   const materialCoverage = await loadMaterialCoverage({
     assemblies: assemblies as any,
     rollups,
     stockByProduct,
     toleranceDefaults,
   });
-
-  console.log(
-    "[factory debug] make stage summary",
-    quantityItems.map((q) => ({
-      assemblyId: q.assemblyId,
-      finish: q.finish,
-      totals: q.totals,
-      stageStats: q.stageStats?.finish,
-    }))
-  );
-
-  console.log(
-    "[assembly] quantityItems usable",
-    JSON.stringify(
-      {
-        ids: assemblies.map((a: any) => a.id),
-        items: quantityItems.map((q) => ({
-          assemblyId: q.assemblyId,
-          cut: q.cut,
-          sew: q.sew,
-          finish: q.finish,
-          pack: q.pack,
-          totals: q.totals,
-        })),
-      },
-      null,
-      2
-    )
+  const stepTypeSet = new Set<ExternalStepType>();
+  Object.values(externalStepsByAssembly).forEach((steps) => {
+    (steps || []).forEach((step) => stepTypeSet.add(step.type));
+  });
+  const vendorOptionsByStep = await loadSupplierOptionsByExternalStepTypes(
+    Array.from(stepTypeSet)
   );
 
   const primaryCostingIdByAssembly = Object.fromEntries(
     assemblies.map((a: any) => [a.id, (a as any).primaryCostingId ?? null])
   );
 
+  const debugAccess = await getDebugAccessForUser(userId);
   return json({
     job,
     assemblies,
@@ -759,13 +789,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
     packActivityReferences: packActivityReferences || null,
     assemblyTypes,
     defectReasons,
+    groupInfo,
     primaryCostingIdByAssembly,
     externalStepsByAssembly,
     toleranceDefaults,
+    rollupsByAssembly,
+    vendorOptionsByStep,
     materialCoverageByAssembly: assemblies.map((assembly: any) => ({
       assemblyId: assembly.id,
       coverage: materialCoverage.get(assembly.id) ?? null,
     })),
+    canDebug: debugAccess.canDebug,
   });
 }
 
@@ -793,6 +827,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (Array.isArray(arr) && arr.length) return arr.map((n) => Number(n) || 0);
     if (Number.isFinite(fallbackQty) && fallbackQty > 0) return [fallbackQty];
     return [];
+  };
+  const parsePrimaryCostingId = (value: unknown) => {
+    if (value == null) return null;
+    if (typeof value === "string" && !value.trim()) return null;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
   };
   const validateDefectBreakdown = async (opts: {
     assemblyId: number;
@@ -882,14 +923,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (opts.stage === AssemblyStage.cut) {
       opts.breakdown.forEach((val, idx) => {
         if (val > Math.max(0, availableCut[idx] ?? 0)) {
-          errs.push(`Cut defect at variant ${idx + 1} exceeds available cut (${Math.max(0, availableCut[idx] ?? 0)})`);
+          errs.push(
+            `Cut defect at variant ${idx + 1} exceeds available cut (${Math.max(
+              0,
+              availableCut[idx] ?? 0
+            )})`
+          );
         }
       });
     }
     if (opts.stage === AssemblyStage.sew) {
       opts.breakdown.forEach((val, idx) => {
         if (val > Math.max(0, availableSew[idx] ?? 0)) {
-          errs.push(`Sew defect at variant ${idx + 1} exceeds available sew (${Math.max(0, availableSew[idx] ?? 0)})`);
+          errs.push(
+            `Sew defect at variant ${idx + 1} exceeds available sew (${Math.max(
+              0,
+              availableSew[idx] ?? 0
+            )})`
+          );
         }
       });
     }
@@ -897,7 +948,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
       opts.breakdown.forEach((val, idx) => {
         if (val > Math.max(0, availableFinish[idx] ?? 0)) {
           errs.push(
-            `Finish defect at variant ${idx + 1} exceeds available finish (${Math.max(0, availableFinish[idx] ?? 0)})`
+            `Finish defect at variant ${
+              idx + 1
+            } exceeds available finish (${Math.max(
+              0,
+              availableFinish[idx] ?? 0
+            )})`
           );
         }
       });
@@ -956,6 +1012,71 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return false;
   };
+  if (intent === "group.event.create.cut") {
+    const groupId = Number(form.get("groupId"));
+    const fabricProductId = Number(form.get("fabricProductId"));
+    const qtyMeters = Number(form.get("qtyMeters"));
+    const locationOutIdRaw = form.get("locationOutId");
+    const locationOutId = Number(locationOutIdRaw);
+    const perAssemblyRaw = String(form.get("perAssembly") || "[]");
+    const eventDateStr = String(form.get("eventDate") || "");
+    let perAssembly: Array<{ assemblyId: number; qtyBreakdown: number[] }> = [];
+    try {
+      const parsed = JSON.parse(perAssemblyRaw);
+      if (Array.isArray(parsed)) {
+        perAssembly = parsed.map((row) => ({
+          assemblyId: Number(row?.assemblyId),
+          qtyBreakdown: Array.isArray(row?.qtyBreakdown)
+            ? row.qtyBreakdown.map((n: any) =>
+                Number.isFinite(Number(n)) ? Number(n) : 0
+              )
+            : [],
+        }));
+      }
+    } catch {
+      perAssembly = [];
+    }
+    if (!Number.isFinite(groupId) || groupId <= 0) {
+      return json({ error: "Group is required." }, { status: 400 });
+    }
+    if (!Number.isFinite(fabricProductId) || fabricProductId <= 0) {
+      return json({ error: "Fabric product is required." }, { status: 400 });
+    }
+    if (!Number.isFinite(qtyMeters) || qtyMeters <= 0) {
+      return json({ error: "Meters consumed must be greater than 0." }, { status: 400 });
+    }
+    if (!perAssembly.length) {
+      return json({ error: "Per-assembly breakdowns are required." }, { status: 400 });
+    }
+    const eventDate = eventDateStr ? new Date(eventDateStr) : new Date();
+    await createPooledCutEvent({
+      assemblyGroupId: groupId,
+      eventDate,
+      fabricProductId,
+      locationOutId: Number.isFinite(locationOutId) ? locationOutId : null,
+      qtyMeters,
+      perAssembly,
+      notes: null,
+      userId: null,
+    });
+    const returnTo = form.get("returnTo");
+    if (typeof returnTo === "string" && returnTo.startsWith("/")) {
+      return redirect(returnTo);
+    }
+    return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+  }
+  if (intent === "group.event.delete") {
+    const eventId = Number(form.get("eventId"));
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return json({ error: "Group event not found." }, { status: 400 });
+    }
+    await deleteAssemblyGroupEvent({ eventId, userId: null });
+    const returnTo = form.get("returnTo");
+    if (typeof returnTo === "string" && returnTo.startsWith("/")) {
+      return redirect(returnTo);
+    }
+    return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
+  }
   if (intent === "group.activity.create.cut") {
     const idsRaw = String(form.get("assemblyIds") || "");
     const ids = idsRaw
@@ -1149,13 +1270,33 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
     // Apply primary costing updates
-    const primaryEntries = Object.entries(primaryMap).filter(
-      ([aid, cid]) => Number.isFinite(Number(aid)) && Number.isFinite(Number(cid))
+    const primaryEntries = Object.entries(primaryMap).filter(([aid]) =>
+      Number.isFinite(Number(aid))
     );
-    for (const [aid, cid] of primaryEntries) {
+    for (const [aid, cidRaw] of primaryEntries) {
+      const aId = Number(aid);
+      if (!Number.isFinite(aId)) continue;
+      const primaryId = parsePrimaryCostingId(cidRaw);
+      if (primaryId == null) {
+        await prisma.assembly.update({
+          where: { id: aId },
+          data: { primaryCostingId: null },
+        });
+        continue;
+      }
+      const exists = await prisma.costing.findFirst({
+        where: { id: primaryId, assemblyId: aId },
+        select: { id: true },
+      });
+      if (!exists) {
+        return json(
+          { error: `Primary costing ${primaryId} not found for assembly ${aId}.` },
+          { status: 400 }
+        );
+      }
       await prisma.assembly.update({
-        where: { id: Number(aid) },
-        data: { primaryCostingId: Number(cid) },
+        where: { id: aId },
+        data: { primaryCostingId: primaryId },
       });
     }
     // Propagate edits across shared product costings in the selected assemblies
@@ -1407,7 +1548,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
             ? Number(matchedLine.quantity)
             : costing.quantityPerUnit;
         const resolvedUnitCost = (() => {
-          if (matchedLine?.unitCost != null) return Number(matchedLine.unitCost);
+          if (matchedLine?.unitCost != null)
+            return Number(matchedLine.unitCost);
           if (matchedLine?.unitCostManual != null)
             return Number(matchedLine.unitCostManual);
           return Number(childProduct?.costPrice ?? costing.unitCost ?? 0);
@@ -1451,6 +1593,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (intent === "activity.delete") {
     const aid = Number(form.get("activityId") ?? form.get("id"));
     if (Number.isFinite(aid)) {
+      const activity = await prisma.assemblyActivity.findUnique({
+        where: { id: aid },
+        select: { id: true, assemblyGroupEventId: true },
+      });
+      if (activity?.assemblyGroupEventId) {
+        return json(
+          {
+            error:
+              "This activity was created by a group event. Delete the group event to remove it.",
+          },
+          { status: 400 }
+        );
+      }
       await prisma.$transaction(async (tx) => {
         const movements = await tx.productMovement.findMany({
           where: { assemblyActivityId: aid },
@@ -1579,6 +1734,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     })();
     const boxDescription = (form.get("boxDescription") as string) || null;
     const boxNotes = (form.get("boxNotes") as string) || null;
+    const allowOverpack = String(form.get("allowOverpack") || "") === "1";
     try {
       await createPackActivity({
         assemblyId: targetAssemblyId,
@@ -1586,10 +1742,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
         qtyBreakdown: qtyArr,
         activityDate,
         boxMode,
-        existingBoxId: existingBoxIdStr ? Number(String(existingBoxIdStr)) : null,
+        existingBoxId: existingBoxIdStr
+          ? Number(String(existingBoxIdStr))
+          : null,
         warehouseNumber: parsedWarehouse,
         boxDescription,
         boxNotes,
+        allowOverpack,
       });
     } catch (err) {
       const message =
@@ -1686,10 +1845,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const stageLower = String(existingActivity?.stage || "").toLowerCase();
       const isRecordedStage =
         stageLower === "cut" || stageLower === "make" || stageLower === "pack";
-      const updateAction =
-        isRecordedStage
-          ? ActivityAction.RECORDED
-          : existingActivity?.action ?? null;
+      const updateAction = isRecordedStage
+        ? ActivityAction.RECORDED
+        : existingActivity?.action ?? null;
       const updated = await tx.assemblyActivity.update({
         where: { id: activityId },
         data: {
@@ -1697,11 +1855,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quantity: qtyTotal,
           activityDate,
           defectDisposition: newDisposition ?? undefined,
-          defectReasonId: defectReasonValid
-            ? (defectReasonId as number)
-            : null,
-          notes:
-            typeof notesRaw === "string" ? notesRaw || null : undefined,
+          defectReasonId: defectReasonValid ? (defectReasonId as number) : null,
+          notes: typeof notesRaw === "string" ? notesRaw || null : undefined,
           action: updateAction ?? undefined,
         },
         select: {
@@ -1712,9 +1867,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
           defectDisposition: true,
         },
       });
-      updatedDisposition = updated.defectDisposition as
-        | DefectDisposition
-        | null;
+      updatedDisposition =
+        updated.defectDisposition as DefectDisposition | null;
       const existing = await tx.productMovement.findMany({
         where: { assemblyActivityId: activityId },
         select: { id: true },
@@ -1899,6 +2053,83 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     return redirect(`/jobs/${jobId}/assembly/${raw}`);
   }
+  if (intent === "externalStep.send" || intent === "externalStep.receive") {
+    const targetAssemblyId = Number(form.get("assemblyId") ?? assemblyId);
+    if (!Number.isFinite(targetAssemblyId)) {
+      return json({ ok: false, error: "invalid_assembly" }, { status: 400 });
+    }
+    const externalStepTypeRaw = String(form.get("externalStepType") || "");
+    const externalStepType = Object.values(ExternalStepType).includes(
+      externalStepTypeRaw as ExternalStepType
+    )
+      ? (externalStepTypeRaw as ExternalStepType)
+      : null;
+    if (!externalStepType) {
+      return json({ ok: false, error: "missing_step_type" }, { status: 400 });
+    }
+    const qty = Number(form.get("qty") ?? 0) || 0;
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return json({ ok: false, error: "invalid_qty" }, { status: 400 });
+    }
+    const activityDateRaw = String(form.get("activityDate") || "");
+    const activityDate = activityDateRaw
+      ? new Date(activityDateRaw)
+      : new Date();
+    const vendorCompanyIdRaw = Number(form.get("vendorCompanyId") ?? NaN);
+    const vendorCompanyId = Number.isFinite(vendorCompanyIdRaw)
+      ? vendorCompanyIdRaw
+      : null;
+    const vendorUnknown =
+      String(form.get("vendorUnknown") || "") === "1";
+    if (!vendorCompanyId && !vendorUnknown) {
+      return json({ ok: false, error: "vendor_required" }, { status: 400 });
+    }
+    const targetAssembly = await prisma.assembly.findFirst({
+      where: { id: targetAssemblyId, jobId },
+      select: { id: true, jobId: true },
+    });
+    if (!targetAssembly) {
+      return json({ ok: false, error: "missing_assembly" }, { status: 404 });
+    }
+    const action =
+      intent === "externalStep.send"
+        ? ActivityAction.SENT_OUT
+        : ActivityAction.RECEIVED_IN;
+    await prisma.assemblyActivity.create({
+      data: {
+        assemblyId: targetAssemblyId,
+        jobId: targetAssembly.jobId ?? jobId,
+        stage: AssemblyStage.finish,
+        kind: ActivityKind.normal,
+        action,
+        externalStepType,
+        vendorCompanyId: vendorCompanyId ?? undefined,
+        activityDate,
+        quantity: qty,
+        notes: vendorUnknown ? "Unknown vendor selected" : null,
+      },
+    });
+    const recordSewNow =
+      intent === "externalStep.send" &&
+      String(form.get("recordSewNow") || "") === "1";
+    if (recordSewNow) {
+      await prisma.assemblyActivity.create({
+        data: {
+          assemblyId: targetAssemblyId,
+          jobId: targetAssembly.jobId ?? jobId,
+          name: "Sew",
+          stage: AssemblyStage.sew,
+          kind: ActivityKind.normal,
+          action: ActivityAction.RECORDED,
+          activityDate,
+          quantity: qty,
+          qtyBreakdown: [Math.round(qty)],
+          notes: "Recorded from Send Out helper",
+        },
+      });
+    }
+    return json({ ok: true });
+  }
   if (intent === "assembly.updateOrderedBreakdown") {
     const orderedStr = String(form.get("orderedArr") || "[]");
     const qpuStr = String(form.get("qpu") || "{}");
@@ -1960,12 +2191,32 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
     // Apply primary costing if provided
-    const primaryVal = primaryMap?.[String(assemblyId)];
-    if (Number.isFinite(Number(primaryVal))) {
-      await prisma.assembly.update({
-        where: { id: assemblyId },
-        data: { primaryCostingId: Number(primaryVal) },
-      });
+    if (Object.prototype.hasOwnProperty.call(primaryMap || {}, String(assemblyId))) {
+      const primaryVal = primaryMap?.[String(assemblyId)];
+      const primaryId = parsePrimaryCostingId(primaryVal);
+      if (primaryId == null) {
+        await prisma.assembly.update({
+          where: { id: assemblyId },
+          data: { primaryCostingId: null },
+        });
+      } else {
+        const exists = await prisma.costing.findFirst({
+          where: { id: primaryId, assemblyId },
+          select: { id: true },
+        });
+        if (!exists) {
+          return json(
+            {
+              error: `Primary costing ${primaryId} not found for assembly ${assemblyId}.`,
+            },
+            { status: 400 }
+          );
+        }
+        await prisma.assembly.update({
+          where: { id: assemblyId },
+          data: { primaryCostingId: primaryId },
+        });
+      }
     }
     await applyStatusUpdates(parseStatusMap(form.get("statuses")));
     return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
@@ -1976,6 +2227,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 export default function JobAssemblyRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
   const data = useLoaderData<typeof loader>() as any;
+  const actionData = useActionData<typeof action>() as any;
   const assemblies = (data.assemblies || []) as any[];
   const isGroup = (assemblies?.length || 0) > 1;
 
@@ -1991,14 +2243,28 @@ export default function JobAssemblyRoute() {
     products,
     productVariantSet,
     assemblyTypes,
+    groupInfo,
   } = data as any;
 
   const nav = useNavigation();
   const submit = useSubmit();
   const acceptGapFetcher = useFetcher<{ ok?: boolean }>();
   const toleranceFetcher = useFetcher<{ ok?: boolean }>();
+  const reservationFetcher = useFetcher<{ ok?: boolean }>();
+  const debugFetcher = useFetcher();
   const revalidator = useRevalidator();
   const { setCurrentId } = useRecordContext();
+  const [debugTarget, setDebugTarget] = useState<{
+    assemblyId: number;
+    jobId: number;
+  } | null>(null);
+  const [groupDrawerOpen, setGroupDrawerOpen] = useState(false);
+  const canDebug = Boolean(data?.canDebug);
+  useEffect(() => {
+    if (actionData?.error) {
+      showToastError(actionData.error);
+    }
+  }, [actionData]);
   useEffect(() => {
     if (isGroup) setCurrentId(idKey);
     else if (assemblies?.[0]?.id) setCurrentId(assemblies[0].id);
@@ -2011,7 +2277,8 @@ export default function JobAssemblyRoute() {
   useEffect(() => {
     if (
       (acceptGapFetcher.state === "idle" && acceptGapFetcher.data) ||
-      (toleranceFetcher.state === "idle" && toleranceFetcher.data)
+      (toleranceFetcher.state === "idle" && toleranceFetcher.data) ||
+      (reservationFetcher.state === "idle" && reservationFetcher.data)
     ) {
       revalidator.revalidate();
     }
@@ -2020,6 +2287,8 @@ export default function JobAssemblyRoute() {
     acceptGapFetcher.data,
     toleranceFetcher.state,
     toleranceFetcher.data,
+    reservationFetcher.state,
+    reservationFetcher.data,
     revalidator,
   ]);
   const coverageByAssembly = useMemo(() => {
@@ -2075,10 +2344,61 @@ export default function JobAssemblyRoute() {
     },
     [toleranceFetcher]
   );
+  const handleTrimReservations = useCallback(
+    (lineId: number) => {
+      const fd = new FormData();
+      fd.set("_intent", "reservations.trim");
+      fd.set("lineId", String(lineId));
+      reservationFetcher.submit(fd, {
+        method: "post",
+        action: "/production/dashboard",
+      });
+    },
+    [reservationFetcher]
+  );
+  const handleSettleReservations = useCallback(
+    (assemblyId: number, productId: number, note: string | null) => {
+      const fd = new FormData();
+      fd.set("_intent", "reservations.settle");
+      fd.set("assemblyId", String(assemblyId));
+      fd.set("productId", String(productId));
+      if (note) {
+        fd.set("note", note);
+      }
+      reservationFetcher.submit(fd, {
+        method: "post",
+        action: "/production/dashboard",
+      });
+    },
+    [reservationFetcher]
+  );
+  const handleOpenDebug = useCallback(
+    (assemblyId: number, jobId: number) => {
+      setDebugTarget({ assemblyId, jobId });
+      debugFetcher.load(`/jobs/${jobId}/assembly/${assemblyId}/debug`);
+    },
+    [debugFetcher]
+  );
   const acceptGapTargetProductId =
     acceptGapFetcher.state !== "idle"
       ? Number(acceptGapFetcher.formData?.get("productId"))
       : null;
+  const reservationIntent =
+    reservationFetcher.state !== "idle"
+      ? String(reservationFetcher.formData?.get("_intent") || "")
+      : "";
+  const trimCandidate =
+    reservationIntent === "reservations.trim"
+      ? Number(reservationFetcher.formData?.get("lineId"))
+      : NaN;
+  const settleCandidate =
+    reservationIntent === "reservations.settle"
+      ? Number(reservationFetcher.formData?.get("productId"))
+      : NaN;
+  const trimmingLineId = Number.isFinite(trimCandidate) ? trimCandidate : null;
+  const settlingProductId = Number.isFinite(settleCandidate)
+    ? settleCandidate
+    : null;
 
   const handleSubmitOrdered = (arr: number[]) => {
     const fd = new FormData();
@@ -2086,16 +2406,16 @@ export default function JobAssemblyRoute() {
     fd.set("orderedArr", JSON.stringify(arr));
     submit(fd, { method: "post" });
   };
-  const renderGroupStatusBar = ({
+  const primaryAssembly = (assemblies || [])[0] as any | null;
+  const renderStatusBar = ({
     statusControls,
     whiteboardControl,
   }: {
     statusControls: ReactNode;
     whiteboardControl: ReactNode | null;
-  }) => (
-    <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
-      <BreadcrumbSet
-        breadcrumbs={[
+  }) => {
+    const breadcrumbs = isGroup
+      ? [
           { label: "Jobs", href: "/jobs" },
           { label: `Job ${job.id}`, href: `/jobs/${job.id}` },
           {
@@ -2106,14 +2426,64 @@ export default function JobAssemblyRoute() {
               .map((a: any) => a.id)
               .join(",")}`,
           },
-        ]}
-      />
-      <Group gap="sm" align="center">
-        {whiteboardControl}
-        {statusControls}
+        ]
+      : [
+          { label: "Jobs", href: "/jobs" },
+          { label: `Job ${job.id}`, href: `/jobs/${job.id}` },
+          {
+            label: `Assembly ${primaryAssembly?.id ?? ""}`,
+            href: `/jobs/${job.id}/assembly/${primaryAssembly?.id ?? ""}`,
+          },
+        ];
+    const actionsMenu =
+      !isGroup && canDebug && primaryAssembly ? (
+        <Menu withinPortal position="bottom-end" shadow="sm">
+          <Menu.Target>
+            <Button
+              size="xs"
+              variant="light"
+              rightSection={<IconMenu2 size={14} />}
+            >
+              Actions
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<IconBug size={14} />}
+              onClick={() => handleOpenDebug(primaryAssembly.id, job.id)}
+            >
+              Debug
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      ) : null;
+    const groupBadge =
+      !isGroup && primaryAssembly?.assemblyGroupId ? (
+        <Group gap="xs">
+          <Badge variant="light">
+            Group G{primaryAssembly.assemblyGroupId}
+          </Badge>
+          <Button
+            size="xs"
+            variant="light"
+            onClick={() => setGroupDrawerOpen(true)}
+          >
+            View group
+          </Button>
+        </Group>
+      ) : null;
+    return (
+      <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
+        <BreadcrumbSet breadcrumbs={breadcrumbs} />
+        <Group gap="sm" align="center">
+          {whiteboardControl}
+          {statusControls}
+          {groupBadge}
+          {actionsMenu}
+        </Group>
       </Group>
-    </Group>
-  );
+    );
+  };
   if (isGroup) {
     const quantityItems = (data.quantityItems || []) as any[];
     return (
@@ -2131,12 +2501,16 @@ export default function JobAssemblyRoute() {
           activities={activities as any}
           activityConsumptionMap={activityConsumptionMap as any}
           packActivityReferences={data.packActivityReferences as any}
-          assemblyTypeOptions={(assemblyTypes || []).map((t: any) => t.label || "")}
+          assemblyTypeOptions={(assemblyTypes || []).map(
+            (t: any) => t.label || ""
+          )}
           defectReasons={data.defectReasons as any}
-          renderStatusBar={renderGroupStatusBar}
+          renderStatusBar={renderStatusBar}
           packContext={data.packContext as any}
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
           externalStepsByAssembly={data.externalStepsByAssembly as any}
+          rollupsByAssembly={data.rollupsByAssembly as any}
+          vendorOptionsByStep={data.vendorOptionsByStep as any}
         />
       </Stack>
     );
@@ -2147,31 +2521,6 @@ export default function JobAssemblyRoute() {
   // the loader never provided (loader only returns `assemblies` with nested `costings`).
   // This caused the costings table to render empty for single assembly while group view worked.
   // Treat single assembly as a degenerate group: rely on `assembly.costings` like group mode.
-  const renderSingleStatusBar = ({
-    statusControls,
-    whiteboardControl,
-  }: {
-    statusControls: ReactNode;
-    whiteboardControl: ReactNode | null;
-  }) => (
-    <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
-      <BreadcrumbSet
-        breadcrumbs={[
-          { label: "Jobs", href: "/jobs" },
-          { label: `Job ${job.id}`, href: `/jobs/${job.id}` },
-          {
-            label: `Assembly ${assembly.id}`,
-            href: `/jobs/${job.id}/assembly/${assembly.id}`,
-          },
-        ]}
-      />
-      <Group gap="sm" align="center">
-        {whiteboardControl}
-        {statusControls}
-      </Group>
-    </Group>
-  );
-
   return (
     <Stack gap="lg">
       <AssembliesEditor
@@ -2199,17 +2548,21 @@ export default function JobAssemblyRoute() {
         activities={activities as any}
         activityConsumptionMap={activityConsumptionMap as any}
         packActivityReferences={data.packActivityReferences as any}
-        assemblyTypeOptions={(assemblyTypes || []).map((t: any) => t.label || "")}
+        assemblyTypeOptions={(assemblyTypes || []).map(
+          (t: any) => t.label || ""
+        )}
         activityVariantLabels={
           (assembly.variantSet?.variants?.length
             ? (assembly.variantSet.variants as any)
             : (productVariantSet?.variants as any)) || []
         }
         defectReasons={data.defectReasons as any}
-        renderStatusBar={renderSingleStatusBar}
+        renderStatusBar={renderStatusBar}
         packContext={data.packContext as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
         externalStepsByAssembly={data.externalStepsByAssembly as any}
+        rollupsByAssembly={data.rollupsByAssembly as any}
+        vendorOptionsByStep={data.vendorOptionsByStep as any}
       />
       <MaterialCoverageDetails
         assemblyId={assembly.id}
@@ -2219,10 +2572,58 @@ export default function JobAssemblyRoute() {
         tolerancePct={assembly.materialCoverageTolerancePct ?? null}
         onAcceptGap={handleAcceptGap}
         acceptingProductId={acceptGapTargetProductId}
+        onTrimReservations={handleTrimReservations}
+        trimmingLineId={trimmingLineId}
+        onSettleReservations={handleSettleReservations}
+        settlingProductId={settlingProductId}
         onUpdateTolerance={handleToleranceSave}
         onResetTolerance={handleToleranceReset}
         toleranceSaving={toleranceFetcher.state !== "idle"}
       />
+      <DebugDrawer
+        opened={!!debugTarget}
+        onClose={() => setDebugTarget(null)}
+        title={`Debug – A${debugTarget?.assemblyId ?? ""}`}
+        payload={debugFetcher.data as any}
+        loading={debugFetcher.state !== "idle"}
+      />
+      <Drawer
+        opened={groupDrawerOpen}
+        onClose={() => setGroupDrawerOpen(false)}
+        title={`Group G${groupInfo?.id ?? ""}`}
+        position="right"
+        size="lg"
+      >
+        {groupInfo ? (
+          <Stack gap="sm">
+            <Text size="sm" c="dimmed">
+              Coordination only. Assemblies remain separate for detail and edits.
+            </Text>
+            <Table withTableBorder striped>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Assembly</Table.Th>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {(groupInfo.assemblies || []).map((asm: any) => (
+                  <Table.Tr key={asm.id}>
+                    <Table.Td>A{asm.id}</Table.Td>
+                    <Table.Td>{asm.name || "—"}</Table.Td>
+                    <Table.Td>{asm.status || "—"}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Stack>
+        ) : (
+          <Text size="sm" c="dimmed">
+            No group details available.
+          </Text>
+        )}
+      </Drawer>
     </Stack>
   );
 }

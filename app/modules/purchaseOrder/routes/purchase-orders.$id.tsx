@@ -23,6 +23,7 @@ import {
   Title,
   Table,
   Button,
+  Badge,
   ScrollArea,
   TextInput,
   Text,
@@ -45,6 +46,7 @@ import { marshallPurchaseOrderToPrisma } from "../helpers/purchaseOrderMarshalle
 import { ProductPricingService } from "~/modules/product/services/ProductPricingService";
 // calcPrice no longer used in this route; pricing handled in lines table
 import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/PurchaseOrderLinesTable";
+import { trimReservationsToExpected } from "~/modules/materials/services/reservations.server";
 import { getSavedIndexSearch } from "~/hooks/useNavLocation";
 import { IconMenu2, IconTrash, IconFileExport } from "@tabler/icons-react";
 import { VariantBreakdownSection } from "../../../components/VariantBreakdownSection";
@@ -153,9 +155,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   const linesWithComputed = (purchaseOrder.lines || []).map((l: any) => {
     const qtyReceived = receivedByLine.get(l.id) || 0;
-    const qtyOrdered = Number(l.quantityOrdered ?? l.quantity ?? 0) || 0;
+    const qtyOrdered = Number(l.quantityOrdered ?? 0) || 0;
+    const qtyExpected = resolveExpectedQty(l);
     const reservations = reservationsByLine.get(l.id) || [];
-    const reservedQty = reservations.reduce(
+    const activeReservations = reservations.filter((res) => !res.settledAt);
+    const reservedQty = activeReservations.reduce(
       (sum, res) => sum + (Number(res.qtyReserved) || 0),
       0
     );
@@ -165,7 +169,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
       qtyShipped: shippedByLine.get(l.id) || 0,
       reservations,
       reservedQty,
-      availableQty: Math.max(qtyOrdered - qtyReceived - reservedQty, 0),
+      qtyExpected,
+      availableQty: Math.max(qtyExpected - qtyReceived - reservedQty, 0),
     };
   });
 
@@ -303,11 +308,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ ok: false, error: "missing" }, { status: 404 });
     }
     const qtyOrdered =
-      Number(
-        reservation.purchaseOrderLine?.quantityOrdered ??
-          reservation.purchaseOrderLine?.quantity ??
-          0
-      ) || 0;
+      Number(reservation.purchaseOrderLine?.quantityOrdered ?? 0) || 0;
+    const qtyExpected = resolveExpectedQty(reservation.purchaseOrderLine);
     const qtyReceived =
       Number(reservation.purchaseOrderLine?.qtyReceived ?? 0) || 0;
     const otherTotals = await prisma.supplyReservation.aggregate({
@@ -315,10 +317,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
       where: {
         purchaseOrderLineId: reservation.purchaseOrderLineId ?? undefined,
         NOT: { id: reservationId },
+        settledAt: null,
       },
     });
     const otherReserved = Number(otherTotals._sum.qtyReserved ?? 0);
-    const maxAllowed = Math.max(qtyOrdered - qtyReceived - otherReserved, 0);
+    const maxAllowed = Math.max(qtyExpected - qtyReceived - otherReserved, 0);
     if (qty > maxAllowed) {
       return json(
         { ok: false, error: "exceeds_available", available: maxAllowed },
@@ -358,6 +361,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
     await prisma.supplyReservation.delete({ where: { id: reservationId } });
     return json({ ok: true });
+  }
+
+  if (intent === "reservations.trim") {
+    const lineId = Number(form.get("lineId"));
+    if (!Number.isFinite(lineId)) {
+      return json({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const line = await prisma.purchaseOrderLine.findUnique({
+      where: { id: lineId },
+      select: {
+        id: true,
+        purchaseOrderId: true,
+      },
+    });
+    if (!line || line.purchaseOrderId !== id) {
+      return json({ ok: false, error: "missing" }, { status: 404 });
+    }
+    const trimmed = await trimReservationsToExpected({
+      purchaseOrderLineId: lineId,
+    });
+    if (!trimmed) {
+      return json({ ok: false, error: "missing" }, { status: 404 });
+    }
+    return json({ ok: true, trimmed: trimmed.trimmed });
   }
 
   if (intent === "po.update") {
@@ -1761,12 +1788,14 @@ function LineReservationsPanel({
   >({});
   useEffect(() => {
     const next: Record<number, { qty: string; note: string }> = {};
-    (line.reservations || []).forEach((res: any) => {
-      next[res.id] = {
-        qty: String(Number(res.qtyReserved) || 0),
-        note: res.note ?? "",
-      };
-    });
+    (line.reservations || [])
+      .filter((res: any) => !res.settledAt)
+      .forEach((res: any) => {
+        next[res.id] = {
+          qty: String(Number(res.qtyReserved) || 0),
+          note: res.note ?? "",
+        };
+      });
     setLocalValues(next);
   }, [line.id, line.reservations]);
   const formatQty = (value: number | null | undefined) => {
@@ -1777,14 +1806,18 @@ function LineReservationsPanel({
   const reservedQty =
     Number(line.reservedQty ?? 0) ||
     (line.reservations || []).reduce(
-      (sum: number, res: any) => sum + (Number(res.qtyReserved) || 0),
+      (sum: number, res: any) =>
+        res.settledAt ? sum : sum + (Number(res.qtyReserved) || 0),
       0
     );
+  const expectedQty = Number(line.qtyExpected ?? 0) || 0;
+  const orderedQty = Number(line.quantityOrdered ?? 0) || 0;
+  const overReserved = Math.max(reservedQty - expectedQty, 0);
   const remainingQty =
     line.availableQty != null
       ? Number(line.availableQty) || 0
       : Math.max(
-          (Number(line.quantityOrdered || 0) || 0) -
+          expectedQty -
             (Number(line.qtyReceived || 0) || 0) -
             reservedQty,
           0
@@ -1818,6 +1851,14 @@ function LineReservationsPanel({
     fd.set("reservationId", String(reservationId));
     fetcher.submit(fd, { method: "post" });
   };
+  const handleTrim = () => {
+    if (!line?.id) return;
+    const fd = new FormData();
+    fd.set("_intent", "reservations.trim");
+    fd.set("lineId", String(line.id));
+    fd.set("strategy", "newest");
+    fetcher.submit(fd, { method: "post" });
+  };
   const currentActionId =
     fetcher.formData && fetcher.formData.has("reservationId")
       ? Number(fetcher.formData.get("reservationId"))
@@ -1831,14 +1872,42 @@ function LineReservationsPanel({
     fetcher.state !== "idle" &&
     currentIntent === "reservation.delete" &&
     currentActionId === id;
+  const isTrimming =
+    fetcher.state !== "idle" && currentIntent === "reservations.trim";
+  const activeReservations = (line.reservations || []).filter(
+    (res: any) => !res.settledAt
+  );
+  const settledReservations = (line.reservations || []).filter(
+    (res: any) => res.settledAt
+  );
 
   return (
     <Stack gap="sm">
-      <Text size="sm" c="dimmed">
-        Ordered {formatQty(line.quantityOrdered)} · Received{" "}
-        {formatQty(line.qtyReceived)} · Reserved {formatQty(reservedQty)} ·
-        Remaining {formatQty(remainingQty)}
-      </Text>
+      <Group justify="space-between" align="center">
+        <Text size="sm" c="dimmed">
+          Expected {formatQty(expectedQty)} · Ordered {formatQty(orderedQty)} ·
+          Received {formatQty(line.qtyReceived)} · Reserved{" "}
+          {formatQty(reservedQty)} · Remaining {formatQty(remainingQty)}
+        </Text>
+        {overReserved > 0 ? (
+          <Badge color="red" size="sm">
+            OVER-RESERVED
+          </Badge>
+        ) : null}
+      </Group>
+      {overReserved > 0 ? (
+        <Group justify="flex-end">
+          <Button
+            size="xs"
+            variant="light"
+            onClick={handleTrim}
+            loading={isTrimming}
+            disabled={submitting}
+          >
+            Trim reservations to expected
+          </Button>
+        </Group>
+      ) : null}
       {fetcher.data?.error ? (
         <Text size="sm" c="red">
           {String(fetcher.data.error)}
@@ -1848,80 +1917,148 @@ function LineReservationsPanel({
         <Text c="dimmed">No reservations yet.</Text>
       ) : (
         <Stack gap="sm">
-          {(line.reservations || []).map((res: any) => {
-            const entry = localValues[res.id] || { qty: "", note: "" };
-            return (
-              <Card key={res.id} withBorder padding="sm">
-                <Stack gap="xs">
-                  <Group justify="space-between" align="flex-start">
-                    <Stack gap={2}>
-                      <Text fw={600}>
-                        Assembly A{res.assembly?.id ?? "—"}
-                      </Text>
+          {activeReservations.length ? (
+            <Stack gap="sm">
+              <Text size="sm" fw={600}>
+                Active reservations
+              </Text>
+              {activeReservations.map((res: any) => {
+                const entry = localValues[res.id] || { qty: "", note: "" };
+                return (
+                  <Card key={res.id} withBorder padding="sm">
+                    <Stack gap="xs">
+                      <Group justify="space-between" align="flex-start">
+                        <Stack gap={2}>
+                          <Text fw={600}>
+                            Assembly A{res.assembly?.id ?? "—"}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {res.assembly?.name || "—"}
+                            {res.assembly?.job
+                              ? ` • Job ${res.assembly.job.id}${
+                                  res.assembly.job.name
+                                    ? ` (${res.assembly.job.name})`
+                                    : ""
+                                }`
+                              : ""}
+                          </Text>
+                        </Stack>
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            loading={isUpdating(res.id)}
+                            onClick={() => handleUpdate(res.id)}
+                            disabled={submitting}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            size="xs"
+                            color="red"
+                            variant="subtle"
+                            loading={isDeleting(res.id)}
+                            onClick={() => handleDelete(res.id)}
+                            disabled={submitting}
+                          >
+                            Remove
+                          </Button>
+                        </Group>
+                      </Group>
+                      <Group gap="sm" grow>
+                        <NumberInput
+                          label="Reserved qty"
+                          value={Number(entry.qty ?? 0)}
+                          onChange={(val) =>
+                            updateValue(
+                              res.id,
+                              "qty",
+                              val != null ? String(val) : "0"
+                            )
+                          }
+                          min={0}
+                          disabled={submitting}
+                        />
+                        <TextInput
+                          label="Note"
+                          value={entry.note}
+                          onChange={(e) =>
+                            updateValue(res.id, "note", e.currentTarget.value)
+                          }
+                          disabled={submitting}
+                        />
+                      </Group>
                       <Text size="xs" c="dimmed">
-                        {res.assembly?.name || "—"}
-                        {res.assembly?.job
-                          ? ` • Job ${res.assembly.job.id}${
-                              res.assembly.job.name
-                                ? ` (${res.assembly.job.name})`
-                                : ""
-                            }`
-                          : ""}
+                        Reserved {formatQty(res.qtyReserved)} · Created{" "}
+                        {res.createdAt
+                          ? new Date(res.createdAt as any).toLocaleString()
+                          : "—"}
                       </Text>
                     </Stack>
-                    <Group gap="xs">
-                      <Button
-                        size="xs"
-                        variant="light"
-                        loading={isUpdating(res.id)}
-                        onClick={() => handleUpdate(res.id)}
-                      >
-                        Save
-                      </Button>
-                      <Button
-                        size="xs"
-                        color="red"
-                        variant="subtle"
-                        loading={isDeleting(res.id)}
-                        onClick={() => handleDelete(res.id)}
-                      >
-                        Remove
-                      </Button>
-                    </Group>
-                  </Group>
-                  <Group gap="sm" grow>
-                    <NumberInput
-                      label="Reserved qty"
-                      value={Number(entry.qty ?? 0)}
-                      onChange={(val) =>
-                        updateValue(
-                          res.id,
-                          "qty",
-                          val != null ? String(val) : "0"
-                        )
-                      }
-                      min={0}
-                      disabled={submitting}
-                    />
-                    <TextInput
-                      label="Note"
-                      value={entry.note}
-                      onChange={(e) =>
-                        updateValue(res.id, "note", e.currentTarget.value)
-                      }
-                      disabled={submitting}
-                    />
-                  </Group>
-                  <Text size="xs" c="dimmed">
-                    Reserved {formatQty(res.qtyReserved)} · Created{" "}
-                    {res.createdAt
-                      ? new Date(res.createdAt as any).toLocaleString()
-                      : "—"}
-                  </Text>
-                </Stack>
-              </Card>
-            );
-          })}
+                  </Card>
+                );
+              })}
+            </Stack>
+          ) : null}
+          {settledReservations.length ? (
+            <Stack gap="sm">
+              <Text size="sm" fw={600}>
+                History (settled)
+              </Text>
+              {settledReservations.map((res: any) => {
+                const settledAt = res.settledAt
+                  ? new Date(res.settledAt as any).toLocaleString()
+                  : null;
+                return (
+                  <Card key={res.id} withBorder padding="sm">
+                    <Stack gap="xs">
+                      <Group justify="space-between" align="flex-start">
+                        <Stack gap={2}>
+                          <Text fw={600}>
+                            Assembly A{res.assembly?.id ?? "—"}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {res.assembly?.name || "—"}
+                            {res.assembly?.job
+                              ? ` • Job ${res.assembly.job.id}${
+                                  res.assembly.job.name
+                                    ? ` (${res.assembly.job.name})`
+                                    : ""
+                                }`
+                              : ""}
+                          </Text>
+                        </Stack>
+                        <Badge color="gray" size="sm" variant="light">
+                          Settled
+                        </Badge>
+                      </Group>
+                      <Group gap="sm" grow>
+                        <NumberInput
+                          label="Reserved qty"
+                          value={Number(res.qtyReserved ?? 0)}
+                          min={0}
+                          disabled
+                        />
+                        <TextInput
+                          label="Note"
+                          value={res.note ?? ""}
+                          disabled
+                        />
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        Reserved {formatQty(res.qtyReserved)} (settled) ·
+                        {settledAt ? ` Settled ${settledAt}` : " Settled —"} ·
+                        Created{" "}
+                        {res.createdAt
+                          ? new Date(res.createdAt as any).toLocaleString()
+                          : "—"}
+                      </Text>
+                    </Stack>
+                  </Card>
+                );
+              })}
+            </Stack>
+          ) : null}
         </Stack>
       )}
     </Stack>
@@ -1970,6 +2107,18 @@ function MovementDeleteMenu({
       </Menu.Dropdown>
     </Menu>
   );
+}
+
+function resolveExpectedQty(line: {
+  quantity?: number | string | null;
+  quantityOrdered?: number | string | null;
+} | null | undefined) {
+  if (!line) return 0;
+  const qty = Number(line.quantity ?? 0) || 0;
+  const ordered = Number(line.quantityOrdered ?? 0) || 0;
+  if (qty > 0) return qty;
+  if (ordered > 0) return ordered;
+  return qty || ordered || 0;
 }
 
 function AsyncProductSearch({

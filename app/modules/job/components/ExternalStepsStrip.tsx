@@ -1,4 +1,5 @@
 import {
+  Button,
   Accordion,
   Badge,
   Card,
@@ -17,6 +18,8 @@ import type {
 
 type Props = {
   steps?: DerivedExternalStep[] | null;
+  onSendOut?: (step: DerivedExternalStep) => void;
+  onReceiveIn?: (step: DerivedExternalStep) => void;
 };
 
 const STATUS_LABELS: Record<ExternalStepStatus, string> = {
@@ -42,7 +45,7 @@ const LEAD_TIME_SOURCE_LABELS: Record<
   COMPANY: "Vendor default",
 };
 
-export function ExternalStepsStrip({ steps }: Props) {
+export function ExternalStepsStrip({ steps, onSendOut, onReceiveIn }: Props) {
   const rows = steps ?? [];
   return (
     <Card withBorder padding="md">
@@ -123,6 +126,28 @@ export function ExternalStepsStrip({ steps }: Props) {
                 </Accordion.Control>
                 <Accordion.Panel>
                   <Stack gap="sm">
+                    {onSendOut || onReceiveIn ? (
+                      <Group justify="flex-end" gap="xs">
+                        {onSendOut && step.expected && step.status === "NOT_STARTED" ? (
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => onSendOut(step)}
+                          >
+                            Send out
+                          </Button>
+                        ) : null}
+                        {onReceiveIn && step.status === "IN_PROGRESS" ? (
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => onReceiveIn(step)}
+                          >
+                            Receive in
+                          </Button>
+                        ) : null}
+                      </Group>
+                    ) : null}
                     <Group align="flex-start" justify="flex-start" gap="xl" wrap="wrap">
                       <Detail label="Sent out" value={formatDate(step.sentDate)} />
                       <Detail label="Received" value={formatDate(step.receivedDate)} />

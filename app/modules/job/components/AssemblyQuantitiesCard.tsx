@@ -322,10 +322,10 @@ export function AssemblyQuantitiesCard({
                       style={{ verticalAlign: "middle" }}
                     >
                       {idx === 0 && actionColumn.onRecordPack ? (
-                        <Tooltip label="Record Pack" withArrow>
+                        <Tooltip label="Add to box" withArrow>
                           <ActionIcon
                             variant="subtle"
-                            aria-label="Record pack"
+                            aria-label="Add to box"
                             onClick={actionColumn.onRecordPack}
                             disabled={actionColumn.recordPackDisabled}
                           >

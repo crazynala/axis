@@ -1,4 +1,3 @@
-import { ActivityKind, AssemblyStage, ActivityAction } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 
 function normalizeBreakdown(values: number[] | undefined | null): number[] {
@@ -99,6 +98,7 @@ type PackActivityInput = {
   warehouseNumber?: number | null;
   boxDescription?: string | null;
   boxNotes?: string | null;
+  allowOverpack?: boolean;
 };
 
 function buildAvailableForPack(
@@ -145,7 +145,19 @@ export async function createPackActivity(input: PackActivityInput) {
   const currentFinish = normalizeBreakdown(
     (assembly as any).c_qtyFinish_Breakdown
   );
-  const currentPack = normalizeBreakdown((assembly as any).c_qtyPack_Breakdown);
+  const boxLines = await prisma.boxLine.findMany({
+    where: { assemblyId: assembly.id, packingOnly: { not: true } },
+    select: { qtyBreakdown: true, quantity: true },
+  });
+  const currentPack = boxLines.reduce((acc: number[], line) => {
+    const raw =
+      Array.isArray(line.qtyBreakdown) && line.qtyBreakdown.length
+        ? (line.qtyBreakdown as number[])
+        : line.quantity != null
+        ? [Number(line.quantity) || 0]
+        : [];
+    return mergeBreakdowns(acc, normalizeBreakdown(raw));
+  }, []);
   const available = buildAvailableForPack(
     currentFinish,
     currentPack,
@@ -158,12 +170,15 @@ export async function createPackActivity(input: PackActivityInput) {
   const exceedsAvailable = normalizedBreakdown.some(
     (qty, idx) => qty > (available[idx] ?? 0)
   );
-  if (exceedsAvailable) {
+  if (exceedsAvailable && !input.allowOverpack) {
     throw new Error("Cannot pack more units than are available.");
   }
 
   const trimmedDescription = input.boxDescription?.trim();
   const trimmedNotes = input.boxNotes?.trim();
+  if (exceedsAvailable && input.allowOverpack && !trimmedNotes) {
+    throw new Error("Add a note to override ready-to-pack limits.");
+  }
   const fallbackDescription =
     trimmedDescription && trimmedDescription.length
       ? trimmedDescription
@@ -213,21 +228,6 @@ export async function createPackActivity(input: PackActivityInput) {
       boxId = box.id;
     }
 
-    const activity = await tx.assemblyActivity.create({
-      data: {
-        assemblyId: assembly.id,
-        jobId: assembly.jobId,
-        name: "Pack",
-        stage: AssemblyStage.pack,
-        kind: ActivityKind.normal,
-        action: ActivityAction.RECORDED,
-        activityDate: input.activityDate,
-        qtyBreakdown: normalizedBreakdown as any,
-        quantity: totalQuantity,
-        notes: trimmedNotes ?? null,
-      },
-    });
-
     await upsertBoxLine(tx, {
       boxId,
       jobId: assembly.jobId ?? input.jobId,
@@ -236,7 +236,6 @@ export async function createPackActivity(input: PackActivityInput) {
       qtyBreakdown: normalizedBreakdown,
       notes: trimmedNotes ?? null,
     });
-
-    return activity;
+    return { ok: true };
   });
 }

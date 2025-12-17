@@ -967,6 +967,10 @@ export function ShipmentDetailView() {
   const lineCount = shipment.lines?.length ?? 0;
   const boxSummaries = useMemo(() => {
     return stagedAndSavedBoxes.map(({ box, isPending }) => {
+      const isLegacy = Boolean(
+        (box as any)?.importKey &&
+          String((box as any).importKey).startsWith("FM_SHIPMENT:")
+      );
       const commercialLines = (box.lines || []).filter(
         (line: any) => !line.packingOnly
       );
@@ -1053,6 +1057,7 @@ export function ShipmentDetailView() {
         totalQuantity,
         skuCount,
         isPending,
+        isLegacy,
         commercialLines,
         extraLines,
         groups,
@@ -1193,6 +1198,7 @@ export function ShipmentDetailView() {
                       box,
                       totalQuantity,
                       isPending,
+                      isLegacy,
                       commercialLines,
                       extraLines,
                       groups,
@@ -1226,6 +1232,11 @@ export function ShipmentDetailView() {
                                 >
                                   {box.state || "unknown"}
                                 </Badge>
+                                {isLegacy && (
+                                  <Badge color="gray" variant="light">
+                                    Legacy box (imported)
+                                  </Badge>
+                                )}
                                 {isPending && (
                                   <Badge color="yellow">Pending Save</Badge>
                                 )}

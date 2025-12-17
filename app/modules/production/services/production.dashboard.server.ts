@@ -271,7 +271,10 @@ async function hydrateAssemblies(
     coverage.materials.forEach((material) => {
       material.reservations
         .filter(
-          (res) => res.type === "PO" && res.purchaseOrderLineId != null
+          (res) =>
+            res.type === "PO" &&
+            res.purchaseOrderLineId != null &&
+            !res.settledAt
         )
         .forEach((res) => {
           const lineId = res.purchaseOrderLineId as number;
@@ -341,11 +344,12 @@ async function hydrateAssemblies(
         });
       }
       if (!targets.length) return;
-      const qtyOrdered = toNumber(line.quantityOrdered ?? line.quantity);
+      const qtyOrdered = toNumber(line.quantityOrdered);
+      const qtyExpected = resolveExpectedQty(line);
       const qtyReceived = toNumber(line.qtyReceived);
       const reservedQty = reservedByPoLine.get(line.id) ?? 0;
       const availableQty = Math.max(
-        (qtyOrdered ?? 0) - (qtyReceived ?? 0) - reservedQty,
+        qtyExpected - qtyReceived - reservedQty,
         0
       );
       targets.forEach((assemblyId) => {
@@ -356,6 +360,7 @@ async function hydrateAssemblies(
           purchaseOrderId: line.purchaseOrderId ?? null,
           etaDate: line.etaDate ? new Date(line.etaDate) : null,
           qtyOrdered,
+          qtyExpected,
           qtyReceived,
           reservedQty,
           availableQty,
@@ -460,4 +465,16 @@ function toNumber(value: any) {
   if (value == null) return 0;
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function resolveExpectedQty(line: {
+  quantity?: number | string | null;
+  quantityOrdered?: number | string | null;
+} | null | undefined) {
+  if (!line) return 0;
+  const qty = toNumber(line.quantity);
+  const ordered = toNumber(line.quantityOrdered);
+  if (qty > 0) return qty;
+  if (ordered > 0) return ordered;
+  return qty || ordered || 0;
 }

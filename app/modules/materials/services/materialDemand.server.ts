@@ -13,6 +13,11 @@ export type MaterialDemandRow = {
   source: MaterialDemandSource | null;
   calc?: {
     orderQty?: number | null;
+    orderQtySource?: string | null;
+    orderQtyCandidates?: {
+      qtyOrderedBreakdown?: number | null;
+      assemblyQuantity?: number | null;
+    } | null;
     cutGoodQty?: number | null;
     remainingToCut?: number | null;
     qtyPerUnit?: number | null;
@@ -39,10 +44,61 @@ export type CostingLite = {
 export type AssemblyDemandInput = {
   id: number;
   quantity?: any;
+  qtyOrderedBreakdown?: number[] | null;
   rollup?: AssemblyRollup | null;
   costings?: CostingLite[];
   status?: string | null;
 };
+
+export type OrderQtyResolution = {
+  orderQty: number;
+  source: "qtyOrderedBreakdown" | "assembly.quantity" | "fallback";
+  candidates: {
+    qtyOrderedBreakdown: number | null;
+    assemblyQuantity: number | null;
+  };
+};
+
+export function resolveAssemblyOrderQty(
+  assembly: AssemblyDemandInput
+): OrderQtyResolution {
+  const breakdownArr = Array.isArray(assembly.qtyOrderedBreakdown)
+    ? assembly.qtyOrderedBreakdown
+    : null;
+  const breakdownQty = breakdownArr
+    ? breakdownArr.reduce((sum, qty) => sum + (Number(qty) || 0), 0)
+    : null;
+  const assemblyQty = toNumber(assembly.quantity);
+
+  if (breakdownArr && breakdownArr.length > 0) {
+    return {
+      orderQty: breakdownQty ?? 0,
+      source: "qtyOrderedBreakdown",
+      candidates: {
+        qtyOrderedBreakdown: breakdownQty,
+        assemblyQuantity: assemblyQty,
+      },
+    };
+  }
+  if (assemblyQty != null) {
+    return {
+      orderQty: assemblyQty,
+      source: "assembly.quantity",
+      candidates: {
+        qtyOrderedBreakdown: breakdownQty,
+        assemblyQuantity: assemblyQty,
+      },
+    };
+  }
+  return {
+    orderQty: 0,
+    source: "fallback",
+    candidates: {
+      qtyOrderedBreakdown: breakdownQty,
+      assemblyQuantity: assemblyQty,
+    },
+  };
+}
 
 export function buildDerivedDemandRows(
   assembly: AssemblyDemandInput
@@ -50,13 +106,32 @@ export function buildDerivedDemandRows(
   const costings = assembly.costings || [];
   if (!costings.length) return [];
   const rollup = assembly.rollup ?? null;
-  const orderQty = toNumber(assembly.quantity) ?? 0;
+  const orderQtyResolution = resolveAssemblyOrderQty(assembly);
+  const orderQty = orderQtyResolution.orderQty ?? 0;
   const cutGoodQty = toNumber(rollup?.cutGoodQty) ?? 0;
   const isStatusFullyCut =
     (assembly.status || "").toString().toUpperCase() === "FULLY_CUT";
   const remainingToCut = isStatusFullyCut
     ? 0
     : Math.max(orderQty - cutGoodQty, 0);
+
+  console.log("[material-demand]", {
+    assemblyId: assembly.id,
+    orderQty,
+    orderQtySource: orderQtyResolution.source,
+    orderQtyCandidates: orderQtyResolution.candidates,
+    cutGoodQty,
+    remainingToCut,
+    costings: costings.map((costing) => ({
+      id: costing.id,
+      productId: costing.productId ?? costing.product?.id ?? null,
+      qtyPerUnit: costing.quantityPerUnit,
+      enabled: costing.flagIsDisabled !== true,
+      productType: costing.product?.type ?? null,
+      stockTracked: costing.product?.stockTrackingEnabled ?? null,
+      consumptionStage: costing.activityUsed ?? null,
+    })),
+  });
 
   const rows: MaterialDemandRow[] = [];
 
@@ -98,6 +173,8 @@ export function buildDerivedDemandRows(
       source: "BOM" as MaterialDemandSource,
       calc: {
         orderQty,
+        orderQtySource: orderQtyResolution.source,
+        orderQtyCandidates: orderQtyResolution.candidates,
         cutGoodQty,
         remainingToCut,
         qtyPerUnit: perUnit,

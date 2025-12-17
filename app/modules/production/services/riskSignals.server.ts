@@ -17,6 +17,7 @@ export type PurchaseOrderLineSummary = {
   productId?: number | null;
   purchaseOrderId?: number | null;
   qtyOrdered: number;
+  qtyExpected: number;
   qtyReceived: number;
   reservedQty?: number;
   availableQty?: number;
@@ -148,7 +149,10 @@ export function buildRiskSignals(options: {
             if (!r.purchaseOrderLineId) return;
             nextActions.push({
               kind: "RESOLVE_PO",
-              label: `Resolve PO line #${r.purchaseOrderLineId}`,
+              label: `Resolve ${formatPoLineLabel(
+                r.purchaseOrderId,
+                r.purchaseOrderLineId
+              )}`,
               detail: r.reason,
             });
           });
@@ -209,7 +213,7 @@ function evaluatePoLines({
   const outstanding = lines
     .map((line) => ({
       line,
-      outstanding: Math.max(line.qtyOrdered - line.qtyReceived, 0),
+      outstanding: Math.max(line.qtyExpected - line.qtyReceived, 0),
     }))
     .filter((entry) => entry.outstanding > 0);
 
@@ -241,12 +245,16 @@ function evaluatePoLines({
     if (focus.eta) {
       poBlockingEta = focus.eta.toISOString();
     }
+    const focusLabel = formatPoLineLabel(
+      focus.line.purchaseOrderId,
+      focus.line.id
+    );
     if (focus.missingEta) {
-      poHoldReason = `Missing ETA on PO line #${focus.line.id}`;
+      poHoldReason = `Missing ETA on ${focusLabel}`;
     } else if (focus.pastDue) {
-      poHoldReason = `PO line #${focus.line.id} past ETA`;
+      poHoldReason = `${focusLabel} past ETA`;
     } else if (focus.afterTarget) {
-      poHoldReason = `PO line #${focus.line.id} arrives after target`;
+      poHoldReason = `${focusLabel} arrives after target`;
     }
     blocking.forEach((info) => {
       let detail: string | null = null;
@@ -257,7 +265,10 @@ function evaluatePoLines({
         detail = `ETA ${formatShort(info.eta)} after target`;
       poNextActions.push({
         kind: "RESOLVE_PO",
-        label: `Resolve PO line #${info.line.id}`,
+        label: `Resolve ${formatPoLineLabel(
+          info.line.purchaseOrderId,
+          info.line.id
+        )}`,
         detail,
       });
     });
@@ -326,4 +337,14 @@ function formatShort(date: Date | null) {
     month: "short",
     day: "numeric",
   });
+}
+
+function formatPoLineLabel(
+  purchaseOrderId: number | null | undefined,
+  lineId: number | null | undefined
+) {
+  if (purchaseOrderId && lineId) return `PO #${purchaseOrderId}, Line #${lineId}`;
+  if (lineId) return `PO line #${lineId}`;
+  if (purchaseOrderId) return `PO #${purchaseOrderId}`;
+  return "PO line";
 }

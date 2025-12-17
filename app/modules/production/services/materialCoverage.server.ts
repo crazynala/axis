@@ -28,15 +28,23 @@ export type MaterialReservationRow = {
   productName: string | null;
   qtyReserved: number;
   type: "PO" | "BATCH";
+  purchaseOrderId: number | null;
   purchaseOrderLineId: number | null;
   inventoryBatchId: number | null;
   etaDate: string | null;
   qtyOrdered: number | null;
+  qtyExpected: number | null;
   qtyReceived: number | null;
   outstandingQty: number | null;
+  reservedTotal: number | null;
+  remainingExpected: number | null;
+  unreceivedExpected: number | null;
+  overReserved: number | null;
   status: "OK" | "BLOCKED";
+  dueSoon: boolean;
   reason: string | null;
   note: string | null;
+  settledAt: string | null;
 };
 
 export type MaterialCoverageItem = {
@@ -52,6 +60,8 @@ export type MaterialCoverageItem = {
   totalStock: number;
   coveredByOnHand: number;
   coveredByReservations: number;
+  coveredByExpected: number;
+  coveredByReceived: number;
   reservations: MaterialReservationRow[];
   blockingPoLineIds: number[];
   earliestEta: string | null;
@@ -72,7 +82,13 @@ export type MaterialHoldReason = {
   message: string;
 };
 
-export type MaterialCoverageStatus = "OK" | "POTENTIAL_UNDERCUT" | "PO_HOLD";
+export type MaterialCoverageStatus =
+  | "OK"
+  | "DUE_SOON"
+  | "POTENTIAL_UNDERCUT"
+  | "PO_HOLD";
+
+const DUE_SOON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type AssemblyMaterialCoverage = {
   assemblyId: number;
@@ -119,6 +135,7 @@ export async function loadMaterialCoverage({
       purchaseOrderLine: {
         select: {
           id: true,
+          purchaseOrderId: true,
           etaDate: true,
           quantityOrdered: true,
           quantity: true,
@@ -147,11 +164,33 @@ export async function loadMaterialCoverage({
   });
 
   const reservationsByAssembly = new Map<number, typeof reservations>();
+  const reservedTotalsByLine = new Map<number, number>();
   reservations.forEach((res) => {
     const list = reservationsByAssembly.get(res.assemblyId) || [];
     list.push(res);
     reservationsByAssembly.set(res.assemblyId, list);
   });
+  const poLineIds = Array.from(
+    new Set(
+      reservations
+        .map((res) => res.purchaseOrderLineId)
+        .filter((id): id is number => Boolean(id))
+    )
+  );
+  if (poLineIds.length) {
+    const totals = await prisma.supplyReservation.groupBy({
+      by: ["purchaseOrderLineId"],
+      where: { purchaseOrderLineId: { in: poLineIds }, settledAt: null },
+      _sum: { qtyReserved: true },
+    });
+    totals.forEach((row) => {
+      if (!row.purchaseOrderLineId) return;
+      reservedTotalsByLine.set(
+        row.purchaseOrderLineId,
+        Number(row._sum.qtyReserved ?? 0) || 0
+      );
+    });
+  }
 
   const fallbackDemands = deriveDemandFromCostings(
     assemblies.filter((a) => !demandsByAssembly.has(a.id)),
@@ -184,6 +223,8 @@ export async function loadMaterialCoverage({
         totalStock: 0,
         coveredByOnHand: 0,
         coveredByReservations: 0,
+        coveredByExpected: 0,
+        coveredByReceived: 0,
         reservations: [],
         blockingPoLineIds: [],
         earliestEta: null,
@@ -196,14 +237,29 @@ export async function loadMaterialCoverage({
     resRows.forEach((res) => {
       const productId = res.productId;
       const productName = res.product?.name ?? null;
+      const isSettled = Boolean(res.settledAt);
       const eta = normalizeDate(res.purchaseOrderLine?.etaDate);
-      const qtyOrdered = toNumber(
-        res.purchaseOrderLine?.quantityOrdered ?? res.purchaseOrderLine?.quantity
-      );
+      const qtyOrdered = toNumber(res.purchaseOrderLine?.quantityOrdered);
+      const qtyExpected = resolveExpectedQty(res.purchaseOrderLine);
       const qtyReceived = toNumber(res.purchaseOrderLine?.qtyReceived);
       const outstanding =
-        qtyOrdered != null && qtyReceived != null
-          ? Math.max(qtyOrdered - qtyReceived, 0)
+        qtyExpected != null && qtyReceived != null
+          ? Math.max(qtyExpected - qtyReceived, 0)
+          : null;
+      const reservedTotal = res.purchaseOrderLineId
+        ? reservedTotalsByLine.get(res.purchaseOrderLineId) ?? 0
+        : null;
+      const remainingExpected =
+        qtyExpected != null
+          ? Math.max(qtyExpected - (reservedTotal ?? 0), 0)
+          : null;
+      const unreceivedExpected =
+        qtyExpected != null && qtyReceived != null
+          ? Math.max(qtyExpected - qtyReceived, 0)
+          : null;
+      const overReserved =
+        qtyExpected != null && reservedTotal != null
+          ? Math.max(reservedTotal - qtyExpected, 0)
           : null;
       const missingEta = !eta;
       const pastDue =
@@ -217,7 +273,15 @@ export async function loadMaterialCoverage({
       const blocked =
         res.purchaseOrderLineId != null &&
         (missingEta || pastDue || afterTarget) &&
-        (outstanding == null || outstanding > 0);
+        !isSettled &&
+        (unreceivedExpected == null || unreceivedExpected > 0);
+      const dueSoon = Boolean(
+        res.purchaseOrderLineId &&
+          !isSettled &&
+          !blocked &&
+          eta &&
+          isEtaDueSoon(eta, neededDate, todayStart)
+      );
 
       const reservation: MaterialReservationRow = {
         id: res.id,
@@ -226,13 +290,20 @@ export async function loadMaterialCoverage({
         productName,
         qtyReserved: toNumber(res.qtyReserved) ?? 0,
         type: res.purchaseOrderLineId ? "PO" : "BATCH",
+        purchaseOrderId: res.purchaseOrderLine?.purchaseOrderId ?? null,
         purchaseOrderLineId: res.purchaseOrderLineId ?? null,
         inventoryBatchId: res.inventoryBatchId ?? null,
         etaDate: eta ? eta.toISOString() : null,
         qtyOrdered,
+        qtyExpected,
         qtyReceived,
         outstandingQty: outstanding,
+        reservedTotal,
+        remainingExpected,
+        unreceivedExpected,
+        overReserved,
         status: blocked ? "BLOCKED" : "OK",
+        dueSoon,
         reason: blocked
           ? missingEta
             ? "ETA missing"
@@ -243,6 +314,7 @@ export async function loadMaterialCoverage({
             : "Blocked"
           : null,
         note: res.note ?? null,
+        settledAt: res.settledAt ? res.settledAt.toISOString() : null,
       };
 
       let item = materials.get(productId);
@@ -260,6 +332,8 @@ export async function loadMaterialCoverage({
           totalStock: 0,
           coveredByOnHand: 0,
           coveredByReservations: 0,
+          coveredByExpected: 0,
+          coveredByReceived: 0,
           reservations: [],
           blockingPoLineIds: [],
           earliestEta: null,
@@ -274,22 +348,24 @@ export async function loadMaterialCoverage({
       }
 
       item.reservations.push(reservation);
-      if (reservation.type === "PO") {
-        item.qtyReservedToPo += reservation.qtyReserved;
-        if (reservation.etaDate) {
-          const etaDate = new Date(reservation.etaDate);
-          if (
-            !item.earliestEta ||
-            etaDate.getTime() < new Date(item.earliestEta).getTime()
-          ) {
-            item.earliestEta = reservation.etaDate;
+      if (!isSettled) {
+        if (reservation.type === "PO") {
+          item.qtyReservedToPo += reservation.qtyReserved;
+          if (reservation.etaDate) {
+            const etaDate = new Date(reservation.etaDate);
+            if (
+              !item.earliestEta ||
+              etaDate.getTime() < new Date(item.earliestEta).getTime()
+            ) {
+              item.earliestEta = reservation.etaDate;
+            }
           }
+          if (blocked && reservation.purchaseOrderLineId) {
+            item.blockingPoLineIds.push(reservation.purchaseOrderLineId);
+          }
+        } else {
+          item.qtyReservedToBatch += reservation.qtyReserved;
         }
-        if (blocked && reservation.purchaseOrderLineId) {
-          item.blockingPoLineIds.push(reservation.purchaseOrderLineId);
-        }
-      } else {
-        item.qtyReservedToBatch += reservation.qtyReserved;
       }
     });
 
@@ -320,6 +396,8 @@ export async function loadMaterialCoverage({
       const totalReserved = item.qtyReservedToPo + item.qtyReservedToBatch;
       const coveredByReservations = Math.min(remainingAfterOnHand, totalReserved);
       item.coveredByReservations = coveredByReservations;
+      item.coveredByExpected = coveredByReservations;
+      item.coveredByReceived = 0;
       item.qtyUncovered = Math.max(remainingAfterOnHand - totalReserved, 0);
       const tolerance = resolveCoverageTolerance({
         assembly,
@@ -335,18 +413,36 @@ export async function loadMaterialCoverage({
       item.tolerance = { ...tolerance, qty: toleranceQty };
       item.qtyUncoveredAfterTolerance = effectiveUncovered;
 
-      const hasPoReservations = item.reservations.some(
-        (r) => r.type === "PO" && r.purchaseOrderLineId != null
+      const activePoReservations = item.reservations.filter(
+        (r) =>
+          r.type === "PO" &&
+          r.purchaseOrderLineId != null &&
+          !r.settledAt
       );
-      const hasUnblockedPo = item.reservations.some(
-        (r) => r.type === "PO" && r.status === "OK"
+      const hasPoReservations = activePoReservations.length > 0;
+      const hasUnblockedPo = activePoReservations.some(
+        (r) => r.status === "OK"
       );
-      const blockedPoLineIds = item.reservations
-        .filter((r) => r.type === "PO" && r.status === "BLOCKED")
-        .map((r) => r.purchaseOrderLineId)
-        .filter((id): id is number => Boolean(id));
+      const blockedPoLineIds = Array.from(
+        new Set(
+          activePoReservations
+            .filter((r) => r.status === "BLOCKED")
+            .map((r) => r.purchaseOrderLineId)
+            .filter((id): id is number => Boolean(id))
+        )
+      );
 
       let status: MaterialCoverageStatus = "OK";
+      const dueSoon = hasPoReservations
+        ? activePoReservations.some((r) => r.status === "OK" && r.dueSoon)
+        : false;
+
+      if (required <= 0) {
+        item.blockingPoLineIds = [];
+        item.status = "OK";
+        return;
+      }
+
       if (required > 0) {
         if (item.qtyUncovered > 0) {
           if (effectiveUncovered > 0) {
@@ -394,10 +490,9 @@ export async function loadMaterialCoverage({
             earliestEta: item.earliestEta,
             message: `PO line timing blocks ${item.productName ?? "material"}`,
           });
+        } else if (!item.qtyUncovered && dueSoon) {
+          status = "DUE_SOON";
         }
-      }
-      if (status !== "PO_HOLD" && blockedPoLineIds.length) {
-        status = "PO_HOLD";
       }
       item.blockingPoLineIds = blockedPoLineIds;
       item.status = status;
@@ -450,6 +545,34 @@ function toNumber(value: any): number | null {
   if (value == null) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function resolveExpectedQty(line: {
+  quantity?: number | string | null;
+  quantityOrdered?: number | string | null;
+} | null | undefined): number | null {
+  if (!line) return null;
+  const qty = toNumber(line.quantity);
+  const ordered = toNumber(line.quantityOrdered);
+  if (qty != null && qty > 0) return qty;
+  if (ordered != null && ordered > 0) return ordered;
+  if (qty != null) return qty;
+  return ordered ?? null;
+}
+
+function isEtaDueSoon(
+  eta: Date,
+  neededDate: Date | null,
+  todayStart: Date
+) {
+  if (!Number.isFinite(eta.getTime())) return false;
+  if (neededDate && Number.isFinite(neededDate.getTime())) {
+    return (
+      Math.abs(eta.getTime() - neededDate.getTime()) <= DUE_SOON_WINDOW_MS
+    );
+  }
+  const diff = eta.getTime() - todayStart.getTime();
+  return diff >= 0 && diff <= DUE_SOON_WINDOW_MS;
 }
 
 function startOfDay(date: Date) {

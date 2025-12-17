@@ -32,7 +32,6 @@ export async function loadAssemblyRollups(
     stageSums,
     packDefects,
     packedSums,
-    packStageSums,
     sentOutSums,
     receivedInSums,
   ] = await Promise.all([
@@ -63,16 +62,6 @@ export async function loadAssemblyRollups(
       where: {
         assemblyId: { in: assemblyIds },
         packingOnly: { not: true },
-      },
-      _sum: { quantity: true },
-    }),
-    prisma.assemblyActivity.groupBy({
-      by: ["assemblyId"],
-      where: {
-        assemblyId: { in: assemblyIds },
-        action: ActivityAction.RECORDED,
-        kind: ActivityKind.normal,
-        stage: AssemblyStage.pack,
       },
       _sum: { quantity: true },
     }),
@@ -132,13 +121,6 @@ export async function loadAssemblyRollups(
   packedSums.forEach((row) => {
     if (!row.assemblyId || !idSet.has(row.assemblyId)) return;
     const roll = ensure(row.assemblyId);
-    roll.packedQty = toNumber(row._sum.quantity);
-  });
-  // Legacy fallback: if no box lines yet, use pack-stage activity totals
-  packStageSums.forEach((row) => {
-    if (!row.assemblyId || !idSet.has(row.assemblyId)) return;
-    const roll = ensure(row.assemblyId);
-    if (roll.packedQty > 0) return;
     roll.packedQty = toNumber(row._sum.quantity);
   });
 

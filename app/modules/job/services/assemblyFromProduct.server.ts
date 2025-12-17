@@ -36,6 +36,7 @@ export async function createAssemblyFromProductAndSeedCostings(
               salePriceGroupId: true,
               manualSalePrice: true,
               manualMargin: true,
+              externalStepType: true,
             },
           },
         },
@@ -95,6 +96,7 @@ export async function createAssemblyFromProductAndSeedCostings(
         salePriceGroupId: child.salePriceGroupId ?? null,
         manualSalePrice: child.manualSalePrice ?? null,
         manualMargin: child.manualMargin ?? null,
+        externalStepType: child.externalStepType ?? null,
         notes: null as string | null,
         flagDefinedInProduct: true,
       } as any;

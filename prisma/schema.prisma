@@ -381,6 +381,7 @@ model SupplyReservation {
   inventoryBatchId    Int?
   qtyReserved         Decimal             @db.Decimal(14, 4)
   note                String?
+  settledAt           DateTime?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
   assembly            Assembly            @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
@@ -392,6 +393,20 @@ model SupplyReservation {
   @@index([productId])
   @@index([purchaseOrderLineId])
   @@index([inventoryBatchId])
+}
+
+model OperationLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  action     String
+  entityType String?
+  entityId   Int?
+  detail     Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([action])
+  @@index([entityType, entityId])
 }
 
 model ProductLine {
@@ -468,6 +483,7 @@ model ProductMovement {
   assemblyActivityId  Int?
   assemblyId          Int?
   assemblyGroupId     Int?
+  assemblyGroupEventId Int?
   costingId           Int?
   expenseId           Int?
   jobId               Int?
@@ -485,10 +501,12 @@ model ProductMovement {
   createdAt           DateTime?             @default(now())
   updatedAt           DateTime?             @updatedAt
   location            Location?             @relation(fields: [locationId], references: [id])
+  assemblyGroupEvent  AssemblyGroupEvent?   @relation(fields: [assemblyGroupEventId], references: [id], onDelete: SetNull)
   lines               ProductMovementLine[]
 
   @@index([productId], map: "idx_product_movement_product_id")
   @@index([productId, date, id], map: "idx_product_movement_product_date_id")
+  @@index([assemblyGroupEventId])
 }
 
 model ProductMovementLine {
@@ -554,6 +572,7 @@ model Job {
   jobTags                 JobTag[]
   purchaseOrderLines      PurchaseOrderLine[]
   shipmentLines           ShipmentLine[]
+  assemblyGroupEvents     AssemblyGroupEvent[]
 }
 
 model AssemblyGroup {
@@ -565,7 +584,26 @@ model AssemblyGroup {
   createdAt  DateTime?  @default(now())
   updatedAt  DateTime?  @updatedAt
   assemblies Assembly[]
+  events     AssemblyGroupEvent[]
   job        Job?       @relation(fields: [jobId], references: [id])
+}
+
+model AssemblyGroupEvent {
+  id              Int                @id @default(autoincrement())
+  assemblyGroupId Int
+  jobId           Int?
+  type            String
+  eventDate       DateTime           @default(now())
+  notes           String?
+  createdBy       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  assemblyGroup   AssemblyGroup      @relation(fields: [assemblyGroupId], references: [id], onDelete: Cascade)
+  job             Job?               @relation(fields: [jobId], references: [id])
+  activities      AssemblyActivity[]
+  productMovements ProductMovement[]
+
+  @@index([assemblyGroupId, eventDate])
 }
 
 model SavedView {
@@ -583,6 +621,7 @@ model AssemblyActivity {
   id                       Int                @id @default(autoincrement())
   assemblyId               Int?
   jobId                    Int?
+  assemblyGroupEventId     Int?
   name                     String?
   description              String?
   activityDate             DateTime?
@@ -607,6 +646,7 @@ model AssemblyActivity {
   externalStepType         ExternalStepType?
   vendorCompanyId          Int?
   assembly                 Assembly?          @relation("Assembly_Activities", fields: [assemblyId], references: [id])
+  assemblyGroupEvent       AssemblyGroupEvent? @relation(fields: [assemblyGroupEventId], references: [id], onDelete: SetNull)
   defectReason             ValueList?         @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
   job                      Job?               @relation(fields: [jobId], references: [id])
   locationIn               Location?          @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
@@ -615,6 +655,7 @@ model AssemblyActivity {
 
   @@index([assemblyId, stage, activityDate])
   @@index([assemblyId, externalStepType, action, activityDate])
+  @@index([assemblyGroupEventId])
   @@index([vendorCompanyId, activityDate])
 }
 
@@ -634,6 +675,7 @@ model User {
   userLevel        UserLevel       @default(Admin)
   resets           PasswordReset[]
   tagDefinitions   TagDefinition[]
+  operationLogs    OperationLog[]
 }
 
 model PasswordReset {
@@ -777,6 +819,7 @@ model Expense {
 model Box {
   id              Int       @id @default(autoincrement())
   code            String?   @unique
+  importKey       String?   @unique
   description     String?
   warehouseNumber Int?
   shipmentNumber  Int?

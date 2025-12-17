@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
+  Checkbox,
   Group,
   Radio,
   Select,
@@ -58,6 +59,7 @@ export function AssemblyPackModal({
 }: AssemblyPackModalProps) {
   const fetcher = useFetcher();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [confirmOverride, setConfirmOverride] = useState(false);
   const baseLabels = useMemo(() => {
     if (variantLabels.length) return variantLabels;
     const fromQuantityItem = quantityItem?.variants?.labels || [];
@@ -126,6 +128,7 @@ export function AssemblyPackModal({
     if (!opened) return;
     form.reset(defaultValues);
     setServerError(null);
+    setConfirmOverride(false);
   }, [opened, defaultValues, form]);
 
   const qtyBreakdownValues =
@@ -148,6 +151,7 @@ export function AssemblyPackModal({
     control: form.control,
     name: "existingBoxId",
   });
+  const boxNotes = useWatch({ control: form.control, name: "boxNotes" }) || "";
   const enteredBreakdown = qtyBreakdownValues.map((entry) =>
     Number(entry?.value || 0)
   );
@@ -161,6 +165,7 @@ export function AssemblyPackModal({
   const hasUnits = unitsEntered > 0;
   const needsExistingSelection = boxMode === "existing" && !existingBoxId;
   const missingLocation = boxMode === "new" && !stockLocationName;
+  const hasOverrideNote = boxNotes.trim().length > 0;
   const overfillMessage = useMemo(() => {
     const overfillIdx = enteredBreakdown.findIndex(
       (qty, idx) => qty > (availableBreakdown[idx] ?? 0)
@@ -174,12 +179,12 @@ export function AssemblyPackModal({
   const disableSubmit =
     fetcher.state === "submitting" ||
     !hasUnits ||
-    exceedsAvailable ||
     needsExistingSelection ||
-    missingLocation;
+    missingLocation ||
+    (exceedsAvailable && !(confirmOverride && hasOverrideNote));
 
   const onSubmit = form.handleSubmit((values) => {
-    if (overfillMessage) {
+    if (overfillMessage && !(confirmOverride && hasOverrideNote)) {
       showToastError(overfillMessage);
       return;
     }
@@ -199,6 +204,9 @@ export function AssemblyPackModal({
       fd.set("boxDescription", values.boxDescription ?? "");
     }
     if (values.boxNotes) fd.set("boxNotes", values.boxNotes);
+    if (exceedsAvailable && confirmOverride && hasOverrideNote) {
+      fd.set("allowOverpack", "1");
+    }
     fetcher.submit(fd, { method: "post" });
   });
 
@@ -207,7 +215,7 @@ export function AssemblyPackModal({
       showToastError(fetcher.data.error);
     }
     if (fetcher.data?.success) {
-      showToastSuccess("Packed successfully");
+      showToastSuccess("Added to box");
       onClose();
     }
     setServerError(fetcher.data?.error ?? null);
@@ -225,7 +233,7 @@ export function AssemblyPackModal({
       opened={opened}
       onClose={onClose}
       closeOnClickOutside={false}
-      title="Record Pack"
+      title="Add to box"
       size="xl"
       centered
     >
@@ -272,8 +280,8 @@ export function AssemblyPackModal({
               Packing {unitsEntered} / {totalAvailable} ready-to-pack units
             </Text>
             {exceedsAvailable && (
-              <Text size="sm" c="red.6">
-                Cannot pack more than available.
+              <Text size="sm" c="yellow.7">
+                Entered above ready-to-pack. Add a reason and confirm to override.
               </Text>
             )}
             {overfillMessage ? (
@@ -291,6 +299,13 @@ export function AssemblyPackModal({
                 Set a stock location on the job before creating a box.
               </Text>
             )}
+            {exceedsAvailable ? (
+              <Checkbox
+                label="Override ready-to-pack limit"
+                checked={confirmOverride}
+                onChange={(e) => setConfirmOverride(e.currentTarget.checked)}
+              />
+            ) : null}
           </Stack>
 
           <Table withColumnBorders withTableBorder>
@@ -407,6 +422,11 @@ export function AssemblyPackModal({
               placeholder="Optional notes"
               {...form.register("boxNotes")}
             />
+            {exceedsAvailable && !hasOverrideNote ? (
+              <Text size="xs" c="dimmed">
+                Add a note to justify the override.
+              </Text>
+            ) : null}
           </Stack>
 
           <Text size="sm" c="dimmed">
