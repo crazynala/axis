@@ -456,6 +456,16 @@ export function AssembliesEditor(props: {
   }, [assemblies, quantityItemsById, defectsByAssembly]);
 
   const deleteRequiredPhrase = "I AM SO SURE";
+  const normalizeCostingActivityUsed = (value?: string | null) => {
+    const v = String(value ?? "")
+      .toLowerCase()
+      .trim();
+    if (v === "make") return "finish";
+    if (v === "finish") return "finish";
+    if (v === "sew") return "sew";
+    if (v === "cut") return "cut";
+    return "";
+  };
   const editForm = useForm<{
     orderedByAssembly: Record<string, number[]>;
     qpu: Record<string, number>;
@@ -483,7 +493,7 @@ export function AssembliesEditor(props: {
           .flatMap((a) => a.costings || [])
           .map((c: any) => [
             String(c.id),
-            String(c.activityUsed ?? "").toLowerCase(),
+            normalizeCostingActivityUsed(c.activityUsed),
           ])
       ) as any,
       costingDisabled: Object.fromEntries(
@@ -836,7 +846,7 @@ export function AssembliesEditor(props: {
             .flatMap((a) => a.costings || [])
             .map((c: any) => [
               String(c.id),
-              String(c.activityUsed ?? "").toLowerCase(),
+              normalizeCostingActivityUsed(c.activityUsed),
             ])
         ) as any,
         primaryCostingIds: Object.fromEntries(
@@ -914,7 +924,7 @@ export function AssembliesEditor(props: {
           .flatMap((a) => a.costings || [])
           .map((c: any) => [
             String(c.id),
-            String(c.activityUsed ?? "").toLowerCase(),
+            normalizeCostingActivityUsed(c.activityUsed),
           ])
       ) as any,
       statusNotes: Object.fromEntries(
