@@ -327,7 +327,7 @@ export default function App() {
     {
       to: "/production-ledger",
       icon: <IconListDetails />,
-      label: "Production Ledger",
+      label: "Ledger",
     },
     {
       to: "/purchase-orders",

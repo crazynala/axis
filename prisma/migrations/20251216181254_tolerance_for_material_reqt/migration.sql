@@ -1,7 +1,0 @@
-DO $$
-BEGIN
-  ALTER TABLE "AppSetting" ALTER COLUMN "updatedAt" DROP DEFAULT;
-EXCEPTION
-  WHEN undefined_table THEN NULL;
-END;
-$$;

@@ -2,13 +2,46 @@
 CREATE TYPE "ColorScheme" AS ENUM ('light', 'dark');
 
 -- CreateEnum
-CREATE TYPE "ProductType" AS ENUM ('CMT', 'Fabric', 'Finished', 'Trim', 'Service');
+CREATE TYPE "UserLevel" AS ENUM ('Admin', 'Manager', 'RegularJoe');
+
+-- CreateEnum
+CREATE TYPE "ProductType" AS ENUM ('CMT', 'Fabric', 'Finished', 'Trim', 'Service', 'Packaging');
 
 -- CreateEnum
 CREATE TYPE "CompanyType" AS ENUM ('vendor', 'customer', 'other');
 
 -- CreateEnum
+CREATE TYPE "InvoiceBillUpon" AS ENUM ('Ship', 'Make');
+
+-- CreateEnum
+CREATE TYPE "MaterialDemandSource" AS ENUM ('BOM', 'IMPORT', 'MANUAL');
+
+-- CreateEnum
 CREATE TYPE "UsageType" AS ENUM ('cut', 'make');
+
+-- CreateEnum
+CREATE TYPE "ValueListType" AS ENUM ('Tax', 'Category', 'ProductType', 'JobType', 'Currency', 'ShippingMethod', 'AssemblyType', 'DefectReason');
+
+-- CreateEnum
+CREATE TYPE "AssemblyStage" AS ENUM ('order', 'cut', 'sew', 'finish', 'pack', 'qc', 'other');
+
+-- CreateEnum
+CREATE TYPE "ActivityKind" AS ENUM ('normal', 'defect', 'rework');
+
+-- CreateEnum
+CREATE TYPE "ActivityAction" AS ENUM ('RECORDED', 'SENT_OUT', 'RECEIVED_IN', 'ADJUSTMENT', 'NOTE');
+
+-- CreateEnum
+CREATE TYPE "ExternalStepType" AS ENUM ('EMBROIDERY', 'WASH', 'DYE');
+
+-- CreateEnum
+CREATE TYPE "DefectDisposition" AS ENUM ('none', 'scrap', 'offSpec', 'sample', 'review');
+
+-- CreateEnum
+CREATE TYPE "LocationType" AS ENUM ('warehouse', 'customer_depot', 'wip', 'sample', 'scrap', 'off_spec', 'review');
+
+-- CreateEnum
+CREATE TYPE "BoxState" AS ENUM ('open', 'sealed', 'shipped');
 
 -- CreateEnum
 CREATE TYPE "TagScope" AS ENUM ('GLOBAL', 'USER');
@@ -84,7 +117,8 @@ CREATE TABLE "Product" (
     "costCurrency" TEXT DEFAULT 'USD',
     "purchaseTaxId" INTEGER,
     "categoryId" INTEGER,
-    "subCategory" TEXT,
+    "subCategoryId" INTEGER,
+    "templateId" INTEGER,
     "pricingGroupId" INTEGER,
     "manualSalePrice" DECIMAL(14,4),
     "manualMargin" DECIMAL(14,4),
@@ -103,6 +137,11 @@ CREATE TABLE "Product" (
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
+    "whiteboard" TEXT,
+    "flagIsDisabled" BOOLEAN NOT NULL DEFAULT false,
+    "primaryProductLineId" INTEGER,
+    "leadTimeDays" INTEGER,
+    "externalStepType" "ExternalStepType",
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
 );
@@ -142,6 +181,12 @@ CREATE TABLE "Company" (
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
     "nameUnaccented" TEXT,
+    "isConsignee" BOOLEAN,
+    "invoiceBillUpon" "InvoiceBillUpon" DEFAULT 'Ship',
+    "invoicePercentOnCut" DECIMAL(5,2),
+    "invoicePercentOnOrder" DECIMAL(5,2),
+    "defaultLeadTimeDays" INTEGER,
+    "code" TEXT,
 
     CONSTRAINT "Company_pkey" PRIMARY KEY ("id")
 );
@@ -176,15 +221,44 @@ CREATE TABLE "SupplierPricingGroup" (
 CREATE TABLE "ValueList" (
     "id" SERIAL NOT NULL,
     "code" TEXT,
-    "label" TEXT,
+    "label" TEXT NOT NULL,
     "value" DECIMAL(14,4),
-    "type" TEXT,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
+    "parentId" INTEGER,
+    "type" "ValueListType" NOT NULL,
 
     CONSTRAINT "ValueList_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ProductTemplate" (
+    "id" SERIAL NOT NULL,
+    "code" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "productType" "ProductType" NOT NULL,
+    "defaultCategoryId" INTEGER,
+    "defaultSubCategoryId" INTEGER,
+    "defaultExternalStepType" "ExternalStepType",
+    "requiresSupplier" BOOLEAN NOT NULL DEFAULT false,
+    "requiresCustomer" BOOLEAN NOT NULL DEFAULT false,
+    "defaultStockTracking" BOOLEAN NOT NULL DEFAULT false,
+    "defaultBatchTracking" BOOLEAN NOT NULL DEFAULT false,
+    "skuSeriesKey" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "ProductTemplate_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SkuSeriesCounter" (
+    "id" SERIAL NOT NULL,
+    "seriesKey" TEXT NOT NULL,
+    "nextNum" INTEGER NOT NULL DEFAULT 1,
+
+    CONSTRAINT "SkuSeriesCounter_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -206,6 +280,10 @@ CREATE TABLE "Assembly" (
     "updatedAt" TIMESTAMP(3),
     "nameUnaccented" TEXT,
     "notesUnaccented" TEXT,
+    "assemblyType" TEXT DEFAULT 'Prod',
+    "primaryCostingId" INTEGER,
+    "materialCoverageTolerancePct" DECIMAL(8,6),
+    "materialCoverageToleranceAbs" DECIMAL(14,4),
 
     CONSTRAINT "Assembly_pkey" PRIMARY KEY ("id")
 );
@@ -226,15 +304,62 @@ CREATE TABLE "Costing" (
     "manualMargin" DECIMAL(14,4),
     "flagAssembly" BOOLEAN,
     "flagDefinedInProduct" BOOLEAN,
-    "flagIsBillableDefaultOrManual" BOOLEAN,
     "flagIsBillableManual" BOOLEAN,
     "flagIsInvoiceableManual" BOOLEAN,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
+    "flagStockTracked" BOOLEAN,
+    "flagIsDisabled" BOOLEAN,
+    "externalStepType" "ExternalStepType",
+    "leadTimeDays" INTEGER,
 
     CONSTRAINT "Costing_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "MaterialDemand" (
+    "id" SERIAL NOT NULL,
+    "assemblyId" INTEGER NOT NULL,
+    "productId" INTEGER NOT NULL,
+    "costingId" INTEGER,
+    "qtyRequired" DECIMAL(14,4),
+    "uom" TEXT,
+    "source" "MaterialDemandSource",
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "MaterialDemand_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SupplyReservation" (
+    "id" SERIAL NOT NULL,
+    "assemblyId" INTEGER NOT NULL,
+    "productId" INTEGER NOT NULL,
+    "purchaseOrderLineId" INTEGER,
+    "inventoryBatchId" INTEGER,
+    "qtyReserved" DECIMAL(14,4) NOT NULL,
+    "note" TEXT,
+    "settledAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SupplyReservation_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "OperationLog" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER,
+    "action" TEXT NOT NULL,
+    "entityType" TEXT,
+    "entityId" INTEGER,
+    "detail" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "OperationLog_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -259,13 +384,13 @@ CREATE TABLE "ProductLine" (
 CREATE TABLE "Location" (
     "id" SERIAL NOT NULL,
     "name" TEXT,
-    "type" TEXT,
     "is_active" BOOLEAN,
     "notes" TEXT,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
+    "type" "LocationType",
 
     CONSTRAINT "Location_pkey" PRIMARY KEY ("id")
 );
@@ -301,6 +426,7 @@ CREATE TABLE "ProductMovement" (
     "assemblyActivityId" INTEGER,
     "assemblyId" INTEGER,
     "assemblyGroupId" INTEGER,
+    "assemblyGroupEventId" INTEGER,
     "costingId" INTEGER,
     "expenseId" INTEGER,
     "jobId" INTEGER,
@@ -389,6 +515,21 @@ CREATE TABLE "AssemblyGroup" (
 );
 
 -- CreateTable
+CREATE TABLE "AssemblyGroupEvent" (
+    "id" SERIAL NOT NULL,
+    "assemblyGroupId" INTEGER NOT NULL,
+    "jobId" INTEGER,
+    "type" TEXT NOT NULL,
+    "eventDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "notes" TEXT,
+    "createdBy" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AssemblyGroupEvent_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "SavedView" (
     "id" SERIAL NOT NULL,
     "module" TEXT NOT NULL,
@@ -407,9 +548,9 @@ CREATE TABLE "AssemblyActivity" (
     "id" SERIAL NOT NULL,
     "assemblyId" INTEGER,
     "jobId" INTEGER,
+    "assemblyGroupEventId" INTEGER,
     "name" TEXT,
     "description" TEXT,
-    "activityType" TEXT,
     "activityDate" TIMESTAMP(3),
     "groupKey" TEXT,
     "notes" TEXT,
@@ -424,6 +565,13 @@ CREATE TABLE "AssemblyActivity" (
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
+    "defectDisposition" "DefectDisposition" DEFAULT 'none',
+    "defectReasonId" INTEGER,
+    "kind" "ActivityKind",
+    "stage" "AssemblyStage",
+    "action" "ActivityAction",
+    "externalStepType" "ExternalStepType",
+    "vendorCompanyId" INTEGER,
 
     CONSTRAINT "AssemblyActivity_pkey" PRIMARY KEY ("id")
 );
@@ -440,6 +588,9 @@ CREATE TABLE "User" (
     "desktopNavOpened" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "firstName" TEXT,
+    "lastName" TEXT,
+    "userLevel" "UserLevel" NOT NULL DEFAULT 'Admin',
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );
@@ -555,6 +706,7 @@ CREATE TABLE "InvoiceLine" (
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "modifiedBy" TEXT,
     "updatedAt" TIMESTAMP(3),
+    "invoicedPrice" DECIMAL(14,4),
 
     CONSTRAINT "InvoiceLine_pkey" PRIMARY KEY ("id")
 );
@@ -581,6 +733,50 @@ CREATE TABLE "Expense" (
     "updatedAt" TIMESTAMP(3),
 
     CONSTRAINT "Expense_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Box" (
+    "id" SERIAL NOT NULL,
+    "code" TEXT,
+    "importKey" TEXT,
+    "description" TEXT,
+    "warehouseNumber" INTEGER,
+    "shipmentNumber" INTEGER,
+    "locationId" INTEGER,
+    "shipmentId" INTEGER,
+    "companyId" INTEGER,
+    "state" "BoxState" NOT NULL DEFAULT 'open',
+    "notes" TEXT,
+    "createdBy" TEXT,
+    "modifiedBy" TEXT,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3),
+
+    CONSTRAINT "Box_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BoxLine" (
+    "id" SERIAL NOT NULL,
+    "boxId" INTEGER NOT NULL,
+    "productId" INTEGER,
+    "batchId" INTEGER,
+    "jobId" INTEGER,
+    "assemblyId" INTEGER,
+    "shipmentLineId" INTEGER,
+    "quantity" DECIMAL(14,4),
+    "qtyBreakdown" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+    "notes" TEXT,
+    "createdBy" TEXT,
+    "modifiedBy" TEXT,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3),
+    "description" TEXT,
+    "isAdHoc" BOOLEAN DEFAULT false,
+    "packingOnly" BOOLEAN DEFAULT false,
+
+    CONSTRAINT "BoxLine_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -613,6 +809,7 @@ CREATE TABLE "Shipment" (
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "modifiedBy" TEXT,
     "updatedAt" TIMESTAMP(3),
+    "packMode" TEXT DEFAULT 'line',
 
     CONSTRAINT "Shipment_pkey" PRIMARY KEY ("id")
 );
@@ -722,6 +919,8 @@ CREATE TABLE "PurchaseOrderLine" (
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "modifiedBy" TEXT,
     "updatedAt" TIMESTAMP(3),
+    "etaDate" TIMESTAMP(3),
+    "etaDateConfirmed" BOOLEAN DEFAULT false,
 
     CONSTRAINT "PurchaseOrderLine_pkey" PRIMARY KEY ("id")
 );
@@ -855,13 +1054,67 @@ CREATE INDEX "ProductTag_tagId_idx" ON "ProductTag"("tagId");
 CREATE UNIQUE INDEX "ProductTag_productId_tagId_key" ON "ProductTag"("productId", "tagId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Company_code_key" ON "Company"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ProductTemplate_code_key" ON "ProductTemplate"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "SkuSeriesCounter_seriesKey_key" ON "SkuSeriesCounter"("seriesKey");
+
+-- CreateIndex
+CREATE INDEX "MaterialDemand_assemblyId_idx" ON "MaterialDemand"("assemblyId");
+
+-- CreateIndex
+CREATE INDEX "MaterialDemand_productId_idx" ON "MaterialDemand"("productId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "MaterialDemand_assemblyId_productId_costingId_key" ON "MaterialDemand"("assemblyId", "productId", "costingId");
+
+-- CreateIndex
+CREATE INDEX "SupplyReservation_assemblyId_idx" ON "SupplyReservation"("assemblyId");
+
+-- CreateIndex
+CREATE INDEX "SupplyReservation_productId_idx" ON "SupplyReservation"("productId");
+
+-- CreateIndex
+CREATE INDEX "SupplyReservation_purchaseOrderLineId_idx" ON "SupplyReservation"("purchaseOrderLineId");
+
+-- CreateIndex
+CREATE INDEX "SupplyReservation_inventoryBatchId_idx" ON "SupplyReservation"("inventoryBatchId");
+
+-- CreateIndex
+CREATE INDEX "OperationLog_action_idx" ON "OperationLog"("action");
+
+-- CreateIndex
+CREATE INDEX "OperationLog_entityType_entityId_idx" ON "OperationLog"("entityType", "entityId");
+
+-- CreateIndex
 CREATE INDEX "idx_product_movement_product_id" ON "ProductMovement"("productId");
 
 -- CreateIndex
 CREATE INDEX "idx_product_movement_product_date_id" ON "ProductMovement"("productId", "date", "id");
 
 -- CreateIndex
+CREATE INDEX "ProductMovement_assemblyGroupEventId_idx" ON "ProductMovement"("assemblyGroupEventId");
+
+-- CreateIndex
 CREATE INDEX "idx_product_movement_line_product_id" ON "ProductMovementLine"("productId");
+
+-- CreateIndex
+CREATE INDEX "AssemblyGroupEvent_assemblyGroupId_eventDate_idx" ON "AssemblyGroupEvent"("assemblyGroupId", "eventDate");
+
+-- CreateIndex
+CREATE INDEX "AssemblyActivity_assemblyId_stage_activityDate_idx" ON "AssemblyActivity"("assemblyId", "stage", "activityDate");
+
+-- CreateIndex
+CREATE INDEX "AssemblyActivity_assemblyId_externalStepType_action_activit_idx" ON "AssemblyActivity"("assemblyId", "externalStepType", "action", "activityDate");
+
+-- CreateIndex
+CREATE INDEX "AssemblyActivity_assemblyGroupEventId_idx" ON "AssemblyActivity"("assemblyGroupEventId");
+
+-- CreateIndex
+CREATE INDEX "AssemblyActivity_vendorCompanyId_activityDate_idx" ON "AssemblyActivity"("vendorCompanyId", "activityDate");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
@@ -874,6 +1127,48 @@ CREATE UNIQUE INDEX "ForexLine_date_currencyFrom_currencyTo_key" ON "ForexLine"(
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Invoice_invoiceCode_key" ON "Invoice"("invoiceCode");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Box_code_key" ON "Box"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Box_importKey_key" ON "Box"("importKey");
+
+-- CreateIndex
+CREATE INDEX "Box_locationId_idx" ON "Box"("locationId");
+
+-- CreateIndex
+CREATE INDEX "Box_shipmentId_idx" ON "Box"("shipmentId");
+
+-- CreateIndex
+CREATE INDEX "Box_companyId_idx" ON "Box"("companyId");
+
+-- CreateIndex
+CREATE INDEX "Box_warehouseNumber_idx" ON "Box"("warehouseNumber");
+
+-- CreateIndex
+CREATE INDEX "Box_shipmentNumber_shipmentId_idx" ON "Box"("shipmentNumber", "shipmentId");
+
+-- CreateIndex
+CREATE INDEX "Box_state_companyId_locationId_idx" ON "Box"("state", "companyId", "locationId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_boxId_idx" ON "BoxLine"("boxId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_productId_idx" ON "BoxLine"("productId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_batchId_idx" ON "BoxLine"("batchId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_jobId_idx" ON "BoxLine"("jobId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_assemblyId_idx" ON "BoxLine"("assemblyId");
+
+-- CreateIndex
+CREATE INDEX "BoxLine_shipmentLineId_idx" ON "BoxLine"("shipmentLineId");
 
 -- CreateIndex
 CREATE INDEX "ProductCostGroup_supplierId_idx" ON "ProductCostGroup"("supplierId");
@@ -930,25 +1225,34 @@ ALTER TABLE "PurchaseOrderTag" ADD CONSTRAINT "PurchaseOrderTag_tagId_fkey" FORE
 ALTER TABLE "TagDefinition" ADD CONSTRAINT "TagDefinition_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_purchaseTaxId_fkey" FOREIGN KEY ("purchaseTaxId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_pricingGroupId_fkey" FOREIGN KEY ("pricingGroupId") REFERENCES "SupplierPricingGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Product" ADD CONSTRAINT "Product_subCategoryId_fkey" FOREIGN KEY ("subCategoryId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "ProductTemplate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_costGroupId_fkey" FOREIGN KEY ("costGroupId") REFERENCES "ProductCostGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_pricingGroupId_fkey" FOREIGN KEY ("pricingGroupId") REFERENCES "SupplierPricingGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_primaryProductLineId_fkey" FOREIGN KEY ("primaryProductLineId") REFERENCES "ProductLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_purchaseTaxId_fkey" FOREIGN KEY ("purchaseTaxId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_salePriceGroupId_fkey" FOREIGN KEY ("salePriceGroupId") REFERENCES "SalePriceGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_variantSetId_fkey" FOREIGN KEY ("variantSetId") REFERENCES "VariantSet"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -966,10 +1270,22 @@ ALTER TABLE "Company" ADD CONSTRAINT "Company_stockLocationId_fkey" FOREIGN KEY 
 ALTER TABLE "SupplierPricingGroup" ADD CONSTRAINT "SupplierPricingGroup_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ValueList" ADD CONSTRAINT "ValueList_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductTemplate" ADD CONSTRAINT "ProductTemplate_defaultCategoryId_fkey" FOREIGN KEY ("defaultCategoryId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductTemplate" ADD CONSTRAINT "ProductTemplate_defaultSubCategoryId_fkey" FOREIGN KEY ("defaultSubCategoryId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_assemblyGroupId_fkey" FOREIGN KEY ("assemblyGroupId") REFERENCES "AssemblyGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_primaryCostingId_fkey" FOREIGN KEY ("primaryCostingId") REFERENCES "Costing"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -978,43 +1294,70 @@ ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_productId_fkey" FOREIGN KEY ("pr
 ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_variantSetId_fkey" FOREIGN KEY ("variantSetId") REFERENCES "VariantSet"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Costing" ADD CONSTRAINT "Costing_salePriceGroupId_fkey" FOREIGN KEY ("salePriceGroupId") REFERENCES "SalePriceGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "Costing" ADD CONSTRAINT "Costing_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Costing" ADD CONSTRAINT "Costing_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ProductLine" ADD CONSTRAINT "ProductLine_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Costing" ADD CONSTRAINT "Costing_salePriceGroupId_fkey" FOREIGN KEY ("salePriceGroupId") REFERENCES "SalePriceGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "MaterialDemand" ADD CONSTRAINT "MaterialDemand_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "MaterialDemand" ADD CONSTRAINT "MaterialDemand_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "MaterialDemand" ADD CONSTRAINT "MaterialDemand_costingId_fkey" FOREIGN KEY ("costingId") REFERENCES "Costing"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupplyReservation" ADD CONSTRAINT "SupplyReservation_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupplyReservation" ADD CONSTRAINT "SupplyReservation_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupplyReservation" ADD CONSTRAINT "SupplyReservation_purchaseOrderLineId_fkey" FOREIGN KEY ("purchaseOrderLineId") REFERENCES "PurchaseOrderLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupplyReservation" ADD CONSTRAINT "SupplyReservation_inventoryBatchId_fkey" FOREIGN KEY ("inventoryBatchId") REFERENCES "Batch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OperationLog" ADD CONSTRAINT "OperationLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProductLine" ADD CONSTRAINT "ProductLine_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Batch" ADD CONSTRAINT "Batch_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Batch" ADD CONSTRAINT "Batch_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Batch" ADD CONSTRAINT "Batch_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ProductLine" ADD CONSTRAINT "ProductLine_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Batch" ADD CONSTRAINT "Batch_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Batch" ADD CONSTRAINT "Batch_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Batch" ADD CONSTRAINT "Batch_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Batch" ADD CONSTRAINT "Batch_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ProductMovement" ADD CONSTRAINT "ProductMovement_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductMovement" ADD CONSTRAINT "ProductMovement_assemblyGroupEventId_fkey" FOREIGN KEY ("assemblyGroupEventId") REFERENCES "AssemblyGroupEvent"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductMovementLine" ADD CONSTRAINT "ProductMovementLine_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "Batch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProductMovementLine" ADD CONSTRAINT "ProductMovementLine_movementId_fkey" FOREIGN KEY ("movementId") REFERENCES "ProductMovement"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProductMovementLine" ADD CONSTRAINT "ProductMovementLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "ProductMovementLine" ADD CONSTRAINT "ProductMovementLine_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "Batch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Job" ADD CONSTRAINT "Job_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1026,16 +1369,31 @@ ALTER TABLE "Job" ADD CONSTRAINT "Job_stockLocationId_fkey" FOREIGN KEY ("stockL
 ALTER TABLE "AssemblyGroup" ADD CONSTRAINT "AssemblyGroup_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "AssemblyGroupEvent" ADD CONSTRAINT "AssemblyGroupEvent_assemblyGroupId_fkey" FOREIGN KEY ("assemblyGroupId") REFERENCES "AssemblyGroup"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AssemblyGroupEvent" ADD CONSTRAINT "AssemblyGroupEvent_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_assemblyGroupEventId_fkey" FOREIGN KEY ("assemblyGroupEventId") REFERENCES "AssemblyGroupEvent"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_defectReasonId_fkey" FOREIGN KEY ("defectReasonId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_locationInId_fkey" FOREIGN KEY ("locationInId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_locationOutId_fkey" FOREIGN KEY ("locationOutId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "AssemblyActivity" ADD CONSTRAINT "AssemblyActivity_vendorCompanyId_fkey" FOREIGN KEY ("vendorCompanyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PasswordReset" ADD CONSTRAINT "PasswordReset_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1047,13 +1405,13 @@ ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_companyId_fkey" FOREIGN KEY ("comp
 ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_taxCodeId_fkey" FOREIGN KEY ("taxCodeId") REFERENCES "ValueList"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "InvoiceLine" ADD CONSTRAINT "InvoiceLine_invoiceId_fkey" FOREIGN KEY ("invoiceId") REFERENCES "Invoice"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "InvoiceLine" ADD CONSTRAINT "InvoiceLine_costingId_fkey" FOREIGN KEY ("costingId") REFERENCES "Costing"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "InvoiceLine" ADD CONSTRAINT "InvoiceLine_expenseId_fkey" FOREIGN KEY ("expenseId") REFERENCES "Expense"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "InvoiceLine" ADD CONSTRAINT "InvoiceLine_invoiceId_fkey" FOREIGN KEY ("invoiceId") REFERENCES "Invoice"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "InvoiceLine" ADD CONSTRAINT "InvoiceLine_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1074,7 +1432,34 @@ ALTER TABLE "Expense" ADD CONSTRAINT "Expense_productId_fkey" FOREIGN KEY ("prod
 ALTER TABLE "Expense" ADD CONSTRAINT "Expense_shippingId_fkey" FOREIGN KEY ("shippingId") REFERENCES "Shipment"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Box" ADD CONSTRAINT "Box_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Box" ADD CONSTRAINT "Box_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Box" ADD CONSTRAINT "Box_shipmentId_fkey" FOREIGN KEY ("shipmentId") REFERENCES "Shipment"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "Batch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_boxId_fkey" FOREIGN KEY ("boxId") REFERENCES "Box"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BoxLine" ADD CONSTRAINT "BoxLine_shipmentLineId_fkey" FOREIGN KEY ("shipmentLineId") REFERENCES "ShipmentLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_addressIdShip_fkey" FOREIGN KEY ("addressIdShip") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_companyIdCarrier_fkey" FOREIGN KEY ("companyIdCarrier") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1086,7 +1471,7 @@ ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_companyIdReceiver_fkey" FOREIGN 
 ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_companyIdSender_fkey" FOREIGN KEY ("companyIdSender") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_addressIdShip_fkey" FOREIGN KEY ("addressIdShip") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Shipment" ADD CONSTRAINT "Shipment_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ShipmentLine" ADD CONSTRAINT "ShipmentLine_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1125,25 +1510,25 @@ ALTER TABLE "PurchaseOrder" ADD CONSTRAINT "PurchaseOrder_consigneeCompanyId_fke
 ALTER TABLE "PurchaseOrder" ADD CONSTRAINT "PurchaseOrder_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_purchaseOrderId_fkey" FOREIGN KEY ("purchaseOrderId") REFERENCES "PurchaseOrder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "PurchaseOrderLine" ADD CONSTRAINT "PurchaseOrderLine_purchaseOrderId_fkey" FOREIGN KEY ("purchaseOrderId") REFERENCES "PurchaseOrder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProductCostGroup" ADD CONSTRAINT "ProductCostGroup_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_costGroupId_fkey" FOREIGN KEY ("costGroupId") REFERENCES "ProductCostGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_costGroupId_fkey" FOREIGN KEY ("costGroupId") REFERENCES "ProductCostGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1152,7 +1537,7 @@ ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_productId_fkey" FORE
 ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_saleGroupId_fkey" FOREIGN KEY ("saleGroupId") REFERENCES "SalePriceGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "VendorCustomerPricing" ADD CONSTRAINT "VendorCustomerPricing_vendorId_fkey" FOREIGN KEY ("vendorId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "VendorCustomerPricing" ADD CONSTRAINT "VendorCustomerPricing_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "VendorCustomerPricing" ADD CONSTRAINT "VendorCustomerPricing_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "VendorCustomerPricing" ADD CONSTRAINT "VendorCustomerPricing_vendorId_fkey" FOREIGN KEY ("vendorId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -369,12 +369,12 @@ export function AssembliesEditor(props: {
   const sewMissing =
     externalStepAction?.mode === "send" &&
     (Number(externalStepRollup?.sewGoodQty ?? 0) || 0) <= 0;
-  const modalVariantLabels = externalStepAction
+  const externalStepVariantLabels = externalStepAction
     ? resolveVariantLabels(externalStepAction.assemblyId)
     : [];
   const externalStepBreakdownEntries = useMemo(() => {
     const len = Math.max(
-      modalVariantLabels.length,
+      externalStepVariantLabels.length,
       externalStepBreakdown.length,
       1
     );
@@ -383,7 +383,7 @@ export function AssembliesEditor(props: {
       const num = Number(value);
       return Number.isFinite(num) ? num : 0;
     });
-  }, [externalStepBreakdown, modalVariantLabels.length]);
+  }, [externalStepBreakdown, externalStepVariantLabels.length]);
   const externalStepBreakdownTotal = useMemo(
     () =>
       externalStepBreakdownEntries.reduce(
@@ -1016,14 +1016,14 @@ export function AssembliesEditor(props: {
     });
   }, [defectModalOpen, defectAssemblyId, firstAssembly?.id]);
 
-  const resolveVariantLabels = (assemblyId: number | null) => {
+  function resolveVariantLabels(assemblyId: number | null) {
     if (!assemblyId) return ["Qty"];
     const labels =
       quantityItemsById.get(assemblyId)?.variants?.labels ||
       firstAssembly?.variantSet?.variants ||
       [];
     return labels && labels.length ? labels : ["Qty"];
-  };
+  }
 
   const buildExternalStepDefaultBreakdown = (
     assemblyId: number,
@@ -1694,7 +1694,8 @@ export function AssembliesEditor(props: {
                           ta="center"
                           style={{ width: 72 }}
                         >
-                          {modalVariantLabels[idx] || `Variant ${idx + 1}`}
+                          {externalStepVariantLabels[idx] ||
+                            `Variant ${idx + 1}`}
                         </Table.Th>
                       ))}
                     </Table.Tr>

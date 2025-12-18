@@ -14,6 +14,7 @@
     "seed:sale-price-groups": "tsx scripts/seed-sale-price-groups.ts",
     "seed:primary-costings": "tsx scripts/seed-primary-costings.ts",
     "seed:coverage-tolerance": "tsx scripts/seed-material-coverage-tolerance.ts",
+    "seed:db-extensions": "tsx scripts/seed-db-extensions.ts",
     "backfill:assembly-actions": "tsx scripts/backfill-assembly-actions.ts",
     "debug": "node --inspect-brk server.mjs",
     "predev": "prisma generate",
