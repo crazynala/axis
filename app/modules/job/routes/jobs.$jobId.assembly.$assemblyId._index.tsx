@@ -52,6 +52,11 @@ import {
   ExternalStepType,
 } from "@prisma/client";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
+import {
+  aggregateAssemblyStages,
+  buildStageRowsFromAggregation,
+  type StageAggregation,
+} from "~/modules/job/services/stageRows.server";
 import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import { loadMaterialCoverage } from "~/modules/production/services/materialCoverage.server";
 import { loadCoverageToleranceDefaults } from "~/modules/materials/services/coverageTolerance.server";
@@ -537,174 +542,35 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     }
   }
 
-  const computeStageStats = (
-    acts: any[] | undefined,
-    stage: "cut" | "sew" | "finish" | "pack",
-    fallbackArr: number[],
-    fallbackTotal: number
-  ) => {
-    const goodArr: number[] = [];
-    const defectArr: number[] = [];
-    let goodTotal = 0;
-    let defectTotal = 0;
-    const stageActs = (acts || []).filter((a) => a?.stage === stage);
-    if (!stageActs.length) {
-      return {
-        goodArr: fallbackArr,
-        defectArr: [],
-        usableArr: fallbackArr,
-        attemptsArr: fallbackArr,
-        goodTotal: fallbackTotal,
-        defectTotal: 0,
-        usableTotal: fallbackTotal,
-        attemptsTotal: fallbackTotal,
-      };
-    }
-    const applyArr = (target: number[], source: number[], sign: number) => {
-      const len = Math.max(target.length, source.length);
-      for (let i = 0; i < len; i++) {
-        const curr = Number(target[i] ?? 0) || 0;
-        const val = Number(source[i] ?? 0) || 0;
-        target[i] = curr + sign * val;
-      }
-    };
-    for (const act of stageActs) {
-      const qty = Number(act.quantity ?? 0) || 0;
-      const breakdown =
-        Array.isArray(act.qtyBreakdown) && act.qtyBreakdown.length
-          ? (act.qtyBreakdown as number[])
-          : qty
-          ? [qty]
-          : [];
-      if (act.kind === "defect") {
-        defectTotal += qty;
-        applyArr(defectArr, breakdown, 1);
-      } else {
-        goodTotal += qty;
-        applyArr(goodArr, breakdown, 1);
-      }
-    }
-    const usableArr: number[] = [];
-    const attemptsArr: number[] = [];
-    const len = Math.max(goodArr.length, defectArr.length);
-    for (let i = 0; i < len; i++) {
-      const good = Number(goodArr[i] ?? 0) || 0;
-      const bad = Number(defectArr[i] ?? 0) || 0;
-      usableArr[i] = good - bad;
-      attemptsArr[i] = good; // attempts reflect good work logged; defects shown separately
-    }
-    return {
-      goodArr,
-      defectArr,
-      usableArr,
-      attemptsArr,
-      goodTotal,
-      defectTotal,
-      usableTotal: goodTotal - defectTotal,
-      attemptsTotal: goodTotal,
-    };
-  };
 
-  const minArrays = (a: number[], b: number[]) => {
-    const len = Math.max(a.length, b.length);
-    const out: number[] = [];
-    for (let i = 0; i < len; i++) {
-      out[i] = Math.min(Number(a[i] ?? 0) || 0, Number(b[i] ?? 0) || 0);
-    }
-    return out;
-  };
-
+  const stageAggregations = new Map<number, StageAggregation>();
   const quantityItems = assemblies.map((a: any) => {
     let labels = (a.variantSet?.variants || []) as string[];
     if ((!labels || labels.length === 0) && (a as any).productId) {
       const fb = prodVariantMap.get(Number((a as any).productId));
       if (fb && fb.length) labels = fb as string[];
     }
-    const acts = activitiesByAssembly.get(a.id) || [];
-    const fallbackCutArr = ((a as any).c_qtyCut_Breakdown || []) as number[];
-    const fallbackSewArr = ((a as any).c_qtySew_Breakdown || []) as number[];
-    const fallbackFinishArr = ((a as any).c_qtyFinish_Breakdown ||
-      []) as number[];
-    const packedSnapshot = packedByAssembly.get(a.id);
-    const fallbackPackArr = (packedSnapshot?.breakdown || []) as number[];
-    const fallbackPackTotal = Number(packedSnapshot?.total ?? 0) || 0;
-    const cutStats = computeStageStats(
-      acts,
-      "cut",
-      fallbackCutArr,
-      Number((a as any).c_qtyCut || 0) || 0
-    );
-    const sewStats = computeStageStats(
-      acts,
-      "sew",
-      fallbackSewArr,
-      Number((a as any).c_qtySew || 0) || 0
-    );
-    const finishStats = computeStageStats(
-      acts,
-      "finish",
-      fallbackFinishArr,
-      Number((a as any).c_qtyFinish || 0) || 0
-    );
-    const packStats = computeStageStats(
-      [],
-      "pack",
-      fallbackPackArr,
-      fallbackPackTotal
-    );
-    // Pipeline usable counts: downstream stages cap upstream usable units
-    const usableCutArr = cutStats.usableArr;
-    const hasSewData =
-      (sewStats?.attemptsTotal || 0) > 0 ||
-      (fallbackSewArr || []).some((n) => Number(n) > 0);
-    const hasFinishData =
-      (finishStats?.attemptsTotal || 0) > 0 ||
-      (fallbackFinishArr || []).some((n) => Number(n) > 0);
-    const sewArrRaw = sewStats.usableArr;
-    const finishArrRaw = finishStats.usableArr;
-    const usableSewArr = hasSewData
-      ? minArrays(sewArrRaw, usableCutArr)
-      : sewArrRaw;
-    const sewLimitBase = hasSewData ? usableSewArr : usableCutArr;
-    const usableFinishArr = hasFinishData
-      ? minArrays(finishArrRaw, sewLimitBase)
-      : finishArrRaw;
-    const hasPackData =
-      (packStats?.attemptsTotal || 0) > 0 ||
-      (Array.isArray(fallbackPackArr) &&
-        fallbackPackArr.some((n) => Number(n) || 0));
-    const usablePackArr = hasPackData
-      ? minArrays(packStats.usableArr, usableFinishArr)
-      : usableFinishArr;
-    const usableCutTotal = cutStats.usableTotal;
-    const usableSewTotal = hasSewData
-      ? Math.min(sewStats.usableTotal, usableCutTotal)
-      : sewStats.usableTotal;
-    const usableFinishTotal = hasSewData
-      ? Math.min(finishStats.usableTotal, usableSewTotal)
-      : Math.min(finishStats.usableTotal, usableCutTotal);
-    const usablePackTotal = hasPackData
-      ? Math.min(packStats.usableTotal, usableFinishTotal)
-      : usableFinishTotal;
-    // Display values are capped by downstream throughput to reflect "usable for assembly"
-    const displayCutArr = hasSewData
-      ? minArrays(usableCutArr, usableSewArr)
-      : usableCutArr;
-    const displaySewArr = hasFinishData
-      ? minArrays(usableSewArr, usableFinishArr)
-      : usableSewArr;
-    const displayFinishArr = usableFinishArr;
-    const displayPackArr = hasPackData
-      ? usablePackArr
-      : Array.from({ length: usableFinishArr.length }, () => 0);
-    const displayCutTotal = hasSewData
-      ? Math.min(usableCutTotal, usableSewTotal)
-      : usableCutTotal;
-    const displaySewTotal = hasFinishData
-      ? Math.min(usableSewTotal, usableFinishTotal)
-      : usableSewTotal;
-    const displayFinishTotal = usableFinishTotal;
-    const displayPackTotal = hasPackData ? usablePackTotal : 0;
+    const aggregation = aggregateAssemblyStages({
+      assemblyId: a.id,
+      orderedBreakdown: (a as any).qtyOrderedBreakdown || [],
+      fallbackBreakdowns: {
+        cut: (a as any).c_qtyCut_Breakdown || [],
+        sew: (a as any).c_qtySew_Breakdown || [],
+        finish: (a as any).c_qtyFinish_Breakdown || [],
+      },
+      fallbackTotals: {
+        cut: (a as any).c_qtyCut ?? 0,
+        sew: (a as any).c_qtySew ?? 0,
+        finish: (a as any).c_qtyFinish ?? 0,
+      },
+      packSnapshot:
+        packedByAssembly.get(a.id) || {
+          breakdown: [],
+          total: 0,
+        },
+      activities: activitiesByAssembly.get(a.id) || [],
+    });
+    stageAggregations.set(a.id, aggregation);
     return {
       assemblyId: a.id,
       label: `Assembly ${a.id}`,
@@ -713,23 +579,20 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
         numVariants:
           Number((a as any).c_numVariants || labels.length || 0) || 0,
       },
-      ordered: ((a as any).qtyOrderedBreakdown || []) as number[],
-      cut: displayCutArr,
-      sew: displaySewArr,
-      finish: displayFinishArr,
-      pack: displayPackArr,
+      ordered: aggregation.ordered,
+      cut: aggregation.displayArrays.cut,
+      sew: aggregation.displayArrays.sew,
+      finish: aggregation.displayArrays.finish,
+      pack: aggregation.displayArrays.pack,
       totals: {
-        cut: displayCutTotal,
-        sew: displaySewTotal,
-        finish: displayFinishTotal,
-        pack: displayPackTotal,
+        cut: aggregation.totals.cut,
+        sew: aggregation.totals.sew,
+        finish: aggregation.totals.finish,
+        pack: aggregation.totals.pack,
       },
-      stageStats: {
-        cut: cutStats,
-        sew: sewStats,
-        finish: finishStats,
-        pack: packStats,
-      },
+      stageStats: aggregation.stageStats,
+      stageRows: [],
+      finishInput: { breakdown: [], total: 0 },
     };
   });
 
@@ -737,9 +600,15 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     number,
     { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }
   >();
-  for (const item of quantityItems) {
-    if (!item?.assemblyId) continue;
-    quantityByAssembly.set(item.assemblyId, { totals: item.totals });
+  for (const [assemblyId, aggregation] of stageAggregations.entries()) {
+    quantityByAssembly.set(assemblyId, {
+      totals: {
+        cut: aggregation.totals.cut,
+        sew: aggregation.totals.sew,
+        finish: aggregation.totals.finish,
+        pack: aggregation.totals.pack,
+      },
+    });
   }
 
   const externalStepsByAssembly = buildExternalStepsByAssembly({
@@ -747,6 +616,18 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     activitiesByAssembly,
     quantityByAssembly,
   });
+  for (const item of quantityItems) {
+    if (!item?.assemblyId) continue;
+    const aggregation = stageAggregations.get(item.assemblyId);
+    if (!aggregation) continue;
+    const derivedSteps = externalStepsByAssembly[item.assemblyId] || [];
+    const { rows, finishInput } = buildStageRowsFromAggregation({
+      aggregation,
+      derivedExternalSteps: derivedSteps,
+    });
+    item.stageRows = rows;
+    item.finishInput = finishInput;
+  }
   const toleranceDefaults = await loadCoverageToleranceDefaults();
   const rollups = assemblyIds.length
     ? await loadAssemblyRollups(assemblyIds)
@@ -791,7 +672,6 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     defectReasons,
     groupInfo,
     primaryCostingIdByAssembly,
-    externalStepsByAssembly,
     toleranceDefaults,
     rollupsByAssembly,
     vendorOptionsByStep,
@@ -827,6 +707,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (Array.isArray(arr) && arr.length) return arr.map((n) => Number(n) || 0);
     if (Number.isFinite(fallbackQty) && fallbackQty > 0) return [fallbackQty];
     return [];
+  };
+  const parseExternalQtyBreakdown = (input: unknown): number[] => {
+    if (typeof input !== "string") return [];
+    if (!input.trim()) return [];
+    try {
+      const parsed = JSON.parse(input);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((n) => {
+        const value = Number(n);
+        return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+      });
+    } catch {
+      return [];
+    }
   };
   const parsePrimaryCostingId = (value: unknown) => {
     if (value == null) return null;
@@ -2067,9 +1961,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!externalStepType) {
       return json({ ok: false, error: "missing_step_type" }, { status: 400 });
     }
-    const qty = Number(form.get("qty") ?? 0) || 0;
-    if (!Number.isFinite(qty) || qty <= 0) {
-      return json({ ok: false, error: "invalid_qty" }, { status: 400 });
+    const qtyBreakdown = parseExternalQtyBreakdown(form.get("qtyBreakdown"));
+    const qty = qtyBreakdown.reduce((sum, value) => sum + value, 0);
+    // qtyBreakdown is mandatory for any unit-moving external step.
+    if (!qtyBreakdown.length || qty <= 0) {
+      return json({ ok: false, error: "invalid_qty_breakdown" }, { status: 400 });
     }
     const activityDateRaw = String(form.get("activityDate") || "");
     const activityDate = activityDateRaw
@@ -2106,6 +2002,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         vendorCompanyId: vendorCompanyId ?? undefined,
         activityDate,
         quantity: qty,
+        qtyBreakdown,
         notes: vendorUnknown ? "Unknown vendor selected" : null,
       },
     });
@@ -2118,15 +2015,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           assemblyId: targetAssemblyId,
           jobId: targetAssembly.jobId ?? jobId,
           name: "Sew",
-          stage: AssemblyStage.sew,
-          kind: ActivityKind.normal,
-          action: ActivityAction.RECORDED,
-          activityDate,
-          quantity: qty,
-          qtyBreakdown: [Math.round(qty)],
-          notes: "Recorded from Send Out helper",
-        },
-      });
+        stage: AssemblyStage.sew,
+        kind: ActivityKind.normal,
+        action: ActivityAction.RECORDED,
+        activityDate,
+        quantity: qty,
+        qtyBreakdown,
+        notes: "Recorded from Send Out helper",
+      },
+    });
     }
     return json({ ok: true });
   }
@@ -2508,7 +2405,6 @@ export default function JobAssemblyRoute() {
           renderStatusBar={renderStatusBar}
           packContext={data.packContext as any}
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
-          externalStepsByAssembly={data.externalStepsByAssembly as any}
           rollupsByAssembly={data.rollupsByAssembly as any}
           vendorOptionsByStep={data.vendorOptionsByStep as any}
         />
@@ -2560,7 +2456,6 @@ export default function JobAssemblyRoute() {
         renderStatusBar={renderStatusBar}
         packContext={data.packContext as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
-        externalStepsByAssembly={data.externalStepsByAssembly as any}
         rollupsByAssembly={data.rollupsByAssembly as any}
         vendorOptionsByStep={data.vendorOptionsByStep as any}
       />

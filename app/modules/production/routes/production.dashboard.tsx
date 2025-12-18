@@ -24,7 +24,6 @@ import {
   Drawer,
   Modal,
   TextInput,
-  NumberInput,
   NativeSelect,
   Select,
   Group,
@@ -186,6 +185,7 @@ export async function action({ request }: LoaderFunctionArgs) {
       assemblyId: number;
       externalStepType: string | null;
       qty: number;
+      qtyBreakdown: number[];
     }> = [];
     try {
       const parsed = JSON.parse(itemsRaw);
@@ -198,6 +198,13 @@ export async function action({ request }: LoaderFunctionArgs) {
                 ? item.externalStepType
                 : null,
             qty: Number(item?.qty ?? 0),
+            qtyBreakdown: Array.isArray(item?.qtyBreakdown)
+              ? item.qtyBreakdown.map((n: any) =>
+                  Number.isFinite(Number(n)) && Number(n) > 0
+                    ? Number(n)
+                    : 0
+                )
+              : [],
           }))
           .filter((item) => Number.isFinite(item.assemblyId));
       }
@@ -277,7 +284,13 @@ export async function action({ request }: LoaderFunctionArgs) {
       )
         ? (externalStepTypeRaw as ExternalStepType)
         : null;
-      if (!externalStepType || !Number.isFinite(item.qty) || item.qty <= 0) {
+      const qtyBreakdown =
+        item.qtyBreakdown && item.qtyBreakdown.length
+          ? item.qtyBreakdown
+          : [];
+      const qty = qtyBreakdown.reduce((sum, value) => sum + value, 0);
+      // qtyBreakdown is mandatory for any unit-moving external step.
+      if (!externalStepType || qty <= 0 || !qtyBreakdown.length) {
         skipped += 1;
         continue;
       }
@@ -297,7 +310,8 @@ export async function action({ request }: LoaderFunctionArgs) {
           externalStepType,
           vendorCompanyId: vendorCompanyId ?? undefined,
           activityDate,
-          quantity: item.qty,
+          quantity: qty,
+          qtyBreakdown,
           notes: vendorUnknown ? "Unknown vendor selected" : null,
         },
       });
@@ -311,8 +325,8 @@ export async function action({ request }: LoaderFunctionArgs) {
             kind: ActivityKind.normal,
             action: ActivityAction.RECORDED,
             activityDate,
-            quantity: item.qty,
-            qtyBreakdown: [Math.round(item.qty)],
+            quantity: qty,
+            qtyBreakdown,
             notes: "Recorded from Send Out helper",
           },
         });
@@ -648,10 +662,11 @@ export default function ProductionDashboardRoute() {
       assemblyLabel: string;
       stepType: string | null;
       stepLabel: string | null;
-      qty: number;
       qtyDefault: number;
       expectedTypes: string[];
       sewMissing: boolean;
+      variantLabels: string[];
+      qtyBreakdown: number[];
     }>;
     availableStepTypes: Array<{ value: string; label: string }>;
     selectedStepType: string | null;
@@ -809,10 +824,11 @@ export default function ProductionDashboardRoute() {
       assemblyLabel: string;
       stepType: string | null;
       stepLabel: string | null;
-      qty: number;
       qtyDefault: number;
       expectedTypes: string[];
       sewMissing: boolean;
+      variantLabels: string[];
+      qtyBreakdown: number[];
     }>;
   }) => {
     const stepLabelByType = new Map<string, string>();
@@ -866,16 +882,25 @@ export default function ProductionDashboardRoute() {
         }));
       const expectedTypes = expectedSteps.map((step) => step.type);
       const defaultQty = Number(assembly.rollup?.sewnAvailableQty ?? 0) || 0;
+      const variantLabels =
+        (assembly.variantLabels && assembly.variantLabels.length
+          ? assembly.variantLabels
+          : ["Qty"]) ?? ["Qty"];
+      const qtyBreakdown =
+        variantLabels.length === 1
+          ? [defaultQty]
+          : Array.from({ length: variantLabels.length }, () => 0);
       return {
         key: `asm-${assembly.id}`,
         assemblyId: assembly.id,
         assemblyLabel: `A${assembly.id}`,
         stepType: null,
         stepLabel: expectedSteps[0]?.label ?? null,
-        qty: defaultQty,
         qtyDefault: defaultQty,
         expectedTypes,
         sewMissing: (Number(assembly.rollup?.sewGoodQty ?? 0) || 0) <= 0,
+        variantLabels,
+        qtyBreakdown,
       };
     });
     openBatchModal({ mode: "send", rows: nextRows });
@@ -896,16 +921,25 @@ export default function ProductionDashboardRoute() {
         (Number(step.qtyOut ?? 0) || 0) - (Number(step.qtyIn ?? 0) || 0),
         0
       );
+      const variantLabels =
+        (assembly.variantLabels && assembly.variantLabels.length
+          ? assembly.variantLabels
+          : ["Qty"]) ?? ["Qty"];
+      const qtyBreakdown =
+        variantLabels.length === 1
+          ? [defaultQty]
+          : Array.from({ length: variantLabels.length }, () => 0);
       return {
         key: `asm-${assembly.id}-${step.type}`,
         assemblyId: assembly.id,
         assemblyLabel: `A${assembly.id}`,
         stepType: step.type,
         stepLabel: step.label ?? null,
-        qty: defaultQty,
         qtyDefault: defaultQty,
         expectedTypes: [step.type],
         sewMissing: false,
+        variantLabels,
+        qtyBreakdown,
       };
     });
     openBatchModal({ mode: "receive", rows: nextRows, vendorId: sharedVendorId });
@@ -925,11 +959,23 @@ export default function ProductionDashboardRoute() {
       return;
     }
     const activityDate = batchDate ?? new Date();
-    const items = batchAction.rows.map((row) => ({
-      assemblyId: row.assemblyId,
-      externalStepType: batchAction.selectedStepType || row.stepType,
-      qty: row.qty,
-    }));
+    const items = batchAction.rows.map((row) => {
+      const breakdown = (row.qtyBreakdown || []).map((value) => {
+        const num = Number(value);
+        return Number.isFinite(num) && num > 0 ? num : 0;
+      });
+      const qty = breakdown.reduce((sum, value) => sum + value, 0);
+      return {
+        assemblyId: row.assemblyId,
+        externalStepType: batchAction.selectedStepType || row.stepType,
+        qty,
+        qtyBreakdown: breakdown,
+      };
+    });
+    if (items.some((item) => item.qty <= 0)) {
+      setBatchError("Enter size breakdowns for all rows.");
+      return;
+    }
     const fd = new FormData();
     fd.set(
       "_intent",
@@ -945,6 +991,26 @@ export default function ProductionDashboardRoute() {
       fd.set("recordSewNow", "1");
     }
     batchFetcher.submit(fd, { method: "post" });
+  };
+
+  const handleBatchRowBreakdownChange = (
+    rowKey: string,
+    index: number,
+    value: string
+  ) => {
+    const parsed = value === "" ? 0 : Number(value);
+    const sanitized =
+      Number.isFinite(parsed) && parsed > 0 ? Number(parsed) : 0;
+    setBatchAction((prev) => {
+      if (!prev) return prev;
+      const nextRows = prev.rows.map((row) => {
+        if (row.key !== rowKey) return row;
+        const next = [...(row.qtyBreakdown || [])];
+        next[index] = sanitized;
+        return { ...row, qtyBreakdown: next };
+      });
+      return { ...prev, rows: nextRows };
+    });
   };
 
   return (
@@ -1808,7 +1874,7 @@ export default function ProductionDashboardRoute() {
                 <Table.Tr>
                   <Table.Th>Assembly</Table.Th>
                   <Table.Th>Step</Table.Th>
-                  <Table.Th>Qty</Table.Th>
+                  <Table.Th>Size breakdown</Table.Th>
                   <Table.Th>Default</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -1824,27 +1890,51 @@ export default function ProductionDashboardRoute() {
                         : row.stepLabel || "—"}
                     </Table.Td>
                     <Table.Td>
-                      <NumberInput
-                        value={row.qty}
-                        min={0}
-                        onChange={(val) =>
-                          setBatchAction((prev) => {
-                            if (!prev) return prev;
-                            const nextRows = prev.rows.map((r) =>
-                              r.key === row.key
-                                ? {
-                                    ...r,
-                                    qty:
-                                      typeof val === "number"
-                                        ? val
-                                        : Number(val) || 0,
-                                  }
-                                : r
-                            );
-                            return { ...prev, rows: nextRows };
-                          })
-                        }
-                      />
+                      <Stack gap="xs">
+                        {(row.variantLabels?.length
+                          ? row.variantLabels
+                          : ["Qty"]
+                        ).map((label, idx) => (
+                          <Group
+                            key={`${row.key}-var-${idx}`}
+                            gap="xs"
+                            align="center"
+                          >
+                            <Text size="xs" w={80}>
+                              {label || `Variant ${idx + 1}`}
+                            </Text>
+                            <TextInput
+                              type="number"
+                              value={String(row.qtyBreakdown[idx] ?? 0)}
+                              onChange={(e) =>
+                                handleBatchRowBreakdownChange(
+                                  row.key,
+                                  idx,
+                                  e.currentTarget.value
+                                )
+                              }
+                            />
+                          </Group>
+                        ))}
+                        <Text
+                          size="xs"
+                          c={
+                            (row.qtyBreakdown || []).reduce(
+                              (sum, value) => sum + (Number(value) || 0),
+                              0
+                            ) === row.qtyDefault
+                              ? "dimmed"
+                              : "red"
+                          }
+                        >
+                          Total{" "}
+                          {(row.qtyBreakdown || []).reduce(
+                            (sum, value) => sum + (Number(value) || 0),
+                            0
+                          )}{" "}
+                          / Target {formatQuantity(row.qtyDefault)}
+                        </Text>
+                      </Stack>
                     </Table.Td>
                     <Table.Td>{formatQuantity(row.qtyDefault)}</Table.Td>
                   </Table.Tr>

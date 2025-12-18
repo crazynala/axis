@@ -22,6 +22,7 @@ import {
   type RiskAssemblyInput,
 } from "~/modules/production/services/riskSignals.server";
 import { getProductStockSnapshots } from "~/utils/prisma.server";
+import { getVariantLabels } from "~/utils/getVariantLabels";
 
 type LoaderPurchaseOrderLineSummary = Omit<
   PurchaseOrderLineSummary,
@@ -31,6 +32,7 @@ type LoaderPurchaseOrderLineSummary = Omit<
 export type LoaderAssembly = {
   id: number;
   name: string | null;
+  variantLabels: string[];
   materialCoverageTolerancePct: number | null;
   materialCoverageToleranceAbs: number | null;
   job: {
@@ -90,8 +92,10 @@ const assemblyIncludes = {
           defaultLeadTimeDays: true,
         },
       },
+      variantSet: { select: { variants: true } },
     },
   },
+  variantSet: { select: { variants: true } },
   costings: {
     include: {
       product: {
@@ -387,6 +391,12 @@ async function hydrateAssemblies(
   return assemblies.map((assembly) => ({
     id: assembly.id,
     name: assembly.name,
+    variantLabels: getVariantLabels(
+      assembly.variantSet?.variants ??
+        assembly.product?.variantSet?.variants ??
+        [],
+      assembly.c_numVariants ?? null
+    ),
     materialCoverageTolerancePct:
       assembly.materialCoverageTolerancePct != null
         ? Number(assembly.materialCoverageTolerancePct)

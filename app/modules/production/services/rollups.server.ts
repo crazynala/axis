@@ -2,6 +2,7 @@ import {
   ActivityAction,
   ActivityKind,
   AssemblyStage,
+  ExternalStepType,
   Prisma,
 } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
@@ -12,6 +13,7 @@ export type AssemblyRollup = {
   sewGoodQty: number;
   finishGoodQty: number;
   finishNetQty: number;
+  finishInputQty: number;
   packedQty: number;
   packDefectQty: number;
   readyToPackQty: number;
@@ -34,6 +36,7 @@ export async function loadAssemblyRollups(
     packedSums,
     sentOutSums,
     receivedInSums,
+    costingSteps,
   ] = await Promise.all([
     prisma.assemblyActivity.groupBy({
       by: ["assemblyId", "stage"],
@@ -66,20 +69,29 @@ export async function loadAssemblyRollups(
       _sum: { quantity: true },
     }),
     prisma.assemblyActivity.groupBy({
-      by: ["assemblyId"],
+      by: ["assemblyId", "externalStepType"],
       where: {
         assemblyId: { in: assemblyIds },
         action: ActivityAction.SENT_OUT,
+        externalStepType: { not: null },
       },
       _sum: { quantity: true },
     }),
     prisma.assemblyActivity.groupBy({
-      by: ["assemblyId"],
+      by: ["assemblyId", "externalStepType"],
       where: {
         assemblyId: { in: assemblyIds },
         action: ActivityAction.RECEIVED_IN,
+        externalStepType: { not: null },
       },
       _sum: { quantity: true },
+    }),
+    prisma.costing.findMany({
+      where: {
+        assemblyId: { in: assemblyIds },
+        externalStepType: { not: null },
+      },
+      select: { assemblyId: true, externalStepType: true },
     }),
   ]);
 
@@ -92,6 +104,7 @@ export async function loadAssemblyRollups(
         sewGoodQty: 0,
         finishGoodQty: 0,
         finishNetQty: 0,
+        finishInputQty: 0,
         packedQty: 0,
         packDefectQty: 0,
         readyToPackQty: 0,
@@ -124,22 +137,73 @@ export async function loadAssemblyRollups(
     roll.packedQty = toNumber(row._sum.quantity);
   });
 
+  const expectedStepsByAssembly = new Map<number, Set<ExternalStepType>>();
+  costingSteps.forEach((row) => {
+    if (!row.assemblyId || !row.externalStepType) return;
+    const set = expectedStepsByAssembly.get(row.assemblyId) ?? new Set();
+    set.add(row.externalStepType);
+    expectedStepsByAssembly.set(row.assemblyId, set);
+  });
+
   const sentTotals = new Map<number, number>();
+  const sentByAssembly = new Map<
+    number,
+    Map<ExternalStepType, number>
+  >();
   sentOutSums.forEach((row) => {
     if (!row.assemblyId || !idSet.has(row.assemblyId)) return;
-    sentTotals.set(row.assemblyId, toNumber(row._sum.quantity));
+    const type = row.externalStepType as ExternalStepType | null;
+    if (!type) return;
+    const value = toNumber(row._sum.quantity);
+    sentTotals.set(row.assemblyId, (sentTotals.get(row.assemblyId) ?? 0) + value);
+    const map = sentByAssembly.get(row.assemblyId) ?? new Map();
+    map.set(type, (map.get(type) ?? 0) + value);
+    sentByAssembly.set(row.assemblyId, map);
   });
   const receivedTotals = new Map<number, number>();
+  const receivedByAssembly = new Map<
+    number,
+    Map<ExternalStepType, number>
+  >();
   receivedInSums.forEach((row) => {
     if (!row.assemblyId || !idSet.has(row.assemblyId)) return;
-    receivedTotals.set(row.assemblyId, toNumber(row._sum.quantity));
+    const type = row.externalStepType as ExternalStepType | null;
+    if (!type) return;
+    const value = toNumber(row._sum.quantity);
+    receivedTotals.set(
+      row.assemblyId,
+      (receivedTotals.get(row.assemblyId) ?? 0) + value
+    );
+    const map = receivedByAssembly.get(row.assemblyId) ?? new Map();
+    map.set(type, (map.get(type) ?? 0) + value);
+    receivedByAssembly.set(row.assemblyId, map);
   });
 
   assemblyIds.forEach((id) => {
     const roll = ensure(id);
     roll.packDefectQty = Math.max(roll.packDefectQty, 0);
     roll.finishNetQty = Math.max(roll.finishGoodQty - roll.packDefectQty, 0);
-    roll.readyToPackQty = Math.max(roll.finishNetQty - roll.packedQty, 0);
+
+    const stepTypes = new Set<ExternalStepType>();
+    const expectedTypes = expectedStepsByAssembly.get(id);
+    expectedTypes?.forEach((type) => stepTypes.add(type));
+    const sentMap = sentByAssembly.get(id);
+    sentMap?.forEach((_value, type) => stepTypes.add(type));
+    const receivedMap = receivedByAssembly.get(id);
+    receivedMap?.forEach((_value, type) => stepTypes.add(type));
+
+    let finishInputQty = roll.sewGoodQty;
+    if (stepTypes.size > 0) {
+      stepTypes.forEach((type) => {
+        const sent = sentMap?.get(type) ?? 0;
+        const received = receivedMap?.get(type) ?? 0;
+        const net = Math.min(sent, received);
+        finishInputQty = Math.min(finishInputQty, net);
+      });
+    }
+    roll.finishInputQty = finishInputQty;
+    const finishGateQty = Math.min(roll.finishNetQty, finishInputQty);
+    roll.readyToPackQty = Math.max(finishGateQty - roll.packedQty, 0);
 
     const sent = sentTotals.get(id) ?? 0;
     const received = receivedTotals.get(id) ?? 0;

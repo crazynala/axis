@@ -1,15 +1,79 @@
 import {
   ActionIcon,
+  Badge,
+  Button,
   Card,
-  Divider,
   Group,
   Table,
+  Text,
   Title,
   Tooltip,
 } from "@mantine/core";
 import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
 import { IconBox, IconScissors, IconSettings } from "@tabler/icons-react";
+import type {
+  ExternalStageRow,
+  StageKey,
+  StageRow,
+} from "~/modules/job/types/stageRows";
+
+const EXTERNAL_STATUS_LABELS: Record<ExternalStageRow["status"], string> = {
+  NOT_STARTED: "Not started",
+  IN_PROGRESS: "Sent out",
+  DONE: "Received",
+  IMPLICIT_DONE: "Implicit done",
+};
+
+const EXTERNAL_STATUS_COLORS: Record<ExternalStageRow["status"], string> = {
+  NOT_STARTED: "gray",
+  IN_PROGRESS: "blue",
+  DONE: "green",
+  IMPLICIT_DONE: "teal",
+};
+
+const formatDateValue = (value: string | null | undefined) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+const padArray = (arr: number[] | undefined, len: number) =>
+  Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
+
+const buildLegacyRows = (item: SingleQuantities): StageRow[] => {
+  const sumArr = (arr: number[] | undefined) =>
+    (arr || []).reduce((total, value) => total + (Number(value) || 0), 0);
+  const makeRow = (
+    stage: StageKey,
+    label: string,
+    breakdown: number[],
+    total: number
+  ): StageRow => ({
+    kind: "internal",
+    stage,
+    label,
+    breakdown,
+    total,
+  });
+  return [
+    makeRow("order", "Ordered", item.ordered || [], sumArr(item.ordered)),
+    makeRow("cut", "Cut", item.cut || [], item.totals.cut ?? sumArr(item.cut)),
+    makeRow("sew", "Sew", item.sew || [], item.totals.sew ?? sumArr(item.sew)),
+    makeRow(
+      "finish",
+      "Finish",
+      item.finish || [],
+      item.totals.finish ?? sumArr(item.finish)
+    ),
+    makeRow("pack", "Pack", item.pack || [], item.totals.pack ?? sumArr(item.pack)),
+  ];
+};
 
 export type VariantInfo = {
   labels: string[];
@@ -18,12 +82,14 @@ export type VariantInfo = {
 
 type SingleQuantities = {
   label: string;
+  assemblyId: number;
   ordered: number[];
   cut: number[];
   sew: number[];
   finish: number[];
   pack: number[];
   totals: { cut: number; sew: number; finish: number; pack: number };
+  stageRows?: StageRow[];
 };
 
 export function AssemblyQuantitiesCard({
@@ -37,6 +103,9 @@ export function AssemblyQuantitiesCard({
   onChangeOrdered,
   hideInlineActions,
   actionColumn,
+  onExternalSend,
+  onExternalReceive,
+  onExternalHistory,
 }: {
   title?: string;
   variants: VariantInfo;
@@ -58,6 +127,9 @@ export function AssemblyQuantitiesCard({
     onRecordPack?: () => void;
     recordPackDisabled?: boolean;
   };
+  onExternalSend?: (assemblyId: number, row: ExternalStageRow) => void;
+  onExternalReceive?: (assemblyId: number, row: ExternalStageRow) => void;
+  onExternalHistory?: (assemblyId: number, row: ExternalStageRow) => void;
 }) {
   const fmt = (n: number | undefined) =>
     n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "∙" : n;
@@ -82,12 +154,22 @@ export function AssemblyQuantitiesCard({
   })();
   // Fallback to the longest data array length when labels and numVariants are not specified
   const dataMaxLen = (items || []).reduce((m, it) => {
-    const l0 = Array.isArray(it?.ordered) ? it.ordered.length : 0;
-    const l1 = Array.isArray(it?.cut) ? it.cut.length : 0;
-    const l2 = Array.isArray(it?.sew) ? it.sew.length : 0;
-    const l3 = Array.isArray(it?.finish) ? it.finish.length : 0;
-    const l4 = Array.isArray(it?.pack) ? it.pack.length : 0;
-    return Math.max(m, l0, l1, l2, l3, l4);
+    const rows =
+      it.stageRows && it.stageRows.length
+        ? it.stageRows
+        : buildLegacyRows(it);
+    const localMax = rows.reduce((inner, row) => {
+      if (row.kind === "external") {
+        return Math.max(
+          inner,
+          row.received.length,
+          row.sent.length,
+          row.loss.length
+        );
+      }
+      return Math.max(inner, row.breakdown.length);
+    }, 0);
+    return Math.max(m, localMax);
   }, 0);
   // Prefer explicit numVariants when provided; else use labels length or data length fallback
   const baseLen =
@@ -105,11 +187,8 @@ export function AssemblyQuantitiesCard({
       ? labelSlice
       : Array.from({ length: effectiveLen }, (_, i) => `${i + 1}`)
   ) as string[];
-  const sum = (arr: number[]) =>
-    (arr || []).reduce(
-      (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
-      0
-    );
+  const sum = (arr: number[] | undefined) =>
+    (arr || []).reduce((t, n) => (Number.isFinite(n) ? t + (n as number) : t), 0);
 
   // Inline edit state (only for first item). Keep local state so total updates live.
   const isControlled = Array.isArray(orderedValue);
@@ -183,159 +262,247 @@ export function AssemblyQuantitiesCard({
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                <Table.Tr>
-                  <Table.Td>Ordered</Table.Td>
-                  {cols.map((_l, i) => (
-                    <Table.Td
-                      key={`ord-${idx}-${i}`}
-                      style={{ padding: editableOrdered ? 0 : undefined }}
-                    >
-                      {editableOrdered && idx === 0 ? (
-                        <EmbeddedTextInput
-                          type="number"
-                          value={effectiveOrdered[i] ?? 0}
-                          onChange={(e) =>
-                            handleChangeCell(i, e.currentTarget.value)
-                          }
-                        />
-                      ) : (
-                        fmt(it.ordered[i])
+                {/* NOTE: External steps are rendered as stage rows. Do NOT create separate UI containers for them. */}
+                {(it.stageRows && it.stageRows.length
+                  ? it.stageRows
+                  : buildLegacyRows(it)
+                ).map((row, rowIdx) => {
+                  if (row.kind === "external") {
+                    const externalRow = row as ExternalStageRow;
+                    const receivedValues = padArray(
+                      externalRow.received,
+                      cols.length
+                    );
+                    const sentValues = padArray(
+                      externalRow.sent,
+                      cols.length
+                    );
+                    const lossValues = padArray(
+                      externalRow.loss,
+                      cols.length
+                    );
+                    return (
+                      <Table.Tr key={`ext-${idx}-${rowIdx}`}>
+                        <Table.Td style={{ verticalAlign: "top" }}>
+                          <Group justify="space-between" align="flex-start">
+                            <div>
+                              <Text fw={600}>{externalRow.label}</Text>
+                              <Text size="sm" c="dimmed">
+                                {externalRow.vendor?.name
+                                  ? `Vendor: ${externalRow.vendor.name}`
+                                  : "Vendor pending"}
+                              </Text>
+                            </div>
+                            {externalRow.totals.loss > 0 ? (
+                              <Badge color="red" variant="light">
+                                Lost {fmt(externalRow.totals.loss)}
+                              </Badge>
+                            ) : null}
+                          </Group>
+                          <Group gap="xs" mt={4} wrap="wrap">
+                            {externalRow.etaDate ? (
+                              <Badge
+                                variant="light"
+                                color={externalRow.isLate ? "red" : "gray"}
+                              >
+                                ETA{" "}
+                                {formatDateValue(externalRow.etaDate) || "—"}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" color="gray">
+                                No ETA
+                              </Badge>
+                            )}
+                            {externalRow.lowConfidence ? (
+                              <Badge color="yellow" variant="light">
+                                Low confidence
+                              </Badge>
+                            ) : null}
+                            <Badge
+                              variant="filled"
+                              color={EXTERNAL_STATUS_COLORS[externalRow.status]}
+                            >
+                              {EXTERNAL_STATUS_LABELS[externalRow.status]}
+                            </Badge>
+                          </Group>
+                          <Group gap="xs" mt="xs">
+                            {onExternalSend &&
+                            externalRow.expected &&
+                            externalRow.status === "NOT_STARTED" ? (
+                              <Button
+                                size="compact-xs"
+                                variant="light"
+                                onClick={() =>
+                                  onExternalSend(it.assemblyId, externalRow)
+                                }
+                              >
+                                Send out
+                              </Button>
+                            ) : null}
+                            {onExternalReceive &&
+                            externalRow.status === "IN_PROGRESS" ? (
+                              <Button
+                                size="compact-xs"
+                                variant="light"
+                                onClick={() =>
+                                  onExternalReceive(
+                                    it.assemblyId,
+                                    externalRow
+                                  )
+                                }
+                              >
+                                Receive in
+                              </Button>
+                            ) : null}
+                            {onExternalHistory ? (
+                              <Button
+                                size="compact-xs"
+                                variant="subtle"
+                                onClick={() =>
+                                  onExternalHistory(
+                                    it.assemblyId,
+                                    externalRow
+                                  )
+                                }
+                              >
+                                View history
+                              </Button>
+                            ) : null}
+                          </Group>
+                        </Table.Td>
+                        {cols.map((_l, i) => (
+                          <Table.Td
+                            key={`ext-cell-${idx}-${rowIdx}-${i}`}
+                            align="center"
+                          >
+                            <Text fw={600}>{fmt(receivedValues[i])}</Text>
+                            {sentValues[i] > 0 || lossValues[i] > 0 ? (
+                              <Text
+                                size="xs"
+                                c={lossValues[i] > 0 ? "red" : "dimmed"}
+                              >
+                                {sentValues[i] > 0
+                                  ? `sent ${fmt(sentValues[i])}`
+                                  : null}
+                                {lossValues[i] > 0
+                                  ? sentValues[i] > 0
+                                    ? ` · lost ${fmt(lossValues[i])}`
+                                    : `lost ${fmt(lossValues[i])}`
+                                  : null}
+                              </Text>
+                            ) : null}
+                          </Table.Td>
+                        ))}
+                        <Table.Td align="center">
+                          <Text fw={600}>{fmt(externalRow.totals.received)}</Text>
+                          {externalRow.totals.sent > 0 ? (
+                            <Text size="xs" c="dimmed">
+                              sent {fmt(externalRow.totals.sent)}
+                            </Text>
+                          ) : null}
+                          {externalRow.totals.loss > 0 ? (
+                            <Text size="xs" c="red">
+                              lost {fmt(externalRow.totals.loss)}
+                            </Text>
+                          ) : null}
+                        </Table.Td>
+                        {hasActionColumn && (
+                          <Table.Td align="center" style={{ verticalAlign: "top" }} />
+                        )}
+                      </Table.Tr>
+                    );
+                  }
+                  const internalRow = row as StageRow;
+                  const breakdownValues =
+                    internalRow.stage === "order" && idx === 0 && editableOrdered
+                      ? padArray(effectiveOrdered, cols.length)
+                      : padArray(internalRow.breakdown, cols.length);
+                  return (
+                    <Table.Tr key={`int-${idx}-${rowIdx}`}>
+                      <Table.Td>{internalRow.label}</Table.Td>
+                      {breakdownValues.map((value, i) => (
+                        <Table.Td
+                          key={`int-cell-${idx}-${rowIdx}-${i}`}
+                          align="center"
+                          style={{
+                            padding:
+                              internalRow.stage === "order" &&
+                              editableOrdered &&
+                              idx === 0
+                                ? 0
+                                : undefined,
+                          }}
+                        >
+                          {internalRow.stage === "order" &&
+                          editableOrdered &&
+                          idx === 0 ? (
+                            <EmbeddedTextInput
+                              type="number"
+                              value={value ?? 0}
+                              onChange={(e) =>
+                                handleChangeCell(i, e.currentTarget.value)
+                              }
+                            />
+                          ) : (
+                            fmt(value)
+                          )}
+                        </Table.Td>
+                      ))}
+                      <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
+                        {internalRow.stage === "order" && editableOrdered && idx === 0
+                          ? fmt(totalOrdered)
+                          : fmt(
+                              internalRow.stage === "order"
+                                ? sum(internalRow.breakdown)
+                                : internalRow.total
+                            )}
+                      </Table.Td>
+                      {hasActionColumn && (
+                        <Table.Td align="center" style={{ verticalAlign: "middle" }}>
+                          {idx === 0 && internalRow.stage === "cut" && actionColumn?.onRecordCut ? (
+                            <Tooltip label="Record Cut" withArrow>
+                              <ActionIcon
+                                variant="subtle"
+                                aria-label="Record cut"
+                                onClick={actionColumn.onRecordCut}
+                              >
+                                <IconScissors size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          ) : null}
+                          {idx === 0 &&
+                          internalRow.stage === "finish" &&
+                          actionColumn?.onRecordFinish ? (
+                            <Tooltip label="Record Finish" withArrow>
+                              <ActionIcon
+                                variant="subtle"
+                                aria-label="Record finish"
+                                onClick={actionColumn.onRecordFinish}
+                                disabled={actionColumn.recordFinishDisabled}
+                              >
+                                <IconSettings size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          ) : null}
+                          {idx === 0 &&
+                          internalRow.stage === "pack" &&
+                          actionColumn?.onRecordPack ? (
+                            <Tooltip label="Add to box" withArrow>
+                              <ActionIcon
+                                variant="subtle"
+                                aria-label="Add to box"
+                                onClick={actionColumn.onRecordPack}
+                                disabled={actionColumn.recordPackDisabled}
+                              >
+                                <IconBox size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          ) : null}
+                        </Table.Td>
                       )}
-                    </Table.Td>
-                  ))}
-                  <Table.Td
-                    align="center"
-                    style={{ verticalAlign: "baseline" }}
-                  >
-                    {editableOrdered && idx === 0
-                      ? fmt(totalOrdered)
-                      : fmt(sum(it.ordered))}
-                  </Table.Td>
-                  {hasActionColumn && (
-                    <Table.Td
-                      align="center"
-                      style={{ verticalAlign: "middle" }}
-                    >
-                      {/* Ordered row has no actions */}
-                    </Table.Td>
-                  )}
-                </Table.Tr>
-                <Table.Tr>
-                  <Table.Td>Cut</Table.Td>
-                  {cols.map((_l, i) => (
-                    <Table.Td key={`cut-${idx}-${i}`} align="center">
-                      {fmt(it.cut[i])}
-                    </Table.Td>
-                  ))}
-                  <Table.Td
-                    align="center"
-                    style={{ verticalAlign: "baseline" }}
-                  >
-                    {fmt(it.totals.cut)}
-                  </Table.Td>
-                  {hasActionColumn && (
-                    <Table.Td
-                      mx={0}
-                      align="center"
-                      style={{ verticalAlign: "middle" }}
-                    >
-                      {idx === 0 && actionColumn.onRecordCut ? (
-                        <Tooltip label="Record Cut" withArrow>
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label="Record cut"
-                            onClick={actionColumn.onRecordCut}
-                          >
-                            <IconScissors size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      ) : null}
-                    </Table.Td>
-                  )}
-                </Table.Tr>
-                <Table.Tr>
-                  <Table.Td>Sew</Table.Td>
-                  {cols.map((_l, i) => (
-                    <Table.Td key={`sew-${idx}-${i}`} align="center">
-                      {fmt(it.sew[i])}
-                    </Table.Td>
-                  ))}
-                  <Table.Td
-                    align="center"
-                    style={{ verticalAlign: "baseline" }}
-                  >
-                    {fmt(it.totals.sew)}
-                  </Table.Td>
-                  {hasActionColumn && (
-                    <Table.Td align="center" style={{ verticalAlign: "middle" }} />
-                  )}
-                </Table.Tr>
-                <Table.Tr>
-                  <Table.Td>Finish</Table.Td>
-                  {cols.map((_l, i) => (
-                    <Table.Td key={`finish-${idx}-${i}`} align="center">
-                      {fmt(it.finish[i])}
-                    </Table.Td>
-                  ))}
-                  <Table.Td
-                    align="center"
-                    style={{ verticalAlign: "baseline" }}
-                  >
-                    {fmt(it.totals.finish)}
-                  </Table.Td>
-                  {hasActionColumn && (
-                    <Table.Td
-                      align="center"
-                      style={{ verticalAlign: "middle" }}
-                    >
-                      {idx === 0 && actionColumn.onRecordFinish ? (
-                        <Tooltip label="Record Finish" withArrow>
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label="Record finish"
-                            onClick={actionColumn.onRecordFinish}
-                            disabled={actionColumn.recordFinishDisabled}
-                          >
-                            <IconSettings size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      ) : null}
-                    </Table.Td>
-                  )}
-                </Table.Tr>
-                <Table.Tr>
-                  <Table.Td>Pack</Table.Td>
-                  {cols.map((_l, i) => (
-                    <Table.Td key={`pack-${idx}-${i}`} align="center">
-                      {fmt(it.pack[i])}
-                    </Table.Td>
-                  ))}
-                  <Table.Td
-                    align="center"
-                    style={{ verticalAlign: "baseline" }}
-                  >
-                    {fmt(it.totals.pack)}
-                  </Table.Td>
-                  {hasActionColumn && (
-                    <Table.Td
-                      align="center"
-                      style={{ verticalAlign: "middle" }}
-                    >
-                      {idx === 0 && actionColumn.onRecordPack ? (
-                        <Tooltip label="Add to box" withArrow>
-                          <ActionIcon
-                            variant="subtle"
-                            aria-label="Add to box"
-                            onClick={actionColumn.onRecordPack}
-                            disabled={actionColumn.recordPackDisabled}
-                          >
-                            <IconBox size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      ) : null}
-                    </Table.Td>
-                  )}
-                </Table.Tr>
+                    </Table.Tr>
+                  );
+                })}
               </Table.Tbody>
             </Table>
           </div>

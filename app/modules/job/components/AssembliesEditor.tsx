@@ -5,11 +5,11 @@ import {
   Card,
   Checkbox,
   Divider,
+  Drawer,
   Grid,
   Group,
   Menu,
   Modal,
-  NumberInput,
   Stack,
   Table,
   Text,
@@ -47,9 +47,10 @@ import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
 import { JumpLink } from "~/components/JumpLink";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
-import { ExternalStepsStrip } from "~/modules/job/components/ExternalStepsStrip";
-import type { DerivedExternalStep } from "~/modules/job/types/externalSteps";
+import type { StageRow } from "~/modules/job/types/stageRows";
+import type { StageStats } from "~/modules/job/services/stageRows.server";
 import type { CompanyOption } from "~/modules/company/components/CompanySelect";
+import type { ExternalStageRow } from "~/modules/job/types/stageRows";
 
 export type QuantityItem = {
   assemblyId: number;
@@ -60,6 +61,15 @@ export type QuantityItem = {
   finish: number[];
   pack: number[];
   totals: { cut: number; sew: number; finish: number; pack: number };
+  stageStats: {
+    cut: StageStats;
+    sew: StageStats;
+    finish: StageStats;
+    pack: StageStats;
+    qc: StageStats;
+  };
+  stageRows: StageRow[];
+  finishInput: { breakdown: number[]; total: number };
 };
 
 type MinimalCosting = Parameters<
@@ -123,7 +133,6 @@ export function AssembliesEditor(props: {
   } | null;
   assemblyTypeOptions?: string[] | null;
   defectReasons?: Array<{ id: number; label: string | null }>;
-  externalStepsByAssembly?: Record<number, DerivedExternalStep[] | undefined> | null;
   rollupsByAssembly?: Record<number, any> | null;
   vendorOptionsByStep?: Record<string, CompanyOption[]> | null;
 }) {
@@ -146,7 +155,6 @@ export function AssembliesEditor(props: {
     assemblyTypeOptions,
     defectReasons,
     primaryCostingIdByAssembly,
-    externalStepsByAssembly,
     rollupsByAssembly,
     vendorOptionsByStep,
   } = props;
@@ -191,9 +199,15 @@ export function AssembliesEditor(props: {
   const [externalStepAction, setExternalStepAction] = useState<{
     mode: "send" | "receive";
     assemblyId: number;
-    step: DerivedExternalStep;
+    step: ExternalStageRow;
   } | null>(null);
-  const [externalStepQty, setExternalStepQty] = useState<number>(0);
+  const [externalHistory, setExternalHistory] = useState<{
+    assemblyId: number;
+    row: ExternalStageRow;
+  } | null>(null);
+  const [externalStepBreakdown, setExternalStepBreakdown] = useState<number[]>(
+    []
+  );
   const [externalStepDate, setExternalStepDate] = useState<Date | null>(
     new Date()
   );
@@ -270,6 +284,7 @@ export function AssembliesEditor(props: {
     if (externalStepFetcher.data?.ok) {
       setExternalStepAction(null);
       setExternalStepError(null);
+      setExternalStepBreakdown([]);
       revalidator.revalidate();
     } else if (externalStepFetcher.data?.error) {
       setExternalStepError(String(externalStepFetcher.data.error));
@@ -278,19 +293,16 @@ export function AssembliesEditor(props: {
 
   const openExternalStepModal = (
     assemblyId: number,
-    step: DerivedExternalStep,
+    step: ExternalStageRow,
     mode: "send" | "receive"
   ) => {
-    const rollup = rollupByAssembly[assemblyId];
-    const defaultQty =
-      mode === "send"
-        ? Number(rollup?.sewnAvailableQty ?? 0) || 0
-        : Math.max(
-            (Number(step.qtyOut ?? 0) || 0) - (Number(step.qtyIn ?? 0) || 0),
-            0
-          );
+    const defaultBreakdown = buildExternalStepDefaultBreakdown(
+      assemblyId,
+      step,
+      mode
+    );
     setExternalStepAction({ mode, assemblyId, step });
-    setExternalStepQty(defaultQty);
+    setExternalStepBreakdown(defaultBreakdown);
     setExternalStepDate(new Date());
     setExternalStepVendorId(step.vendor?.id ?? null);
     setExternalStepUnknownVendor(false);
@@ -298,9 +310,27 @@ export function AssembliesEditor(props: {
     setExternalStepError(null);
   };
 
+  const handleExternalStepBreakdownChange = (
+    index: number,
+    value: string
+  ) => {
+    const parsed = value === "" ? 0 : Number(value);
+    const sanitized =
+      Number.isFinite(parsed) && parsed > 0 ? Number(parsed) : 0;
+    setExternalStepBreakdown((prev) => {
+      const next = [...(prev || [])];
+      next[index] = sanitized;
+      return next;
+    });
+  };
+
   const handleExternalStepSubmit = () => {
     if (!externalStepAction) return;
-    const qty = Number(externalStepQty ?? 0) || 0;
+    const qtyBreakdown = (externalStepBreakdown || []).map((value) => {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    });
+    const qty = qtyBreakdown.reduce((sum, value) => sum + value, 0);
     const vendorId = externalStepVendorId;
     const unknownVendor = externalStepUnknownVendor;
     if (!unknownVendor && !vendorId) {
@@ -308,7 +338,7 @@ export function AssembliesEditor(props: {
       return;
     }
     if (!Number.isFinite(qty) || qty <= 0) {
-      setExternalStepError("Quantity must be greater than 0.");
+      setExternalStepError("Enter at least one unit in the size breakdown.");
       return;
     }
     const fd = new FormData();
@@ -319,11 +349,12 @@ export function AssembliesEditor(props: {
         : "externalStep.receive"
     );
     fd.set("assemblyId", String(externalStepAction.assemblyId));
-    fd.set("externalStepType", externalStepAction.step.type);
+    fd.set("externalStepType", externalStepAction.step.externalStepType);
     if (externalStepDate) {
       fd.set("activityDate", externalStepDate.toISOString());
     }
     fd.set("qty", String(qty));
+    fd.set("qtyBreakdown", JSON.stringify(qtyBreakdown));
     if (vendorId) fd.set("vendorCompanyId", String(vendorId));
     if (unknownVendor) fd.set("vendorUnknown", "1");
     if (externalStepAction.mode === "send" && externalStepRecordSew) {
@@ -338,10 +369,33 @@ export function AssembliesEditor(props: {
   const sewMissing =
     externalStepAction?.mode === "send" &&
     (Number(externalStepRollup?.sewGoodQty ?? 0) || 0) <= 0;
+  const modalVariantLabels = externalStepAction
+    ? resolveVariantLabels(externalStepAction.assemblyId)
+    : [];
+  const externalStepBreakdownEntries = useMemo(() => {
+    const len = Math.max(
+      modalVariantLabels.length,
+      externalStepBreakdown.length,
+      1
+    );
+    return Array.from({ length: len }, (_, idx) => {
+      const value = externalStepBreakdown[idx];
+      const num = Number(value);
+      return Number.isFinite(num) ? num : 0;
+    });
+  }, [externalStepBreakdown, modalVariantLabels.length]);
+  const externalStepBreakdownTotal = useMemo(
+    () =>
+      externalStepBreakdownEntries.reduce(
+        (sum, value) => sum + (Number(value) || 0),
+        0
+      ),
+    [externalStepBreakdownEntries]
+  );
   const vendorSelectData = useMemo(() => {
     if (!externalStepAction) return [];
     const baseOptions =
-      vendorOptionsByStep?.[externalStepAction.step.type] || [];
+      vendorOptionsByStep?.[externalStepAction.step.externalStepType] || [];
     const map = new Map<number, CompanyOption>();
     baseOptions.forEach((opt) => map.set(opt.value, opt));
     const activeVendor = externalStepAction.step.vendor;
@@ -971,6 +1025,45 @@ export function AssembliesEditor(props: {
     return labels && labels.length ? labels : ["Qty"];
   };
 
+  const buildExternalStepDefaultBreakdown = (
+    assemblyId: number,
+    step: ExternalStageRow,
+    mode: "send" | "receive"
+  ): number[] => {
+    if (!assemblyId) return [];
+    const item = quantityItemsByAssemblyId.get(assemblyId);
+    if (!item) return [];
+    let base: number[] = [];
+    if (mode === "send") {
+      base = item.sew ? [...item.sew] : [];
+    } else {
+      const match = (item.stageRows || []).find(
+        (
+          row
+        ): row is Extract<
+          StageRow,
+          { kind: "external"; externalStepType: ExternalStageRow["externalStepType"] }
+        > =>
+          row.kind === "external" && row.externalStepType === step.externalStepType
+      );
+      if (match) {
+        base = match.sent.map((sent, idx) =>
+          Math.max(sent - (match.received[idx] ?? 0), 0)
+        );
+      }
+    }
+    const labels = resolveVariantLabels(assemblyId);
+    const len = Math.max(base.length, labels.length, 1);
+    return Array.from({ length: len }, (_, idx) => Number(base[idx] ?? 0) || 0);
+  };
+
+  const formatExternalActivityDate = (value: string | null | undefined) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return "—";
+    return date.toLocaleString();
+  };
+
   const watchedPrimaryCostingIds =
     (editForm.watch("primaryCostingIds") as Record<string, number | null>) ||
     {};
@@ -1213,10 +1306,6 @@ export function AssembliesEditor(props: {
             watchedAssemblyTypes[String(a.id)] ||
             (a as any).assemblyType ||
             "Prod";
-          const externalStepRows =
-            externalStepsByAssembly == null
-              ? null
-              : externalStepsByAssembly[a.id] || [];
           return (
             <Fragment key={a.id}>
               <Grid.Col span={5}>
@@ -1284,17 +1373,6 @@ export function AssembliesEditor(props: {
               </Grid.Col>
               <Grid.Col span={7}>
                 <Stack gap="sm">
-                  {externalStepRows !== null ? (
-                    <ExternalStepsStrip
-                      steps={externalStepRows}
-                      onSendOut={(step) =>
-                        openExternalStepModal(a.id, step, "send")
-                      }
-                      onReceiveIn={(step) =>
-                        openExternalStepModal(a.id, step, "receive")
-                      }
-                    />
-                  ) : null}
                   <Group justify="flex-end">
                     <Button
                       size="xs"
@@ -1309,12 +1387,14 @@ export function AssembliesEditor(props: {
                     items={[
                       {
                         label: `Assembly ${a.id}`,
+                        assemblyId: a.id,
                         ordered: item.ordered,
                         cut: item.cut,
                         sew: item.sew,
                         finish: item.finish,
                         pack: item.pack,
                         totals: item.totals,
+                        stageRows: item.stageRows,
                       },
                     ]}
                     editableOrdered
@@ -1339,6 +1419,15 @@ export function AssembliesEditor(props: {
                       onRecordPack: () => handleRecordPack(a.id),
                       recordPackDisabled: !canRecordPackForAssembly(a.id),
                     }}
+                    onExternalSend={(assemblyId, row) =>
+                      openExternalStepModal(assemblyId, row, "send")
+                    }
+                    onExternalReceive={(assemblyId, row) =>
+                      openExternalStepModal(assemblyId, row, "receive")
+                    }
+                    onExternalHistory={(assemblyId, row) =>
+                      setExternalHistory({ assemblyId, row })
+                    }
                   />
                 </Stack>
               </Grid.Col>
@@ -1583,27 +1672,75 @@ export function AssembliesEditor(props: {
                   {externalStepError}
                 </Text>
               ) : null}
-              <Group grow align="flex-end">
-                <NumberInput
-                  label={
-                    externalStepAction?.mode === "receive"
-                      ? "Qty received"
-                      : "Qty sent out"
-                  }
-                  value={externalStepQty}
-                  onChange={(val) =>
-                    setExternalStepQty(
-                      typeof val === "number" ? val : Number(val) || 0
-                    )
-                  }
-                  min={0}
-                />
-                <DatePickerInput
-                  label="Date"
-                  value={externalStepDate}
-                  onChange={setExternalStepDate}
-                />
-              </Group>
+              <Stack gap="xs">
+                <Group justify="space-between" align="center">
+                  <Text size="sm" fw={500}>
+                    Size breakdown
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Total units: {externalStepBreakdownTotal}
+                  </Text>
+                </Group>
+                <Table
+                  withColumnBorders
+                  withTableBorder
+                  style={{ tableLayout: "fixed" }}
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      {externalStepBreakdownEntries.map((_value, idx) => (
+                        <Table.Th
+                          key={`ext-head-${idx}`}
+                          ta="center"
+                          style={{ width: 72 }}
+                        >
+                          {modalVariantLabels[idx] || `Variant ${idx + 1}`}
+                        </Table.Th>
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    <Table.Tr>
+                      {externalStepBreakdownEntries.map((value, idx) => (
+                        <Table.Td
+                          key={`ext-cell-${idx}`}
+                          p={0}
+                          ta="center"
+                          style={{ width: 72 }}
+                        >
+                          <TextInput
+                            type="number"
+                            variant="unstyled"
+                            inputMode="numeric"
+                            value={String(value ?? 0)}
+                            onChange={(e) =>
+                              handleExternalStepBreakdownChange(
+                                idx,
+                                e.currentTarget.value
+                              )
+                            }
+                            styles={{
+                              input: {
+                                width: "100%",
+                                height: "100%",
+                                textAlign: "center",
+                                padding: 0,
+                                margin: 0,
+                                outline: "none",
+                              },
+                            }}
+                          />
+                        </Table.Td>
+                      ))}
+                    </Table.Tr>
+                  </Table.Tbody>
+                </Table>
+              </Stack>
+              <DatePickerInput
+                label="Date"
+                value={externalStepDate}
+                onChange={setExternalStepDate}
+              />
               <Group grow align="flex-end">
                 <Select
                   label="Vendor"
@@ -1651,6 +1788,56 @@ export function AssembliesEditor(props: {
           </Modal.Body>
         </Modal.Content>
       </HotkeyAwareModalRoot>
+
+      <Drawer
+        opened={externalHistory != null}
+        onClose={() => setExternalHistory(null)}
+        position="right"
+        size="lg"
+        title={
+          externalHistory
+            ? `External history — Assembly ${externalHistory.assemblyId}`
+            : "External history"
+        }
+      >
+        {externalHistory ? (
+          externalHistory.row.activities?.length ? (
+            <Table withColumnBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Date</Table.Th>
+                  <Table.Th>Action</Table.Th>
+                  <Table.Th>Quantity</Table.Th>
+                  <Table.Th>Kind</Table.Th>
+                  <Table.Th>Vendor</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {externalHistory.row.activities.map((activity) => (
+                  <Table.Tr key={activity.id}>
+                    <Table.Td>
+                      {formatExternalActivityDate(activity.activityDate)}
+                    </Table.Td>
+                    <Table.Td>{activity.action ?? "—"}</Table.Td>
+                    <Table.Td>{Number(activity.quantity ?? 0) || 0}</Table.Td>
+                    <Table.Td>{activity.kind ?? "—"}</Table.Td>
+                    <Table.Td>
+                      {activity.vendor?.name ||
+                        (activity.vendor?.id
+                          ? `Vendor ${activity.vendor.id}`
+                          : "—")}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          ) : (
+            <Text size="sm" c="dimmed">
+              No activity recorded yet.
+            </Text>
+          )
+        ) : null}
+      </Drawer>
 
       <Modal
         opened={factoryAssemblyId != null}
