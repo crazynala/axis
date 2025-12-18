@@ -266,6 +266,17 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--dsg-corner-indicator-width": "10px",
     "--dsg-expand-rows-indicator-width": "10px",
     "--dsg-scroll-shadow-width": "7px",
+
+    // Axis semantic chip tokens (used for Status chips)
+    "--axis-chip-warning-bg": "transparent",
+    "--axis-chip-warning-fg": "currentColor",
+    "--axis-chip-warning-bd": "transparent",
+    "--axis-chip-info-bg": "transparent",
+    "--axis-chip-info-fg": "currentColor",
+    "--axis-chip-info-bd": "transparent",
+    "--axis-chip-neutral-bg": "transparent",
+    "--axis-chip-neutral-fg": "currentColor",
+    "--axis-chip-neutral-bd": "transparent",
   },
   light: {
     "--aa-card-bg": t.colors.gray[0],
@@ -280,6 +291,16 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--dsg-cell-background-color": t.white,
     "--dsg-cell-disabled-background-color": t.colors.gray[0],
     "--dsg-scroll-shadow-color": "rgba(0,0,0,.2)",
+
+    "--axis-chip-warning-bg": t.colors.yellow[1],
+    "--axis-chip-warning-fg": t.colors.yellow[9],
+    "--axis-chip-warning-bd": t.colors.yellow[3],
+    "--axis-chip-info-bg": t.colors.gray[1],
+    "--axis-chip-info-fg": t.colors.gray[8],
+    "--axis-chip-info-bd": t.colors.gray[3],
+    "--axis-chip-neutral-bg": t.colors.blue[0],
+    "--axis-chip-neutral-fg": t.colors.blue[9],
+    "--axis-chip-neutral-bd": t.colors.blue[2],
   },
   dark: {
     "--aa-card-bg": t.colors.dark[8],
@@ -295,6 +316,16 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--dsg-cell-background-color": t.colors.dark[7],
     "--dsg-cell-disabled-background-color": t.colors.dark[6],
     "--dsg-scroll-shadow-color": "rgba(0,0,0,.5)",
+
+    "--axis-chip-warning-bg": `color-mix(in oklab, ${t.colors.yellow[6]} 22%, transparent)`,
+    "--axis-chip-warning-fg": t.colors.yellow[2],
+    "--axis-chip-warning-bd": `color-mix(in oklab, ${t.colors.yellow[6]} 55%, transparent)`,
+    "--axis-chip-info-bg": `color-mix(in oklab, ${t.colors.gray[5]} 20%, transparent)`,
+    "--axis-chip-info-fg": t.colors.gray[1],
+    "--axis-chip-info-bd": `color-mix(in oklab, ${t.colors.gray[5]} 45%, transparent)`,
+    "--axis-chip-neutral-bg": `color-mix(in oklab, ${t.colors.blue[6]} 18%, transparent)`,
+    "--axis-chip-neutral-fg": t.colors.blue[1],
+    "--axis-chip-neutral-bd": `color-mix(in oklab, ${t.colors.blue[6]} 40%, transparent)`,
   },
 });
 

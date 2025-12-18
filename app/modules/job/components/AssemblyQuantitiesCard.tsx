@@ -1,7 +1,5 @@
 import {
   ActionIcon,
-  Badge,
-  Button,
   Card,
   Group,
   Table,
@@ -9,9 +7,16 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { AxisChip } from "~/components/AxisChip";
 import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
-import { IconBox, IconScissors, IconSettings } from "@tabler/icons-react";
+import {
+  IconArrowDownLeft,
+  IconArrowUpRight,
+  IconBox,
+  IconScissors,
+  IconSettings,
+} from "@tabler/icons-react";
 import type {
   ExternalStageRow,
   StageKey,
@@ -23,13 +28,6 @@ const EXTERNAL_STATUS_LABELS: Record<ExternalStageRow["status"], string> = {
   IN_PROGRESS: "Sent out",
   DONE: "Received",
   IMPLICIT_DONE: "Implicit done",
-};
-
-const EXTERNAL_STATUS_COLORS: Record<ExternalStageRow["status"], string> = {
-  NOT_STARTED: "gray",
-  IN_PROGRESS: "blue",
-  DONE: "green",
-  IMPLICIT_DONE: "teal",
 };
 
 const formatDateValue = (value: string | null | undefined) => {
@@ -45,6 +43,27 @@ const formatDateValue = (value: string | null | undefined) => {
 
 const padArray = (arr: number[] | undefined, len: number) =>
   Array.from({ length: len }, (_, i) => Number(arr?.[i] ?? 0) || 0);
+
+const STAGE_LABELS: Record<string, string> = {
+  order: "ORDER",
+  cut: "CUT",
+  sew: "SEW",
+  wash: "WASH",
+  embroidery: "EMBROIDERY",
+  dye: "DYE",
+  finish: "FINISH",
+  pack: "PACK",
+  qc: "QC",
+};
+
+function getStageLabelForRow(row: StageRow): string {
+  if (row.kind === "internal")
+    return STAGE_LABELS[row.stage] ?? row.stage.toUpperCase();
+  const type = String(row.externalStepType || row.label || "").trim();
+  if (!type) return "EXTERNAL";
+  const normalized = type.toLowerCase();
+  return STAGE_LABELS[normalized] ?? type.toUpperCase();
+}
 
 const buildLegacyRows = (item: SingleQuantities): StageRow[] => {
   const sumArr = (arr: number[] | undefined) =>
@@ -105,7 +124,6 @@ export function AssemblyQuantitiesCard({
   actionColumn,
   onExternalSend,
   onExternalReceive,
-  onExternalHistory,
 }: {
   title?: string;
   variants: VariantInfo;
@@ -129,11 +147,12 @@ export function AssemblyQuantitiesCard({
   };
   onExternalSend?: (assemblyId: number, row: ExternalStageRow) => void;
   onExternalReceive?: (assemblyId: number, row: ExternalStageRow) => void;
-  onExternalHistory?: (assemblyId: number, row: ExternalStageRow) => void;
 }) {
-  const fmt = (n: number | undefined) =>
-    n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "∙" : n;
-  const hasActionColumn = Boolean(
+  const fmtNum = (n: number | undefined) =>
+    n === undefined || n === null || !Number.isFinite(n) || n === 0 ? "" : String(n);
+  const fmtEta = (value: string | null | undefined) =>
+    formatDateValue(value) ?? (value ? value : "");
+  const hasInternalActions = Boolean(
     actionColumn &&
       (actionColumn.onRecordCut ||
         actionColumn.onRecordFinish ||
@@ -230,6 +249,147 @@ export function AssemblyQuantitiesCard({
 
   const totalOrdered = useMemo(() => sum(effectiveOrdered), [effectiveOrdered]);
 
+  const tableStyle: React.CSSProperties = {
+    tableLayout: "fixed",
+  };
+  const tdBase: React.CSSProperties = {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    verticalAlign: "middle",
+    paddingTop: 6,
+    paddingBottom: 6,
+  };
+  const tdCenter: React.CSSProperties = {
+    ...tdBase,
+    textAlign: "center",
+  };
+  const thCenter: React.CSSProperties = {
+    textAlign: "center",
+  };
+  const colWidths = {
+    stage: 120,
+    total: 70,
+    loss: 70,
+    eta: 110,
+    status: 280,
+    act: 120,
+    size: 52,
+  };
+
+  type ChipTone = "warning" | "info" | "neutral";
+  type ChipSpec = {
+    key: string;
+    tone: ChipTone;
+    label: string;
+    tooltip: string;
+  };
+
+  const collapseChips = (
+    chips: ChipSpec[],
+    maxVisible: number,
+    overflowLabel: (n: number) => string
+  ): ChipSpec[] => {
+    if (chips.length <= maxVisible) return chips;
+    const visible = chips.slice(0, maxVisible);
+    const hidden = chips.slice(maxVisible);
+    visible.push({
+      key: `overflow-${visible.length}`,
+      tone: "neutral",
+      label: overflowLabel(hidden.length),
+      tooltip: hidden.map((c) => c.label).join(" · "),
+    });
+    return visible;
+  };
+
+  const buildStatusChips = (
+    assemblyId: number,
+    row: StageRow,
+    breakdownValues?: number[],
+    rawBreakdown?: number[]
+  ) => {
+    const warnings: ChipSpec[] = [];
+    const ops: ChipSpec[] = [];
+    const extState: ChipSpec[] = [];
+    const derived: ChipSpec[] = [];
+    const scope: ChipSpec[] = [];
+
+    // Missing sizes: only for legacy ORDER cases:
+    // total > 0 AND breakdown empty/null AND stage is ORDER (or order_adjust equivalents).
+    if (row.kind === "internal") {
+      const stageRaw = String(row.stage || "").toLowerCase();
+      const isOrderStage = stageRaw === "order" || stageRaw === "order_adjust";
+      const total = Number(row.total ?? 0) || 0;
+      const rawLen = Array.isArray(rawBreakdown) ? rawBreakdown.length : 0;
+      if (isOrderStage && total > 0 && rawLen === 0) {
+        warnings.push({
+          key: "missing-sizes",
+          tone: "warning",
+          label: "Missing sizes",
+          tooltip:
+            "Legacy order record: total exists but the size breakdown is empty.",
+        });
+      }
+    }
+
+    if (row.kind === "external") {
+      const type = String(row.externalStepType || "").toLowerCase();
+      if (type) {
+        const label = type.charAt(0).toUpperCase() + type.slice(1);
+        scope.push({
+          key: `scope-${type}`,
+          tone: "neutral",
+          label,
+          tooltip: `${label} scope.`,
+        });
+      }
+
+      if (row.isLate) {
+        ops.push({
+          key: "late",
+          tone: "warning",
+          label: "Late",
+          tooltip: "This step is past its ETA.",
+        });
+      }
+
+      if (row.lowConfidence) {
+        derived.push({
+          key: "derived",
+          tone: "info",
+          label: "Derived",
+          tooltip:
+            "This row is marked low confidence due to inferred/backfilled data (e.g. Sew missing).",
+        });
+      }
+
+      // External step state chip is omitted when the single action already communicates state.
+      // If the step is done (no action button), show it for clarity.
+      if (row.status === "DONE" || row.status === "IMPLICIT_DONE") {
+        extState.push({
+          key: "ext-status",
+          tone: "neutral",
+          label: EXTERNAL_STATUS_LABELS[row.status],
+          tooltip: "External step status.",
+        });
+      }
+    }
+
+    const orderedWarnings = warnings;
+    const orderedOps = ops;
+    const orderedExtState = extState.slice(0, 1);
+    const orderedDerived = derived.slice(0, 1);
+    const orderedScope = scope;
+
+    const out: ChipSpec[] = [];
+    out.push(...collapseChips(orderedWarnings, 2, (n) => `+${n}`));
+    out.push(...collapseChips(orderedOps, 2, (n) => `+${n}`));
+    out.push(...orderedExtState);
+    out.push(...orderedDerived);
+    out.push(...collapseChips(orderedScope, 2, (n) => `+${n} scope`));
+    return out;
+  };
+
   return (
     <Card withBorder padding="md">
       <Card.Section>
@@ -243,22 +403,31 @@ export function AssemblyQuantitiesCard({
                 <Title order={6}>{it.label}</Title>
               </Group>
             )}
-            <Table withTableBorder withColumnBorders>
+            <Table withTableBorder withColumnBorders style={tableStyle}>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Type</Table.Th>
+                  <Table.Th style={{ width: colWidths.stage }}>Stage</Table.Th>
                   {cols.map((l: string, i: number) => (
                     <Table.Th
                       key={`qcol-${idx}-${i}`}
-                      style={{ textAlign: "center" }}
+                      style={{ ...thCenter, width: colWidths.size }}
                     >
                       {l || `${i + 1}`}
                     </Table.Th>
                   ))}
-                  <Table.Th>Total</Table.Th>
-                  {hasActionColumn && (
-                    <Table.Th style={{ width: 30, textAlign: "center" }} />
-                  )}
+                  <Table.Th style={{ ...thCenter, width: colWidths.total }}>
+                    Total
+                  </Table.Th>
+                  <Table.Th style={{ ...thCenter, width: colWidths.loss }}>
+                    Loss
+                  </Table.Th>
+                  <Table.Th style={{ ...thCenter, width: colWidths.eta }}>
+                    ETA
+                  </Table.Th>
+                  <Table.Th style={{ width: colWidths.status }}>Status</Table.Th>
+                  <Table.Th style={{ ...thCenter, width: colWidths.act }}>
+                    Act
+                  </Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -273,158 +442,141 @@ export function AssemblyQuantitiesCard({
                       externalRow.received,
                       cols.length
                     );
-                    const sentValues = padArray(
-                      externalRow.sent,
-                      cols.length
-                    );
-                    const lossValues = padArray(
-                      externalRow.loss,
-                      cols.length
+                    const etaText = externalRow.etaDate
+                      ? fmtEta(externalRow.etaDate) || ""
+                      : "No ETA";
+                    const chips = buildStatusChips(
+                      it.assemblyId,
+                      externalRow,
+                      receivedValues
                     );
                     return (
                       <Table.Tr key={`ext-${idx}-${rowIdx}`}>
-                        <Table.Td style={{ verticalAlign: "top" }}>
-                          <Group justify="space-between" align="flex-start">
-                            <div>
-                              <Text fw={600}>{externalRow.label}</Text>
-                              <Text size="sm" c="dimmed">
-                                {externalRow.vendor?.name
-                                  ? `Vendor: ${externalRow.vendor.name}`
-                                  : "Vendor pending"}
-                              </Text>
-                            </div>
-                            {externalRow.totals.loss > 0 ? (
-                              <Badge color="red" variant="light">
-                                Lost {fmt(externalRow.totals.loss)}
-                              </Badge>
-                            ) : null}
-                          </Group>
-                          <Group gap="xs" mt={4} wrap="wrap">
-                            {externalRow.etaDate ? (
-                              <Badge
-                                variant="light"
-                                color={externalRow.isLate ? "red" : "gray"}
-                              >
-                                ETA{" "}
-                                {formatDateValue(externalRow.etaDate) || "—"}
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" color="gray">
-                                No ETA
-                              </Badge>
-                            )}
-                            {externalRow.lowConfidence ? (
-                              <Badge color="yellow" variant="light">
-                                Low confidence
-                              </Badge>
-                            ) : null}
-                            <Badge
-                              variant="filled"
-                              color={EXTERNAL_STATUS_COLORS[externalRow.status]}
-                            >
-                              {EXTERNAL_STATUS_LABELS[externalRow.status]}
-                            </Badge>
-                          </Group>
-                          <Group gap="xs" mt="xs">
-                            {onExternalSend &&
-                            externalRow.expected &&
-                            externalRow.status === "NOT_STARTED" ? (
-                              <Button
-                                size="compact-xs"
-                                variant="light"
-                                onClick={() =>
-                                  onExternalSend(it.assemblyId, externalRow)
-                                }
-                              >
-                                Send out
-                              </Button>
-                            ) : null}
-                            {onExternalReceive &&
-                            externalRow.status === "IN_PROGRESS" ? (
-                              <Button
-                                size="compact-xs"
-                                variant="light"
-                                onClick={() =>
-                                  onExternalReceive(
-                                    it.assemblyId,
-                                    externalRow
-                                  )
-                                }
-                              >
-                                Receive in
-                              </Button>
-                            ) : null}
-                            {onExternalHistory ? (
-                              <Button
-                                size="compact-xs"
-                                variant="subtle"
-                                onClick={() =>
-                                  onExternalHistory(
-                                    it.assemblyId,
-                                    externalRow
-                                  )
-                                }
-                              >
-                                View history
-                              </Button>
-                            ) : null}
-                          </Group>
+                        <Table.Td style={tdBase}>
+                          <Text fw={600} size="sm">
+                            {getStageLabelForRow(externalRow)}
+                          </Text>
                         </Table.Td>
                         {cols.map((_l, i) => (
                           <Table.Td
                             key={`ext-cell-${idx}-${rowIdx}-${i}`}
-                            align="center"
+                            style={tdCenter}
                           >
-                            <Text fw={600}>{fmt(receivedValues[i])}</Text>
-                            {sentValues[i] > 0 || lossValues[i] > 0 ? (
-                              <Text
-                                size="xs"
-                                c={lossValues[i] > 0 ? "red" : "dimmed"}
-                              >
-                                {sentValues[i] > 0
-                                  ? `sent ${fmt(sentValues[i])}`
-                                  : null}
-                                {lossValues[i] > 0
-                                  ? sentValues[i] > 0
-                                    ? ` · lost ${fmt(lossValues[i])}`
-                                    : `lost ${fmt(lossValues[i])}`
-                                  : null}
-                              </Text>
-                            ) : null}
+                            <Text fw={600} size="sm">
+                              {fmtNum(receivedValues[i])}
+                            </Text>
                           </Table.Td>
                         ))}
-                        <Table.Td align="center">
-                          <Text fw={600}>{fmt(externalRow.totals.received)}</Text>
-                          {externalRow.totals.sent > 0 ? (
-                            <Text size="xs" c="dimmed">
-                              sent {fmt(externalRow.totals.sent)}
-                            </Text>
-                          ) : null}
-                          {externalRow.totals.loss > 0 ? (
-                            <Text size="xs" c="red">
-                              lost {fmt(externalRow.totals.loss)}
-                            </Text>
-                          ) : null}
+                        <Table.Td style={tdCenter}>
+                          <Text fw={600} size="sm">
+                            {fmtNum(externalRow.totals.received)}
+                          </Text>
                         </Table.Td>
-                        {hasActionColumn && (
-                          <Table.Td align="center" style={{ verticalAlign: "top" }} />
-                        )}
+                        <Table.Td style={tdCenter}>
+                          <Text
+                            fw={600}
+                            size="sm"
+                            c={externalRow.totals.loss > 0 ? "red" : "dimmed"}
+                          >
+                            {fmtNum(externalRow.totals.loss)}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td style={tdCenter} title={etaText}>
+                          <Text
+                            size="sm"
+                            style={{
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {etaText}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td style={tdBase}>
+                          <Group
+                            gap={6}
+                            wrap="nowrap"
+                            style={{ overflow: "hidden", height: 26 }}
+                          >
+                            {chips.map((chip) => (
+                              <Tooltip
+                                key={`${it.assemblyId}-${rowIdx}-${chip.key}`}
+                                label={chip.tooltip}
+                                withArrow
+                                multiline
+                              >
+                                <AxisChip
+                                  tone={chip.tone}
+                                >
+                                  {chip.label}
+                                </AxisChip>
+                              </Tooltip>
+                            ))}
+                          </Group>
+                        </Table.Td>
+                        <Table.Td style={tdCenter}>
+                          <Group
+                            gap={6}
+                            wrap="nowrap"
+                            justify="center"
+                            style={{ overflow: "hidden" }}
+                          >
+                            {onExternalSend &&
+                            externalRow.expected &&
+                            externalRow.status === "NOT_STARTED" ? (
+                              <Tooltip label="Send out" withArrow>
+                                <ActionIcon
+                                  variant="light"
+                                  aria-label="Send out"
+                                  onClick={() => onExternalSend(it.assemblyId, externalRow)}
+                                >
+                                  <IconArrowUpRight size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : null}
+                            {onExternalReceive && externalRow.status === "IN_PROGRESS" ? (
+                              <Tooltip label="Receive in" withArrow>
+                                <ActionIcon
+                                  variant="light"
+                                  aria-label="Receive in"
+                                  onClick={() =>
+                                    onExternalReceive(it.assemblyId, externalRow)
+                                  }
+                                >
+                                  <IconArrowDownLeft size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : null}
+                          </Group>
+                        </Table.Td>
                       </Table.Tr>
                     );
                   }
-                  const internalRow = row as StageRow;
+                  const internalRow = row;
                   const breakdownValues =
                     internalRow.stage === "order" && idx === 0 && editableOrdered
                       ? padArray(effectiveOrdered, cols.length)
                       : padArray(internalRow.breakdown, cols.length);
+                  const chips = buildStatusChips(
+                    it.assemblyId,
+                    internalRow,
+                    breakdownValues,
+                    internalRow.breakdown
+                  );
                   return (
                     <Table.Tr key={`int-${idx}-${rowIdx}`}>
-                      <Table.Td>{internalRow.label}</Table.Td>
+                      <Table.Td style={tdBase}>
+                        <Text fw={600} size="sm">
+                          {getStageLabelForRow(internalRow)}
+                        </Text>
+                      </Table.Td>
                       {breakdownValues.map((value, i) => (
                         <Table.Td
                           key={`int-cell-${idx}-${rowIdx}-${i}`}
                           align="center"
                           style={{
+                            ...tdCenter,
                             padding:
                               internalRow.stage === "order" &&
                               editableOrdered &&
@@ -438,68 +590,93 @@ export function AssemblyQuantitiesCard({
                           idx === 0 ? (
                             <EmbeddedTextInput
                               type="number"
-                              value={value ?? 0}
+                              value={value === 0 ? "" : value ?? 0}
+                              padding={6}
+                              inputStyle={{ fontWeight: 600, fontSize: 14 }}
                               onChange={(e) =>
                                 handleChangeCell(i, e.currentTarget.value)
                               }
                             />
                           ) : (
-                            fmt(value)
+                            <Text fw={600} size="sm">
+                              {fmtNum(value)}
+                            </Text>
                           )}
                         </Table.Td>
                       ))}
-                      <Table.Td align="center" style={{ verticalAlign: "baseline" }}>
-                        {internalRow.stage === "order" && editableOrdered && idx === 0
-                          ? fmt(totalOrdered)
-                          : fmt(
-                              internalRow.stage === "order"
-                                ? sum(internalRow.breakdown)
-                                : internalRow.total
-                            )}
+                      <Table.Td style={tdCenter}>
+                        <Text fw={600} size="sm">
+                          {internalRow.stage === "order" && editableOrdered && idx === 0
+                            ? fmtNum(totalOrdered)
+                            : fmtNum(
+                                internalRow.stage === "order"
+                                  ? sum(internalRow.breakdown)
+                                  : internalRow.total
+                              )}
+                        </Text>
                       </Table.Td>
-                      {hasActionColumn && (
-                        <Table.Td align="center" style={{ verticalAlign: "middle" }}>
-                          {idx === 0 && internalRow.stage === "cut" && actionColumn?.onRecordCut ? (
-                            <Tooltip label="Record Cut" withArrow>
-                              <ActionIcon
-                                variant="subtle"
-                                aria-label="Record cut"
-                                onClick={actionColumn.onRecordCut}
-                              >
-                                <IconScissors size={16} />
-                              </ActionIcon>
+                      <Table.Td style={tdCenter} />
+                      <Table.Td style={tdCenter} />
+                      <Table.Td style={tdBase}>
+                        <Group
+                          gap={6}
+                          wrap="nowrap"
+                          style={{ overflow: "hidden", height: 26 }}
+                        >
+                          {chips.map((chip) => (
+                            <Tooltip
+                              key={`${it.assemblyId}-${rowIdx}-${chip.key}`}
+                              label={chip.tooltip}
+                              withArrow
+                              multiline
+                            >
+                              <AxisChip tone={chip.tone}>{chip.label}</AxisChip>
                             </Tooltip>
-                          ) : null}
-                          {idx === 0 &&
-                          internalRow.stage === "finish" &&
-                          actionColumn?.onRecordFinish ? (
-                            <Tooltip label="Record Finish" withArrow>
-                              <ActionIcon
-                                variant="subtle"
-                                aria-label="Record finish"
-                                onClick={actionColumn.onRecordFinish}
-                                disabled={actionColumn.recordFinishDisabled}
-                              >
-                                <IconSettings size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          ) : null}
-                          {idx === 0 &&
-                          internalRow.stage === "pack" &&
-                          actionColumn?.onRecordPack ? (
-                            <Tooltip label="Add to box" withArrow>
-                              <ActionIcon
-                                variant="subtle"
-                                aria-label="Add to box"
-                                onClick={actionColumn.onRecordPack}
-                                disabled={actionColumn.recordPackDisabled}
-                              >
-                                <IconBox size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          ) : null}
-                        </Table.Td>
-                      )}
+                          ))}
+                        </Group>
+                      </Table.Td>
+                      <Table.Td style={tdCenter}>
+                        {idx === 0 && hasInternalActions ? (
+                          <Group gap={6} wrap="nowrap" justify="center">
+                            {internalRow.stage === "cut" && actionColumn?.onRecordCut ? (
+                              <Tooltip label="Record Cut" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label="Record cut"
+                                  onClick={actionColumn.onRecordCut}
+                                >
+                                  <IconScissors size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : null}
+                            {internalRow.stage === "finish" &&
+                            actionColumn?.onRecordFinish ? (
+                              <Tooltip label="Record Finish" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label="Record finish"
+                                  onClick={actionColumn.onRecordFinish}
+                                  disabled={actionColumn.recordFinishDisabled}
+                                >
+                                  <IconSettings size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : null}
+                            {internalRow.stage === "pack" && actionColumn?.onRecordPack ? (
+                              <Tooltip label="Add to box" withArrow>
+                                <ActionIcon
+                                  variant="subtle"
+                                  aria-label="Add to box"
+                                  onClick={actionColumn.onRecordPack}
+                                  disabled={actionColumn.recordPackDisabled}
+                                >
+                                  <IconBox size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : null}
+                          </Group>
+                        ) : null}
+                      </Table.Td>
                     </Table.Tr>
                   );
                 })}

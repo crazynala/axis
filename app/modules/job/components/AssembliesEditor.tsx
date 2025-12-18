@@ -5,16 +5,17 @@ import {
   Card,
   Checkbox,
   Divider,
-  Drawer,
   Grid,
   Group,
   Menu,
   Modal,
+  SegmentedControl,
   Stack,
   Table,
   Text,
   TextInput,
   Title,
+  Tooltip,
   NativeSelect,
   Select,
   Textarea,
@@ -44,6 +45,7 @@ import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
+import { AxisChip } from "~/components/AxisChip";
 import { JumpLink } from "~/components/JumpLink";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
@@ -201,10 +203,6 @@ export function AssembliesEditor(props: {
     assemblyId: number;
     step: ExternalStageRow;
   } | null>(null);
-  const [externalHistory, setExternalHistory] = useState<{
-    assemblyId: number;
-    row: ExternalStageRow;
-  } | null>(null);
   const [externalStepBreakdown, setExternalStepBreakdown] = useState<number[]>(
     []
   );
@@ -221,6 +219,7 @@ export function AssembliesEditor(props: {
   const [factoryAssemblyId, setFactoryAssemblyId] = useState<number | null>(
     null
   );
+  const [costingsExpanded, setCostingsExpanded] = useState(false);
   const reasonLabelById = useMemo(() => {
     const map = new Map<number, string>();
     (defectReasons || []).forEach((r) => {
@@ -280,6 +279,22 @@ export function AssembliesEditor(props: {
 
   const rollupByAssembly = rollupsByAssembly || {};
 
+  const externalScopeSummary = useMemo(() => {
+    const found = new Set<string>();
+    (quantityItems || []).forEach((item: any) => {
+      (item?.stageRows || []).forEach((row: any) => {
+        if (row?.kind !== "external") return;
+        const type = String(row.externalStepType || "").toLowerCase();
+        if (type === "wash" || type === "embroidery" || type === "dye") {
+          found.add(type);
+        } else if (type) {
+          found.add(type);
+        }
+      });
+    });
+    return Array.from(found.values());
+  }, [quantityItems]);
+
   useEffect(() => {
     if (externalStepFetcher.data?.ok) {
       setExternalStepAction(null);
@@ -291,16 +306,14 @@ export function AssembliesEditor(props: {
     }
   }, [externalStepFetcher.data, revalidator]);
 
-  const openExternalStepModal = (
-    assemblyId: number,
-    step: ExternalStageRow,
-    mode: "send" | "receive"
-  ) => {
-    const defaultBreakdown = buildExternalStepDefaultBreakdown(
-      assemblyId,
-      step,
-      mode
-    );
+  const openExternalStepModal = (assemblyId: number, step: ExternalStageRow) => {
+    const mode: "send" | "receive" =
+      step.status === "NOT_STARTED"
+        ? "send"
+        : step.status === "IN_PROGRESS"
+          ? "receive"
+          : "receive";
+    const defaultBreakdown = buildExternalStepDefaultBreakdown(assemblyId, step, mode);
     setExternalStepAction({ mode, assemblyId, step });
     setExternalStepBreakdown(defaultBreakdown);
     setExternalStepDate(new Date());
@@ -308,6 +321,22 @@ export function AssembliesEditor(props: {
     setExternalStepUnknownVendor(false);
     setExternalStepRecordSew(false);
     setExternalStepError(null);
+  };
+
+  const setExternalStepMode = (mode: "send" | "receive") => {
+    setExternalStepAction((prev) => {
+      if (!prev) return prev;
+      if (prev.mode === mode) return prev;
+      const defaultBreakdown = buildExternalStepDefaultBreakdown(
+        prev.assemblyId,
+        prev.step,
+        mode
+      );
+      setExternalStepBreakdown(defaultBreakdown);
+      setExternalStepRecordSew(false);
+      setExternalStepError(null);
+      return { ...prev, mode };
+    });
   };
 
   const handleExternalStepBreakdownChange = (
@@ -1067,13 +1096,6 @@ export function AssembliesEditor(props: {
     return Array.from({ length: len }, (_, idx) => Number(base[idx] ?? 0) || 0);
   };
 
-  const formatExternalActivityDate = (value: string | null | undefined) => {
-    if (!value) return "—";
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return "—";
-    return date.toLocaleString();
-  };
-
   const watchedPrimaryCostingIds =
     (editForm.watch("primaryCostingIds") as Record<string, number | null>) ||
     {};
@@ -1094,6 +1116,126 @@ export function AssembliesEditor(props: {
     });
     return Object.fromEntries(map);
   })();
+
+  const costingsSummary = useMemo(() => {
+    type Chip = {
+      key: string;
+      tone: "warning" | "info" | "neutral";
+      label: string;
+      tooltip: string;
+    };
+    const warnings: Chip[] = [];
+    const neutrals: Chip[] = [];
+    const scopes: Chip[] = [];
+
+    const collapse = (
+      list: Chip[],
+      max: number,
+      overflowLabel: (n: number) => string
+    ): Chip[] => {
+      if (list.length <= max) return list;
+      const visible = list.slice(0, max);
+      const hidden = list.slice(max);
+      visible.push({
+        key: `overflow-${visible.length}`,
+        tone: "neutral",
+        label: overflowLabel(hidden.length),
+        tooltip: hidden.map((c) => c.label).join(" · "),
+      });
+      return visible;
+    };
+
+    const aid = Number(firstAssembly?.id ?? 0) || 0;
+    const primaryId =
+      (aid && currentPrimaryCostingByAssembly[aid] != null
+        ? currentPrimaryCostingByAssembly[aid]
+        : null) ?? null;
+    const assembly = aid ? assembliesById.get(aid) : undefined;
+    const costings = (assembly as any)?.costings || [];
+    const primary =
+      primaryId != null
+        ? costings.find((c: any) => Number(c?.id) === Number(primaryId))
+        : null;
+
+    if (!primaryId || !primary) {
+      warnings.push({
+        key: "no-primary",
+        tone: "warning",
+        label: "No primary fabric",
+        tooltip: "No primary fabric costing is set.",
+      });
+    } else {
+      const labelCore =
+        primary?.product?.sku ||
+        primary?.product?.name ||
+        primary?.sku ||
+        primary?.name ||
+        `#${primaryId}`;
+      neutrals.push({
+        key: "primary",
+        tone: "neutral",
+        label: `Primary fabric: ${String(labelCore)}`,
+        tooltip: "Primary fabric costing (main fabric).",
+      });
+
+      const qpuMissing =
+        primary?.quantityPerUnit == null ||
+        Number(primary.quantityPerUnit) <= 0 ||
+        !Number.isFinite(Number(primary.quantityPerUnit));
+      const activityMissing = !String(primary?.activityUsed || "").trim();
+      const pricingMissing =
+        primary?.unitCost == null ||
+        !Number.isFinite(Number(primary.unitCost)) ||
+        Number(primary.unitCost) <= 0;
+      if (qpuMissing) {
+        warnings.push({
+          key: "missing-qpu",
+          tone: "warning",
+          label: "Missing QPU",
+          tooltip: "Primary fabric is missing quantity-per-unit (QPU).",
+        });
+      }
+      if (activityMissing) {
+        warnings.push({
+          key: "missing-activity",
+          tone: "warning",
+          label: "Missing activity",
+          tooltip: "Primary fabric is missing its activity usage (cut/sew/finish).",
+        });
+      }
+      if (pricingMissing) {
+        warnings.push({
+          key: "missing-pricing",
+          tone: "warning",
+          label: "Missing price",
+          tooltip: "Primary fabric is missing unit cost / price inputs.",
+        });
+      }
+    }
+
+    externalScopeSummary.forEach((type) => {
+      const label = type.charAt(0).toUpperCase() + type.slice(1);
+      if (type === "wash" || type === "embroidery" || type === "dye") {
+        scopes.push({
+          key: `scope-${type}`,
+          tone: "neutral",
+          label,
+          tooltip: `${label} scope.`,
+        });
+      }
+    });
+
+    return [
+      ...collapse(warnings, 2, (n) => `+${n}`),
+      ...neutrals,
+      ...collapse(scopes, 2, (n) => `+${n} scope`),
+    ];
+  }, [
+    assembliesById,
+    currentPrimaryCostingByAssembly,
+    externalScopeSummary,
+    firstAssembly?.id,
+  ]);
 
   const computeDefectCaps = (
     assemblyId: number | null,
@@ -1430,13 +1572,10 @@ export function AssembliesEditor(props: {
                       recordPackDisabled: !canRecordPackForAssembly(a.id),
                     }}
                     onExternalSend={(assemblyId, row) =>
-                      openExternalStepModal(assemblyId, row, "send")
+                      openExternalStepModal(assemblyId, row)
                     }
                     onExternalReceive={(assemblyId, row) =>
-                      openExternalStepModal(assemblyId, row, "receive")
-                    }
-                    onExternalHistory={(assemblyId, row) =>
-                      setExternalHistory({ assemblyId, row })
+                      openExternalStepModal(assemblyId, row)
                     }
                   />
                 </Stack>
@@ -1445,71 +1584,124 @@ export function AssembliesEditor(props: {
           );
         })}
         <Grid.Col span={12} mt="lg">
-          <AssemblyCostingsTable
-            title="Costings"
-            actions={[
-              <AddCostingButton
-                products={products || []}
-                jobId={job?.id || 0}
-                assemblyId={firstAssembly?.id || 0}
-              />,
-              <Link
-                to={`/jobs/${job?.id || 0}/assembly/${(assemblies || [])
-                  .map((a) => a.id)
-                  .join(",")}/costings-sheet`}
-                prefetch="intent"
-                key="open-sheet"
-                style={{ textDecoration: "none" }}
-              >
-                <Button variant="default" size="xs">
-                  Open Sheet
-                </Button>
-              </Link>,
-            ]}
-            editableCosting
-            canEditCosting={(row) => {
-              const aid = Number((row.assemblyId as any) || 0) || 0;
-              const a = (assemblies as any[]).find((x: any) => x.id === aid);
-              const cutTotal = Number((a as any)?.c_qtyCut || 0) || 0;
-              const batchTracked = !!row.batchTrackingEnabled;
-              return canEditQpuDefault(cutTotal, batchTracked);
-            }}
-            register={editForm.register}
-            fieldNameForQpu={(row) => `qpu.${row.id}`}
-            fieldNameForActivityUsed={(row) => `activity.${row.id}`}
-            onCostingAction={handleCostingAction}
-            primaryCostingIdByAssembly={
-              (currentPrimaryCostingByAssembly as any) || undefined
-            }
-            onSetPrimaryCosting={(costingId, assemblyId) => {
-              editForm.setValue(
-                `primaryCostingIds.${assemblyId}` as any,
-                costingId,
-                { shouldDirty: true, shouldTouch: true }
-              );
-            }}
-            common={
-              ((assemblies || [])
-                .flatMap((a) =>
-                  buildCostingRows({
-                    assemblyId: a.id,
-                    costings: (a.costings || []) as any,
-                    requiredInputs: {
-                      qtyOrdered: (a as any).c_qtyOrdered ?? 0,
-                      qtyCut: (a as any).c_qtyCut ?? 0,
-                    },
-                    priceMultiplier: Number(priceMultiplier || 1) || 1,
-                    costingStats: costingStats as any,
-                  })
-                )
-                .map((row: any) => ({
-                  ...row,
-                  flagIsDisabled:
-                    costingDisabledMap?.[String(row.id)] ?? row.flagIsDisabled,
-                })) || []) as any
-            }
-            accordionByProduct
-          />
+          <Card withBorder bg="transparent" padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center" wrap="nowrap">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setCostingsExpanded((v) => !v)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setCostingsExpanded((v) => !v);
+                    }
+                  }}
+                  style={{
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ overflow: "hidden" }}>
+                    <Title order={4}>Costings</Title>
+                    <Group
+                      gap={6}
+                      wrap="nowrap"
+                      style={{ overflow: "hidden", height: 26 }}
+                    >
+                      {costingsSummary.map((chip) => (
+                        <Tooltip
+                          key={chip.key}
+                          label={chip.tooltip}
+                          withArrow
+                          multiline
+                        >
+                          <AxisChip tone={chip.tone}>{chip.label}</AxisChip>
+                        </Tooltip>
+                      ))}
+                    </Group>
+                  </Group>
+                </div>
+                <Group gap="xs" wrap="nowrap">
+                  <AddCostingButton
+                    products={products || []}
+                    jobId={job?.id || 0}
+                    assemblyId={firstAssembly?.id || 0}
+                  />
+                  <Link
+                    to={`/jobs/${job?.id || 0}/assembly/${(assemblies || [])
+                      .map((a) => a.id)
+                      .join(",")}/costings-sheet`}
+                    prefetch="intent"
+                    style={{ textDecoration: "none" }}
+                  >
+                    <Button variant="default" size="xs">
+                      Open Sheet
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    onClick={() => setCostingsExpanded((v) => !v)}
+                  >
+                    {costingsExpanded ? "Collapse" : "Expand"}
+                  </Button>
+                </Group>
+              </Group>
+            </Card.Section>
+          </Card>
+          {costingsExpanded ? (
+            <AssemblyCostingsTable
+              title="Costings"
+              actions={null}
+              editableCosting
+              canEditCosting={(row) => {
+                const aid = Number((row.assemblyId as any) || 0) || 0;
+                const a = (assemblies as any[]).find((x: any) => x.id === aid);
+                const cutTotal = Number((a as any)?.c_qtyCut || 0) || 0;
+                const batchTracked = !!row.batchTrackingEnabled;
+                return canEditQpuDefault(cutTotal, batchTracked);
+              }}
+              register={editForm.register}
+              fieldNameForQpu={(row) => `qpu.${row.id}`}
+              fieldNameForActivityUsed={(row) => `activity.${row.id}`}
+              onCostingAction={handleCostingAction}
+              primaryCostingIdByAssembly={
+                (currentPrimaryCostingByAssembly as any) || undefined
+              }
+              onSetPrimaryCosting={(costingId, assemblyId) => {
+                editForm.setValue(
+                  `primaryCostingIds.${assemblyId}` as any,
+                  costingId,
+                  { shouldDirty: true, shouldTouch: true }
+                );
+              }}
+              common={
+                ((assemblies || [])
+                  .flatMap((a) =>
+                    buildCostingRows({
+                      assemblyId: a.id,
+                      costings: (a.costings || []) as any,
+                      requiredInputs: {
+                        qtyOrdered: (a as any).c_qtyOrdered ?? 0,
+                        qtyCut: (a as any).c_qtyCut ?? 0,
+                      },
+                      priceMultiplier: Number(priceMultiplier || 1) || 1,
+                      costingStats: costingStats as any,
+                    })
+                  )
+                  .map((row: any) => ({
+                    ...row,
+                    flagIsDisabled:
+                      costingDisabledMap?.[String(row.id)] ??
+                      row.flagIsDisabled,
+                  })) || []) as any
+              }
+              accordionByProduct
+            />
+          ) : null}
         </Grid.Col>
         {/* Activity section */}
         <Grid.Col span={12} mt="lg">
@@ -1569,9 +1761,27 @@ export function AssembliesEditor(props: {
                               : ""}
                           </Table.Td>
                           <Table.Td>
-                            {representative?.stage
-                              ? String(representative.stage).toUpperCase()
-                              : representative?.name || "Activity"}
+                            {(() => {
+                              const stageRaw =
+                                representative?.stage != null
+                                  ? String(representative.stage).trim()
+                                  : "";
+                              if (stageRaw) return stageRaw.toUpperCase();
+                              const kindRaw =
+                                representative?.kind != null
+                                  ? String(representative.kind).trim()
+                                  : "";
+                              const actionRaw =
+                                representative?.action != null
+                                  ? String(representative.action).trim()
+                                  : "";
+                              if (kindRaw && actionRaw) {
+                                return `${kindRaw}_${actionRaw}`.toUpperCase();
+                              }
+                              if (kindRaw) return kindRaw.toUpperCase();
+                              if (actionRaw) return actionRaw.toUpperCase();
+                              return representative?.name || "Activity";
+                            })()}
                           </Table.Td>
                           <Table.Td>{assemblyLabel}</Table.Td>
                           {activityVariantHeaders.map(
@@ -1649,17 +1859,46 @@ export function AssembliesEditor(props: {
         size="lg"
       >
         <Modal.Overlay />
-        <Modal.Content>
+          <Modal.Content>
           <Modal.Header>
             <Group justify="space-between" w="100%">
-              <Title order={5}>
-                {externalStepAction?.mode === "send" ? "Send out" : "Receive in"} –{" "}
-                {externalStepAction?.step.label || "External step"}
-              </Title>
+              <Stack gap={2} style={{ overflow: "hidden", minWidth: 0 }}>
+                <Title order={5}>
+                  {externalStepAction?.mode === "send" ? "Send out" : "Receive in"} –{" "}
+                  {externalStepAction?.step.label || "External step"}
+                </Title>
+                {externalStepAction ? (
+                  <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    Vendor:{" "}
+                    {externalStepAction.step.vendor?.name ||
+                      (externalStepAction.step.vendor?.id
+                        ? `Vendor ${externalStepAction.step.vendor.id}`
+                        : "—")}
+                  </Text>
+                ) : null}
+              </Stack>
             </Group>
           </Modal.Header>
           <Modal.Body>
             <Stack gap="sm">
+              {externalStepAction?.step.status === "IN_PROGRESS" ? (
+                <Group justify="space-between" align="center">
+                  <Text size="sm" fw={500}>
+                    Mode
+                  </Text>
+                  <SegmentedControl
+                    size="xs"
+                    value={externalStepAction?.mode}
+                    onChange={(val) =>
+                      setExternalStepMode(val === "send" ? "send" : "receive")
+                    }
+                    data={[
+                      { label: "Send out", value: "send" },
+                      { label: "Receive in", value: "receive" },
+                    ]}
+                  />
+                </Group>
+              ) : null}
               {sewMissing ? (
                 <Alert color="yellow" title="Sew missing">
                   <Stack gap="xs">
@@ -1799,56 +2038,6 @@ export function AssembliesEditor(props: {
           </Modal.Body>
         </Modal.Content>
       </HotkeyAwareModalRoot>
-
-      <Drawer
-        opened={externalHistory != null}
-        onClose={() => setExternalHistory(null)}
-        position="right"
-        size="lg"
-        title={
-          externalHistory
-            ? `External history — Assembly ${externalHistory.assemblyId}`
-            : "External history"
-        }
-      >
-        {externalHistory ? (
-          externalHistory.row.activities?.length ? (
-            <Table withColumnBorders>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Date</Table.Th>
-                  <Table.Th>Action</Table.Th>
-                  <Table.Th>Quantity</Table.Th>
-                  <Table.Th>Kind</Table.Th>
-                  <Table.Th>Vendor</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {externalHistory.row.activities.map((activity) => (
-                  <Table.Tr key={activity.id}>
-                    <Table.Td>
-                      {formatExternalActivityDate(activity.activityDate)}
-                    </Table.Td>
-                    <Table.Td>{activity.action ?? "—"}</Table.Td>
-                    <Table.Td>{Number(activity.quantity ?? 0) || 0}</Table.Td>
-                    <Table.Td>{activity.kind ?? "—"}</Table.Td>
-                    <Table.Td>
-                      {activity.vendor?.name ||
-                        (activity.vendor?.id
-                          ? `Vendor ${activity.vendor.id}`
-                          : "—")}
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          ) : (
-            <Text size="sm" c="dimmed">
-              No activity recorded yet.
-            </Text>
-          )
-        ) : null}
-      </Drawer>
 
       <Modal
         opened={factoryAssemblyId != null}
