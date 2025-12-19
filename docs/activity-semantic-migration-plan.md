@@ -288,15 +288,15 @@ Tests / acceptance:
 ## 9. Product semantics + templates + SKU + import normalization
 
 - Database / migrations
-  - [ ] Add `Company.code String? @unique` with uppercase 2–10 char validation at app layer; allow null for legacy. Used for vendors and customers (single Company table).
-  - [ ] Add `Product.sku String? @unique` (keep nullable for legacy), extend `Product.type` enum with `Packaging` (stop using `Raw` except for legacy mapping), and keep `Product.type` non-null in UI.
-  - [ ] Normalize categories: keep `Product.categoryId Int?` (leaf ValueList row with `type=Category`, parent=type group; hierarchy is group (parent=null) → category (parent=group) → subcategory (parent=category)); drop `subCategory String?`, add `Product.subCategoryId Int?` with relation `subCategory ValueList? @relation("ProductSubCategory", ...)` and optional backrelation `productsSubCategory`.
+  - [x] Add `Company.code String? @unique` with uppercase 2–10 char validation at app layer; allow null for legacy. Used for vendors and customers (single Company table).
+  - [x] Add `Product.sku String? @unique` (keep nullable for legacy), extend `Product.type` enum with `Packaging` (stop using `Raw` except for legacy mapping), and keep `Product.type` non-null in UI.
+  - [x] Normalize categories: keep `Product.categoryId Int?` (leaf ValueList row with `type=Category`, parent=type group; hierarchy is group (parent=null) → category (parent=group) → subcategory (parent=category)); drop `subCategory String?`, add `Product.subCategoryId Int?` with relation `subCategory ValueList? @relation("ProductSubCategory", ...)` and optional backrelation `productsSubCategory`.
   - [ ] Update ValueList(Category) seed structure to carry stable `code` on every row; children defined as `{ code, label }`, with parentCode links (group codes per ProductType, leaf codes for categories, optional subcategory codes as children).
-  - [ ] Add optional `Product.externalStepType ExternalStepType?` (default expected step for Service products/templates).
-  - [ ] Add `ProductTemplate` model: `code` (unique), `label`, `productType`, `defaultCategoryId`, `defaultSubCategoryId`, `defaultExternalStepType`, `requiresSupplier`, `requiresCustomer`, `defaultStockTracking`, `defaultBatchTracking`, `skuSeriesKey`, `isActive`.
-  - [ ] Add `SkuSeriesCounter` model: `seriesKey` unique, `nextNum` default 1.
-  - [ ] Add `Product.templateId` FK to `ProductTemplate`.
-  - [ ] Create Prisma migrations for: ProductType enum change (+Packaging, stop Raw usage), drop subCategory string/add `subCategoryId`, add `Product.externalStepType`, add `ProductTemplate` + `templateId` relation, and `SkuSeriesCounter`. No DB backfills—reimport FM data to populate codes/templates/SKUs.
+  - [x] Add optional `Product.externalStepType ExternalStepType?` (default expected step for Service products/templates).
+  - [x] Add `ProductTemplate` model: `code` (unique), `label`, `productType`, `defaultCategoryId`, `defaultSubCategoryId`, `defaultExternalStepType`, `requiresSupplier`, `requiresCustomer`, `defaultStockTracking`, `defaultBatchTracking`, `skuSeriesKey`, `isActive`.
+  - [x] Add `SkuSeriesCounter` model: `seriesKey` unique, `nextNum` default 1.
+  - [x] Add `Product.templateId` FK to `ProductTemplate`.
+  - [x] Create Prisma migrations for: ProductType enum change (+Packaging, stop Raw usage), drop subCategory string/add `subCategoryId`, add `Product.externalStepType`, add `ProductTemplate` + `templateId` relation, and `SkuSeriesCounter`. No DB backfills—reimport FM data to populate codes/templates/SKUs.
 - Core logic / services
   - [ ] Enforce Product.type required in app logic; gate BOM editing to Finished only.
   - [ ] Implement SKU generator: accepts template key, vendor/customer/category codes, optional size token, pulls/bumps `SkuSeriesCounter`, retries on uniqueness conflict.
@@ -319,9 +319,9 @@ Tests / acceptance:
 - UI / forms
   - [ ] Company editor: add `code` field (uppercase, 2–10 chars), surface for suppliers/customers with uniqueness errors.
   - [ ] Product editor/creator:
-    - [ ] Require Product.type; add required Template picker (ProductTemplate table) that pre-fills type/category/subcategory/default flags, stock/batch defaults, externalStepType, and SKU series key.
+    - [x] Require Product.type; add required Template picker (ProductTemplate table) that pre-fills type/category/subcategory/default flags, stock/batch defaults, externalStepType, and SKU series key.
     - [ ] Category selector uses leaf ValueList filtered by Product.type group; subcategory selector uses children of selected leaf (can be hidden/disabled until seeded). Clear invalid selections when type/template changes.
-    - [ ] Replace free-text subCategory input with constrained selectors; preserve legacy data in notes only for imports.
+    - [x] Replace free-text subCategory input with constrained selectors; preserve legacy data in notes only for imports.
     - [ ] For Service type, require template selection; auto-set external/internal, externalStepType, supplierId requirement, category/subcategory visibility. If leaf is Outside Wash/Dye/Embroidery, auto-set externalStepType and require supplierId in UI.
     - [ ] For Fabric/Trim/Packaging: enforce supplierId, auto-set stock/batch defaults.
     - [ ] For Finished/CMT: enforce customerId, hide supplier fields; disable BOM editing unless Finished.
@@ -330,13 +330,13 @@ Tests / acceptance:
 - Importer
   - [ ] When importing Companies, populate `code` from FM if present; leave null otherwise.
   - [ ] When importing Products:
-    - [ ] Preserve incoming SKU if present; otherwise leave null (no generation during import).
-    - [ ] Map FM types: Raw/packaging → Packaging; Fabric → Fabric; Finished → Finished; Trim → Trim; CMT → CMT; Services/fees → Service.
-    - [ ] Map category/subcategory into ValueList hierarchy: group rows per ProductType (e.g., SERVICE, TRIM, FABRIC, FINISHED, CMT, PACKAGING), leaf category = `categoryId` via `code`, subCategoryId from child rows (none seeded initially). If FM subcategory is unmapped, append to `Product.notes` and emit import warning.
-    - [ ] Add helpers `getCategoryGroupIdByCode`, `getCategoryLeafId(groupCode, leafCode)` with in-memory cache per import run (codes on ValueList rows; children include `code` + `label`).
-    - [ ] Derive `Product.externalStepType` for Service from template/leaf codes: OUTSIDE_WASH → WASH, OUTSIDE_DYE → DYE, OUTSIDE_EMBROIDERY → EMBROIDERY; else null.
-    - [ ] Validation warnings (no hard fail): Fabric/Trim/Packaging missing supplierId; Finished/CMT missing customerId; Service with externalStepType missing supplierId. Emit console table + JSON report with product IDs/SKUs.
-    - [ ] On import, set `Product.templateId` when FM category maps to a seeded template; otherwise leave null.
+    - [x] Preserve incoming SKU if present; otherwise leave null (no generation during import).
+    - [x] Map FM types: Raw/packaging → Packaging; Fabric → Fabric; Finished → Finished; Trim → Trim; CMT → CMT; Services/fees → Service.
+    - [x] Map category/subcategory into ValueList hierarchy: group rows per ProductType (e.g., SERVICE, TRIM, FABRIC, FINISHED, CMT, PACKAGING), leaf category = `categoryId` via `code`, subCategoryId from child rows (none seeded initially). If FM subcategory is unmapped, append to `Product.notes` and emit import warning.
+    - [x] Add helpers `getCategoryGroupIdByCode`, `getCategoryLeafId(groupCode, leafCode)` with in-memory cache per import run (codes on ValueList rows; children include `code` + `label`).
+    - [x] Derive `Product.externalStepType` for Service from template/leaf codes: OUTSIDE_WASH → WASH, OUTSIDE_DYE → DYE, OUTSIDE_EMBROIDERY → EMBROIDERY; else null.
+    - [x] Validation warnings (no hard fail): Fabric/Trim/Packaging missing supplierId; Finished/CMT missing customerId; Service with externalStepType missing supplierId. Emit console table + JSON report with product IDs/SKUs.
+    - [x] On import, set `Product.templateId` when FM category maps to a seeded template; otherwise leave null.
   - [ ] When importing ProductLine/BOM and instantiating Costings: default `costing.externalStepType` from child product/template (or leaf code mapping); preserve incoming IDs.
   - [ ] Post-import validation report: list Service products missing supplierId or externalStepType/template so FM mapping can be fixed and reimported.
   - [ ] Seed data: add `productTemplates` TS array (at least SV_OUT_WASH, SV_OUT_DYE, SV_OUT_EMB, SV_INTERNAL_PATTERN, FAB_MAIN, TRIM_ZIP, PKG_POLYBAG, FIN_SHIRT, CMT_SHIRT); seed script resolves category IDs via ValueList codes (parentCode + leafCode) and upserts ProductTemplate rows and `SkuSeriesCounter` where `skuSeriesKey` present.

@@ -8,9 +8,11 @@ import { action as productAction } from "./products.$id._index";
 import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import { Button, Card, Group, Stack, Title } from "@mantine/core";
 import { useForm } from "react-hook-form";
+import { useMemo, useState } from "react";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { prismaBase } from "~/utils/prisma.server";
 import { GlobalFormProvider, SaveCancelHeader } from "@aa/timber";
+import { computeProductValidation } from "../validation/computeProductValidation";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];
 
@@ -62,6 +64,10 @@ export default function NewProductRoute() {
   const busy = nav.state !== "idle";
   const submit = useSubmit();
   const { productTemplates } = useLoaderData<typeof loader>();
+  const [focusMissingRequired, setFocusMissingRequired] = useState<
+    (() => void) | null
+  >(null);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const form = useForm({
     defaultValues: {
       sku: "",
@@ -77,12 +83,54 @@ export default function NewProductRoute() {
       subCategoryId: "",
     },
   });
-  const pickedTemplateId = form.watch("templateId");
-  const handleTemplatePick = (id: number) => {
-    form.setValue("templateId", id, { shouldDirty: true });
+  const watched = form.watch();
+  const validation = useMemo(
+    () =>
+      computeProductValidation({
+        type: watched.type,
+        name: watched.name,
+        categoryId: watched.categoryId,
+        templateId: watched.templateId,
+        supplierId: watched.supplierId,
+        customerId: watched.customerId,
+        variantSetId: watched.variantSetId,
+        costPrice: watched.costPrice,
+        leadTimeDays: watched.leadTimeDays,
+        externalStepType: watched.externalStepType,
+      }),
+    [watched]
+  );
+  const typeOptions = [
+    { value: "FABRIC", label: "Fabric" },
+    { value: "TRIM", label: "Trim" },
+    { value: "PACKAGING", label: "Packaging" },
+    { value: "FINISHED", label: "Finished" },
+    { value: "CMT", label: "CMT" },
+    { value: "SERVICE", label: "Service" },
+  ];
+  const handleTypePick = (value: string) => {
+    form.setValue("type", value, { shouldDirty: true });
+    // Conservative clearing: do not wipe populated fields
+    // Apply safe defaults for stock/batch by type
+    if (value === "FABRIC") {
+      form.setValue("stockTrackingEnabled", true, { shouldDirty: true });
+      form.setValue("batchTrackingEnabled", true, { shouldDirty: true });
+    } else if (value === "TRIM" || value === "PACKAGING") {
+      form.setValue("stockTrackingEnabled", true, { shouldDirty: true });
+      form.setValue("batchTrackingEnabled", false, { shouldDirty: true });
+    } else {
+      form.setValue("stockTrackingEnabled", false, { shouldDirty: true });
+      form.setValue("batchTrackingEnabled", false, { shouldDirty: true });
+    }
+    setAttemptedSubmit(false);
   };
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (validation?.missingRequired?.length) {
+      setAttemptedSubmit(true);
+      focusMissingRequired?.();
+      return;
+    }
     const values = form.getValues();
     const fd = new FormData();
     for (const [k, v] of Object.entries(values)) {
@@ -101,26 +149,30 @@ export default function NewProductRoute() {
         <Title order={2}>Create New Product</Title>
         <SaveCancelHeader />
         <Group gap="xs" wrap="wrap">
-          {productTemplates.map((t) => {
-            const active = pickedTemplateId === t.id;
+          {typeOptions.map((t) => {
+            const active = watched.type === t.value;
             return (
               <Button
-                key={t.id}
+                key={t.value}
                 variant={active ? "filled" : "light"}
-                onClick={() => handleTemplatePick(t.id)}
+                onClick={() => handleTypePick(t.value)}
               >
-                {t.label || t.code}
+                {t.label}
               </Button>
             );
           })}
         </Group>
-        {pickedTemplateId ? (
+        {watched.type ? (
           <form onSubmit={onSubmit}>
             <ProductDetailForm
               mode="edit"
               form={form as any}
-              requireTemplate
-              hideTemplateField
+              validation={validation}
+              onRegisterMissingFocus={setFocusMissingRequired}
+              visibilityPolicy="strict"
+              attemptedSubmit={attemptedSubmit}
+              showSectionRollups={false}
+              requiredIndicatorMode="inline"
               templateOptions={productTemplates.map((t) => ({
                 value: String(t.id),
                 label: t.label || t.code,
@@ -130,7 +182,17 @@ export default function NewProductRoute() {
               )}
             />
             <Group mt="md">
-              <Button type="submit" disabled={busy}>
+              <Button
+                type="submit"
+                disabled={busy}
+                onClick={() => {
+                  if (validation?.missingRequired?.length) {
+                    setAttemptedSubmit(true);
+                    focusMissingRequired();
+                    return;
+                  }
+                }}
+              >
                 {busy ? "Saving..." : "Create"}
               </Button>
             </Group>

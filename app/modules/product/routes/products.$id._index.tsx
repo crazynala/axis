@@ -1,10 +1,8 @@
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
-  Badge,
   Button,
   Card,
-  Checkbox,
   Menu,
   ActionIcon,
   Anchor,
@@ -21,11 +19,12 @@ import {
   Title,
   Modal,
   Tabs,
+  Tooltip,
+  Text as MantineText,
 } from "@mantine/core";
 import { IconBug, IconMenu2 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
 import {
   Form,
   Link,
@@ -37,8 +36,10 @@ import {
   useMatches,
   useSubmit,
 } from "@remix-run/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { AxisChip, type AxisChipTone } from "~/components/AxisChip";
+import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -51,29 +52,18 @@ import {
   type BatchOption,
 } from "~/components/InventoryTransferModal";
 import { JumpLink } from "~/components/JumpLink";
-import { TagPicker } from "~/components/TagPicker";
 import {
   buildProductEditDefaults,
   useProductFindify,
 } from "~/modules/product/findify/productFindify";
-import { requireUserId } from "~/utils/auth.server";
-import { buildWhereFromConfig } from "~/utils/buildWhereFromConfig.server";
 import { ProductDetailForm } from "../components/ProductDetailForm";
-import { deriveExternalStepTypeFromCategoryCode } from "~/modules/product/rules/productTypeRules";
-import { loadOptions } from "~/utils/options.server";
+
 import { ProductFindManager } from "../components/ProductFindManager";
-import {
-  productAssocFields,
-  productBomFindFields,
-  productIdentityFields,
-  productPricingFields,
-} from "../forms/productDetail";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
-import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
 import { loadProductDetailVM } from "~/modules/product/services/productDetailVM.server";
 import { handleProductDetailAction } from "~/modules/product/services/productDetailActions.server";
@@ -81,6 +71,16 @@ import { handleProductDetailAction } from "~/modules/product/services/productDet
 // BOM spreadsheet modal removed; see /products/:id/bom page
 
 const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
+const fmtDate = (value: string | Date | null | undefined) => {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
   return loadProductDetailVM({ params, request });
@@ -488,6 +488,225 @@ export default function ProductDetailRoute() {
   );
   const showInstances =
     assemblies.length > 0 || bomParents.length > 0 || costingAsm.length > 0;
+  const [focusMissingRequired, setFocusMissingRequired] = useState<
+    (() => void) | null
+  >(null);
+  const requiredIndicatorMode: "inline" | "chips" = "chips";
+  const hasMovements = lines.length > 0;
+
+  const watched = editForm.watch() as Record<string, any>;
+  const validation = useMemo(
+    () =>
+      computeProductValidation({
+        type: watched?.type ?? product.type,
+        name: watched?.name ?? product.name,
+        categoryId: watched?.categoryId ?? product.categoryId,
+        templateId: watched?.templateId ?? product.templateId,
+        supplierId: watched?.supplierId ?? product.supplierId,
+        customerId: watched?.customerId ?? product.customerId,
+        variantSetId: watched?.variantSetId ?? product.variantSetId,
+        costPrice: watched?.costPrice ?? product.costPrice,
+        leadTimeDays: watched?.leadTimeDays ?? product.leadTimeDays,
+        externalStepType:
+          watched?.externalStepType ?? product.externalStepType ?? null,
+      }),
+    [watched, product]
+  );
+
+  type HealthChip = {
+    tone: AxisChipTone;
+    label: string;
+    tooltip: string;
+    icon?: ReactNode;
+    onClick?: () => void;
+  };
+  const topHealth = useMemo(() => {
+    const warnings: HealthChip[] = [];
+    const infos: HealthChip[] = [];
+    const neutral: HealthChip[] = [];
+    const typeLabel = product.type || "Unspecified";
+    const typeUpper = String(typeLabel || "").toUpperCase();
+    const supplyTypes = new Set(["FABRIC", "TRIM", "PACKAGING"]);
+    const requiresSupplier =
+      supplyTypes.has(typeUpper) ||
+      (typeUpper === "SERVICE" && !!product.externalStepType);
+    const requiresCustomer = typeUpper === "FINISHED" || typeUpper === "CMT";
+    const isFabric = typeUpper === "FABRIC";
+
+    if (!product.type) {
+      warnings.push({
+        tone: "warning",
+        label: "Type missing",
+        tooltip: "Select a product type to enable template and SKU rules.",
+        icon: "⚠",
+      });
+    }
+    if (requiresSupplier && !product.supplierId) {
+      warnings.push({
+        tone: "warning",
+        label: "Supplier required",
+        tooltip: `${typeLabel} should link a supplier for ordering and costing.`,
+        icon: "⚠",
+      });
+    }
+    if (requiresCustomer && !product.customerId) {
+      warnings.push({
+        tone: "warning",
+        label: "Customer required",
+        tooltip: `${typeLabel} should link a customer for pricing and BOM rules.`,
+        icon: "⚠",
+      });
+    }
+    if (isFabric) {
+      if (!product.stockTrackingEnabled) {
+        warnings.push({
+          tone: "warning",
+          label: "Stock tracking off",
+          tooltip: "Fabric must track stock to manage inventory accurately.",
+          icon: "⚠",
+        });
+      } else if (product.stockTrackingEnabled && product.batchTrackingEnabled === false) {
+        warnings.push({
+          tone: "warning",
+          label: "Batch tracking off",
+          tooltip: "Fabric with stock tracking should also enable batch tracking.",
+          icon: "⚠",
+        });
+      }
+    } else if (supplyTypes.has(typeUpper) && !product.stockTrackingEnabled) {
+      warnings.push({
+        tone: "warning",
+        label: `Stock tracking off (${typeLabel})`,
+        tooltip: `Enable stock tracking for ${typeLabel.toLowerCase()} to manage inventory.`,
+        icon: "⚠",
+      });
+    }
+    if (typeUpper === "SERVICE" && !product.templateId) {
+      warnings.push({
+        tone: "warning",
+        label: "Template missing",
+        tooltip: "Service products need a template to set expected steps and SKU rules.",
+        icon: "⚠",
+      });
+    }
+    if (validation.missingRequired.length && requiredIndicatorMode !== "inline") {
+      const grouped = Object.entries(validation.bySection)
+        .map(([section, data]) =>
+          data.missingRequired.length
+            ? `${section}: ${data.missingRequired.join(", ")}`
+            : null
+        )
+        .filter(Boolean)
+        .join("\n");
+      warnings.push({
+        tone: "warning",
+        label: `Missing required: ${validation.missingRequired.length}`,
+        tooltip: grouped || "Missing required fields",
+        icon: "⚠",
+        onClick: focusMissingRequired || undefined,
+      });
+    }
+
+    if (product.type) {
+      infos.push({
+        tone: "info",
+        label: `Type: ${typeLabel}`,
+        tooltip: "Current product type drives rules for suppliers/customers.",
+      });
+    }
+    if (product.templateId) {
+      infos.push({
+        tone: "info",
+        label: `Template #${product.templateId}`,
+        tooltip: "Template linked for defaults and SKU series.",
+      });
+    }
+    if (product.externalStepType) {
+      infos.push({
+        tone: "info",
+        label: `External: ${product.externalStepType}`,
+        tooltip: "External step expectation applied to services and BOM costings.",
+      });
+    }
+    if (product.leadTimeDays != null) {
+      infos.push({
+        tone: "info",
+        label: `Lead time ${product.leadTimeDays}d`,
+        tooltip: "Overrides supplier default lead time for ETAs.",
+      });
+    }
+    const variantSetId = product.variantSetId ?? product.variantSet?.id ?? null;
+    if (!variantSetId && typeUpper === "FINISHED") {
+      infos.push({
+        tone: "neutral",
+        label: "Variant set optional",
+        tooltip: "No variant set selected; add one to manage sizes/colors if needed.",
+      });
+    }
+
+    neutral.push({
+      tone: "neutral",
+      label: `SKU ${product.sku || "—"}`,
+      tooltip: product.sku ? "SKU assigned" : "No SKU on record",
+    });
+    neutral.push({
+      tone: "neutral",
+      label: `ID ${product.id}`,
+      tooltip: "Internal product id",
+    });
+
+    return { warnings, infos, neutral };
+  }, [product]);
+
+  const renderHealthChip = (chip: HealthChip, key: string) => (
+    <Tooltip
+      key={key}
+      label={chip.tooltip}
+      withArrow
+      multiline
+      maw={260}
+      position="bottom"
+    >
+      <AxisChip
+        tone={chip.tone}
+        leftSection={chip.icon}
+        onClick={chip.onClick}
+        style={chip.onClick ? { cursor: "pointer" } : undefined}
+      >
+        {chip.label}
+      </AxisChip>
+    </Tooltip>
+  );
+
+  const renderBucket = (
+    chips: HealthChip[],
+    maxVisible: number,
+    fallbackTone: AxisChipTone
+  ) => {
+    if (!chips.length) return null;
+    const visible = chips.slice(0, maxVisible);
+    const overflow = chips.slice(maxVisible);
+    const rendered = visible.map((chip, idx) =>
+      renderHealthChip(chip, `${chip.label}-${idx}`)
+    );
+    if (overflow.length) {
+      const summary = overflow.map((c) => `• ${c.label}`).join("\n");
+      rendered.push(
+        <Tooltip
+          key={`more-${fallbackTone}`}
+          label={summary || "More"}
+          withArrow
+          multiline
+          maw={260}
+        >
+          <AxisChip tone={fallbackTone} leftSection="+">
+            +{overflow.length}
+          </AxisChip>
+        </Tooltip>
+      );
+    }
+    return rendered;
+  };
 
   return (
     <Stack gap="lg">
@@ -602,6 +821,28 @@ export default function ProductDetailRoute() {
           </Menu>
         </Group>
       </Group>
+      <MantineText size="xs" c="dimmed">
+        {(() => {
+          const ts = fmtDate(product.updatedAt || product.modifiedAt);
+          if (!ts) return null;
+          const by = (product.modifiedBy || product.updatedBy || "").trim();
+          return by ? `Last updated ${ts} by ${by}` : `Last updated ${ts}`;
+        })()}
+      </MantineText>
+      <div
+        style={{
+          overflowX: "auto",
+          padding: "2px 2px",
+        }}
+      >
+        <Group gap="xs" wrap="nowrap" align="center">
+          {renderBucket(topHealth.warnings, 2, "warning")}
+          {renderBucket(topHealth.infos, 2, "info")}
+          {topHealth.neutral.map((chip, idx) =>
+            renderHealthChip(chip, `neutral-${idx}`)
+          )}
+        </Group>
+      </div>
       <ProductFindManager />
       <DebugDrawer
         opened={debugOpen}
@@ -617,6 +858,10 @@ export default function ProductDetailRoute() {
           mode={"edit" as any}
           form={editForm as any}
           product={product}
+          validation={validation}
+          onRegisterMissingFocus={setFocusMissingRequired}
+          requiredIndicatorMode={requiredIndicatorMode}
+          hasMovements={hasMovements}
         />
       </Form>
       {/* Tags block removed; now handled by TagsInput in header and saved via global form */}
@@ -720,7 +965,11 @@ export default function ProductDetailRoute() {
                               {row.location_name ||
                                 `${row.location_id ?? "(none)"}`}
                             </Table.Td>
-                            <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                            <Table.Td>
+                              {Number(row.qty ?? 0) === 0
+                                ? ""
+                                : Number(row.qty ?? 0)}
+                            </Table.Td>
                           </Table.Tr>
                         ))}
                       </Table.Tbody>
@@ -840,22 +1089,26 @@ export default function ProductDetailRoute() {
                                   )}
                                 </Table.Td>
 
-                                <Table.Td>
-                                  {row.location_name ||
-                                    (row.location_id
-                                      ? `${row.location_id}`
-                                      : "")}
-                                </Table.Td>
-                                <Table.Td>
-                                  {row.received_at
-                                    ? new Date(
-                                        row.received_at
-                                      ).toLocaleDateString()
-                                    : ""}
-                                </Table.Td>
-                              </>
-                            )}
-                            <Table.Td>{Number(row.qty ?? 0)}</Table.Td>
+                            <Table.Td>
+                              {row.location_name ||
+                                (row.location_id
+                                  ? `${row.location_id}`
+                                  : "")}
+                            </Table.Td>
+                            <Table.Td>
+                              {row.received_at
+                                ? new Date(
+                                    row.received_at
+                                  ).toLocaleDateString()
+                                : ""}
+                            </Table.Td>
+                          </>
+                        )}
+                        <Table.Td>
+                          {Number(row.qty ?? 0) === 0
+                            ? ""
+                            : Number(row.qty ?? 0)}
+                        </Table.Td>
                             <Table.Td>
                               <Menu
                                 withinPortal
@@ -1104,9 +1357,7 @@ export default function ProductDetailRoute() {
                               <Table.Tr key={`line-${ml.id}`}>
                                 <Table.Td>
                                   {ml.movement?.date
-                                    ? new Date(
-                                        ml.movement.date
-                                      ).toLocaleDateString()
+                                    ? fmtDate(ml.movement.date)
                                     : ""}
                                 </Table.Td>
                                 <Table.Td>
@@ -1136,7 +1387,11 @@ export default function ProductDetailRoute() {
                                     ? `${ml.batch.id}`
                                     : ""}
                                 </Table.Td>
-                                <Table.Td>{ml.quantity ?? ""}</Table.Td>
+                                <Table.Td>
+                                  {Number(ml.quantity || 0) === 0
+                                    ? ""
+                                    : ml.quantity}
+                                </Table.Td>
                                 <Table.Td>{ml.notes || ""}</Table.Td>
                                 <Table.Td width={48}>
                                   <Menu
@@ -1190,9 +1445,7 @@ export default function ProductDetailRoute() {
                           ).map((mh: any) => (
                             <Table.Tr key={`hdr-${mh.id}`}>
                               <Table.Td>
-                                {mh.date
-                                  ? new Date(mh.date).toLocaleDateString()
-                                  : ""}
+                                {mh.date ? fmtDate(mh.date) : ""}
                               </Table.Td>
                               <Table.Td>{mh.movementType || ""}</Table.Td>
                               <Table.Td>
@@ -1207,7 +1460,11 @@ export default function ProductDetailRoute() {
                                     mh.locationInId
                                   : ""}
                               </Table.Td>
-                              <Table.Td>{mh.quantity ?? ""}</Table.Td>
+                              <Table.Td>
+                                {Number(mh.quantity || 0) === 0
+                                  ? ""
+                                  : mh.quantity}
+                              </Table.Td>
                               <Table.Td>{mh.notes || ""}</Table.Td>
                               <Table.Td width={48}>
                                 <Menu

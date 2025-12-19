@@ -264,6 +264,17 @@ export function renderField(
   if (field.render) return field.render({ form, mode, field, ctx });
   const widget = field.widget || (field.type === "date" ? "date" : "text");
   const common: any = { label: field.label, mod: "data-autosize" };
+  const requiredState = (ctx as any)?.requiredStates?.[field.name];
+  if (requiredState?.state === "error") {
+    common.error = requiredState.message || "Required";
+  } else if (requiredState?.state === "warn") {
+    common.description = requiredState.message || "Required";
+    common.styles = {
+      input: {
+        borderColor: "var(--mantine-color-yellow-6)",
+      },
+    };
+  }
   const dynamicReadOnly = field.readOnlyIf
     ? field.readOnlyIf({ form, mode, field, ctx })
     : false;
