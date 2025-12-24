@@ -18,6 +18,7 @@ export type JobDetailFormProps = {
   form: UseFormReturn<any>;
   job: any;
   openCustomerModal?: () => void;
+  fieldCtx?: Record<string, any>;
 };
 
 export function JobDetailForm({
@@ -25,6 +26,7 @@ export function JobDetailForm({
   form,
   job,
   openCustomerModal,
+  fieldCtx,
 }: JobDetailFormProps) {
   // derive customer options from job.company if present (single) - could be injected by parent
   const customerOptions = job?.company
@@ -53,7 +55,7 @@ export function JobDetailForm({
                 field={cfg}
                 mode={mode as any}
                 // record={{ ...job, ...form.getValues() }}
-                ctx={{ openCustomerModal }}
+                ctx={{ openCustomerModal, ...(fieldCtx || {}) }}
               />
             ))}
           </Stack>
@@ -70,6 +72,7 @@ export function JobDetailForm({
                   field={cfg}
                   mode={mode as any}
                   // record={{ ...job, ...form.getValues() }}
+                  ctx={fieldCtx}
                 />
               ))}
             </Stack>
@@ -81,6 +84,7 @@ export function JobDetailForm({
                   field={cfg}
                   mode={mode as any}
                   // record={{ ...job, ...form.getValues() }}
+                  ctx={fieldCtx}
                 />
               ))}
             </Stack>

@@ -7,6 +7,7 @@ import {
   loadAssemblyRollups,
   type AssemblyRollup,
 } from "~/modules/production/services/rollups.server";
+import { loadDefaultInternalTargetLeadDays } from "~/modules/job/services/targetOverrides.server";
 import {
   loadMaterialCoverage,
   type AssemblyMaterialCoverage,
@@ -32,16 +33,34 @@ type LoaderPurchaseOrderLineSummary = Omit<
 export type LoaderAssembly = {
   id: number;
   name: string | null;
+  qtyOrderedBreakdown: number[];
+  quantity: number | null;
+  manualHoldOn: boolean;
+  manualHoldReason: string | null;
+  manualHoldType: string | null;
+  internalTargetDateOverride: string | null;
+  customerTargetDateOverride: string | null;
+  dropDeadDateOverride: string | null;
+  shipToLocationOverride: { id: number; name: string | null } | null;
+  productId: number | null;
   variantLabels: string[];
   materialCoverageTolerancePct: number | null;
   materialCoverageToleranceAbs: number | null;
   job: {
     id: number;
+    state: string | null;
+    createdAt: string | null;
     projectCode: string | null;
     name: string | null;
     targetDate: string | null;
     dropDeadDate: string | null;
+    internalTargetDate: string | null;
+    customerTargetDate: string | null;
+    shipToLocation: { id: number; name: string | null } | null;
     customerName: string | null;
+    jobHoldOn: boolean;
+    jobHoldReason: string | null;
+    jobHoldType: string | null;
   } | null;
   status?: string | null;
   productName: string | null;
@@ -56,6 +75,7 @@ export type LoaderData = {
   asOf: string;
   assemblies: LoaderAssembly[];
   toleranceDefaults: CoverageToleranceDefaults;
+  defaultLeadDays: number;
 };
 
 export const activeAssemblyFilter = {
@@ -64,17 +84,26 @@ export const activeAssemblyFilter = {
     { status: "" },
     { status: { notIn: ["CANCELED", "COMPLETE"] } },
   ],
+  job: { state: { not: "CANCELED" } },
 };
 
 const assemblyIncludes = {
   job: {
     select: {
       id: true,
+      state: true,
+      createdAt: true,
       projectCode: true,
       name: true,
       targetDate: true,
       dropDeadDate: true,
+      internalTargetDate: true,
+      customerTargetDate: true,
       stockLocationId: true,
+      jobHoldOn: true,
+      jobHoldReason: true,
+      jobHoldType: true,
+      shipToLocation: { select: { id: true, name: true } },
       company: { select: { name: true } },
     },
   },
@@ -96,6 +125,7 @@ const assemblyIncludes = {
     },
   },
   variantSet: { select: { variants: true } },
+  shipToLocationOverride: { select: { id: true, name: true } },
   costings: {
     include: {
       product: {
@@ -120,6 +150,7 @@ const assemblyIncludes = {
 
 export async function loadDashboardData(take: number): Promise<LoaderData> {
   const toleranceDefaults = await loadCoverageToleranceDefaults();
+  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
   const assemblies = await prisma.assembly.findMany({
     where: activeAssemblyFilter,
     include: assemblyIncludes,
@@ -136,6 +167,7 @@ export async function loadDashboardData(take: number): Promise<LoaderData> {
     asOf: new Date().toISOString(),
     assemblies: hydrated,
     toleranceDefaults,
+    defaultLeadDays,
   };
 }
 
@@ -391,6 +423,25 @@ async function hydrateAssemblies(
   return assemblies.map((assembly) => ({
     id: assembly.id,
     name: assembly.name,
+    qtyOrderedBreakdown: Array.isArray(assembly.qtyOrderedBreakdown)
+      ? assembly.qtyOrderedBreakdown.map((n: any) => Number(n) || 0)
+      : [],
+    quantity:
+      assembly.quantity != null ? Number(assembly.quantity) || 0 : null,
+    manualHoldOn: Boolean(assembly.manualHoldOn),
+    manualHoldReason: assembly.manualHoldReason ?? null,
+    manualHoldType: assembly.manualHoldType ?? null,
+    internalTargetDateOverride: assembly.internalTargetDateOverride
+      ? new Date(assembly.internalTargetDateOverride).toISOString()
+      : null,
+    customerTargetDateOverride: assembly.customerTargetDateOverride
+      ? new Date(assembly.customerTargetDateOverride).toISOString()
+      : null,
+    dropDeadDateOverride: assembly.dropDeadDateOverride
+      ? new Date(assembly.dropDeadDateOverride).toISOString()
+      : null,
+    shipToLocationOverride: assembly.shipToLocationOverride ?? null,
+    productId: assembly.product?.id ?? null,
     variantLabels: getVariantLabels(
       assembly.variantSet?.variants ??
         assembly.product?.variantSet?.variants ??
@@ -408,6 +459,10 @@ async function hydrateAssemblies(
     job: assembly.job
       ? {
           id: assembly.job.id,
+          state: assembly.job.state ?? null,
+          createdAt: assembly.job.createdAt
+            ? assembly.job.createdAt.toISOString()
+            : null,
           projectCode: assembly.job.projectCode,
           name: assembly.job.name,
           targetDate: assembly.job.targetDate
@@ -416,7 +471,17 @@ async function hydrateAssemblies(
           dropDeadDate: assembly.job.dropDeadDate
             ? assembly.job.dropDeadDate.toISOString()
             : null,
+          internalTargetDate: assembly.job.internalTargetDate
+            ? assembly.job.internalTargetDate.toISOString()
+            : null,
+          customerTargetDate: assembly.job.customerTargetDate
+            ? assembly.job.customerTargetDate.toISOString()
+            : null,
+          shipToLocation: assembly.job.shipToLocation ?? null,
           customerName: assembly.job.company?.name ?? null,
+          jobHoldOn: Boolean(assembly.job.jobHoldOn),
+          jobHoldReason: assembly.job.jobHoldReason ?? null,
+          jobHoldType: assembly.job.jobHoldType ?? null,
         }
       : null,
     productName: assembly.product?.name ?? null,

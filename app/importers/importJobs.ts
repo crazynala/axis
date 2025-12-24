@@ -1,12 +1,29 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asDate, asNum, pick, resetSequence } from "./utils";
+import {
+  mapLegacyJobStatusToHold,
+  mapLegacyJobStatusToState,
+} from "../modules/job/stateUtils";
 
 export async function importJobs(rows: any[]): Promise<ImportResult> {
   let created = 0,
     updated = 0,
     skipped = 0;
   const errors: any[] = [];
+  const shipToStats = {
+    setFromFm: 0,
+    clearedMismatch: 0,
+    missingInFm: 0,
+    legacyLocationRetained: 0,
+  };
+  const addressOwners = new Map<number, number | null>();
+  const addressRows = await prisma.address.findMany({
+    select: { id: true, companyId: true },
+  });
+  for (const row of addressRows) {
+    addressOwners.set(row.id, row.companyId ?? null);
+  }
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const jobIdNum = asNum(
@@ -29,6 +46,29 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
     }
     const companyId = asNum(pick(r, ["a_CompanyID"])) as number | null;
     const locationId = asNum(pick(r, ["a_LocationID|In"])) as number | null;
+    const shipToAddressRaw = asNum(
+      pick(r, [
+        "a_AddressID|Ship",
+        "a_AddressID|ShipTo",
+        "ShipToAddressID",
+        "ShipToAddressId",
+        "AddressID|ShipTo",
+        "AddressID|Ship",
+        "a_ShipToAddressID",
+      ])
+    ) as number | null;
+    let shipToAddressId: number | null = null;
+    if (shipToAddressRaw == null) {
+      shipToStats.missingInFm++;
+    } else {
+      const ownerCompanyId = addressOwners.get(shipToAddressRaw) ?? null;
+      if (ownerCompanyId && companyId && ownerCompanyId === companyId) {
+        shipToAddressId = shipToAddressRaw;
+        shipToStats.setFromFm++;
+      } else {
+        shipToStats.clearedMismatch++;
+      }
+    }
     const jobType = (pick(r, ["JobType"]) ?? "").toString().trim() || null;
     const endCustomerName =
       (pick(r, ["EndCustomerName"]) ?? "").toString().trim() || null;
@@ -46,6 +86,12 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
       pick(r, ["Date|FirstInvoice"])
     ) as Date | null;
     const targetDate = asDate(pick(r, ["Date|Target"])) as Date | null;
+    const legacyStatusRaw = pick(r, ["Status", "JobStatus", "job_status"]);
+    const legacyStatus = legacyStatusRaw
+      ? legacyStatusRaw.toString().trim()
+      : null;
+    const mappedState = mapLegacyJobStatusToState(legacyStatus);
+    const hold = mapLegacyJobStatusToHold(legacyStatus);
     const data: any = {
       projectCode: projectCode || null,
       name: name || null,
@@ -59,12 +105,28 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
       targetDate,
       companyId: companyId ?? undefined,
       stockLocationId: locationId ?? undefined,
+      ...(shipToAddressId != null
+        ? { shipToAddressId, shipToLocationId: null }
+        : {}),
+      status: legacyStatus,
+      state: mappedState,
+      jobHoldOn: hold.jobHoldOn,
+      jobHoldReason: hold.jobHoldReason,
     };
     try {
-      const existing = await prisma.job.findUnique({ where: { id: jobIdNum } });
+      const existing = await prisma.job.findUnique({
+        where: { id: jobIdNum },
+        select: { id: true, shipToLocationId: true },
+      });
       if (existing)
         await prisma.job.update({ where: { id: existing.id }, data });
       else await prisma.job.create({ data: { id: jobIdNum, ...data } });
+      if (
+        shipToAddressId == null &&
+        existing?.shipToLocationId != null
+      ) {
+        shipToStats.legacyLocationRetained++;
+      }
       created += 1;
     } catch (e: any) {
       errors.push({
@@ -85,6 +147,7 @@ export async function importJobs(rows: any[]): Promise<ImportResult> {
   console.log(
     `[import] jobs complete total=${rows.length} created=${created} skipped=${skipped} errors=${errors.length}`
   );
+  console.log("[import] jobs ship-to summary", shipToStats);
   if (errors.length) {
     const grouped: Record<
       string,

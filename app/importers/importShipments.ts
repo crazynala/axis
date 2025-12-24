@@ -2,6 +2,21 @@ import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asDate, asNum, pick, resetSequence } from "./utils";
 
+function mapShipmentStatus(raw: unknown): "DRAFT" | "COMPLETE" | "CANCELED" {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (!value) return "DRAFT";
+  if (value.includes("cancel")) return "CANCELED";
+  if (
+    value.includes("complete") ||
+    value.includes("shipped") ||
+    value.includes("received")
+  ) {
+    return "COMPLETE";
+  }
+  if (value.includes("in progress")) return "DRAFT";
+  return "DRAFT";
+}
+
 export async function importShipments(rows: any[]): Promise<ImportResult> {
   let created = 0,
     updated = 0,
@@ -35,7 +50,7 @@ export async function importShipments(rows: any[]): Promise<ImportResult> {
       packingSlipCode:
         (pick(r, ["PackingSlipCode"]) ?? "").toString().trim() || null,
       type: (pick(r, ["Type"]) ?? "").toString().trim() || null,
-      status: (pick(r, ["Status"]) ?? "").toString().trim() || null,
+      status: mapShipmentStatus(pick(r, ["Status"])),
       // New address detail fields (Ship)
       addressName:
         (pick(r, ["Address_Name|Ship"]) ?? "").toString().trim() || null,

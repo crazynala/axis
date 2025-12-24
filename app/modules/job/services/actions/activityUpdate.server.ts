@@ -21,6 +21,7 @@ export async function handleActivityUpdate(opts: {
   const defectReasonValid =
     defectReasonId != null && Number.isFinite(defectReasonId) && defectReasonId > 0;
   const notesRaw = opts.form.get("notes");
+  const notesValue = typeof notesRaw === "string" ? notesRaw.trim() : "";
   const dispositionRaw = opts.form.get("defectDisposition");
   const dispositionVal = typeof dispositionRaw === "string" ? dispositionRaw.trim() : "";
   const allowedDisposition = new Set<DefectDisposition>([
@@ -52,6 +53,10 @@ export async function handleActivityUpdate(opts: {
     where: { id: activityId },
     select: { assemblyId: true, stage: true, defectDisposition: true },
   });
+  const existingStageLower = String(existingForValidation?.stage || "").toLowerCase();
+  if (existingStageLower === "cancel" && !notesValue) {
+    return json({ error: "Cancellation requires a reason." }, { status: 400 });
+  }
   const validationBreakdown = normalizeBreakdown(qtyArr, qtyTotal);
   if (existingForValidation?.assemblyId) {
     const validationError = await validateDefectBreakdown({
@@ -78,8 +83,9 @@ export async function handleActivityUpdate(opts: {
     });
     previousDisposition = (existingActivity?.defectDisposition ?? null) as DefectDisposition | null;
     const stageLower = String(existingActivity?.stage || "").toLowerCase();
-    const isRecordedStage =
-      stageLower === "cut" || stageLower === "make" || stageLower === "pack";
+    const isRecordedStage = ["cut", "make", "finish", "pack", "cancel"].includes(
+      stageLower
+    );
     const updateAction = isRecordedStage ? ActivityAction.RECORDED : existingActivity?.action ?? null;
     const updated = await tx.assemblyActivity.update({
       where: { id: activityId },
@@ -89,7 +95,7 @@ export async function handleActivityUpdate(opts: {
         activityDate,
         defectDisposition: newDisposition ?? undefined,
         defectReasonId: defectReasonValid ? (defectReasonId as number) : null,
-        notes: typeof notesRaw === "string" ? notesRaw || null : undefined,
+        notes: typeof notesRaw === "string" ? notesValue || null : undefined,
         action: updateAction ?? undefined,
       },
       select: {
@@ -204,4 +210,3 @@ export async function handleActivityUpdate(opts: {
   await refreshProductStockSnapshot();
   return redirect(`/jobs/${opts.jobId}/assembly/${opts.assemblyId}`);
 }
-

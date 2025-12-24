@@ -13,6 +13,7 @@ import {
   useLoaderData,
   useNavigate,
   useRevalidator,
+  useSearchParams,
 } from "@remix-run/react";
 import {
   Badge,
@@ -47,10 +48,20 @@ import {
   type LoaderAssembly,
   type LoaderData,
 } from "~/modules/production/services/production.dashboard.server";
+import {
+  buildProductionAttentionRows,
+  type ProductionAttentionRow,
+} from "~/modules/production/services/production.attention.server";
+import {
+  type ProductionAttentionFilters,
+  type ProductionAttentionSort,
+} from "~/modules/production/services/production.attention.logic";
 import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import type { AssemblyRiskSignals } from "~/modules/production/services/riskSignals.server";
 import type { MaterialCoverageItem } from "~/modules/production/services/materialCoverage.server";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import { AxisChip } from "~/components/AxisChip";
+import { OverrideIndicator } from "~/components/OverrideIndicator";
 import { IconBug } from "@tabler/icons-react";
 import {
   resolveExpectedQty,
@@ -67,6 +78,9 @@ const LEAD_TIME_SOURCE_LABELS: Record<string, string> = {
 type DashboardLoaderData = LoaderData & {
   canDebug: boolean;
   vendorOptionsByStep: Record<string, CompanyOption[]>;
+  attentionRows: ProductionAttentionRow[];
+  attentionFilters: ProductionAttentionFilters;
+  attentionSort: ProductionAttentionSort;
 };
 
 export const meta: MetaFunction = () => [{ title: "Production Dashboard" }];
@@ -75,6 +89,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const userId = await requireUserId(request);
   const url = new URL(request.url);
   const limitParam = Number(url.searchParams.get("limit"));
+  const attentionSort = parseAttentionSort(
+    url.searchParams.get("attentionSort")
+  );
+  const attentionFilters = parseAttentionFilters(url.searchParams);
   const take =
     Number.isFinite(limitParam) && limitParam > 0
       ? Math.min(Math.max(Math.floor(limitParam), 25), 50000)
@@ -83,6 +101,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
     "../services/production.dashboard.server"
   );
   const data = await loadDashboardData(take);
+  const attentionRows = await buildProductionAttentionRows({
+    assemblies: data.assemblies,
+    filters: attentionFilters,
+    sort: attentionSort,
+    defaultLeadDays: data.defaultLeadDays,
+  });
   const stepTypes = new Set<ExternalStepType>();
   (data.assemblies || []).forEach((assembly) => {
     (assembly.externalSteps || []).forEach((step) => {
@@ -108,6 +132,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
   return json({
     ...data,
+    attentionRows,
+    attentionFilters,
+    attentionSort,
     vendorOptionsByStep,
     canDebug: debugAccess.canDebug,
   });
@@ -479,11 +506,17 @@ export default function ProductionDashboardRoute() {
   const assemblies = Array.isArray(data?.assemblies)
     ? (data.assemblies as LoaderAssembly[])
     : [];
+  const attentionRows = Array.isArray(data?.attentionRows)
+    ? (data.attentionRows as ProductionAttentionRow[])
+    : [];
+  const attentionFilters = data.attentionFilters;
+  const attentionSort = data.attentionSort;
   console.log("[production.dashboard] client data", {
     assemblies: assemblies.length,
     type: typeof data?.assemblies,
   });
   const [activeTab, setActiveTab] = useState<string>("at-risk");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [poHoldFocus, setPoHoldFocus] = useState<LoaderAssembly | null>(null);
   const [debugTarget, setDebugTarget] = useState<LoaderAssembly | null>(null);
   const [assignTarget, setAssignTarget] = useState<{
@@ -706,27 +739,20 @@ export default function ProductionDashboardRoute() {
     }
   }, [batchFetcher.data, revalidator]);
 
+  const assembliesById = useMemo(() => {
+    const map = new Map<number, LoaderAssembly>();
+    assemblies.forEach((assembly) => map.set(assembly.id, assembly));
+    return map;
+  }, [assemblies]);
+
   const atRiskRows = useMemo(() => {
-    const rows = assemblies.slice();
-    rows.sort((a, b) => {
-      const lateDiff =
-        Number(b.risk.hasExternalLate) - Number(a.risk.hasExternalLate);
-      if (lateDiff !== 0) return lateDiff;
-      const aSupply = supplySummaryByAssembly.get(a.id)?.rank ?? 99;
-      const bSupply = supplySummaryByAssembly.get(b.id)?.rank ?? 99;
-      if (aSupply !== bSupply) return aSupply - bSupply;
-      const dueSoonDiff =
-        Number(b.risk.externalDueSoon) - Number(a.risk.externalDueSoon);
-      if (dueSoonDiff !== 0) return dueSoonDiff;
-      const aDate = getTargetDate(a);
-      const bDate = getTargetDate(b);
-      if (aDate && bDate) return aDate.getTime() - bDate.getTime();
-      if (aDate) return -1;
-      if (bDate) return 1;
-      return a.id - b.id;
-    });
-    return rows;
-  }, [assemblies, supplySummaryByAssembly]);
+    return attentionRows
+      .map((row) => ({
+        attention: row,
+        assembly: assembliesById.get(row.assemblyId) || null,
+      }))
+      .filter((row) => Boolean(row.assembly));
+  }, [attentionRows, assembliesById]);
 
   const vendorRows = useMemo(() => {
     return assemblies
@@ -871,6 +897,54 @@ export default function ProductionDashboardRoute() {
     setBatchDate(new Date());
     setBatchError(null);
   };
+
+  const updateAttentionParam = useCallback(
+    (key: string, value: string | null) => {
+      const next = new URLSearchParams(searchParams);
+      if (value === null) next.delete(key);
+      else next.set(key, value);
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
+
+  const handleAttentionSortChange = useCallback(
+    (value: string | null) => {
+      updateAttentionParam(
+        "attentionSort",
+        value && value !== "priority" ? value : null
+      );
+    },
+    [updateAttentionParam]
+  );
+
+  const handleIncludeHeldChange = useCallback(
+    (checked: boolean) => {
+      updateAttentionParam("includeHeld", checked ? null : "0");
+    },
+    [updateAttentionParam]
+  );
+
+  const handleOnlyNotStartedChange = useCallback(
+    (checked: boolean) => {
+      updateAttentionParam("onlyNotStarted", checked ? "1" : null);
+    },
+    [updateAttentionParam]
+  );
+
+  const handleOnlyDueSoonChange = useCallback(
+    (checked: boolean) => {
+      updateAttentionParam("onlyDueSoon", checked ? "1" : null);
+    },
+    [updateAttentionParam]
+  );
+
+  const handleOnlyBlockedChange = useCallback(
+    (checked: boolean) => {
+      updateAttentionParam("onlyBlocked", checked ? "1" : null);
+    },
+    [updateAttentionParam]
+  );
 
   const openBatchSendFromAtRisk = (rows: LoaderAssembly[]) => {
     const nextRows = rows.map((assembly) => {
@@ -1043,6 +1117,54 @@ export default function ProductionDashboardRoute() {
 
         <Tabs.Panel value="at-risk" pt="md">
           <Card withBorder padding="md">
+            <Group justify="space-between" mb="sm" align="center">
+              <Group gap="xs" wrap="wrap">
+                <Checkbox
+                  label="Include held"
+                  checked={attentionFilters?.includeHeld ?? true}
+                  onChange={(e) =>
+                    handleIncludeHeldChange(e.currentTarget.checked)
+                  }
+                />
+                <Checkbox
+                  label="Only not started"
+                  checked={attentionFilters?.onlyNotStarted ?? false}
+                  onChange={(e) =>
+                    handleOnlyNotStartedChange(e.currentTarget.checked)
+                  }
+                />
+                <Checkbox
+                  label="Only due soon/late"
+                  checked={attentionFilters?.onlyDueSoon ?? false}
+                  onChange={(e) =>
+                    handleOnlyDueSoonChange(e.currentTarget.checked)
+                  }
+                />
+                <Checkbox
+                  label="Only blocked"
+                  checked={attentionFilters?.onlyBlocked ?? false}
+                  onChange={(e) =>
+                    handleOnlyBlockedChange(e.currentTarget.checked)
+                  }
+                />
+              </Group>
+              <Select
+                label="Sort"
+                value={attentionSort || "priority"}
+                data={[
+                  { value: "priority", label: "Priority" },
+                  { value: "deadline", label: "Nearest deadline" },
+                  { value: "customer", label: "Customer" },
+                  { value: "job", label: "Job code" },
+                  { value: "assembly", label: "Assembly id" },
+                  { value: "newest", label: "Newest" },
+                  { value: "oldest", label: "Oldest" },
+                ]}
+                onChange={handleAttentionSortChange}
+                size="xs"
+                w={200}
+              />
+            </Group>
             {selectedAtRisk.size > 0 ? (
               <Group justify="space-between" mb="sm">
                 <Text size="sm">
@@ -1054,9 +1176,12 @@ export default function ProductionDashboardRoute() {
                     variant="light"
                     onClick={() =>
                       openBatchSendFromAtRisk(
-                        atRiskRows.filter((row) =>
-                          selectedAtRisk.has(row.id)
-                        )
+                        atRiskRows
+                          .filter((row) =>
+                            selectedAtRisk.has(row.attention.assemblyId)
+                          )
+                          .map((row) => row.assembly)
+                          .filter(Boolean)
                       )
                     }
                   >
@@ -1069,7 +1194,11 @@ export default function ProductionDashboardRoute() {
                       openBatchModal({
                         mode: "receive",
                         rows: atRiskRows
-                          .filter((row) => selectedAtRisk.has(row.id))
+                          .filter((row) =>
+                            selectedAtRisk.has(row.attention.assemblyId)
+                          )
+                          .map((row) => row.assembly)
+                          .filter(Boolean)
                           .map((row) => {
                             const step = (row.externalSteps || []).find(
                               (s) => s.status === "IN_PROGRESS"
@@ -1130,7 +1259,9 @@ export default function ProductionDashboardRoute() {
                       onChange={(e) => {
                         if (e.currentTarget.checked) {
                           setSelectedAtRisk(
-                            new Set(atRiskRows.map((row) => row.id))
+                            new Set(
+                              atRiskRows.map((row) => row.attention.assemblyId)
+                            )
                           );
                         } else {
                           setSelectedAtRisk(new Set());
@@ -1140,7 +1271,8 @@ export default function ProductionDashboardRoute() {
                   </Table.Th>
                   <Table.Th>Assembly</Table.Th>
                   <Table.Th>Job</Table.Th>
-                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Work</Table.Th>
+                  <Table.Th>Signals</Table.Th>
                   <Table.Th>External step</Table.Th>
                   <Table.Th>External ETA</Table.Th>
                   <Table.Th>Supply</Table.Th>
@@ -1152,29 +1284,60 @@ export default function ProductionDashboardRoute() {
               </Table.Thead>
               <Table.Tbody>
                 {atRiskRows.map((row) => {
+                  const assembly = row.assembly;
+                  if (!assembly) return null;
                   const supplySummary =
-                    supplySummaryByAssembly.get(row.id) ?? emptySupplySummary();
+                    supplySummaryByAssembly.get(assembly.id) ??
+                    emptySupplySummary();
                   const supplyChips = buildSupplyChips(supplySummary, {
                     showCounts: true,
                   });
-                  const nextSendStep = (row.externalSteps || []).find(
+                  const nextSendStep = (assembly.externalSteps || []).find(
                     (step) => step.expected && step.status === "NOT_STARTED"
                   );
-                  const nextReceiveStep = (row.externalSteps || []).find(
+                  const nextReceiveStep = (assembly.externalSteps || []).find(
                     (step) => step.status === "IN_PROGRESS"
                   );
-                  const isSelected = selectedAtRisk.has(row.id);
+                  const dateValue =
+                    row.attention.dropDeadDate ||
+                    row.attention.customerTargetDate ||
+                    row.attention.internalTargetDate ||
+                    null;
+                  const dateSource = row.attention.dropDeadDate
+                    ? row.attention.dropDeadSource
+                    : row.attention.customerTargetDate
+                      ? row.attention.customerTargetSource
+                      : row.attention.internalTargetDate
+                        ? row.attention.internalTargetSource
+                        : "NONE";
+                  const jobDateValue = row.attention.dropDeadDate
+                    ? row.attention.dropDeadJobValue
+                    : row.attention.customerTargetDate
+                      ? row.attention.customerTargetJobValue
+                      : row.attention.internalTargetDate
+                        ? row.attention.internalTargetJobValue
+                        : null;
+                  const dateTooltip =
+                    dateSource === "OVERRIDE"
+                      ? `Pinned. Effective: ${formatDate(dateValue)} · Job: ${formatDate(jobDateValue)}`
+                      : dateSource === "DERIVED"
+                        ? "Derived internal target date"
+                        : "";
+                  const isSelected = selectedAtRisk.has(
+                    row.attention.assemblyId
+                  );
                   return (
-                    <Table.Tr key={row.id}>
+                    <Table.Tr key={row.attention.assemblyId}>
                     <Table.Td>
                       <Checkbox
-                        aria-label={`Select A${row.id}`}
+                        aria-label={`Select A${row.attention.assemblyId}`}
                         checked={isSelected}
                         onChange={(e) => {
                           setSelectedAtRisk((prev) => {
                             const next = new Set(prev);
-                            if (e.currentTarget.checked) next.add(row.id);
-                            else next.delete(row.id);
+                            if (e.currentTarget.checked)
+                              next.add(row.attention.assemblyId);
+                            else next.delete(row.attention.assemblyId);
                             return next;
                           });
                         }}
@@ -1182,38 +1345,70 @@ export default function ProductionDashboardRoute() {
                     </Table.Td>
                     <Table.Td>
                       <Stack gap={0}>
-                        {row.job ? (
-                          <Link to={`/jobs/${row.job.id}/assembly/${row.id}`}>
-                            A{row.id}
+                        {row.attention.jobId ? (
+                          <Link
+                            to={`/jobs/${row.attention.jobId}/assembly/${row.attention.assemblyId}`}
+                          >
+                            A{row.attention.assemblyId}
                           </Link>
                         ) : (
-                          <Text fw={600}>A{row.id}</Text>
+                          <Text fw={600}>A{row.attention.assemblyId}</Text>
                         )}
                         <Text size="xs" c="dimmed">
-                          {row.name || row.productName || "—"}
+                          {row.attention.assemblyName ||
+                            row.attention.productName ||
+                            "—"}
                         </Text>
                       </Stack>
                     </Table.Td>
                     <Table.Td>
                       <Stack gap={0}>
-                        {row.job ? (
-                          <Link to={`/jobs/${row.job.id}`}>
-                            {formatJobLabel(row.job)}
+                        {assembly.job ? (
+                          <Link to={`/jobs/${assembly.job.id}`}>
+                            {formatJobLabel(assembly.job)}
                           </Link>
                         ) : (
                           "—"
                         )}
                         <Text size="xs" c="dimmed">
-                          {row.job?.customerName || "—"}
+                          {row.attention.customerName || "—"}
                         </Text>
                       </Stack>
                     </Table.Td>
-                    <Table.Td>{row.status || "—"}</Table.Td>
+                    <Table.Td>
+                      <Stack gap={2}>
+                        <Text size="xs">
+                          Net {formatQuantity(row.attention.effectiveOrderedTotal)}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          Cut {formatQuantity(row.attention.cutTotal)} · Finish{" "}
+                          {formatQuantity(row.attention.finishTotal)} · Pack{" "}
+                          {formatQuantity(row.attention.packTotal)}
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs" wrap="wrap">
+                        {collapseAttentionSignals(
+                          row.attention.attentionSignals,
+                          4
+                        ).map((signal) => (
+                          <Tooltip
+                            key={`${row.attention.assemblyId}-${signal.key}`}
+                            label={signal.tooltip}
+                            disabled={!signal.tooltip}
+                            multiline
+                          >
+                            <AxisChip tone={signal.tone}>{signal.label}</AxisChip>
+                          </Tooltip>
+                        ))}
+                      </Group>
+                    </Table.Td>
                     <Table.Td>
                       <Stack gap={4}>
-                        {renderExternalStatus(row.risk)}
+                        {renderExternalStatus(assembly.risk)}
                         <Text size="xs" c="dimmed">
-                          {row.risk.externalEtaStepLabel || "—"}
+                          {assembly.risk.externalEtaStepLabel || "—"}
                         </Text>
                         {(nextSendStep || nextReceiveStep) ? (
                           <Group gap="xs">
@@ -1227,20 +1422,20 @@ export default function ProductionDashboardRoute() {
                                     vendorId: nextSendStep.vendor?.id ?? null,
                                     rows: [
                                       {
-                                        key: `asm-${row.id}`,
-                                        assemblyId: row.id,
-                                        assemblyLabel: `A${row.id}`,
+                                        key: `asm-${assembly.id}`,
+                                        assemblyId: assembly.id,
+                                        assemblyLabel: `A${assembly.id}`,
                                         stepType: nextSendStep.type,
                                         stepLabel: nextSendStep.label,
                                         qty: Number(
-                                          row.rollup?.sewnAvailableQty ?? 0
+                                          assembly.rollup?.sewnAvailableQty ?? 0
                                         ) || 0,
                                         qtyDefault: Number(
-                                          row.rollup?.sewnAvailableQty ?? 0
+                                          assembly.rollup?.sewnAvailableQty ?? 0
                                         ) || 0,
                                         expectedTypes: [nextSendStep.type],
                                         sewMissing:
-                                          (Number(row.rollup?.sewGoodQty ?? 0) ||
+                                          (Number(assembly.rollup?.sewGoodQty ?? 0) ||
                                             0) <= 0,
                                       },
                                     ],
@@ -1260,9 +1455,9 @@ export default function ProductionDashboardRoute() {
                                     vendorId: nextReceiveStep.vendor?.id ?? null,
                                     rows: [
                                       {
-                                        key: `asm-${row.id}-${nextReceiveStep.type}`,
-                                        assemblyId: row.id,
-                                        assemblyLabel: `A${row.id}`,
+                                        key: `asm-${assembly.id}-${nextReceiveStep.type}`,
+                                        assemblyId: assembly.id,
+                                        assemblyLabel: `A${assembly.id}`,
                                         stepType: nextReceiveStep.type,
                                         stepLabel: nextReceiveStep.label,
                                         qty: Math.max(
@@ -1290,8 +1485,8 @@ export default function ProductionDashboardRoute() {
                       </Stack>
                     </Table.Td>
                     <Table.Td>
-                      {row.risk.externalEta
-                        ? formatDate(row.risk.externalEta)
+                      {assembly.risk.externalEta
+                        ? formatDate(assembly.risk.externalEta)
                         : "—"}
                     </Table.Td>
                     <Table.Td>
@@ -1309,7 +1504,7 @@ export default function ProductionDashboardRoute() {
                                   variant={chip.variant}
                                   size="sm"
                                   style={{ cursor: "pointer" }}
-                                  onClick={() => setPoHoldFocus(row)}
+                                  onClick={() => setPoHoldFocus(assembly)}
                                 >
                                   {chip.label}
                                 </Badge>
@@ -1320,7 +1515,7 @@ export default function ProductionDashboardRoute() {
                                 <ActionIcon
                                   size="sm"
                                   variant="light"
-                                  onClick={() => handleOpenDebug(row)}
+                                  onClick={() => handleOpenDebug(assembly)}
                                 >
                                   <IconBug size={16} />
                                 </ActionIcon>
@@ -1335,7 +1530,7 @@ export default function ProductionDashboardRoute() {
                                 <ActionIcon
                                   size="sm"
                                   variant="light"
-                                  onClick={() => handleOpenDebug(row)}
+                                  onClick={() => handleOpenDebug(assembly)}
                                 >
                                   <IconBug size={16} />
                                 </ActionIcon>
@@ -1344,46 +1539,59 @@ export default function ProductionDashboardRoute() {
                           </Group>
                         )}
                         {supplySummary.poHoldCount > 0 &&
-                        row.risk.poHoldReason ? (
+                        assembly.risk.poHoldReason ? (
                           <Text size="xs" c="dimmed">
-                            {row.risk.poHoldReason}
+                            {assembly.risk.poHoldReason}
                           </Text>
                         ) : null}
                       </Stack>
                     </Table.Td>
                     <Table.Td>
-                      {row.risk.poBlockingEta
-                        ? formatDate(row.risk.poBlockingEta)
+                      {assembly.risk.poBlockingEta
+                        ? formatDate(assembly.risk.poBlockingEta)
                         : "—"}
                     </Table.Td>
                     <Table.Td>
-                      {formatDate(row.job?.targetDate || row.job?.dropDeadDate)}
+                      <Group gap={6} wrap="nowrap">
+                        <Text size="sm">{formatDate(dateValue)}</Text>
+                        <OverrideIndicator
+                          isOverridden={dateSource === "OVERRIDE"}
+                          tooltip={dateTooltip}
+                        />
+                        {dateSource === "DERIVED" ? (
+                          <Tooltip label="Derived internal target date" withArrow>
+                            <Text size="xs" c="dimmed">
+                              Derived
+                            </Text>
+                          </Tooltip>
+                        ) : null}
+                      </Group>
                     </Table.Td>
                     <Table.Td>
-                      {formatQuantity(row.rollup?.readyToPackQty ?? 0)}
+                      {formatQuantity(assembly.rollup?.readyToPackQty ?? 0)}
                     </Table.Td>
                     <Table.Td>
                       <Button
                         size="xs"
                         variant="light"
-                        onClick={() => setPoHoldFocus(row)}
+                        onClick={() => setPoHoldFocus(assembly)}
                       >
                         Details
                       </Button>
-                      {row.materialCoverage?.materials?.length ? (
+                      {assembly.materialCoverage?.materials?.length ? (
                         <Button
                           size="xs"
                           variant="subtle"
                           ml="xs"
                           onClick={() => {
                             const mat =
-                              row.materialCoverage?.materials.find(
+                              assembly.materialCoverage?.materials.find(
                                 (m) => (m.qtyUncovered ?? 0) > 0
                               ) ||
-                              row.materialCoverage?.materials[0];
+                              assembly.materialCoverage?.materials[0];
                             if (mat) {
                               setAssignTarget({
-                                assembly: row,
+                                assembly,
                                 productId: mat.productId,
                                 productName: mat.productName,
                                 uncovered: mat.qtyUncovered ?? 0,
@@ -1402,7 +1610,7 @@ export default function ProductionDashboardRoute() {
             </Table>
             {!atRiskRows.length ? (
               <Group justify="center" py="md">
-                <Text c="dimmed">No assemblies ready for display.</Text>
+                <Text c="dimmed">No assemblies match these filters.</Text>
               </Group>
             ) : null}
           </Card>
@@ -2459,4 +2667,50 @@ function stepTime(value: string | null) {
   if (!value) return Number.POSITIVE_INFINITY;
   const t = new Date(value).getTime();
   return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+}
+
+function parseAttentionSort(value: string | null): ProductionAttentionSort {
+  switch ((value || "").toLowerCase()) {
+    case "deadline":
+      return "deadline";
+    case "customer":
+      return "customer";
+    case "job":
+      return "job";
+    case "assembly":
+      return "assembly";
+    case "newest":
+      return "newest";
+    case "oldest":
+      return "oldest";
+    default:
+      return "priority";
+  }
+}
+
+function parseAttentionFilters(
+  params: URLSearchParams
+): ProductionAttentionFilters {
+  return {
+    includeHeld: params.get("includeHeld") !== "0",
+    onlyNotStarted: params.get("onlyNotStarted") === "1",
+    onlyDueSoon: params.get("onlyDueSoon") === "1",
+    onlyBlocked: params.get("onlyBlocked") === "1",
+  };
+}
+
+function collapseAttentionSignals(
+  signals: ProductionAttentionRow["attentionSignals"],
+  maxVisible: number
+): ProductionAttentionRow["attentionSignals"] {
+  if (signals.length <= maxVisible) return signals;
+  const visible = signals.slice(0, maxVisible);
+  const hidden = signals.slice(maxVisible);
+  visible.push({
+    key: `overflow-${hidden.length}`,
+    tone: "neutral",
+    label: `+${hidden.length}`,
+    tooltip: hidden.map((signal) => signal.label).join(" · "),
+  });
+  return visible;
 }

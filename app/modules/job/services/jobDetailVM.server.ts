@@ -1,14 +1,22 @@
 import { json, redirect } from "@remix-run/node";
 import type { Params } from "@remix-run/react";
 import type { JobDetailVM } from "~/modules/job/types/jobDetailVM";
+import { prisma } from "~/utils/prisma.server";
 import {
   getActivityCountsByAssembly,
   getAssemblyTypes,
+  getCancelActivitiesByAssembly,
   getCustomers,
   getJobWithAssembliesCompanyGroups,
   getProductChoices,
   getProductsForAssemblies,
 } from "./jobDetailQueries.server";
+import { coerceBreakdown, sumBreakdownArrays } from "~/modules/job/quantityUtils";
+import {
+  loadDefaultInternalTargetLeadDays,
+  resolveAssemblyTargets,
+} from "~/modules/job/services/targetOverrides.server";
+import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
 
 export async function loadJobDetailVM(opts: { params: Params }) {
   const id = Number(opts.params.id);
@@ -28,6 +36,24 @@ export async function loadJobDetailVM(opts: { params: Params }) {
       activityCounts[asmId] = (r as any)._count.assemblyId;
     }
   }
+  if (asmIds.length) {
+    const cancelActs = await getCancelActivitiesByAssembly({ assemblyIds: asmIds });
+    const canceledByAssembly = new Map<number, number[]>();
+    for (const act of cancelActs) {
+      const asmId = Number((act as any).assemblyId || 0);
+      if (!asmId) continue;
+      const current = canceledByAssembly.get(asmId) || [];
+      const next = sumBreakdownArrays([
+        current,
+        coerceBreakdown(act.qtyBreakdown as any, act.quantity as any),
+      ]);
+      canceledByAssembly.set(asmId, next);
+    }
+    for (const asm of job.assemblies || []) {
+      (asm as any).c_canceled_Breakdown =
+        canceledByAssembly.get((asm as any).id) || [];
+    }
+  }
 
   const productIds = Array.from(
     new Set((job.assemblies || []).map((a: any) => a.productId).filter(Boolean))
@@ -41,6 +67,51 @@ export async function loadJobDetailVM(opts: { params: Params }) {
   const productChoices = await getProductChoices();
   const groupsById: Record<number, any> = Object.fromEntries(
     (job.assemblyGroups || []).map((g: any) => [g.id, g])
+  );
+  const locations = await prisma.location.findMany({
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  const shipToAddresses = job.companyId
+    ? await getCompanyAddressOptions(job.companyId)
+    : [];
+  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+
+  const jobTargets = resolveAssemblyTargets({
+    job: {
+      createdAt: job.createdAt,
+      internalTargetDate: job.internalTargetDate,
+      customerTargetDate: job.customerTargetDate,
+      dropDeadDate: job.dropDeadDate,
+      shipToLocation: job.shipToLocation ?? null,
+      shipToAddress: job.shipToAddress ?? null,
+    },
+    assembly: null,
+    defaultLeadDays,
+  });
+
+  const assemblyTargetsById: Record<number, any> = Object.fromEntries(
+    (job.assemblies || []).map((assembly: any) => {
+      const resolved = resolveAssemblyTargets({
+        job: {
+          createdAt: job.createdAt,
+          internalTargetDate: job.internalTargetDate,
+          customerTargetDate: job.customerTargetDate,
+          dropDeadDate: job.dropDeadDate,
+          shipToLocation: job.shipToLocation ?? null,
+          shipToAddress: job.shipToAddress ?? null,
+        },
+        assembly: {
+          internalTargetDateOverride: assembly.internalTargetDateOverride,
+          customerTargetDateOverride: assembly.customerTargetDateOverride,
+          dropDeadDateOverride: assembly.dropDeadDateOverride,
+          shipToLocationOverride: assembly.shipToLocationOverride ?? null,
+          shipToAddressOverride: assembly.shipToAddressOverride ?? null,
+        },
+        defaultLeadDays,
+      });
+      return [assembly.id, resolved];
+    })
   );
 
   console.log("[jobs.$id] Loader assemblies data", {
@@ -63,8 +134,12 @@ export async function loadJobDetailVM(opts: { params: Params }) {
     productChoices,
     groupsById,
     activityCounts,
+    locations,
+    shipToAddresses,
+    defaultLeadDays,
+    jobTargets,
+    assemblyTargetsById,
   };
 
   return json(vm as any);
 }
-

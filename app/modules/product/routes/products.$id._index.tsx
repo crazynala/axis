@@ -22,7 +22,8 @@ import {
   Tooltip,
   Text as MantineText,
 } from "@mantine/core";
-import { IconBug, IconMenu2 } from "@tabler/icons-react";
+import { modals } from "@mantine/modals";
+import { IconBug, IconMenu2, IconTrash } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import {
@@ -57,6 +58,7 @@ import {
   useProductFindify,
 } from "~/modules/product/findify/productFindify";
 import { ProductDetailForm } from "../components/ProductDetailForm";
+import { CreateCmtFromBomHelper } from "../components/CreateCmtFromBomHelper";
 
 import { ProductFindManager } from "../components/ProductFindManager";
 import {
@@ -80,6 +82,19 @@ const fmtDate = (value: string | Date | null | undefined) => {
     day: "numeric",
     year: "numeric",
   });
+};
+
+type BomDraftRow = {
+  id?: number;
+  tempId?: string;
+  childId?: number | null;
+  childSku?: string | null;
+  childName?: string | null;
+  childType?: string | null;
+  supplierName?: string | null;
+  quantity?: number | null;
+  activityUsed?: string | null;
+  deleted?: boolean;
 };
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
@@ -129,6 +144,8 @@ export default function ProductDetailRoute() {
   usePersistIndexSearch("/products");
   const {
     product,
+    metadataDefinitions,
+    metadataValuesByKey,
     stockByLocation,
     stockByBatch,
     productChoices,
@@ -138,6 +155,11 @@ export default function ProductDetailRoute() {
     salePriceGroups,
     usedInProducts,
     costingAssemblies,
+    hasCmtLine,
+    pricingSpecOptions,
+    categoryLabel,
+    subCategoryLabel,
+    subCategoryOptions,
     shipmentLines,
     userLevel,
     canDebug,
@@ -152,6 +174,16 @@ export default function ProductDetailRoute() {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  useEffect(() => {
+    if (!actionData || typeof actionData !== "object") return;
+    const error = (actionData as any).error;
+    if (!error) return;
+    notifications.show({
+      color: "red",
+      title: "Save failed",
+      message: String(error),
+    });
+  }, [actionData]);
   const debugFetcher = useFetcher();
   const [debugOpen, setDebugOpen] = useState(false);
   // Sync RecordContext currentId for global navigation consistency
@@ -164,13 +196,17 @@ export default function ProductDetailRoute() {
   const submit = useSubmit();
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
-  const { editForm, buildUpdatePayload } = useProductFindify(product, nav);
+  const { editForm, buildUpdatePayload } = useProductFindify(
+    product,
+    nav,
+    metadataDefinitions
+  );
   useEffect(() => {
-    editForm.reset(buildProductEditDefaults(product), {
+    editForm.reset(buildProductEditDefaults(product, metadataDefinitions), {
       keepDirty: false,
       keepDefaultValues: false,
     });
-  }, [product]);
+  }, [product, metadataDefinitions]);
 
   console.log("!! form values:", editForm.getValues());
   console.log(
@@ -183,19 +219,115 @@ export default function ProductDetailRoute() {
   // Find modal is handled via ProductFindManager now (no inline find toggle)
 
   // Only wire header Save/Cancel to the real edit form
+  const [bomDraftRows, setBomDraftRows] = useState<BomDraftRow[]>([]);
+  const resetBomDraftRows = useCallback(() => {
+    const nextRows =
+      (product.productLines || []).map((pl: any) => ({
+        id: pl.id,
+        childId: pl.childId ?? pl.child?.id ?? null,
+        childSku: pl.child?.sku ?? null,
+        childName: pl.child?.name ?? null,
+        childType: pl.child?.type ?? null,
+        supplierName: pl.child?.supplier?.name ?? null,
+        quantity: pl.quantity ?? null,
+        activityUsed: pl.activityUsed ?? null,
+        deleted: false,
+      })) || [];
+    setBomDraftRows(nextRows);
+  }, [product.productLines]);
+  useEffect(() => {
+    resetBomDraftRows();
+  }, [product.id, resetBomDraftRows]);
+
+  const visibleBomRows = useMemo(
+    () => bomDraftRows.filter((row) => !row.deleted),
+    [bomDraftRows]
+  );
+
+  const buildBomBatchFromDraft = useCallback(() => {
+    const originalById = new Map<number, any>(
+      (product.productLines || []).map((pl: any) => [Number(pl.id), pl])
+    );
+    const creates: Array<{
+      childSku: string;
+      quantity?: number;
+      activityUsed?: string | null;
+    }> = [];
+    const updates: Array<{
+      id: number;
+      quantity?: number;
+      activityUsed?: string | null;
+    }> = [];
+    const deletes: number[] = [];
+
+    for (const row of bomDraftRows) {
+      if (row.deleted) {
+        if (row.id != null) deletes.push(Number(row.id));
+        continue;
+      }
+      if (row.id != null) {
+        const original = originalById.get(Number(row.id));
+        if (!original) continue;
+        const nextQty = Number(row.quantity ?? 0) || 0;
+        const prevQty = Number(original.quantity ?? 0) || 0;
+        const nextActivity = (row.activityUsed || "").trim() || null;
+        const prevActivity = (original.activityUsed || "").trim() || null;
+        if (nextQty !== prevQty || nextActivity !== prevActivity) {
+          updates.push({
+            id: Number(row.id),
+            quantity: nextQty,
+            activityUsed: nextActivity,
+          });
+        }
+        continue;
+      }
+      const childSku = (row.childSku || "").trim();
+      if (!childSku) continue;
+      creates.push({
+        childSku,
+        quantity: Number(row.quantity ?? 0) || 0,
+        activityUsed: (row.activityUsed || "").trim() || null,
+      });
+    }
+
+    return { creates, updates, deletes };
+  }, [bomDraftRows, product.productLines]);
+
   const saveUpdate = useCallback(
     (values: any) => {
       const updatePayload = buildUpdatePayload(values);
+      const bomBatch = buildBomBatchFromDraft();
+      if (
+        bomBatch.creates.length ||
+        bomBatch.updates.length ||
+        bomBatch.deletes.length
+      ) {
+        updatePayload.set("bomCreates", JSON.stringify(bomBatch.creates));
+        updatePayload.set("bomUpdates", JSON.stringify(bomBatch.updates));
+        updatePayload.set("bomDeletes", JSON.stringify(bomBatch.deletes));
+      }
       console.log("Saving with payload", updatePayload);
       submit(updatePayload, { method: "post" });
     },
-    [buildUpdatePayload, submit]
+    [buildUpdatePayload, buildBomBatchFromDraft, submit]
   );
   // Defer initialization to avoid HMR race where provider isn't ready yet
   // useInitGlobalFormContext(editForm as any, saveUpdate, () => editForm.reset());
 
   const [pickerOpen, setPickerOpen] = useState(false);
   // BOM spreadsheet modal removed (now a dedicated full-page route)
+
+  const handleBomDelete = useCallback((line: BomDraftRow) => {
+    setBomDraftRows((rows) => {
+      if (line.id == null) {
+        return rows.filter((r) => r.tempId !== line.tempId);
+      }
+      return rows.map((r) =>
+        r.id === line.id ? { ...r, deleted: true } : r
+      );
+    });
+    editForm.setValue("bomDirty", String(Date.now()), { shouldDirty: true });
+  }, [editForm]);
   const [pickerSearch, setPickerSearch] = useState("");
   const [assemblyItemOnly, setAssemblyItemOnly] = useState(false);
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
@@ -843,7 +975,7 @@ export default function ProductDetailRoute() {
           )}
         </Group>
       </div>
-      <ProductFindManager />
+      <ProductFindManager metadataDefinitions={metadataDefinitions} />
       <DebugDrawer
         opened={debugOpen}
         onClose={() => setDebugOpen(false)}
@@ -853,11 +985,25 @@ export default function ProductDetailRoute() {
       />
       <Form id="product-form" method="post">
         {/* Isolate global form init into a dedicated child to reduce HMR churn */}
-        <GlobalFormInit form={editForm as any} onSave={saveUpdate} />
+        <DeferredGlobalFormInit
+          form={editForm as any}
+          onSave={saveUpdate}
+          onReset={() => {
+            editForm.reset(
+              buildProductEditDefaults(product, metadataDefinitions),
+              {
+                keepDirty: false,
+                keepDefaultValues: false,
+              }
+            );
+            resetBomDraftRows();
+          }}
+        />
         <ProductDetailForm
           mode={"edit" as any}
           form={editForm as any}
           product={product}
+          metadataDefinitions={metadataDefinitions}
           validation={validation}
           onRegisterMissingFocus={setFocusMissingRequired}
           requiredIndicatorMode={requiredIndicatorMode}
@@ -886,7 +1032,19 @@ export default function ProductDetailRoute() {
               </Button>
             </Group>
           </Card.Section>
-          {product.productLines.length > 0 && (
+          <CreateCmtFromBomHelper
+            parentProductId={product.id}
+            parentType={product.type}
+            parentCategoryId={product.categoryId ?? null}
+            parentSubCategoryId={product.subCategoryId ?? null}
+            categoryLabel={categoryLabel}
+            subCategoryLabel={subCategoryLabel}
+            hasCmtLine={Boolean(hasCmtLine)}
+            pricingSpecOptions={pricingSpecOptions || []}
+            subCategoryOptions={subCategoryOptions || []}
+            onSuccess={() => revalidate()}
+          />
+          {visibleBomRows.length > 0 && (
             <Table striped withTableBorder withColumnBorders highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -897,26 +1055,61 @@ export default function ProductDetailRoute() {
                   <Table.Th>Type</Table.Th>
                   <Table.Th>Supplier</Table.Th>
                   <Table.Th>Qty</Table.Th>
+                  <Table.Th></Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {product.productLines.map((pl: any) => (
-                  <Table.Tr key={pl.id}>
-                    <Table.Td>{pl.id}</Table.Td>
-                    <Table.Td>{pl.child?.sku || ""}</Table.Td>
+                {visibleBomRows.map((row) => (
+                  <Table.Tr key={row.id ?? row.tempId}>
+                    <Table.Td>{row.id ?? "new"}</Table.Td>
+                    <Table.Td>{row.childSku || ""}</Table.Td>
                     <Table.Td>
-                      {pl.child ? (
-                        <Link to={`/products/${pl.child.id}`}>
-                          {pl.child.name || pl.child.id}
+                      {row.childId ? (
+                        <Link to={`/products/${row.childId}`}>
+                          {row.childName || row.childId}
                         </Link>
                       ) : (
-                        pl.childId
+                        row.childId || ""
                       )}
                     </Table.Td>
-                    <Table.Td>{pl.activityUsed || ""}</Table.Td>
-                    <Table.Td>{pl.child?.type || ""}</Table.Td>
-                    <Table.Td>{pl.child?.supplier?.name || ""}</Table.Td>
-                    <Table.Td>{pl.quantity}</Table.Td>
+                    <Table.Td>{row.activityUsed || ""}</Table.Td>
+                    <Table.Td>{row.childType || ""}</Table.Td>
+                    <Table.Td>{row.supplierName || ""}</Table.Td>
+                    <Table.Td>{row.quantity}</Table.Td>
+                    <Table.Td>
+                      <Menu withinPortal position="bottom-end" shadow="md">
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="subtle"
+                            size="sm"
+                            aria-label="BOM actions"
+                          >
+                            <IconMenu2 size={16} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            leftSection={<IconTrash size={14} />}
+                            color="red"
+                            onClick={() => {
+                              modals.openConfirmModal({
+                                title: "Remove BOM line?",
+                                children: (
+                                  <Text size="sm">
+                                    This will remove the line from the BOM.
+                                  </Text>
+                                ),
+                                labels: { confirm: "OK", cancel: "Cancel" },
+                                confirmProps: { color: "red" },
+                                onConfirm: () => handleBomDelete(row),
+                              });
+                            }}
+                          >
+                            Delete
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    </Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -1804,10 +1997,22 @@ export default function ProductDetailRoute() {
         assemblyItemOnly={assemblyItemOnly}
         onAssemblyItemOnlyChange={setAssemblyItemOnly}
         onSelect={(p) => {
-          const fd = new FormData();
-          fd.set("_intent", "product.addComponent");
-          fd.set("childId", String(p.id));
-          submit(fd, { method: "post" });
+          const tempId = `tmp-${Date.now()}-${p.id}`;
+          setBomDraftRows((rows) => [
+            ...rows,
+            {
+              tempId,
+              childId: p.id,
+              childSku: p.sku,
+              childName: p.name ?? null,
+              childType: p.type ?? null,
+              supplierName: p.supplierName ?? null,
+              quantity: 1,
+              activityUsed: null,
+              deleted: false,
+            },
+          ]);
+          editForm.setValue("bomDirty", String(Date.now()), { shouldDirty: true });
           setPickerOpen(false);
         }}
       />

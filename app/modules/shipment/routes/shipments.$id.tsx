@@ -6,6 +6,7 @@ import type {
 import { json, redirect } from "@remix-run/node";
 import {
   Outlet,
+  useActionData,
   useFetcher,
   useMatches,
   useRouteLoaderData,
@@ -33,12 +34,23 @@ import {
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm, useWatch } from "react-hook-form";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { ShipmentDetailForm } from "../forms/ShipmentDetailForm";
 import { AttachBoxesModal } from "../components/AttachBoxesModal";
 import { resolveVariantSourceFromLine } from "../../../utils/variantBreakdown";
+import { formatAddressLines } from "~/utils/addressFormat";
+import {
+  assertAddressAllowedForShipment,
+  getCompanyAddressOptions,
+  getContactAddressOptions,
+} from "~/utils/addressOwnership.server";
 
 const ALLOWED_BOX_STATES = new Set(["open", "sealed"]);
+const LOCKED_SHIPMENT_STATUSES = new Set(["COMPLETE", "CANCELED"]);
+
+function isShipmentLocked(status: string | null | undefined) {
+  return status != null && LOCKED_SHIPMENT_STATUSES.has(status);
+}
 
 function buildShipmentLineKey(
   jobId: number | null,
@@ -93,6 +105,93 @@ function parseBoxIdList(value: FormDataEntryValue | null): number[] {
   } catch {
     return [];
   }
+}
+
+async function buildShipmentAddressSnapshot(addressId: number | null) {
+  if (addressId == null) {
+    return {
+      addressIdShip: null,
+      addressName: null,
+      addressCountry: null,
+      addressCountyState: null,
+      addressLine1: null,
+      addressLine2: null,
+      addressLine3: null,
+      addressTownCity: null,
+      addressZipPostCode: null,
+    };
+  }
+  const address = await prisma.address.findUnique({
+    where: { id: addressId },
+    select: {
+      id: true,
+      name: true,
+      addressCountry: true,
+      addressCountyState: true,
+      addressLine1: true,
+      addressLine2: true,
+      addressLine3: true,
+      addressTownCity: true,
+      addressZipPostCode: true,
+    },
+  });
+  if (!address) {
+    return {
+      addressIdShip: null,
+      addressName: null,
+      addressCountry: null,
+      addressCountyState: null,
+      addressLine1: null,
+      addressLine2: null,
+      addressLine3: null,
+      addressTownCity: null,
+      addressZipPostCode: null,
+    };
+  }
+  return {
+    addressIdShip: address.id,
+    addressName: address.name ?? null,
+    addressCountry: address.addressCountry ?? null,
+    addressCountyState: address.addressCountyState ?? null,
+    addressLine1: address.addressLine1 ?? null,
+    addressLine2: address.addressLine2 ?? null,
+    addressLine3: address.addressLine3 ?? null,
+    addressTownCity: address.addressTownCity ?? null,
+    addressZipPostCode: address.addressZipPostCode ?? null,
+  };
+}
+
+function buildAddressOptionLabel(address: {
+  id: number;
+  name: string | null;
+  addressLine1: string | null;
+  addressTownCity: string | null;
+  addressCountyState: string | null;
+  addressZipPostCode: string | null;
+  addressCountry?: string | null;
+}) {
+  const lines = formatAddressLines(address);
+  const base = lines[0] || address.addressLine1 || `Address ${address.id}`;
+  const tail = lines.slice(1).join(", ");
+  return tail ? `${base} — ${tail}` : base;
+}
+
+async function loadShipToAddressOptions(args: {
+  companyIdReceiver: number | null;
+  contactIdReceiver: number | null;
+}) {
+  const companyId = args.companyIdReceiver;
+  const contactId = args.contactIdReceiver;
+  if (!companyId && !contactId) return [];
+  const [companyAddresses, contactAddresses] = await Promise.all([
+    companyId ? getCompanyAddressOptions(companyId) : Promise.resolve([]),
+    contactId ? getContactAddressOptions(contactId) : Promise.resolve([]),
+  ]);
+  const merged = [...companyAddresses, ...contactAddresses];
+  return merged.map((address) => ({
+    value: String(address.id),
+    label: buildAddressOptionLabel(address),
+  }));
 }
 
 type ShipmentLoaderData = NonNullable<
@@ -481,6 +580,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   console.log("Returning shipment:", shipment);
   if (!shipment) return redirect("/shipments");
+  const addressOptions = await loadShipToAddressOptions({
+    companyIdReceiver: shipment.companyIdReceiver ?? null,
+    contactIdReceiver: shipment.contactIdReceiver ?? null,
+  });
   const [attachedBoxes, availableBoxes] = await Promise.all([
     prisma.box.findMany({
       where: { shipmentId: shipment.id },
@@ -578,7 +681,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
         })
       : [],
   ]);
-  return json({ shipment, attachedBoxes, availableBoxes });
+  return json({ shipment, attachedBoxes, availableBoxes, addressOptions });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -587,6 +690,79 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const id = !isNew && idRaw ? Number(idRaw) : NaN;
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const lockIntents = new Set([
+    "box.addLine",
+    "box.updateLine",
+    "shipment.update",
+    "shipment.attachBoxes",
+  ]);
+  let shipmentStatus: string | null | undefined;
+  let shipmentAddressId: number | null | undefined;
+  if (
+    !isNew &&
+    (lockIntents.has(intent) ||
+      intent === "shipment.markComplete" ||
+      intent === "shipment.cancel")
+  ) {
+    if (!Number.isFinite(id)) throw new Error("Shipment id required");
+    const current = await prisma.shipment.findUnique({
+      where: { id },
+      select: { status: true, addressIdShip: true },
+    });
+    if (!current) throw new Error("Shipment not found");
+    shipmentStatus = current.status;
+    shipmentAddressId = current.addressIdShip ?? null;
+    if (isShipmentLocked(shipmentStatus) && lockIntents.has(intent)) {
+      return json(
+        { error: "Shipment is locked because it is COMPLETE/CANCELED." },
+        { status: 400 }
+      );
+    }
+    if (
+      isShipmentLocked(shipmentStatus) &&
+      (intent === "shipment.markComplete" || intent === "shipment.cancel")
+    ) {
+      return json(
+        { error: "Shipment is already locked because it is COMPLETE/CANCELED." },
+        { status: 400 }
+      );
+    }
+  }
+  if (intent === "shipment.markComplete") {
+    if (!Number.isFinite(id)) throw new Error("Shipment id required");
+    if (shipmentStatus !== "DRAFT") {
+      return json(
+        { error: "Shipment must be in DRAFT status to mark complete." },
+        { status: 400 }
+      );
+    }
+    const snapshot =
+      shipmentAddressId != null
+        ? await buildShipmentAddressSnapshot(shipmentAddressId)
+        : {};
+    await prisma.shipment.update({
+      where: { id },
+      data: {
+        status: "COMPLETE",
+        ...(snapshot as any),
+      },
+    });
+    return redirect(`/shipments/${id}`);
+  }
+  if (intent === "shipment.cancel") {
+    if (!Number.isFinite(id)) throw new Error("Shipment id required");
+    if (shipmentStatus !== "DRAFT") {
+      return json(
+        { error: "Shipment must be in DRAFT status to cancel." },
+        { status: 400 }
+      );
+    }
+    await prisma.shipment.update({
+      where: { id },
+      data: { status: "CANCELED" },
+    });
+    return redirect(`/shipments/${id}`);
+  }
   if (intent === "box.addLine") {
     const boxId = Number(form.get("boxId"));
     const mode = String(form.get("mode") || "product");
@@ -743,23 +919,63 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return redirect(`/shipments/${targetId}`);
   }
   if (isNew || intent === "shipment.create") {
-    const status = "In Progress";
+    const status = "DRAFT";
     const type = (form.get("type") as string) || null;
     const shipmentType = (form.get("shipmentType") as string) || null;
     const packModeRaw = (form.get("packMode") as string) || null;
     const packMode = packModeRaw || (type === "Out" ? "box" : "line");
     const trackingNo = (form.get("trackingNo") as string) || null;
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
+    const shippingMethodRaw = form.get("shippingMethod");
+    const shippingMethod =
+      shippingMethodRaw != null && String(shippingMethodRaw).trim() !== ""
+        ? String(shippingMethodRaw)
+        : null;
     const dateRaw = form.get("date") as string | null;
     const dateReceivedRaw = form.get("dateReceived") as string | null;
     const companyIdReceiverRaw = form.get("companyIdReceiver") as string | null;
     const contactIdReceiverRaw = form.get("contactIdReceiver") as string | null;
+    const addressIdShipRaw = form.get("addressIdShip") as string | null;
     const companyIdReceiver = companyIdReceiverRaw
       ? Number(companyIdReceiverRaw)
       : null;
     const contactIdReceiver = contactIdReceiverRaw
       ? Number(contactIdReceiverRaw)
       : null;
+    const hasAddressIdShip = addressIdShipRaw != null;
+    const addressIdParsed =
+      addressIdShipRaw === null || addressIdShipRaw === ""
+        ? null
+        : Number(addressIdShipRaw);
+    const addressIdShip =
+      addressIdParsed != null && Number.isFinite(addressIdParsed) && addressIdParsed > 0
+        ? addressIdParsed
+        : null;
+    if (hasAddressIdShip && addressIdShip != null) {
+      const allowed = await assertAddressAllowedForShipment(
+        addressIdShip,
+        companyIdReceiver,
+        contactIdReceiver
+      );
+      if (!allowed) {
+        return json(
+          {
+            error:
+              "Ship-to address must belong to the receiver company or receiver contact.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+    const addressSnapshot = hasAddressIdShip
+      ? await buildShipmentAddressSnapshot(
+          Number.isFinite(addressIdShip) ? addressIdShip : null
+        )
+      : {};
+    const shippingMethodPatch =
+      form.has("shippingMethod") || (hasAddressIdShip && addressIdShip == null)
+        ? { shippingMethod }
+        : {};
     const date = dateRaw ? new Date(dateRaw) : null;
     const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
     const max = await prisma.shipment.aggregate({ _max: { id: true } });
@@ -785,26 +1001,33 @@ export async function action({ request, params }: ActionFunctionArgs) {
         dateReceived,
         locationId,
         packMode,
+        ...(shippingMethodPatch as any),
         companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
           ? (companyIdReceiver as any)
           : undefined,
         contactIdReceiver: Number.isFinite(Number(contactIdReceiver))
           ? (contactIdReceiver as any)
           : undefined,
+        ...(addressSnapshot as any),
       } as any,
     });
     return redirect(`/shipments/${created.id}`);
   }
   if (intent === "shipment.update") {
-    const status = (form.get("status") as string) || null;
     const type = (form.get("type") as string) || null;
     const packModeRaw = (form.get("packMode") as string) || null;
     const trackingNo = (form.get("trackingNo") as string) || null;
     const packingSlipCode = (form.get("packingSlipCode") as string) || null;
+    const shippingMethodRaw = form.get("shippingMethod");
+    const shippingMethod =
+      shippingMethodRaw != null && String(shippingMethodRaw).trim() !== ""
+        ? String(shippingMethodRaw)
+        : null;
     const dateRaw = form.get("date") as string | null;
     const dateReceivedRaw = form.get("dateReceived") as string | null;
     const companyIdReceiverRaw = form.get("companyIdReceiver") as string | null;
     const contactIdReceiverRaw = form.get("contactIdReceiver") as string | null;
+    const addressIdShipRaw = form.get("addressIdShip") as string | null;
     const pendingAttachBoxIds = parseBoxIdList(form.get("pendingAttachBoxIds"));
     const normalizedPackMode =
       packModeRaw === "box" ? "box" : packModeRaw === "line" ? "line" : null;
@@ -828,15 +1051,55 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const contactIdReceiver = contactIdReceiverRaw
       ? Number(contactIdReceiverRaw)
       : null;
+    const hasAddressIdShip = addressIdShipRaw != null;
+    const addressIdParsed =
+      addressIdShipRaw === null || addressIdShipRaw === ""
+        ? null
+        : Number(addressIdShipRaw);
+    const addressIdShip =
+      addressIdParsed != null && Number.isFinite(addressIdParsed) && addressIdParsed > 0
+        ? addressIdParsed
+        : null;
+    if (hasAddressIdShip && addressIdShip != null) {
+      const allowed = await assertAddressAllowedForShipment(
+        addressIdShip,
+        companyIdReceiver,
+        contactIdReceiver
+      );
+      if (!allowed) {
+        return json(
+          {
+            error:
+              "Ship-to address must belong to the receiver company or receiver contact.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+    const addressSnapshot = hasAddressIdShip
+      ? await buildShipmentAddressSnapshot(
+          Number.isFinite(addressIdShip) ? addressIdShip : null
+        )
+      : {};
+    const shippingMethodPatch =
+      form.has("shippingMethod") || (hasAddressIdShip && addressIdShip == null)
+        ? { shippingMethod }
+        : {};
     const date = dateRaw ? new Date(dateRaw) : null;
     const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
+    if (shipmentStatus !== "DRAFT") {
+      return json(
+        { error: "Shipment is locked because it is COMPLETE/CANCELED." },
+        { status: 400 }
+      );
+    }
     await prisma.shipment.update({
       where: { id },
       data: {
-        status,
         type,
         trackingNo,
         packingSlipCode,
+        ...(shippingMethodPatch as any),
         date,
         dateReceived,
         ...(packModeUpdate ? { packMode: packModeUpdate } : {}),
@@ -846,6 +1109,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         contactIdReceiver: Number.isFinite(Number(contactIdReceiver))
           ? (contactIdReceiver as any)
           : undefined,
+        ...(addressSnapshot as any),
       },
     });
     if (pendingAttachBoxIds.length) {
@@ -863,11 +1127,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export function ShipmentDetailView() {
-  const { shipment, attachedBoxes = [], availableBoxes = [] } =
+  const { shipment, attachedBoxes = [], availableBoxes = [], addressOptions } =
     useShipmentLoaderDataSafe();
+  const actionData = useActionData<typeof action>() as any;
   const isOutbound = shipment.type === "Out";
   const isBoxMode = (shipment.packMode || "line") === "box";
   const showBoxesTab = isOutbound && isBoxMode;
+  const isLocked = isShipmentLocked(shipment.status);
+  const statusLabel = shipment.status || "DRAFT";
+  const statusColor =
+    statusLabel === "COMPLETE"
+      ? "green"
+      : statusLabel === "CANCELED"
+      ? "red"
+      : "gray";
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   const lineUpdate = useSubmit();
@@ -902,6 +1175,76 @@ export function ShipmentDetailView() {
   const form = useForm({
     defaultValues: formDefaults,
   });
+  const [shipToOptions, setShipToOptions] = useState<
+    { value: string; label: string }[]
+  >(addressOptions || []);
+  const receiverCompanyId = useWatch({
+    control: form.control,
+    name: "companyIdReceiver",
+  });
+  const receiverContactId = useWatch({
+    control: form.control,
+    name: "contactIdReceiver",
+  });
+  const prevReceiverCompanyId = useRef<number | null | undefined>(
+    receiverCompanyId
+  );
+  useEffect(() => {
+    if (
+      prevReceiverCompanyId.current !== undefined &&
+      prevReceiverCompanyId.current !== receiverCompanyId
+    ) {
+      form.setValue("addressIdShip", null);
+    }
+    prevReceiverCompanyId.current = receiverCompanyId;
+  }, [receiverCompanyId, form]);
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const companyId =
+        receiverCompanyId != null ? Number(receiverCompanyId) : null;
+      const contactId =
+        receiverContactId != null ? Number(receiverContactId) : null;
+      if (!companyId && !contactId) {
+        setShipToOptions([]);
+        return;
+      }
+      const urls: string[] = [];
+      if (companyId) urls.push(`/companies/${companyId}/addresses`);
+      if (contactId) urls.push(`/contacts/${contactId}/addresses`);
+      try {
+        const responses = await Promise.all(
+          urls.map((url) => fetch(url).then((r) => r.json()))
+        );
+        if (cancelled) return;
+        const merged: Record<string, { value: string; label: string }> = {};
+        for (const payload of responses) {
+          const list = payload?.addresses || [];
+          list.forEach((addr: any) => {
+            const label = buildAddressOptionLabel({
+              id: addr.id,
+              name: addr.name ?? null,
+              addressLine1: addr.addressLine1 ?? null,
+              addressTownCity: addr.addressTownCity ?? null,
+              addressCountyState: addr.addressCountyState ?? null,
+              addressZipPostCode: addr.addressZipPostCode ?? null,
+            });
+            merged[String(addr.id)] = {
+              value: String(addr.id),
+              label,
+            };
+          });
+        }
+        setShipToOptions(Object.values(merged));
+      } catch {
+        if (!cancelled) setShipToOptions([]);
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [receiverCompanyId, receiverContactId]);
   const pendingAttachRaw =
     useWatch({ control: form.control, name: "pendingAttachBoxIds" }) || [];
   const pendingAttachBoxIds: number[] = Array.isArray(pendingAttachRaw)
@@ -939,6 +1282,7 @@ export function ShipmentDetailView() {
   useInitGlobalFormContext(
     form as any,
     (values: any) => {
+      if (isLocked) return;
       const fd = new FormData();
       fd.set("_intent", "shipment.update");
       fd.set("trackingNo", values.trackingNo || "");
@@ -952,6 +1296,8 @@ export function ShipmentDetailView() {
         fd.set("companyIdReceiver", String(values.companyIdReceiver));
       if (values.contactIdReceiver != null)
         fd.set("contactIdReceiver", String(values.contactIdReceiver));
+      if (values.addressIdShip != null)
+        fd.set("addressIdShip", String(values.addressIdShip));
       fd.set(
         "pendingAttachBoxIds",
         JSON.stringify(values.pendingAttachBoxIds || [])
@@ -1066,6 +1412,7 @@ export function ShipmentDetailView() {
     });
   }, [stagedAndSavedBoxes]);
   const handleAttachConfirm = (boxIds: number[]) => {
+    if (isLocked) return;
     if (!boxIds.length) return;
     const current: number[] = form.getValues("pendingAttachBoxIds") || [];
     const merged = Array.from(
@@ -1088,6 +1435,7 @@ export function ShipmentDetailView() {
     lineId: number,
     updates: { quantity?: number; description?: string }
   ) => {
+    if (isLocked) return;
     const fd = new FormData();
     fd.set("_intent", "box.updateLine");
     fd.set("lineId", String(lineId));
@@ -1095,9 +1443,14 @@ export function ShipmentDetailView() {
     if (updates.description != null) fd.set("description", updates.description);
     lineUpdate(fd, { method: "post" });
   };
+  const handleStatusIntent = (nextIntent: "shipment.markComplete" | "shipment.cancel") => {
+    const fd = new FormData();
+    fd.set("_intent", nextIntent);
+    submit(fd, { method: "post" });
+  };
   const canAttachBoxes = Boolean(
     showBoxesTab &&
-      shipment.status === "In Progress" &&
+      shipment.status === "DRAFT" &&
       shipment.locationId &&
       (attachableBoxes?.length ?? 0) > 0
   );
@@ -1108,6 +1461,7 @@ export function ShipmentDetailView() {
 
   return (
     <Stack>
+      {actionData?.error ? <Text c="red">{actionData.error}</Text> : null}
       <Group justify="space-between" align="center">
         <BreadcrumbSet
           breadcrumbs={[
@@ -1115,14 +1469,43 @@ export function ShipmentDetailView() {
             { label: String(shipment.id), href: `/shipments/${shipment.id}` },
           ]}
         />
-        <Group gap="xs"></Group>
+        <Group gap="xs">
+          <Badge color={statusColor} variant="light">
+            {statusLabel}
+          </Badge>
+          {!isLocked && statusLabel === "DRAFT" ? (
+            <>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => handleStatusIntent("shipment.markComplete")}
+              >
+                Mark Complete
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                color="red"
+                onClick={() => handleStatusIntent("shipment.cancel")}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : null}
+        </Group>
       </Group>
 
       <ShipmentDetailForm
         mode="edit"
         form={form as any}
         shipment={shipment}
-        fieldCtx={{ packModeLocked: hasAnyItems }}
+        fieldCtx={{
+          packModeLocked: hasAnyItems || isLocked,
+          shipmentLocked: isLocked,
+          fieldOptions: {
+            address_shipto: shipToOptions,
+          },
+        }}
       />
 
       <Tabs
@@ -1180,7 +1563,10 @@ export function ShipmentDetailView() {
             <Stack gap="md">
               <Group justify="space-between" align="center">
                 <Title order={5}>Boxes ({boxSummaries.length})</Title>
-                <Button onClick={openAttach} disabled={!canAttachBoxes}>
+                <Button
+                  onClick={openAttach}
+                  disabled={!canAttachBoxes || isLocked}
+                >
                   Attach boxes from warehouse…
                 </Button>
               </Group>
@@ -1244,6 +1630,7 @@ export function ShipmentDetailView() {
                               <Button
                                 size="xs"
                                 variant="light"
+                                disabled={isLocked}
                                 onClick={() => {
                                   setAddBoxId(box.id);
                                   openAddItem();
@@ -1256,6 +1643,7 @@ export function ShipmentDetailView() {
                                   variant="subtle"
                                   color="red"
                                   size="xs"
+                                  disabled={isLocked}
                                   onClick={() => handleRemovePendingBox(box.id)}
                                 >
                                   Remove
@@ -1347,6 +1735,7 @@ export function ShipmentDetailView() {
                                               <TextInput
                                                 type="number"
                                                 size="xs"
+                                                disabled={isLocked}
                                                 defaultValue={
                                                   line.quantity ??
                                                   sumNumberArray(
@@ -1408,6 +1797,7 @@ export function ShipmentDetailView() {
                                     <TextInput
                                       size="xs"
                                       label="Description"
+                                      disabled={isLocked}
                                       defaultValue={
                                         line.description ||
                                         line.product?.name ||
@@ -1424,6 +1814,7 @@ export function ShipmentDetailView() {
                                       type="number"
                                       size="xs"
                                       label="Quantity"
+                                      disabled={isLocked}
                                       defaultValue={
                                         line.quantity ??
                                         sumNumberArray(

@@ -8,10 +8,28 @@ import {
   useFetcher,
   useLoaderData,
   useNavigation,
+  useSearchParams,
   useSubmit,
   useRevalidator,
 } from "@remix-run/react";
-import { Badge, Button, Drawer, Group, Menu, Stack, Table, Text } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Divider,
+  Drawer,
+  Group,
+  Menu,
+  Modal,
+  SegmentedControl,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Textarea,
+} from "@mantine/core";
+import { DatePickerInput } from "@mantine/dates";
 import {
   useEffect,
   useState,
@@ -19,17 +37,26 @@ import {
   useMemo,
   useCallback,
 } from "react";
-import { BreadcrumbSet, getLogger } from "@aa/timber";
+import { BreadcrumbSet, getLogger, useInitGlobalFormContext } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
-import { normalizeAssemblyState } from "~/modules/job/stateUtils";
+import { computeEffectiveAssemblyHold } from "~/modules/job/stateUtils";
 import { useRegisterNavLocation } from "~/hooks/useNavLocation";
 import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
-import { IconBug, IconMenu2 } from "@tabler/icons-react";
+import { IconBan, IconBug, IconMenu2 } from "@tabler/icons-react";
 import { showToastError } from "~/utils/toast";
 import { loadAssemblyDetailVM } from "~/modules/job/services/assemblyDetailVM.server";
 import { handleAssemblyDetailAction } from "~/modules/job/services/assemblyDetailActions.server";
+import {
+  computeEffectiveOrderedBreakdown,
+  computeOrderedTotal,
+  sumBreakdownArrays,
+} from "~/modules/job/quantityUtils";
+import { getVariantLabels } from "~/utils/getVariantLabels";
+import { OverridableField } from "~/components/OverridableField";
+import { formatAddressLines } from "~/utils/addressFormat";
+import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -47,6 +74,7 @@ export default function JobAssemblyRoute() {
   const actionData = useActionData<typeof action>() as any;
   const assemblies = (data.assemblies || []) as any[];
   const isGroup = (assemblies?.length || 0) > 1;
+  const assemblyTargetsById = data.assemblyTargetsById || {};
 
   const job = { id: data?.job?.id as number, name: data?.job?.name ?? null };
   const log = getLogger("assembly");
@@ -64,6 +92,7 @@ export default function JobAssemblyRoute() {
   } = data as any;
 
   const nav = useNavigation();
+  const [sp] = useSearchParams();
   const submit = useSubmit();
   const acceptGapFetcher = useFetcher<{ ok?: boolean }>();
   const toleranceFetcher = useFetcher<{ ok?: boolean }>();
@@ -77,11 +106,163 @@ export default function JobAssemblyRoute() {
   } | null>(null);
   const [groupDrawerOpen, setGroupDrawerOpen] = useState(false);
   const canDebug = Boolean(data?.canDebug);
+  const primaryAssembly = assemblies?.[0] ?? null;
+  const overrideTargets = primaryAssembly
+    ? assemblyTargetsById[primaryAssembly.id]
+    : null;
+  const shipToAddresses = (data.shipToAddresses || []) as any[];
+  const shipToAddressOptions = useMemo(() => {
+    return shipToAddresses.map((addr: any) => {
+      const lines = formatAddressLines(addr);
+      const base = lines[0] || `Address ${addr.id}`;
+      const tail = lines.slice(1).join(", ");
+      return {
+        value: String(addr.id),
+        label: tail ? `${base} — ${tail}` : base,
+      };
+    });
+  }, [shipToAddresses]);
+  const shipToAddressById = useMemo(() => {
+    const map = new Map<number, any>();
+    shipToAddresses.forEach((addr: any) => map.set(addr.id, addr));
+    return map;
+  }, [shipToAddresses]);
+
+  const toDateInputValue = (value: any) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isFinite(parsed.getTime()) ? parsed : null;
+    }
+    return null;
+  };
+  const toDateInputString = (value: Date | string | null | undefined) => {
+    if (!value) return "";
+    if (value instanceof Date) {
+      return Number.isFinite(value.getTime())
+        ? value.toISOString().slice(0, 10)
+        : "";
+    }
+    if (typeof value === "string") {
+      return value.length >= 10 ? value.slice(0, 10) : value;
+    }
+    return "";
+  };
+  const formatDateLabel = (value: Date | string | null | undefined) => {
+    if (!value) return "—";
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return "—";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  const effectiveInternalValue = toDateInputValue(
+    overrideTargets?.internal?.value
+  );
+  const effectiveCustomerValue = toDateInputValue(
+    overrideTargets?.customer?.value
+  );
+  const effectiveDropDeadValue = toDateInputValue(
+    overrideTargets?.dropDead?.value
+  );
+  const effectiveShipToAddress = overrideTargets?.shipToAddress?.value ?? null;
+  const effectiveShipToAddressId =
+    effectiveShipToAddress && Number.isFinite(Number((effectiveShipToAddress as any).id))
+      ? Number((effectiveShipToAddress as any).id)
+      : null;
+  const jobShipToAddress = overrideTargets?.shipToAddress?.jobValue ?? null;
+  const jobShipToLocation = overrideTargets?.legacyShipToLocation?.value ?? null;
+  const formatAddressLabel = (addr: any) => {
+    const lines = formatAddressLines(addr);
+    return lines.length ? lines.join(", ") : null;
+  };
+  const shipToHint = !effectiveShipToAddress && jobShipToLocation
+    ? `Legacy ship-to location: ${jobShipToLocation.name || `Location ${jobShipToLocation.id}`}`
+    : undefined;
+
+  const initialInternalOverride = useMemo(
+    () => toDateInputValue(primaryAssembly?.internalTargetDateOverride),
+    [primaryAssembly?.internalTargetDateOverride]
+  );
+  const initialCustomerOverride = useMemo(
+    () => toDateInputValue(primaryAssembly?.customerTargetDateOverride),
+    [primaryAssembly?.customerTargetDateOverride]
+  );
+  const initialDropDeadOverride = useMemo(
+    () => toDateInputValue(primaryAssembly?.dropDeadDateOverride),
+    [primaryAssembly?.dropDeadDateOverride]
+  );
+  const initialShipToAddressOverride = useMemo(
+    () => primaryAssembly?.shipToAddressIdOverride ?? null,
+    [primaryAssembly?.shipToAddressIdOverride]
+  );
+  const [internalOverride, setInternalOverride] = useState<Date | null>(
+    initialInternalOverride
+  );
+  const [customerOverride, setCustomerOverride] = useState<Date | null>(
+    initialCustomerOverride
+  );
+  const [dropDeadOverride, setDropDeadOverride] = useState<Date | null>(
+    initialDropDeadOverride
+  );
+  const [shipToAddressOverrideId, setShipToAddressOverrideId] = useState<
+    number | null
+  >(initialShipToAddressOverride);
+  const resetOverrides = useCallback(() => {
+    setInternalOverride(initialInternalOverride);
+    setCustomerOverride(initialCustomerOverride);
+    setDropDeadOverride(initialDropDeadOverride);
+    setShipToAddressOverrideId(initialShipToAddressOverride);
+  }, [
+    initialInternalOverride,
+    initialCustomerOverride,
+    initialDropDeadOverride,
+    initialShipToAddressOverride,
+  ]);
+  useEffect(() => {
+    resetOverrides();
+  }, [primaryAssembly?.id, resetOverrides]);
   useEffect(() => {
     if (actionData?.error) {
       showToastError(actionData.error);
     }
   }, [actionData]);
+  useEffect(() => {
+    const err = sp.get("asmHoldErr");
+    if (!err) return;
+    showToastError(
+      err === "reason_required"
+        ? "Assembly hold requires a reason."
+        : "Assembly hold update blocked."
+    );
+  }, [sp]);
+  useEffect(() => {
+    const err = sp.get("asmDateErr");
+    if (!err) return;
+    const message =
+      err === "internal_after_customer"
+        ? "Internal target date must be on or before customer target date."
+        : "Assembly overrides could not be saved.";
+    showToastError(message);
+  }, [sp]);
+  useEffect(() => {
+    const err = sp.get("asmCancelErr");
+    if (!err) return;
+    const messages: Record<string, string> = {
+      reason_required: "Cancellation requires a reason.",
+      qty_invalid: "Canceled quantity exceeds ordered quantity.",
+      qty_below_progress:
+        "Canceled quantity would go below finished/packed units.",
+      override_required:
+        "Cancellation goes below recorded progress and needs an override.",
+      has_activity:
+        "Assembly has production activity and cannot be fully canceled.",
+    };
+    showToastError(messages[err] || "Unable to cancel assembly.");
+  }, [sp]);
   useEffect(() => {
     if (isGroup) setCurrentId(idKey);
     else if (assemblies?.[0]?.id) setCurrentId(assemblies[0].id);
@@ -161,6 +342,92 @@ export default function JobAssemblyRoute() {
     },
     [toleranceFetcher]
   );
+  const handleOverridesSave = useCallback(() => {
+    if (!primaryAssembly) return;
+    const fd = new FormData();
+    fd.set("_intent", "assembly.update");
+    fd.set("assemblyId", String(primaryAssembly.id));
+    fd.set("returnTo", `/jobs/${job.id}/assembly/${primaryAssembly.id}`);
+    fd.set(
+      "internalTargetDateOverride",
+      internalOverride ? toDateInputString(internalOverride) : ""
+    );
+    fd.set(
+      "customerTargetDateOverride",
+      customerOverride ? toDateInputString(customerOverride) : ""
+    );
+    fd.set(
+      "dropDeadDateOverride",
+      dropDeadOverride ? toDateInputString(dropDeadOverride) : ""
+    );
+    fd.set(
+      "shipToAddressIdOverride",
+      shipToAddressOverrideId != null ? String(shipToAddressOverrideId) : ""
+    );
+    submit(fd, { method: "post" });
+  }, [
+    primaryAssembly,
+    internalOverride,
+    customerOverride,
+    dropDeadOverride,
+    shipToAddressOverrideId,
+    submit,
+    job.id,
+  ]);
+  const overridesDirty = useMemo(() => {
+    if (!primaryAssembly) return false;
+    const currentInternal = internalOverride
+      ? toDateInputString(internalOverride)
+      : "";
+    const currentCustomer = customerOverride
+      ? toDateInputString(customerOverride)
+      : "";
+    const currentDropDead = dropDeadOverride
+      ? toDateInputString(dropDeadOverride)
+      : "";
+    const baseInternal = initialInternalOverride
+      ? toDateInputString(initialInternalOverride)
+      : "";
+    const baseCustomer = initialCustomerOverride
+      ? toDateInputString(initialCustomerOverride)
+      : "";
+    const baseDropDead = initialDropDeadOverride
+      ? toDateInputString(initialDropDeadOverride)
+      : "";
+    const currentShipTo = shipToAddressOverrideId != null ? String(shipToAddressOverrideId) : "";
+    const baseShipTo = initialShipToAddressOverride != null
+      ? String(initialShipToAddressOverride)
+      : "";
+    return (
+      currentInternal !== baseInternal ||
+      currentCustomer !== baseCustomer ||
+      currentDropDead !== baseDropDead ||
+      currentShipTo !== baseShipTo
+    );
+  }, [
+    primaryAssembly,
+    internalOverride,
+    customerOverride,
+    dropDeadOverride,
+    shipToAddressOverrideId,
+    initialShipToAddressOverride,
+    initialInternalOverride,
+    initialCustomerOverride,
+    initialDropDeadOverride,
+  ]);
+  const overridesFormHandlers = useMemo(
+    () => ({
+      handleSubmit: (onSubmit: (data: any) => void) => () => onSubmit({}),
+      reset: () => resetOverrides(),
+      formState: { isDirty: overridesDirty },
+    }),
+    [overridesDirty, resetOverrides]
+  );
+  useInitGlobalFormContext(
+    overridesFormHandlers as any,
+    () => handleOverridesSave(),
+    () => resetOverrides()
+  );
   const handleTrimReservations = useCallback(
     (lineId: number) => {
       const fd = new FormData();
@@ -223,7 +490,135 @@ export default function JobAssemblyRoute() {
     fd.set("orderedArr", JSON.stringify(arr));
     submit(fd, { method: "post" });
   };
-  const primaryAssembly = (assemblies || [])[0] as any | null;
+  const [manualHoldSegment, setManualHoldSegment] = useState("OFF");
+  const [manualHoldReason, setManualHoldReason] = useState("");
+  const [manualHoldDirty, setManualHoldDirty] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelArr, setCancelArr] = useState<number[]>([]);
+  const [cancelLabels, setCancelLabels] = useState<string[]>([]);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelOverride, setCancelOverride] = useState(false);
+  const [cancelMode, setCancelMode] = useState<"full" | "remaining">(
+    "remaining"
+  );
+  const [cancelBaseline, setCancelBaseline] = useState("ORDER");
+  const holdSegmentOptions = [
+    { value: "OFF", label: "Off" },
+    { value: "CLIENT", label: "Client hold" },
+    { value: "INTERNAL", label: "Internal hold" },
+  ];
+  useEffect(() => {
+    if (!primaryAssembly) return;
+    const on = Boolean(primaryAssembly.manualHoldOn);
+    const type =
+      primaryAssembly.manualHoldType === "CLIENT" ? "CLIENT" : "INTERNAL";
+    setManualHoldSegment(on ? type : "OFF");
+    setManualHoldReason(String(primaryAssembly.manualHoldReason || ""));
+    setManualHoldDirty(false);
+  }, [
+    primaryAssembly?.id,
+    primaryAssembly?.manualHoldOn,
+    primaryAssembly?.manualHoldType,
+    primaryAssembly?.manualHoldReason,
+  ]);
+  const openCancelModal = (mode: "full" | "remaining") => {
+    if (!primaryAssembly) return;
+    const ordered = Array.isArray(primaryAssembly.qtyOrderedBreakdown)
+      ? (primaryAssembly.qtyOrderedBreakdown as number[])
+      : [];
+    const existingCanceled = Array.isArray(
+      (primaryAssembly as any).c_canceled_Breakdown
+    )
+      ? ((primaryAssembly as any).c_canceled_Breakdown as number[])
+      : [];
+    const effectiveOrdered = computeEffectiveOrderedBreakdown({
+      orderedBySize: ordered,
+      canceledBySize: existingCanceled,
+    }).effective;
+    const cut = Array.isArray((primaryAssembly as any).c_qtyCut_Breakdown)
+      ? ((primaryAssembly as any).c_qtyCut_Breakdown as number[])
+      : [];
+    const sew = Array.isArray((primaryAssembly as any).c_qtySew_Breakdown)
+      ? ((primaryAssembly as any).c_qtySew_Breakdown as number[])
+      : [];
+    const finish = Array.isArray((primaryAssembly as any).c_qtyFinish_Breakdown)
+      ? ((primaryAssembly as any).c_qtyFinish_Breakdown as number[])
+      : [];
+    const pack = Array.isArray((primaryAssembly as any).c_qtyPack_Breakdown)
+      ? ((primaryAssembly as any).c_qtyPack_Breakdown as number[])
+      : [];
+    const hasPack = pack.some((n) => Number(n) > 0);
+    const hasFinish = finish.some((n) => Number(n) > 0);
+    const hasSew = sew.some((n) => Number(n) > 0);
+    const hasCut = cut.some((n) => Number(n) > 0);
+    const baselineLabel = hasPack
+      ? "PACK"
+      : hasFinish
+      ? "FINISH"
+      : hasSew
+      ? "SEW"
+      : hasCut
+      ? "CUT"
+      : "ORDER";
+    const baselineArr = hasPack
+      ? pack
+      : hasFinish
+      ? finish
+      : hasSew
+      ? sew
+      : hasCut
+      ? cut
+      : [];
+    const defaultCancel =
+      mode === "full"
+        ? effectiveOrdered
+        : effectiveOrdered.map((val, idx) =>
+            Math.max(0, Number(val || 0) - (Number(baselineArr[idx] || 0) || 0))
+          );
+    const labels = (primaryAssembly.variantSet?.variants ||
+      data.productVariantSet?.variants ||
+      []) as string[];
+    const trimmedLabels = getVariantLabels(
+      labels,
+      (primaryAssembly as any).c_numVariants
+    );
+    const lastNonZero = Math.max(
+      ...defaultCancel.map((n, idx) => (Number(n) > 0 ? idx : -1)),
+      ...effectiveOrdered.map((n, idx) => (Number(n) > 0 ? idx : -1))
+    );
+    const effectiveLen = Math.max(trimmedLabels.length, lastNonZero + 1, 1);
+    const colLabels = Array.from({ length: effectiveLen }, (_, idx) => {
+      return trimmedLabels[idx] || `Variant ${idx + 1}`;
+    });
+    setCancelArr(
+      Array.from({ length: effectiveLen }, (_, idx) => defaultCancel[idx] || 0)
+    );
+    setCancelLabels(colLabels);
+    setCancelReason("");
+    setCancelOverride(false);
+    setCancelMode(mode);
+    setCancelBaseline(baselineLabel);
+    setCancelOpen(true);
+  };
+  const submitManualHold = () => {
+    if (!primaryAssembly) return;
+    const holdOn = manualHoldSegment !== "OFF";
+    if (holdOn && !manualHoldReason.trim()) {
+      showToastError("Assembly hold requires a reason.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("_intent", "assembly.update");
+    fd.set("assemblyId", String(primaryAssembly.id));
+    fd.set("manualHoldOn", holdOn ? "true" : "false");
+    fd.set("manualHoldType", holdOn ? manualHoldSegment : "");
+    fd.set("manualHoldReason", holdOn ? manualHoldReason.trim() : "");
+    if (typeof window !== "undefined") {
+      fd.set("returnTo", window.location.pathname + window.location.search);
+    }
+    submit(fd, { method: "post" });
+    setManualHoldDirty(false);
+  };
   const renderStatusBar = ({
     statusControls,
     whiteboardControl,
@@ -252,8 +647,13 @@ export default function JobAssemblyRoute() {
             href: `/jobs/${job.id}/assembly/${primaryAssembly?.id ?? ""}`,
           },
         ];
+    const hasProductionActivity =
+      Number((primaryAssembly as any)?.c_qtyCut ?? 0) > 0 ||
+      Number((primaryAssembly as any)?.c_qtySew ?? 0) > 0 ||
+      Number((primaryAssembly as any)?.c_qtyFinish ?? 0) > 0 ||
+      Number((primaryAssembly as any)?.c_qtyPack ?? 0) > 0;
     const actionsMenu =
-      !isGroup && canDebug && primaryAssembly ? (
+      !isGroup && primaryAssembly ? (
         <Menu withinPortal position="bottom-end" shadow="sm">
           <Menu.Target>
             <Button
@@ -265,14 +665,95 @@ export default function JobAssemblyRoute() {
             </Button>
           </Menu.Target>
           <Menu.Dropdown>
+            {!hasProductionActivity ? (
+              <Menu.Item
+                leftSection={<IconBan size={14} />}
+                onClick={() => openCancelModal("full")}
+              >
+                Cancel assembly...
+              </Menu.Item>
+            ) : null}
+            {hasProductionActivity ? (
+              <Menu.Item
+                leftSection={<IconBan size={14} />}
+                onClick={() => openCancelModal("remaining")}
+              >
+                Cancel remaining units...
+              </Menu.Item>
+            ) : null}
             <Menu.Item
               leftSection={<IconBug size={14} />}
+              disabled={!canDebug}
               onClick={() => handleOpenDebug(primaryAssembly.id, job.id)}
             >
               Debug
             </Menu.Item>
           </Menu.Dropdown>
         </Menu>
+      ) : null;
+    const manualHoldDisabled =
+      primaryAssembly?.job?.state === "COMPLETE" ||
+      primaryAssembly?.job?.state === "CANCELED";
+    const manualHoldOn = manualHoldSegment !== "OFF";
+    const effectiveHold = computeEffectiveAssemblyHold({
+      jobHoldOn: Boolean(primaryAssembly?.job?.jobHoldOn),
+      manualHoldOn,
+    });
+    const effectiveHoldLabel = effectiveHold
+      ? primaryAssembly?.job?.jobHoldOn && manualHoldOn
+        ? "Held (Job + Assembly)"
+        : primaryAssembly?.job?.jobHoldOn
+        ? "Held (Job)"
+        : "Held (Assembly)"
+      : null;
+    const manualHoldControls =
+      !isGroup && primaryAssembly ? (
+        <Stack gap={4}>
+          <SegmentedControl
+            data={holdSegmentOptions}
+            value={manualHoldSegment}
+            disabled={manualHoldDisabled}
+            onChange={(value) => {
+              setManualHoldSegment(value);
+              if (value === "OFF") {
+                setManualHoldReason("");
+              }
+              setManualHoldDirty(true);
+            }}
+            size="xs"
+          />
+          {manualHoldSegment !== "OFF" ? (
+            <Textarea
+              placeholder="Hold reason"
+              value={manualHoldReason}
+              onChange={(e) => {
+                setManualHoldReason(e.currentTarget.value);
+                setManualHoldDirty(true);
+              }}
+              autosize
+              minRows={2}
+            />
+          ) : null}
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="light"
+              disabled={
+                manualHoldDisabled ||
+                (!manualHoldDirty && manualHoldSegment === "OFF") ||
+                (manualHoldSegment !== "OFF" && !manualHoldReason.trim())
+              }
+              onClick={submitManualHold}
+            >
+              Apply hold
+            </Button>
+            {effectiveHoldLabel ? (
+              <Badge size="sm" color="orange" variant="light">
+                {effectiveHoldLabel}
+              </Badge>
+            ) : null}
+          </Group>
+        </Stack>
       ) : null;
     const groupBadge =
       !isGroup && primaryAssembly?.assemblyGroupId ? (
@@ -289,18 +770,81 @@ export default function JobAssemblyRoute() {
           </Button>
         </Group>
       ) : null;
+    const canceledQty = Array.isArray(primaryAssembly?.c_canceled_Breakdown)
+      ? (primaryAssembly.c_canceled_Breakdown as number[]).reduce(
+          (sum, value) => sum + (Number(value) || 0),
+          0
+        )
+      : 0;
+    const canceledBadge =
+      !isGroup && primaryAssembly && canceledQty > 0 ? (
+        <Badge color="orange" variant="light">
+          Canceled {canceledQty}/{cancelOrderedTotal}
+        </Badge>
+      ) : null;
     return (
       <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
         <BreadcrumbSet breadcrumbs={breadcrumbs} />
         <Group gap="sm" align="center">
           {whiteboardControl}
           {statusControls}
+          {canceledBadge}
+          {manualHoldControls}
           {groupBadge}
           {actionsMenu}
         </Group>
       </Group>
     );
   };
+  const cancelOrderedBySize = primaryAssembly
+    ? ((primaryAssembly as any).qtyOrderedBreakdown as number[] | null) || []
+    : [];
+  const cancelExistingCanceled = Array.isArray(
+    (primaryAssembly as any)?.c_canceled_Breakdown
+  )
+    ? ((primaryAssembly as any).c_canceled_Breakdown as number[])
+    : [];
+  const cancelOrderedTotal = computeOrderedTotal(cancelOrderedBySize);
+  const cancelPackBySize = Array.isArray((primaryAssembly as any)?.c_qtyPack_Breakdown)
+    ? ((primaryAssembly as any).c_qtyPack_Breakdown as number[])
+    : [];
+  const cancelFinishBySize = Array.isArray(
+    (primaryAssembly as any)?.c_qtyFinish_Breakdown
+  )
+    ? ((primaryAssembly as any).c_qtyFinish_Breakdown as number[])
+    : [];
+  const cancelCutBySize = Array.isArray((primaryAssembly as any)?.c_qtyCut_Breakdown)
+    ? ((primaryAssembly as any).c_qtyCut_Breakdown as number[])
+    : [];
+  const cancelSewBySize = Array.isArray((primaryAssembly as any)?.c_qtySew_Breakdown)
+    ? ((primaryAssembly as any).c_qtySew_Breakdown as number[])
+    : [];
+  const cancelCombinedCanceled = sumBreakdownArrays([
+    cancelExistingCanceled,
+    cancelArr,
+  ]);
+  const cancelComputed = computeEffectiveOrderedBreakdown({
+    orderedBySize: cancelOrderedBySize,
+    canceledBySize: cancelCombinedCanceled,
+  });
+  const cancelNewTotal = cancelArr.reduce(
+    (sum, value) => sum + (Number(value) || 0),
+    0
+  );
+  const cancelEffectiveOrdered = cancelComputed.total;
+  const cancelHardBlock = cancelComputed.effective.some(
+    (val, idx) =>
+      val < (Number(cancelPackBySize[idx] ?? 0) || 0) ||
+      val < (Number(cancelFinishBySize[idx] ?? 0) || 0)
+  );
+  const cancelSoftBlock = cancelComputed.effective.some(
+    (val, idx) =>
+      val <
+      Math.max(
+        Number(cancelCutBySize[idx] ?? 0) || 0,
+        Number(cancelSewBySize[idx] ?? 0) || 0
+      )
+  );
   if (isGroup) {
     const quantityItems = (data.quantityItems || []) as any[];
     return (
@@ -327,6 +871,7 @@ export default function JobAssemblyRoute() {
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
           rollupsByAssembly={data.rollupsByAssembly as any}
           vendorOptionsByStep={data.vendorOptionsByStep as any}
+          legacyStatusReadOnly
         />
       </Stack>
     );
@@ -339,6 +884,89 @@ export default function JobAssemblyRoute() {
   // Treat single assembly as a degenerate group: rely on `assembly.costings` like group mode.
   return (
     <Stack gap="lg">
+      {!isGroup && primaryAssembly ? (
+        <Card withBorder padding="md">
+          <Card.Section inheritPadding py="xs">
+            <Group justify="space-between" align="center">
+              <Text fw={600}>Overrides</Text>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={handleOverridesSave}
+              >
+                Save overrides
+              </Button>
+            </Group>
+          </Card.Section>
+          <Divider my="xs" />
+          <Stack gap="md">
+            <OverridableField
+              label="Internal target date"
+              isOverridden={internalOverride != null}
+              jobValue={formatDateLabel(overrideTargets?.internal?.jobValue)}
+              onClear={() => setInternalOverride(null)}
+            >
+              <DatePickerInput
+                value={internalOverride ?? effectiveInternalValue}
+                onChange={(value) => setInternalOverride(value ?? null)}
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+            </OverridableField>
+            <OverridableField
+              label="Customer target date"
+              isOverridden={customerOverride != null}
+              jobValue={formatDateLabel(overrideTargets?.customer?.jobValue)}
+              onClear={() => setCustomerOverride(null)}
+            >
+              <DatePickerInput
+                value={customerOverride ?? effectiveCustomerValue}
+                onChange={(value) => setCustomerOverride(value ?? null)}
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+            </OverridableField>
+            <OverridableField
+              label="Drop-dead date"
+              isOverridden={dropDeadOverride != null}
+              jobValue={formatDateLabel(overrideTargets?.dropDead?.jobValue)}
+              onClear={() => setDropDeadOverride(null)}
+            >
+              <DatePickerInput
+                value={dropDeadOverride ?? effectiveDropDeadValue}
+                onChange={(value) => setDropDeadOverride(value ?? null)}
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+            </OverridableField>
+            <OverridableField
+              label="Ship-To Address"
+              isOverridden={shipToAddressOverrideId != null}
+              jobValue={formatAddressLabel(jobShipToAddress)}
+              onClear={() => setShipToAddressOverrideId(null)}
+            >
+              <AddressPickerField
+                label="Ship-To Address"
+                value={
+                  shipToAddressOverrideId != null
+                    ? shipToAddressOverrideId
+                    : effectiveShipToAddressId != null
+                      ? effectiveShipToAddressId
+                      : null
+                }
+                options={shipToAddressOptions}
+                previewAddress={
+                  shipToAddressOverrideId != null
+                    ? shipToAddressById.get(shipToAddressOverrideId) ?? null
+                    : effectiveShipToAddress ?? null
+                }
+                hint={shipToHint}
+                onChange={(nextId) => setShipToAddressOverrideId(nextId)}
+              />
+            </OverridableField>
+          </Stack>
+        </Card>
+      ) : null}
       <AssembliesEditor
         job={job as any}
         assemblies={
@@ -378,7 +1006,132 @@ export default function JobAssemblyRoute() {
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
         rollupsByAssembly={data.rollupsByAssembly as any}
         vendorOptionsByStep={data.vendorOptionsByStep as any}
+        legacyStatusReadOnly
       />
+      <Modal
+        opened={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        title={
+          primaryAssembly
+            ? cancelMode === "full"
+              ? `Cancel assembly - A${primaryAssembly.id}`
+              : `Cancel remaining units - A${primaryAssembly.id}`
+            : cancelMode === "full"
+            ? "Cancel assembly"
+            : "Cancel remaining units"
+        }
+        centered
+        size="xl"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Ordered: {cancelOrderedTotal} | Effective: {cancelEffectiveOrdered} | Canceled: {cancelComputed.canceled.reduce((t, v) => t + (Number(v) || 0), 0)}
+          </Text>
+          {cancelMode === "remaining" ? (
+            <Text size="xs" c="dimmed">
+              Defaulting to remaining based on {cancelBaseline} totals.
+            </Text>
+          ) : null}
+          {cancelLabels.length ? (
+            <Table withTableBorder withColumnBorders striped>
+              <Table.Thead>
+                <Table.Tr>
+                  {cancelLabels.map((label, i) => (
+                    <Table.Th key={`c-h-${i}`} ta="center">
+                      {label || `#${i + 1}`}
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  {cancelLabels.map((_label, i) => (
+                    <Table.Td key={`c-c-${i}`}>
+                      <TextInput
+                        w="60px"
+                        styles={{ input: { textAlign: "center" } }}
+                        type="number"
+                        value={cancelArr[i] ?? 0}
+                        onChange={(e) => {
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setCancelArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
+                        }}
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          ) : (
+            <Text size="sm" c="dimmed">
+              No size breakdown available for this assembly.
+            </Text>
+          )}
+          <Textarea
+            label="Reason"
+            placeholder={
+              cancelMode === "full"
+                ? "Why is this assembly being canceled?"
+                : "Why are the remaining units being canceled?"
+            }
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.currentTarget.value)}
+            autosize
+            minRows={2}
+          />
+          <Text size="sm">
+            Effective ordered after cancel: {cancelEffectiveOrdered}
+          </Text>
+          {cancelHardBlock ? (
+            <Text size="sm" c="red">
+              Cancellation cannot reduce below finished/packed quantities.
+            </Text>
+          ) : cancelSoftBlock ? (
+            <Checkbox
+              label="Override: allow cancel below recorded cut/sew progress"
+              checked={cancelOverride}
+              onChange={(e) => setCancelOverride(e.currentTarget.checked)}
+            />
+          ) : null}
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setCancelOpen(false)}>
+              Close
+            </Button>
+            <Button
+              color="red"
+              disabled={
+                cancelHardBlock ||
+                (cancelSoftBlock && !cancelOverride) ||
+                (cancelNewTotal > 0 && !cancelReason.trim())
+              }
+              onClick={() => {
+                if (!primaryAssembly) return;
+                const fd = new FormData();
+                fd.set("_intent", "assembly.cancel");
+                fd.set("assemblyId", String(primaryAssembly.id));
+                fd.set("canceledBySize", JSON.stringify(cancelArr));
+                fd.set("cancelReason", cancelReason.trim());
+                fd.set("cancelMode", cancelMode);
+                if (cancelOverride) fd.set("override", "true");
+                if (typeof window !== "undefined") {
+                  fd.set("returnTo", window.location.pathname + window.location.search);
+                }
+                submit(fd, { method: "post" });
+                setCancelOpen(false);
+              }}
+            >
+              Apply cancellation
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <MaterialCoverageDetails
         assemblyId={assembly.id}
         coverage={coverageByAssembly.get(assembly.id) ?? null}
@@ -419,7 +1172,7 @@ export default function JobAssemblyRoute() {
                 <Table.Tr>
                   <Table.Th>Assembly</Table.Th>
                   <Table.Th>Name</Table.Th>
-                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Legacy status</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

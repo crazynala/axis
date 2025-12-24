@@ -11,6 +11,7 @@ import { handleJobAssemblyDuplicate } from "./actions/jobAssemblyDuplicate.serve
 import { handleJobAssemblyUngroupOne } from "./actions/jobAssemblyUngroupOne.server";
 import { handleJobAssemblyDelete } from "./actions/jobAssemblyDelete.server";
 import { handleJobAssemblyState } from "./actions/jobAssemblyState.server";
+import { handleAssemblyCancel } from "./actions/assemblyCancel.server";
 
 export async function handleJobDetailAction({
   request,
@@ -35,7 +36,8 @@ export async function handleJobDetailAction({
   if (intent === "assembly.ungroupOne") return handleJobAssemblyUngroupOne({ id, form });
   if (intent === "assembly.delete") return handleJobAssemblyDelete({ id, form });
   if (intent === "assembly.state") return handleJobAssemblyState({ id, form });
+  if (intent === "assembly.cancel")
+    return handleAssemblyCancel({ jobId: id, assemblyId: 0, form });
 
   return redirect(`/jobs/${id}`);
 }
-

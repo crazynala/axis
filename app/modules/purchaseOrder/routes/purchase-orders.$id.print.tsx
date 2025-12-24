@@ -15,7 +15,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     where: { id },
     include: {
       lines: { include: { product: true } },
-      company: true, // vendor
+      company: { include: { defaultAddress: true } }, // vendor
       consignee: true,
       location: true,
     },
@@ -74,15 +74,31 @@ export default function POPrintPage() {
             <div>
               <strong>{po.company?.name ?? ""}</strong>
             </div>
-            {po.company?.address && <div>{po.company.address}</div>}
-            {(po.company?.city || po.company?.state || po.company?.zip) && (
+            {po.company?.defaultAddress?.addressLine1 && (
+              <div>{po.company.defaultAddress.addressLine1}</div>
+            )}
+            {po.company?.defaultAddress?.addressLine2 && (
+              <div>{po.company.defaultAddress.addressLine2}</div>
+            )}
+            {po.company?.defaultAddress?.addressLine3 && (
+              <div>{po.company.defaultAddress.addressLine3}</div>
+            )}
+            {(po.company?.defaultAddress?.addressTownCity ||
+              po.company?.defaultAddress?.addressCountyState ||
+              po.company?.defaultAddress?.addressZipPostCode) && (
               <div>
-                {[po.company.city, po.company.state, po.company.zip]
+                {[
+                  po.company.defaultAddress.addressTownCity,
+                  po.company.defaultAddress.addressCountyState,
+                  po.company.defaultAddress.addressZipPostCode,
+                ]
                   .filter(Boolean)
                   .join(", ")}
               </div>
             )}
-            {po.company?.country && <div>{po.company.country}</div>}
+            {po.company?.defaultAddress?.addressCountry && (
+              <div>{po.company.defaultAddress.addressCountry}</div>
+            )}
             {po.company?.email && (
               <div className="small">Email: {po.company.email}</div>
             )}

@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Button,
+  Badge,
   Card,
   Checkbox,
   Divider,
@@ -22,6 +23,7 @@ import {
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { IconMenu2 } from "@tabler/icons-react";
+import { modals } from "@mantine/modals";
 import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
 import {
   useEffect,
@@ -43,7 +45,10 @@ import {
 } from "~/modules/job/services/costingsView";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { assemblyStateConfig } from "~/base/state/configs";
-import { normalizeAssemblyState } from "~/modules/job/stateUtils";
+import {
+  computeEffectiveAssemblyHold,
+  normalizeAssemblyState,
+} from "~/modules/job/stateUtils";
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
 import { AxisChip } from "~/components/AxisChip";
 import { JumpLink } from "~/components/JumpLink";
@@ -57,6 +62,8 @@ import type { ExternalStageRow } from "~/modules/job/types/stageRows";
 export type QuantityItem = {
   assemblyId: number;
   variants: { labels: string[]; numVariants: number };
+  orderedRaw: number[];
+  canceled: number[];
   ordered: number[];
   cut: number[];
   sew: number[];
@@ -137,6 +144,7 @@ export function AssembliesEditor(props: {
   defectReasons?: Array<{ id: number; label: string | null }>;
   rollupsByAssembly?: Record<number, any> | null;
   vendorOptionsByStep?: Record<string, CompanyOption[]> | null;
+  legacyStatusReadOnly?: boolean;
 }) {
   const {
     job,
@@ -159,6 +167,7 @@ export function AssembliesEditor(props: {
     primaryCostingIdByAssembly,
     rollupsByAssembly,
     vendorOptionsByStep,
+    legacyStatusReadOnly,
   } = props;
   const activityList = activitiesProp || [];
   const submit = useSubmit();
@@ -176,6 +185,14 @@ export function AssembliesEditor(props: {
   const [createActivityType, setCreateActivityType] =
     useState<ActivityModalType>("cut");
   const [editActivity, setEditActivity] = useState<null | any>(null);
+  const [cancelEditOpen, setCancelEditOpen] = useState(false);
+  const [cancelEditActivity, setCancelEditActivity] = useState<any | null>(null);
+  const [cancelEditBreakdown, setCancelEditBreakdown] = useState<number[]>([]);
+  const [cancelEditReason, setCancelEditReason] = useState("");
+  const [cancelEditDate, setCancelEditDate] = useState<Date | null>(new Date());
+  const [cancelEditAssemblyId, setCancelEditAssemblyId] = useState<number | null>(
+    null
+  );
   const [modalAssemblyId, setModalAssemblyId] = useState<number | null>(
     firstAssembly?.id ?? null
   );
@@ -568,6 +585,49 @@ export function AssembliesEditor(props: {
     });
     return map;
   }, [assemblies]);
+  const resolveHoldContext = (assemblyId: number) => {
+    const asm = assembliesById.get(assemblyId);
+    const jobState = String(asm?.job?.state || "").toUpperCase();
+    if (jobState === "CANCELED") {
+      return { label: "Job is canceled", mode: "canceled" } as const;
+    }
+    const jobHoldOn = Boolean(asm?.job?.jobHoldOn);
+    const manualHoldOn = Boolean(asm?.manualHoldOn);
+    const effectiveHold = computeEffectiveAssemblyHold({
+      jobHoldOn,
+      manualHoldOn,
+    });
+    if (!effectiveHold) return null;
+    const label = jobHoldOn && manualHoldOn
+      ? "Job + Assembly"
+      : jobHoldOn
+      ? "Job"
+      : "Assembly";
+    return { label, mode: "hold" } as const;
+  };
+  const confirmIfHeld = (
+    assemblyId: number,
+    onConfirm: () => void
+  ): void => {
+    const hold = resolveHoldContext(assemblyId);
+    if (!hold) {
+      onConfirm();
+      return;
+    }
+    modals.openConfirmModal({
+      title: hold.mode === "canceled" ? "Job is canceled" : "Assembly is held",
+      children: (
+        <Text size="sm">
+          {hold.mode === "canceled"
+            ? "This job is canceled. Creating new activity is blocked by default. Continue anyway?"
+            : `This assembly is currently held (${hold.label}). Continue anyway?`}
+        </Text>
+      ),
+      labels: { confirm: "Continue", cancel: "Cancel" },
+      confirmProps: { color: hold.mode === "canceled" ? "red" : "orange" },
+      onConfirm,
+    });
+  };
 
   const handleCostingAction = (
     costingId: number,
@@ -1043,6 +1103,15 @@ export function AssembliesEditor(props: {
     setDefectEditActivityId(null);
   };
 
+  const resolveCancelEditLabels = () => {
+    const labels = cancelEditAssemblyId
+      ? trimVariantLabels(getVariantLabelsForAssembly(cancelEditAssemblyId))
+      : [];
+    const maxLen = Math.max(labels.length, cancelEditBreakdown.length);
+    if (!maxLen) return [];
+    return Array.from({ length: maxLen }, (_, idx) => labels[idx] || `Variant ${idx + 1}`);
+  };
+
   useEffect(() => {
     if (!defectModalOpen) return;
     const labels = resolveVariantLabels(
@@ -1337,27 +1406,68 @@ export function AssembliesEditor(props: {
   };
 
   const handleRecordCut = (assemblyId: number) => {
-    setModalAssemblyId(assemblyId ?? firstAssembly?.id ?? null);
-    setCreateActivityType("cut");
-    setEditActivity(null);
-    setActivityModalOpen(true);
+    const targetId = assemblyId ?? firstAssembly?.id ?? null;
+    if (!targetId) return;
+    confirmIfHeld(targetId, () => {
+      setModalAssemblyId(targetId);
+      setCreateActivityType("cut");
+      setEditActivity(null);
+      setActivityModalOpen(true);
+    });
   };
 
   const handleRecordFinish = (assemblyId: number) => {
     if (!canRecordFinishForAssembly(assemblyId)) return;
-    setModalAssemblyId(assemblyId ?? firstAssembly?.id ?? null);
-    setCreateActivityType("finish");
-    setEditActivity(null);
-    setActivityModalOpen(true);
+    const targetId = assemblyId ?? firstAssembly?.id ?? null;
+    if (!targetId) return;
+    confirmIfHeld(targetId, () => {
+      setModalAssemblyId(targetId);
+      setCreateActivityType("finish");
+      setEditActivity(null);
+      setActivityModalOpen(true);
+    });
   };
 
   const handleRecordPack = (assemblyId: number) => {
     if (!canRecordPackForAssembly(assemblyId)) return;
-    setPackModalAssemblyId(assemblyId);
-    setPackModalOpen(true);
+    const targetId = assemblyId ?? firstAssembly?.id ?? null;
+    if (!targetId) return;
+    confirmIfHeld(targetId, () => {
+      setPackModalAssemblyId(targetId);
+      setPackModalOpen(true);
+    });
   };
 
-  const statusControlElements = isGroup
+  const statusControlElements = legacyStatusReadOnly
+    ? (() => {
+        if (isGroup) {
+          const values = (assemblies as any[]).map(
+            (a) => normalizeAssemblyState(a.status as string | null) ?? "DRAFT"
+          );
+          const unique = new Set(values);
+          const label =
+            unique.size === 1
+              ? assemblyStateConfig.states[values[0]]?.label || values[0]
+              : "Mixed";
+          return [
+            <Badge key="legacy-status" variant="light" color="gray">
+              Legacy status: {label}
+            </Badge>,
+          ];
+        }
+        return (assemblies as any[]).map((a) => {
+          const normalizedStatus =
+            normalizeAssemblyState(a.status as string | null) ?? "DRAFT";
+          const label =
+            assemblyStateConfig.states[normalizedStatus]?.label || normalizedStatus;
+          return (
+            <Badge key={`legacy-status-${a.id}`} variant="light" color="gray">
+              Legacy status: {label}
+            </Badge>
+          );
+        });
+      })()
+    : isGroup
     ? [
         <StateChangeButton
           key="group-status"
@@ -1736,6 +1846,7 @@ export function AssembliesEditor(props: {
                           </Table.Th>
                         )
                       )}
+                      <Table.Th>Notes</Table.Th>
                       <Table.Th>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -1791,6 +1902,40 @@ export function AssembliesEditor(props: {
                               </Table.Td>
                             )
                           )}
+                          <Table.Td>
+                            {(() => {
+                              const note = representative?.notes;
+                              const createdBy = representative?.createdBy;
+                              const createdAt = representative?.createdAt;
+                              const metaParts = [
+                                createdBy ? `by ${createdBy}` : "",
+                                createdAt
+                                  ? new Date(createdAt).toLocaleString()
+                                  : "",
+                              ].filter(Boolean);
+                              if (!note && metaParts.length === 0) {
+                                return (
+                                  <Text size="xs" c="dimmed">
+                                    —
+                                  </Text>
+                                );
+                              }
+                              return (
+                                <Stack gap={2}>
+                                  {note ? (
+                                    <Text size="xs" lineClamp={2}>
+                                      {note}
+                                    </Text>
+                                  ) : null}
+                                  {metaParts.length ? (
+                                    <Text size="xs" c="dimmed">
+                                      {metaParts.join(" · ")}
+                                    </Text>
+                                  ) : null}
+                                </Stack>
+                              );
+                            })()}
+                          </Table.Td>
                           <Table.Td width={60}>
                             <Menu
                               withinPortal
@@ -1813,7 +1958,43 @@ export function AssembliesEditor(props: {
                                       Number(representative?.assemblyId) ||
                                       firstAssembly?.id ||
                                       null;
-                                    if (representative?.kind === "defect") {
+                                    const stage = String(
+                                      representative?.stage || ""
+                                    ).toLowerCase();
+                                    if (stage === "cancel") {
+                                      const labels = trimVariantLabels(
+                                        getVariantLabelsForAssembly(
+                                          targetAssemblyId ?? 0
+                                        )
+                                      );
+                                      const breakdown = Array.isArray(
+                                        representative?.qtyBreakdown
+                                      )
+                                        ? (representative.qtyBreakdown as number[])
+                                        : [];
+                                      const effectiveLen = Math.max(
+                                        labels.length,
+                                        breakdown.length
+                                      );
+                                      const normalized = Array.from(
+                                        { length: effectiveLen },
+                                        (_, idx) => Number(breakdown[idx] ?? 0) || 0
+                                      );
+                                      setCancelEditActivity(representative);
+                                      setCancelEditAssemblyId(targetAssemblyId);
+                                      setCancelEditBreakdown(normalized);
+                                      setCancelEditReason(
+                                        String(representative?.notes || "")
+                                      );
+                                      setCancelEditDate(
+                                        representative?.activityDate
+                                          ? new Date(representative.activityDate)
+                                          : new Date()
+                                      );
+                                      setCancelEditOpen(true);
+                                    } else if (
+                                      representative?.kind === "defect"
+                                    ) {
                                       openDefectModal({
                                         assemblyId: targetAssemblyId,
                                         activity: representative,
@@ -2063,6 +2244,28 @@ export function AssembliesEditor(props: {
               finish: item?.finish || [],
               pack: item?.pack || [],
             };
+            const sumArray = (arr?: number[]) =>
+              (arr || []).reduce((t, n) => t + (Number(n) || 0), 0);
+            const orderRows = [
+              {
+                label: "ORDER (ORIG)",
+                arr: item?.orderedRaw || [],
+                total: sumArray(item?.orderedRaw),
+                highlight: false,
+              },
+              {
+                label: "CANCELED",
+                arr: item?.canceled || [],
+                total: sumArray(item?.canceled),
+                highlight: false,
+              },
+              {
+                label: "ORDER (NET)",
+                arr: item?.ordered || [],
+                total: sumArray(item?.ordered),
+                highlight: true,
+              },
+            ];
             const usableTotalMap: Record<string, number | undefined> = {
               cut: item?.totals?.cut,
               sew: item?.totals?.sew,
@@ -2100,6 +2303,7 @@ export function AssembliesEditor(props: {
                 ];
               }
             );
+            const rowsToRender = [...orderRows, ...factoryRows];
             return (
               <Stack gap="md">
                 <Card withBorder padding="sm">
@@ -2136,7 +2340,7 @@ export function AssembliesEditor(props: {
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {factoryRows.map((row, idx) => (
+                      {rowsToRender.map((row, idx) => (
                         <Table.Tr
                           key={`${row.label}-${row.stage || row.kind || idx}`}
                           style={
@@ -2249,6 +2453,113 @@ export function AssembliesEditor(props: {
           }
         />
       )}
+      <Modal
+        opened={cancelEditOpen}
+        onClose={() => {
+          setCancelEditOpen(false);
+          setCancelEditActivity(null);
+          setCancelEditAssemblyId(null);
+          setCancelEditBreakdown([]);
+          setCancelEditReason("");
+        }}
+        title={
+          cancelEditActivity
+            ? `Edit cancel - A${cancelEditActivity.assemblyId ?? ""}`
+            : "Edit cancel"
+        }
+        size="xl"
+        centered
+      >
+        <Stack>
+          <DatePickerInput
+            label="Date"
+            value={cancelEditDate}
+            onChange={setCancelEditDate}
+            size="xs"
+          />
+          {resolveCancelEditLabels().length ? (
+            <Table withTableBorder withColumnBorders striped>
+              <Table.Thead>
+                <Table.Tr>
+                  {resolveCancelEditLabels().map((label, idx) => (
+                    <Table.Th key={`cancel-edit-h-${idx}`} ta="center">
+                      {label}
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  {resolveCancelEditLabels().map((_label, idx) => (
+                    <Table.Td key={`cancel-edit-${idx}`}>
+                      <TextInput
+                        w="60px"
+                        styles={{ input: { textAlign: "center" } }}
+                        type="number"
+                        value={cancelEditBreakdown[idx] ?? 0}
+                        onChange={(e) => {
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setCancelEditBreakdown((prev) =>
+                            prev.map((x, i) =>
+                              i === idx ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
+                        }}
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          ) : (
+            <Text size="sm" c="dimmed">
+              No size breakdown available for this cancel.
+            </Text>
+          )}
+          <Textarea
+            label="Reason"
+            placeholder="Why is this assembly being canceled?"
+            value={cancelEditReason}
+            onChange={(e) => setCancelEditReason(e.currentTarget.value)}
+            autosize
+            minRows={2}
+          />
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setCancelEditOpen(false)}>
+              Close
+            </Button>
+            <Button
+              color="red"
+              disabled={!cancelEditReason.trim()}
+              onClick={() => {
+                if (!cancelEditActivity) return;
+                const fd = new FormData();
+                fd.set("_intent", "activity.update");
+                fd.set("activityId", String(cancelEditActivity.id));
+                fd.set(
+                  "qtyBreakdown",
+                  JSON.stringify(cancelEditBreakdown || [])
+                );
+                fd.set("notes", cancelEditReason.trim());
+                if (cancelEditDate) {
+                  fd.set("activityDate", cancelEditDate.toISOString());
+                }
+                submit(fd, { method: "post" });
+                setCancelEditOpen(false);
+                setCancelEditActivity(null);
+                setCancelEditAssemblyId(null);
+                setCancelEditBreakdown([]);
+                setCancelEditReason("");
+              }}
+            >
+              Save cancel
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       {packModalAssembly && (
         <AssemblyPackModal
           opened={packModalOpen}

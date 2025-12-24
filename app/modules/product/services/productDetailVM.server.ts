@@ -3,6 +3,7 @@ import type { Params } from "@remix-run/react";
 import { requireUserId } from "~/utils/auth.server";
 import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import type { ProductDetailVM } from "~/modules/product/types/productDetailVM";
+import { ValueListType } from "@prisma/client";
 
 export async function loadProductDetailVM(opts: {
   params: Params;
@@ -27,8 +28,12 @@ export async function loadProductDetailVM(opts: {
         costGroup: { include: { costRanges: true } },
         salePriceGroup: { include: { saleRanges: true } },
         salePriceRanges: true,
-        productLines: {
-          include: {
+      productLines: {
+          select: {
+            id: true,
+            quantity: true,
+            activityUsed: true,
+            flagAssemblyOmit: true,
             child: {
               select: {
                 id: true,
@@ -103,6 +108,13 @@ export async function loadProductDetailVM(opts: {
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
+    const metadataDefsPromise = prismaBase.productAttributeDefinition.findMany({
+      orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+    });
+    const metadataValuesPromise = prismaBase.productAttributeValue.findMany({
+      where: { productId: id },
+      include: { definition: { select: { key: true, dataType: true } } },
+    });
     const [
       product,
       productChoices,
@@ -112,6 +124,8 @@ export async function loadProductDetailVM(opts: {
       usedInProducts,
       costingAssemblies,
       shipmentLines,
+      metadataDefinitions,
+      metadataValues,
     ] = await Promise.all([
       productPromise.then((r) => {
         mark("product");
@@ -180,8 +194,71 @@ export async function loadProductDetailVM(opts: {
           },
         });
       })(),
+      metadataDefsPromise,
+      metadataValuesPromise,
     ]);
     if (!product) return redirect("/products");
+    const hasCmtLine = (product.productLines || []).some(
+      (pl: any) => pl.child?.type === "CMT" && !pl.flagAssemblyOmit
+    );
+    const categoryId = (product as any)?.categoryId ?? null;
+    const subCategoryId = (product as any)?.subCategoryId ?? null;
+    const [category, subCategory, subCategoryOptions, pricingSpecs] =
+      await Promise.all([
+        categoryId
+          ? prismaBase.valueList.findUnique({
+              where: { id: categoryId },
+              select: { id: true, label: true, code: true },
+            })
+          : Promise.resolve(null),
+        subCategoryId
+          ? prismaBase.valueList.findUnique({
+              where: { id: subCategoryId },
+              select: { id: true, label: true, code: true },
+            })
+          : Promise.resolve(null),
+        categoryId
+          ? prismaBase.valueList.findMany({
+              where: { type: ValueListType.Category, parentId: categoryId },
+              orderBy: { label: "asc" },
+              select: { id: true, label: true, code: true },
+            })
+          : Promise.resolve([]),
+        prismaBase.pricingSpec.findMany({
+          where: {
+            target: "SELL",
+            curveFamily: { in: ["CMT_MOQ_50", "CMT_MOQ_100"] },
+          },
+          orderBy: { id: "asc" },
+          select: { id: true, name: true, code: true, curveFamily: true },
+        }),
+      ]);
+    const pricingSpecOptions = pricingSpecs.map((spec) => ({
+      value: String(spec.id),
+      label:
+        spec.name ||
+        (spec.curveFamily === "CMT_MOQ_50"
+          ? "MOQ 50"
+          : spec.curveFamily === "CMT_MOQ_100"
+          ? "MOQ 100"
+          : spec.code),
+    }));
+    const subCategorySelect = subCategoryOptions.map((opt) => ({
+      value: String(opt.id),
+      label: opt.label || opt.code || `#${opt.id}`,
+    }));
+    const metadataValuesByKey: Record<string, any> = {};
+    for (const row of metadataValues || []) {
+      const key = (row as any)?.definition?.key;
+      if (!key) continue;
+      const dt = (row as any)?.definition?.dataType;
+      if (dt === "NUMBER") metadataValuesByKey[key] = row.valueNumber;
+      else if (dt === "BOOLEAN") metadataValuesByKey[key] = row.valueBool;
+      else if (dt === "JSON")
+        metadataValuesByKey[key] = row.valueJson ?? row.valueString;
+      else metadataValuesByKey[key] = row.valueString ?? null;
+    }
+    (product as any).metadataValuesByKey = metadataValuesByKey;
 
     const locIdSet = new Set<number>();
     for (const ml of movements as any[]) {
@@ -276,6 +353,8 @@ export async function loadProductDetailVM(opts: {
     }
     const vm: ProductDetailVM = {
       product,
+      metadataDefinitions: metadataDefinitions || [],
+      metadataValuesByKey,
       stockByLocation,
       stockByBatch,
       productChoices,
@@ -285,6 +364,11 @@ export async function loadProductDetailVM(opts: {
       salePriceGroups,
       usedInProducts,
       costingAssemblies,
+      hasCmtLine,
+      pricingSpecOptions,
+      categoryLabel: category?.label || category?.code || null,
+      subCategoryLabel: subCategory?.label || subCategory?.code || null,
+      subCategoryOptions: subCategorySelect,
       userLevel,
       canDebug,
     };
@@ -295,4 +379,3 @@ export async function loadProductDetailVM(opts: {
     return json(vm as any);
   });
 }
-

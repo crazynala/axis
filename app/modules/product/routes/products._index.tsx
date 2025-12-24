@@ -3,11 +3,16 @@ import {
   useLocation,
   useNavigate,
   useSearchParams,
+  useMatches,
 } from "@remix-run/react";
 import { Button, Group, Stack, Text, Card, Indicator } from "@mantine/core";
 import SplitButton from "~/components/SplitButton";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
+import {
+  defaultSummarizeFilters,
+  type FilterChip,
+} from "~/base/find/FindRibbon";
 import { BreadcrumbSet } from "packages/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
@@ -190,6 +195,14 @@ export default function ProductsIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "products" });
   // Persist/restore index search so filters survive leaving and returning
   usePersistIndexSearch("/products");
+  const matches = useMatches();
+  const metadataDefinitions = useMemo(() => {
+    const match = matches.find((m) =>
+      String(m.id).endsWith("modules/product/routes/products")
+    );
+    const defs = (match?.data as any)?.metadataDefinitions;
+    return Array.isArray(defs) ? defs : [];
+  }, [matches]);
   // If user lands on /products directly and we have a saved subpath, redirect to it for testing
   const location = useLocation();
   useEffect(() => {
@@ -299,6 +312,52 @@ export default function ProductsIndexRoute() {
   // Row selection managed by table (multiselect)
   const [selectedIds, setSelectedIds] = useState<Array<number | string>>([]);
   const pricing = usePricingPrefsFromWidget();
+  const summarizeFilters = useMemo(() => {
+    const defByKey = new Map(
+      metadataDefinitions.map((def: any) => [def.key, def])
+    );
+    return (params: Record<string, string>) => {
+      const chips: FilterChip[] = [];
+      const nonMeta: Record<string, string> = {};
+      for (const [k, v] of Object.entries(params)) {
+        if (!k.startsWith("meta__")) {
+          nonMeta[k] = v;
+          continue;
+        }
+        const raw = k.slice("meta__".length);
+        const isMin = raw.endsWith("Min");
+        const isMax = raw.endsWith("Max");
+        const defKey = isMin || isMax ? raw.slice(0, -3) : raw;
+        const def = defByKey.get(defKey);
+        if (!def) continue;
+        if (isMin || isMax) continue;
+        const label = def.label || def.key;
+        if (def.dataType === "BOOLEAN") {
+          const pretty = v === "true" ? "Yes" : v === "false" ? "No" : v;
+          chips.push({ key: k, label: `${label}: ${pretty}` });
+        } else {
+          chips.push({ key: k, label: `${label}: ${v}` });
+        }
+      }
+      for (const def of metadataDefinitions) {
+        if (def.dataType !== "NUMBER") continue;
+        const minKey = `meta__${def.key}Min`;
+        const maxKey = `meta__${def.key}Max`;
+        const minVal = params[minKey];
+        const maxVal = params[maxKey];
+        if (!minVal && !maxVal) continue;
+        const label = def.label || def.key;
+        const range =
+          minVal && maxVal
+            ? `${minVal}–${maxVal}`
+            : minVal
+            ? `>= ${minVal}`
+            : `<= ${maxVal}`;
+        chips.push({ key: minKey, label: `${label}: ${range}` });
+      }
+      return [...defaultSummarizeFilters(nonMeta), ...chips];
+    };
+  }, [metadataDefinitions]);
 
   // Revalidate / refresh current product row on window focus to avoid stale manual price after edits
   useEffect(() => {
@@ -335,7 +394,7 @@ export default function ProductsIndexRoute() {
 
   return (
     <Stack gap="lg">
-      <ProductFindManager />
+      <ProductFindManager metadataDefinitions={metadataDefinitions} />
       <Group
         justify="space-between"
         mb="xs"
@@ -363,7 +422,11 @@ export default function ProductsIndexRoute() {
         </Group>
       </Group>
       <Group justify="space-between" align="center">
-        <FindRibbonAuto views={[]} activeView={null} />
+        <FindRibbonAuto
+          views={[]}
+          activeView={null}
+          summarizeFilters={summarizeFilters}
+        />
         <Card withBorder padding={5}>
           <PricingPreviewWidget productId={Number(currentId) || undefined} />
         </Card>

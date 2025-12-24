@@ -14,7 +14,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     where: { id: idNum },
     include: {
       lines: { include: { product: true } },
-      company: true,
+      company: { include: { defaultAddress: true } },
       consignee: true,
       location: true,
     },

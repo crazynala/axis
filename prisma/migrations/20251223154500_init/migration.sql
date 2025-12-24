@@ -8,6 +8,21 @@ CREATE TYPE "UserLevel" AS ENUM ('Admin', 'Manager', 'RegularJoe');
 CREATE TYPE "ProductType" AS ENUM ('CMT', 'Fabric', 'Finished', 'Trim', 'Service', 'Packaging');
 
 -- CreateEnum
+CREATE TYPE "PricingSpecTarget" AS ENUM ('SELL', 'COST');
+
+-- CreateEnum
+CREATE TYPE "PricingCurveFamily" AS ENUM ('CMT_MOQ_50', 'CMT_MOQ_100', 'OUTSIDE_ASYMPTOTIC_LOGISTICS');
+
+-- CreateEnum
+CREATE TYPE "ProductAttributeDataType" AS ENUM ('STRING', 'NUMBER', 'ENUM', 'BOOLEAN', 'JSON');
+
+-- CreateEnum
+CREATE TYPE "JobState" AS ENUM ('DRAFT', 'ACTIVE', 'COMPLETE', 'CANCELED');
+
+-- CreateEnum
+CREATE TYPE "HoldType" AS ENUM ('CLIENT', 'INTERNAL');
+
+-- CreateEnum
 CREATE TYPE "CompanyType" AS ENUM ('vendor', 'customer', 'other');
 
 -- CreateEnum
@@ -23,7 +38,7 @@ CREATE TYPE "UsageType" AS ENUM ('cut', 'make');
 CREATE TYPE "ValueListType" AS ENUM ('Tax', 'Category', 'ProductType', 'JobType', 'Currency', 'ShippingMethod', 'AssemblyType', 'DefectReason');
 
 -- CreateEnum
-CREATE TYPE "AssemblyStage" AS ENUM ('order', 'cut', 'sew', 'finish', 'pack', 'qc', 'other');
+CREATE TYPE "AssemblyStage" AS ENUM ('order', 'cut', 'sew', 'finish', 'pack', 'qc', 'other', 'cancel');
 
 -- CreateEnum
 CREATE TYPE "ActivityKind" AS ENUM ('normal', 'defect', 'rework');
@@ -42,6 +57,9 @@ CREATE TYPE "LocationType" AS ENUM ('warehouse', 'customer_depot', 'wip', 'sampl
 
 -- CreateEnum
 CREATE TYPE "BoxState" AS ENUM ('open', 'sealed', 'shipped');
+
+-- CreateEnum
+CREATE TYPE "ShipmentStatus" AS ENUM ('DRAFT', 'COMPLETE', 'CANCELED');
 
 -- CreateEnum
 CREATE TYPE "TagScope" AS ENUM ('GLOBAL', 'USER');
@@ -133,6 +151,7 @@ CREATE TABLE "Product" (
     "notesUnaccented" TEXT,
     "costGroupId" INTEGER,
     "salePriceGroupId" INTEGER,
+    "pricingSpecId" INTEGER,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
@@ -144,6 +163,39 @@ CREATE TABLE "Product" (
     "externalStepType" "ExternalStepType",
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ProductAttributeDefinition" (
+    "id" SERIAL NOT NULL,
+    "key" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "dataType" "ProductAttributeDataType" NOT NULL,
+    "isRequired" BOOLEAN NOT NULL DEFAULT false,
+    "isFilterable" BOOLEAN NOT NULL DEFAULT false,
+    "enumOptions" JSONB,
+    "validation" JSONB,
+    "appliesToProductTypes" TEXT[],
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ProductAttributeDefinition_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "ProductAttributeValue" (
+    "id" SERIAL NOT NULL,
+    "productId" INTEGER NOT NULL,
+    "definitionId" INTEGER NOT NULL,
+    "valueString" TEXT,
+    "valueNumber" DECIMAL(14,4),
+    "valueBool" BOOLEAN,
+    "valueJson" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ProductAttributeValue_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -160,11 +212,6 @@ CREATE TABLE "ProductTag" (
 CREATE TABLE "Company" (
     "id" SERIAL NOT NULL,
     "name" TEXT,
-    "address" TEXT,
-    "city" TEXT,
-    "state" TEXT,
-    "zip" TEXT,
-    "country" TEXT,
     "phone" TEXT,
     "email" TEXT,
     "website" TEXT,
@@ -187,6 +234,7 @@ CREATE TABLE "Company" (
     "invoicePercentOnOrder" DECIMAL(5,2),
     "defaultLeadTimeDays" INTEGER,
     "code" TEXT,
+    "defaultAddressId" INTEGER,
 
     CONSTRAINT "Company_pkey" PRIMARY KEY ("id")
 );
@@ -266,8 +314,20 @@ CREATE TABLE "Assembly" (
     "id" SERIAL NOT NULL,
     "name" TEXT,
     "status" TEXT,
+    "manualHoldOn" BOOLEAN NOT NULL DEFAULT false,
+    "manualHoldReason" TEXT,
+    "manualHoldType" "HoldType",
     "quantity" DECIMAL(14,4),
     "qtyOrderedBreakdown" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+    "canceledQty" INTEGER NOT NULL DEFAULT 0,
+    "canceledQtyBySize" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+    "cancelReason" TEXT,
+    "canceledAt" TIMESTAMP(3),
+    "internalTargetDateOverride" TIMESTAMP(3),
+    "customerTargetDateOverride" TIMESTAMP(3),
+    "dropDeadDateOverride" TIMESTAMP(3),
+    "shipToLocationIdOverride" INTEGER,
+    "shipToAddressIdOverride" INTEGER,
     "notes" TEXT,
     "statusWhiteboard" TEXT,
     "jobId" INTEGER,
@@ -475,6 +535,12 @@ CREATE TABLE "Job" (
     "startDate" TIMESTAMP(3),
     "endDate" TIMESTAMP(3),
     "status" TEXT,
+    "state" "JobState" NOT NULL DEFAULT 'DRAFT',
+    "cancelReason" TEXT,
+    "canceledAt" TIMESTAMP(3),
+    "jobHoldOn" BOOLEAN NOT NULL DEFAULT false,
+    "jobHoldReason" TEXT,
+    "jobHoldType" "HoldType",
     "jobType" TEXT,
     "isActive" BOOLEAN,
     "notes" TEXT,
@@ -486,6 +552,10 @@ CREATE TABLE "Job" (
     "customerOrderDateManual" TIMESTAMP(3),
     "cutSubmissionDate" TIMESTAMP(3),
     "dropDeadDate" TIMESTAMP(3),
+    "internalTargetDate" TIMESTAMP(3),
+    "customerTargetDate" TIMESTAMP(3),
+    "shipToLocationId" INTEGER,
+    "shipToAddressId" INTEGER,
     "finishDate" TIMESTAMP(3),
     "finishDateManual" TIMESTAMP(3),
     "firstInvoiceDate" TIMESTAMP(3),
@@ -792,7 +862,7 @@ CREATE TABLE "Shipment" (
     "dateReceived" TIMESTAMP(3),
     "packingSlipCode" TEXT,
     "shipmentType" TEXT,
-    "status" TEXT,
+    "status" "ShipmentStatus" NOT NULL DEFAULT 'DRAFT',
     "trackingNo" TEXT,
     "type" TEXT,
     "memo" TEXT,
@@ -861,7 +931,7 @@ CREATE TABLE "Address" (
 -- CreateTable
 CREATE TABLE "Contact" (
     "id" INTEGER NOT NULL,
-    "addressId" INTEGER,
+    "defaultAddressId" INTEGER,
     "companyId" INTEGER,
     "email" TEXT,
     "department" TEXT,
@@ -950,12 +1020,31 @@ CREATE TABLE "ProductCostRange" (
     "sellPriceManual" DECIMAL(14,4),
     "rangeFrom" INTEGER,
     "rangeTo" INTEGER,
+    "generatedBySpecId" INTEGER,
+    "generatedAt" TIMESTAMP(3),
+    "generatedHash" TEXT,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
 
     CONSTRAINT "ProductCostRange_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PricingSpec" (
+    "id" SERIAL NOT NULL,
+    "code" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "target" "PricingSpecTarget" NOT NULL,
+    "curveFamily" "PricingCurveFamily" NOT NULL,
+    "defaultBreakpoints" INTEGER[] DEFAULT ARRAY[1, 5, 10, 15, 20, 25, 50, 75, 100, 125, 150, 175, 200, 250]::INTEGER[],
+    "params" JSONB,
+    "notes" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PricingSpec_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -979,6 +1068,9 @@ CREATE TABLE "SalePriceRange" (
     "price" DECIMAL(14,4),
     "rangeFrom" INTEGER,
     "rangeTo" INTEGER,
+    "generatedBySpecId" INTEGER,
+    "generatedAt" TIMESTAMP(3),
+    "generatedHash" TEXT,
     "createdBy" TEXT,
     "modifiedBy" TEXT,
     "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
@@ -1046,6 +1138,33 @@ CREATE UNIQUE INDEX "TagDefinition_name_scope_ownerId_key" ON "TagDefinition"("n
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Product_sku_key" ON "Product"("sku");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ProductAttributeDefinition_key_key" ON "ProductAttributeDefinition"("key");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeDefinition_isFilterable_idx" ON "ProductAttributeDefinition"("isFilterable");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeDefinition_sortOrder_idx" ON "ProductAttributeDefinition"("sortOrder");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeValue_definitionId_idx" ON "ProductAttributeValue"("definitionId");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeValue_productId_idx" ON "ProductAttributeValue"("productId");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeValue_definitionId_valueString_idx" ON "ProductAttributeValue"("definitionId", "valueString");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeValue_definitionId_valueNumber_idx" ON "ProductAttributeValue"("definitionId", "valueNumber");
+
+-- CreateIndex
+CREATE INDEX "ProductAttributeValue_definitionId_valueBool_idx" ON "ProductAttributeValue"("definitionId", "valueBool");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ProductAttributeValue_productId_definitionId_key" ON "ProductAttributeValue"("productId", "definitionId");
 
 -- CreateIndex
 CREATE INDEX "ProductTag_tagId_idx" ON "ProductTag"("tagId");
@@ -1180,10 +1299,19 @@ CREATE INDEX "ProductCostRange_productId_idx" ON "ProductCostRange"("productId")
 CREATE INDEX "ProductCostRange_costGroupId_idx" ON "ProductCostRange"("costGroupId");
 
 -- CreateIndex
+CREATE INDEX "ProductCostRange_generatedBySpecId_idx" ON "ProductCostRange"("generatedBySpecId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PricingSpec_code_key" ON "PricingSpec"("code");
+
+-- CreateIndex
 CREATE INDEX "SalePriceRange_productId_idx" ON "SalePriceRange"("productId");
 
 -- CreateIndex
 CREATE INDEX "SalePriceRange_saleGroupId_idx" ON "SalePriceRange"("saleGroupId");
+
+-- CreateIndex
+CREATE INDEX "SalePriceRange_generatedBySpecId_idx" ON "SalePriceRange"("generatedBySpecId");
 
 -- CreateIndex
 CREATE INDEX "VendorCustomerPricing_customerId_idx" ON "VendorCustomerPricing"("customerId");
@@ -1258,6 +1386,15 @@ ALTER TABLE "Product" ADD CONSTRAINT "Product_supplierId_fkey" FOREIGN KEY ("sup
 ALTER TABLE "Product" ADD CONSTRAINT "Product_variantSetId_fkey" FOREIGN KEY ("variantSetId") REFERENCES "VariantSet"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Product" ADD CONSTRAINT "Product_pricingSpecId_fkey" FOREIGN KEY ("pricingSpecId") REFERENCES "PricingSpec"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductAttributeValue" ADD CONSTRAINT "ProductAttributeValue_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ProductAttributeValue" ADD CONSTRAINT "ProductAttributeValue_definitionId_fkey" FOREIGN KEY ("definitionId") REFERENCES "ProductAttributeDefinition"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ProductTag" ADD CONSTRAINT "ProductTag_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -1265,6 +1402,9 @@ ALTER TABLE "ProductTag" ADD CONSTRAINT "ProductTag_tagId_fkey" FOREIGN KEY ("ta
 
 -- AddForeignKey
 ALTER TABLE "Company" ADD CONSTRAINT "Company_stockLocationId_fkey" FOREIGN KEY ("stockLocationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Company" ADD CONSTRAINT "Company_defaultAddressId_fkey" FOREIGN KEY ("defaultAddressId") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SupplierPricingGroup" ADD CONSTRAINT "SupplierPricingGroup_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1292,6 +1432,12 @@ ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_productId_fkey" FOREIGN KEY ("pr
 
 -- AddForeignKey
 ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_variantSetId_fkey" FOREIGN KEY ("variantSetId") REFERENCES "VariantSet"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_shipToLocationIdOverride_fkey" FOREIGN KEY ("shipToLocationIdOverride") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Assembly" ADD CONSTRAINT "Assembly_shipToAddressIdOverride_fkey" FOREIGN KEY ("shipToAddressIdOverride") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Costing" ADD CONSTRAINT "Costing_assemblyId_fkey" FOREIGN KEY ("assemblyId") REFERENCES "Assembly"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1364,6 +1510,12 @@ ALTER TABLE "Job" ADD CONSTRAINT "Job_companyId_fkey" FOREIGN KEY ("companyId") 
 
 -- AddForeignKey
 ALTER TABLE "Job" ADD CONSTRAINT "Job_stockLocationId_fkey" FOREIGN KEY ("stockLocationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Job" ADD CONSTRAINT "Job_shipToLocationId_fkey" FOREIGN KEY ("shipToLocationId") REFERENCES "Location"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Job" ADD CONSTRAINT "Job_shipToAddressId_fkey" FOREIGN KEY ("shipToAddressId") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AssemblyGroup" ADD CONSTRAINT "AssemblyGroup_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1492,10 +1644,13 @@ ALTER TABLE "ShipmentLine" ADD CONSTRAINT "ShipmentLine_shipmentId_fkey" FOREIGN
 ALTER TABLE "ShipmentLine" ADD CONSTRAINT "ShipmentLine_variantSetId_fkey" FOREIGN KEY ("variantSetId") REFERENCES "VariantSet"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Address" ADD CONSTRAINT "Address_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Address" ADD CONSTRAINT "Address_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Contact" ADD CONSTRAINT "Contact_addressId_fkey" FOREIGN KEY ("addressId") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Address" ADD CONSTRAINT "Address_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Contact" ADD CONSTRAINT "Contact_defaultAddressId_fkey" FOREIGN KEY ("defaultAddressId") REFERENCES "Address"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Contact" ADD CONSTRAINT "Contact_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1531,10 +1686,16 @@ ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_costGroupId_fkey
 ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "ProductCostRange" ADD CONSTRAINT "ProductCostRange_generatedBySpecId_fkey" FOREIGN KEY ("generatedBySpecId") REFERENCES "PricingSpec"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_saleGroupId_fkey" FOREIGN KEY ("saleGroupId") REFERENCES "SalePriceGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SalePriceRange" ADD CONSTRAINT "SalePriceRange_generatedBySpecId_fkey" FOREIGN KEY ("generatedBySpecId") REFERENCES "PricingSpec"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "VendorCustomerPricing" ADD CONSTRAINT "VendorCustomerPricing_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;

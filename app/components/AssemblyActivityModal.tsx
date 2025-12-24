@@ -23,6 +23,7 @@ import {
   serializeAssemblyActivityValues,
 } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
 import type { AssemblyActivityFormValues } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
+import { computeEffectiveOrderedBreakdown } from "~/modules/job/quantityUtils";
 
 type Costing = {
   id: number;
@@ -125,6 +126,15 @@ export function AssemblyActivityModal(props: {
   }, [labelsRaw, assembly]);
   // Single-assembly defaults
   const ordered = ((assembly as any).qtyOrderedBreakdown || []) as number[];
+  const canceled = ((assembly as any).c_canceled_Breakdown || []) as number[];
+  const effectiveOrdered = useMemo(
+    () =>
+      computeEffectiveOrderedBreakdown({
+        orderedBySize: ordered,
+        canceledBySize: canceled,
+      }).effective,
+    [ordered, canceled]
+  );
   const alreadyCut =
     (((assembly as any).c_qtyCut_Breakdown || []) as number[]) || [];
   const leftToCutExt =
@@ -138,10 +148,18 @@ export function AssemblyActivityModal(props: {
     }
     return Array.from({ length: len }, (_, i) => {
       const ext = leftToCutExt[i];
-      if (Number.isFinite(ext)) return Math.max(0, Number(ext));
-      return Math.max(0, (ordered[i] || 0) - (alreadyCut[i] || 0));
+      if (Number.isFinite(ext)) {
+        return Math.max(
+          0,
+          Math.min(Number(ext), Number(effectiveOrdered[i] || 0))
+        );
+      }
+      return Math.max(
+        0,
+        (effectiveOrdered[i] || 0) - (alreadyCut[i] || 0)
+      );
     });
-  }, [activityType, labels, ordered, alreadyCut, leftToCutExt]);
+  }, [activityType, labels, effectiveOrdered, alreadyCut, leftToCutExt]);
 
   // Group-assembly defaults prepared from provided groupQtyItems
   const groupDefaults = useMemo(() => {

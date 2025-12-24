@@ -1,6 +1,11 @@
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asNum, pick, parseIntListPreserveGaps, resetSequence } from "./utils";
+import {
+  mapLegacyAssemblyStatusToHoldAndIntent,
+  mapLegacyJobStatusToHold,
+  mapLegacyJobStatusToState,
+} from "../modules/job/stateUtils";
 
 // Canonical “tight” assembly statuses (string keys) for Axis dashboards.
 // These correspond to your assemblyStateKeys in the front-end config.
@@ -94,6 +99,12 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
     updated = 0,
     skipped = 0;
   const errors: any[] = [];
+  const shipToStats = {
+    setFromFm: 0,
+    clearedMismatch: 0,
+    missingInFm: 0,
+    legacyLocationRetained: 0,
+  };
 
   const unknownStatusCounts = new Map<string, number>();
 
@@ -119,6 +130,28 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
 
   // Track per-job canonical statuses so we can roll up job status at the end
   const jobCanonStates = new Map<number, (CanonState | null)[]>();
+  const addressOwners = new Map<number, number | null>();
+  const addressRows = await prisma.address.findMany({
+    select: { id: true, companyId: true },
+  });
+  for (const row of addressRows) {
+    addressOwners.set(row.id, row.companyId ?? null);
+  }
+  const jobIdSet = new Set<number>();
+  for (const row of rows) {
+    const jid = asNum(pick(row, ["a_JobNo"])) as number | null;
+    if (jid != null) jobIdSet.add(jid);
+  }
+  const jobCompanyById = new Map<number, number | null>();
+  if (jobIdSet.size) {
+    const jobs = await prisma.job.findMany({
+      where: { id: { in: Array.from(jobIdSet) } },
+      select: { id: true, companyId: true },
+    });
+    for (const job of jobs) {
+      jobCompanyById.set(job.id, job.companyId ?? null);
+    }
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -160,6 +193,7 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
 
     const statusRaw = pick(r, ["Status"]);
     const status = (statusRaw ?? "").toString().trim() || null;
+    const hold = mapLegacyAssemblyStatusToHoldAndIntent(status);
 
     const { canon, statusNorm } = mapFmAssemblyStatus(statusRaw);
     if (statusNorm && !canon) {
@@ -170,6 +204,30 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
     }
 
     const jobId = asNum(pick(r, ["a_JobNo"])) as number | null;
+    const shipToAddressRaw = asNum(
+      pick(r, [
+        "a_AddressID|ShipOverride",
+        "a_AddressID|ShipToOverride",
+        "ShipToAddressOverrideID",
+        "ShipToAddressIdOverride",
+        "ShipToAddressIDOverride",
+        "AddressID|ShipTo|Override",
+        "a_ShipToAddressOverrideID",
+      ])
+    ) as number | null;
+    let shipToAddressIdOverride: number | null = null;
+    if (shipToAddressRaw == null) {
+      shipToStats.missingInFm++;
+    } else {
+      const jobCompanyId = jobId != null ? jobCompanyById.get(jobId) ?? null : null;
+      const ownerCompanyId = addressOwners.get(shipToAddressRaw) ?? null;
+      if (jobCompanyId && ownerCompanyId && jobCompanyId === ownerCompanyId) {
+        shipToAddressIdOverride = shipToAddressRaw;
+        shipToStats.setFromFm++;
+      } else {
+        shipToStats.clearedMismatch++;
+      }
+    }
 
     // Keep both:
     // - status: raw FM
@@ -179,6 +237,8 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
       name: resolvedName,
       status: canon,
       statusWhiteboard: notes,
+      manualHoldOn: hold.manualHoldOn,
+      manualHoldReason: hold.manualHoldReason,
       quantity:
         orderedSum > 0
           ? (orderedSum as any)
@@ -188,13 +248,16 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
       productId,
       variantSetId: asNum(pick(r, ["a_VariantSetID"])) as number | null,
       notes: (pick(r, ["Notes"]) ?? "").toString().trim() || null,
+      ...(shipToAddressIdOverride != null
+        ? { shipToAddressIdOverride, shipToLocationIdOverride: null }
+        : {}),
     };
 
     try {
       // Correct created vs updated count
       const existed = await prisma.assembly.findUnique({
         where: { id },
-        select: { id: true },
+        select: { id: true, shipToLocationIdOverride: true },
       });
 
       await prisma.assembly.upsert({
@@ -205,6 +268,12 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
 
       if (existed) updated++;
       else created++;
+      if (
+        shipToAddressIdOverride == null &&
+        existed?.shipToLocationIdOverride != null
+      ) {
+        shipToStats.legacyLocationRetained++;
+      }
 
       if (jobId != null) {
         if (!jobCanonStates.has(jobId)) jobCanonStates.set(jobId, []);
@@ -219,6 +288,8 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
   // Set Job.statusWhiteboard only if there is extra nuance worth surfacing.
   for (const [jobId, canonStates] of jobCanonStates.entries()) {
     const jobCanon = rollupJobStatusFromAssemblies(canonStates);
+    const jobState = mapLegacyJobStatusToState(jobCanon);
+    const jobHold = mapLegacyJobStatusToHold(jobCanon);
 
     // Optional nuance: if any assembly in the job is blocked, summarize why.
     // This uses the RAW FM status captured in Assembly.status.
@@ -258,6 +329,9 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
       data: {
         status: jobCanon,
         statusWhiteboard: whiteboard,
+        state: jobState,
+        jobHoldOn: jobHold.jobHoldOn,
+        jobHoldReason: jobHold.jobHoldReason,
       },
     });
   }
@@ -268,6 +342,8 @@ export async function importAssemblies(rows: any[]): Promise<ImportResult> {
       .slice(0, 30);
     console.log("[import] assemblies: unknown FM statuses (top)", top);
   }
+
+  console.log("[import] assemblies ship-to summary", shipToStats);
 
   if (errors.length) {
     const grouped: Record<

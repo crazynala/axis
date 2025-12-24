@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import { useLocation, useNavigate, useSearchParams } from "@remix-run/react";
-import { FindRibbon, defaultSummarizeFilters } from "~/base/find/FindRibbon";
+import {
+  FindRibbon,
+  defaultSummarizeFilters,
+  type FilterChip,
+} from "~/base/find/FindRibbon";
 
 export function FindRibbonAuto({
   views,
@@ -8,6 +12,7 @@ export function FindRibbonAuto({
   title,
   labelMap,
   keepKeys,
+  summarizeFilters,
 }: {
   views: any[];
   activeView: string | null;
@@ -19,6 +24,10 @@ export function FindRibbonAuto({
    * Note: page is intentionally NOT preserved by default so it resets to page 1 when filters change.
    */
   keepKeys?: string[];
+  summarizeFilters?: (
+    params: Record<string, string>,
+    opts: { labelMap?: Record<string, string> }
+  ) => FilterChip[];
 }) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -47,7 +56,9 @@ export function FindRibbonAuto({
     return obj;
   }, [sp]);
   const inFindMode = sp.has("findReqs") || Object.keys(simpleParams).length > 0;
-  const chips = defaultSummarizeFilters(simpleParams, { labelMap });
+  const chips = summarizeFilters
+    ? summarizeFilters(simpleParams, { labelMap })
+    : defaultSummarizeFilters(simpleParams, { labelMap });
 
   const makeBaseParams = () => {
     const next = new URLSearchParams();

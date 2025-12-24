@@ -29,6 +29,8 @@ import {
   productAssocFields,
   productPricingFields,
 } from "../forms/productDetail";
+import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
+import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 import { ProductCostTiersModal } from "../components/ProductCostTiersModal";
 import { PricingPreviewWidget } from "./PricingPreviewWidget";
 import type { ProductValidationResult } from "../validation/computeProductValidation";
@@ -71,6 +73,7 @@ export type ProductDetailFormProps = {
       skuSeriesKey?: string | null;
     }
   >;
+  metadataDefinitions?: ProductAttributeDefinition[];
 };
 
 export function ProductDetailForm({
@@ -90,6 +93,7 @@ export function ProductDetailForm({
   hasMovements,
   requireTemplate = false,
   hideTemplateField,
+  metadataDefinitions = [],
 }: ProductDetailFormProps) {
   const optionsCtx = useOptions();
   const [tiersOpen, setTiersOpen] = React.useState(false);
@@ -772,6 +776,10 @@ export function ProductDetailForm({
       requiredStates,
     ]
   );
+  const metadataFields = React.useMemo(
+    () => buildProductMetadataFields(metadataDefinitions),
+    [metadataDefinitions]
+  );
 
   return (
     <Grid>
@@ -898,6 +906,25 @@ export function ProductDetailForm({
           </Card>
         </SimpleGrid>
       </Grid.Col>
+      {metadataFields.length ? (
+        <Grid.Col span={{ base: 12 }}>
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center" gap="xs">
+                <Text size="sm" fw={600}>
+                  Metadata
+                </Text>
+              </Group>
+            </Card.Section>
+            <RenderGroup
+              form={form as any}
+              fields={metadataFields as any}
+              mode={mode as any}
+              ctx={ctx as any}
+            />
+          </Card>
+        </Grid.Col>
+      ) : null}
       {legacyEntries.length ? (
         <Grid.Col span={{ base: 12 }}>
           <Accordion

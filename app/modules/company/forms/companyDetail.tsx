@@ -36,7 +36,7 @@ function LeadTimeInput({ form }: { form: UseFormReturn<any> }) {
   );
 }
 
-export const companyMainFields: FieldConfig[] = [
+export const companyPanelOneFields: FieldConfig[] = [
   {
     name: "id",
     label: "ID",
@@ -54,6 +54,22 @@ export const companyMainFields: FieldConfig[] = [
     widget: "triBool",
     findOp: "equals",
   },
+
+  {
+    name: "isSupplier",
+    label: "Supplier",
+    widget: "triBool",
+    findOp: "equals",
+  },
+  {
+    name: "isInactive",
+    label: "Archived",
+    widget: "triBool",
+    findOp: "equals",
+  },
+];
+
+export const companyPanelTwoFields: FieldConfig[] = [
   {
     name: "isConsignee",
     label: "Consignee",
@@ -63,23 +79,11 @@ export const companyMainFields: FieldConfig[] = [
     hiddenInModes: ["find"],
   },
   {
-    name: "isSupplier",
-    label: "Supplier",
-    widget: "triBool",
-    findOp: "equals",
-  },
-  {
     name: "defaultLeadTimeDays",
     label: "Default lead time (days)",
     hiddenInModes: ["find"],
     showIf: ({ form }) => !!(form.getValues() as any)?.isSupplier,
     render: ({ form }) => <LeadTimeInput form={form as any} />,
-  },
-  {
-    name: "isInactive",
-    label: "Archived",
-    widget: "triBool",
-    findOp: "equals",
   },
   {
     name: "defaultMarginOverride",
@@ -98,7 +102,7 @@ export const companyMainFields: FieldConfig[] = [
   },
   {
     name: "invoiceBillUpon",
-    label: "Bill Upon",
+    label: "Invoice Upon",
     widget: "select",
     options: [
       { value: "Ship", label: "Ship" },
@@ -109,14 +113,15 @@ export const companyMainFields: FieldConfig[] = [
   },
   {
     name: "invoicePercentOnCut",
-    label: "Invoice % on Cut",
+    label: "Invoice / Cut",
+    placeholder: "50%",
     widget: "text",
     showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
     hiddenInModes: ["find"],
   },
   {
     name: "invoicePercentOnOrder",
-    label: "Invoice % on Order",
+    label: "Invoice / Order",
     widget: "text",
     showIf: ({ form }) => !!(form.getValues() as any)?.isCustomer,
     hiddenInModes: ["find"],
@@ -124,5 +129,5 @@ export const companyMainFields: FieldConfig[] = [
 ];
 
 export function allCompanyFindFields() {
-  return [...companyMainFields];
+  return [...companyPanelOneFields, ...companyPanelTwoFields];
 }

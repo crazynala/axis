@@ -550,11 +550,12 @@ export const productBomFindFields: FieldConfig[] = [
   },
 ];
 
-export function allProductFindFields() {
+export function allProductFindFields(extraFields: FieldConfig[] = []) {
   return [
     ...productIdentityFields,
     ...productAssocFields,
     ...productPricingFields,
     ...productBomFindFields,
+    ...extraFields,
   ];
 }

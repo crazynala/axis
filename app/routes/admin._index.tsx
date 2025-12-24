@@ -27,6 +27,7 @@ export default function AdminIndex() {
             <Link to="/admin/value-lists/DefectReason">
               Value Lists: Defect Reasons
             </Link>
+            <Link to="/admin/product-attributes">Product Metadata</Link>
             <Link to="/admin/forex/USD/TRY">Forex: USD → TRY</Link>
             <Link to="/admin/dhl-records">DHL Records</Link>
           </Group>

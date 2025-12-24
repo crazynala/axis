@@ -8,6 +8,7 @@ import type { DerivedExternalStep } from "~/modules/job/types/externalSteps";
 import type { StageRow } from "~/modules/job/types/stageRows";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
 import { prisma } from "~/utils/prisma.server";
+import { computeEffectiveOrderedBreakdown } from "~/modules/job/quantityUtils";
 
 type AggregationActivity = {
   stage?: string | null;
@@ -44,6 +45,8 @@ type ExternalAggregate = {
 
 export type StageAggregation = {
   assemblyId: number;
+  orderedRaw: number[];
+  canceled: number[];
   ordered: number[];
   orderedTotal: number;
   displayArrays: Record<"cut" | "sew" | "finish" | "pack" | "qc", number[]>;
@@ -80,10 +83,14 @@ export function aggregateAssemblyStages(
     packSnapshot,
     activities,
   } = options;
-  const ordered = Array.isArray(orderedBreakdown)
+  const orderedRaw = Array.isArray(orderedBreakdown)
     ? normalizeBreakdown(orderedBreakdown, 0, false)
     : [];
-  const orderedTotal = sumArray(ordered);
+  const canceledBreakdown = sumBreakdownsForStage(activities, "cancel");
+  const { effective: ordered, total: orderedTotal } = computeEffectiveOrderedBreakdown({
+    orderedBySize: orderedRaw,
+    canceledBySize: canceledBreakdown,
+  });
   const stageActs = {
     cut: filterStage(activities, "cut"),
     sew: filterStage(activities, "sew"),
@@ -167,6 +174,8 @@ export function aggregateAssemblyStages(
 
   return {
     assemblyId,
+    orderedRaw,
+    canceled: canceledBreakdown,
     ordered,
     orderedTotal,
     displayArrays,
@@ -556,6 +565,7 @@ function normalizeActivityForAggregation(act: AssemblyActivity): AggregationActi
     else if (name.includes("finish") || name.includes("make")) stage = "finish";
     else if (name.includes("pack")) stage = "pack";
     else if (name.includes("qc")) stage = "qc";
+    else if (name.includes("cancel")) stage = "cancel";
     else stage = "other";
   }
   if (stage === "make") stage = "finish";
@@ -570,4 +580,21 @@ function normalizeActivityForAggregation(act: AssemblyActivity): AggregationActi
     qtyBreakdown: act.qtyBreakdown as any,
     externalStepType: act.externalStepType,
   };
+}
+
+function sumBreakdownsForStage(
+  activities: AggregationActivity[],
+  stage: string
+): number[] {
+  const breakdowns: number[][] = [];
+  for (const act of activities || []) {
+    const raw = String(act?.stage || "").toLowerCase();
+    if (raw !== stage) continue;
+    const arr = normalizeBreakdown(act.qtyBreakdown, Number(act.quantity ?? 0));
+    if (arr.length) breakdowns.push(arr);
+  }
+  return breakdowns.reduce((total, arr) => {
+    addInto(total, arr);
+    return total;
+  }, [] as number[]);
 }

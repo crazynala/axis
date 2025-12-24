@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { useBaseFindify } from "~/base/find/baseFindify";
 import { useFind } from "~/base/find/FindContext";
+import { buildProductMetadataDefaults } from "~/modules/productMetadata/utils/productMetadataFields";
+import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 
 export type ProductFindFormValues = {
   id?: number | string | null;
@@ -36,10 +38,18 @@ export type ProductFindFormValues = {
   componentChildName?: string | null;
   componentChildSupplierId?: number | null;
   componentChildType?: string | null;
+  bomDirty?: string | null;
 };
 
 // Build defaults for edit + find modes
-export function buildProductEditDefaults(p: any): ProductFindFormValues {
+export function buildProductEditDefaults(
+  p: any,
+  metadataDefinitions: ProductAttributeDefinition[] = []
+): ProductFindFormValues {
+  const metaDefaults = buildProductMetadataDefaults(
+    metadataDefinitions,
+    p?.metadataValuesByKey || {}
+  );
   return {
     id: p.id,
     sku: p.sku || "",
@@ -68,6 +78,8 @@ export function buildProductEditDefaults(p: any): ProductFindFormValues {
     tagNames: (p.productTags || [])
       .map((pt: any) => pt?.tag?.name)
       .filter(Boolean) as string[],
+    bomDirty: null,
+    ...(metaDefaults as any),
   };
 }
 
@@ -100,20 +112,26 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     componentChildSupplierId: undefined,
     componentChildType: undefined,
     externalStepType: undefined,
+    bomDirty: undefined,
   };
 }
 
-export function useProductFindify(product: any, nav?: { state: string }) {
+export function useProductFindify(
+  product: any,
+  nav?: { state: string },
+  metadataDefinitions: ProductAttributeDefinition[] = []
+) {
   const { mode } = useFind();
   const { editForm, findForm, enterFind, exitFind, toggleFind } =
     useBaseFindify<ProductFindFormValues, ProductFindFormValues>({
-      buildEditDefaults: buildProductEditDefaults,
+      buildEditDefaults: (p) => buildProductEditDefaults(p, metadataDefinitions),
       buildFindDefaults: buildProductFindDefaults,
       record: product,
       navState: nav?.state,
     });
 
-  const buildUpdatePayload = useCallback((values: ProductFindFormValues) => {
+  const buildUpdatePayload = useCallback(
+    (values: ProductFindFormValues) => {
     const fd = new FormData();
     fd.set("_intent", "update");
 
@@ -162,9 +180,16 @@ export function useProductFindify(product: any, nav?: { state: string }) {
     } catch {
       // ignore
     }
+    for (const def of metadataDefinitions) {
+      const key = `meta__${def.key}`;
+      const raw = (values as any)[key];
+      fd.set(key, raw == null ? "" : String(raw));
+    }
 
     return fd;
-  }, []);
+    },
+    [metadataDefinitions]
+  );
 
   const buildFindPayload = useCallback((values: ProductFindFormValues) => {
     const fd = new FormData();

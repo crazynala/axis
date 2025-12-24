@@ -48,10 +48,12 @@ export async function loader(args: LoaderFunctionArgs) {
     { runWithDbActivity, prismaBase, prisma },
     { buildPrismaArgs, parseTableParams },
     { listViews },
+    { getFilterableProductAttributeDefinitions },
   ] = await Promise.all([
     import("~/utils/prisma.server"),
     import("~/utils/table.server"),
     import("~/utils/views.server"),
+    import("~/modules/productMetadata/services/productMetadata.server"),
   ]);
   console.log("!! Product master loader");
   return runWithDbActivity("products.index", async () => {
@@ -59,6 +61,7 @@ export async function loader(args: LoaderFunctionArgs) {
     const q = url.searchParams;
     const params = parseTableParams(args.request.url);
     const views = await listViews("products");
+    const metadataDefinitions = await getFilterableProductAttributeDefinitions();
     const viewName = q.get("view");
     const __debug = process.env.NODE_ENV !== "production";
     const d = (label: string, obj: any) => {
@@ -120,9 +123,10 @@ export async function loader(args: LoaderFunctionArgs) {
       if (tokens.length === 1) return builder(tokens[0]);
       return { AND: tokens.map((token) => builder(token)) };
     };
+    const metaKeys = Array.from(q.keys()).filter((k) => k.startsWith("meta__"));
     const findKeys = PRODUCT_FIND_PARAM_KEYS.filter(
       (k) => !["view", "sort", "dir", "perPage", "q", "findReqs"].includes(k)
-    );
+    ).concat(metaKeys);
     const hasFindIndicators =
       findKeys.some((k) => q.has(k)) || q.has("findReqs");
     let findWhere: any = null;
@@ -183,6 +187,15 @@ export async function loader(args: LoaderFunctionArgs) {
             mode: "insensitive",
           },
         });
+      const { buildMetadataWhereFromParams, buildMetadataInterpreters } =
+        await import(
+          "~/modules/productMetadata/services/productMetadataFilters.server"
+        );
+      const metadataWhere = buildMetadataWhereFromParams(
+        q,
+        metadataDefinitions
+      );
+      if (metadataWhere) simpleClauses.push(metadataWhere);
       const simple =
         simpleClauses.length === 0
           ? null
@@ -250,6 +263,10 @@ export async function loader(args: LoaderFunctionArgs) {
             productLines: { some: { child: { type: canonType(v) } } },
           }),
         };
+        Object.assign(
+          interpreters,
+          buildMetadataInterpreters(metadataDefinitions)
+        );
         const multiWhere = buildWhereFromRequests(multi, interpreters);
         findWhere = mergeSimpleAndMulti(simple, multiWhere);
         d("[products.index] multiFind decoded", multi);
@@ -293,6 +310,9 @@ export async function loader(args: LoaderFunctionArgs) {
         "componentChildType",
       ]) {
         if (k in rest) delete (rest as any)[k];
+      }
+      for (const k of Object.keys(rest)) {
+        if (k.startsWith("meta__")) delete (rest as any)[k];
       }
       baseParams = { ...baseParams, filters: rest };
     }
@@ -342,6 +362,7 @@ export async function loader(args: LoaderFunctionArgs) {
       total: idList.length,
       views,
       activeView: viewName || null,
+      metadataDefinitions,
     });
   });
   return null;
@@ -351,7 +372,7 @@ export async function loader(args: LoaderFunctionArgs) {
 // unless relevant search params actually change or a mutation occurs.
 export const shouldRevalidate = makeModuleShouldRevalidate(
   "/products",
-  PRODUCT_FIND_PARAM_KEYS,
+  [...PRODUCT_FIND_PARAM_KEYS, "meta__*"],
   {
     // Block revalidation on child/detail routes and after non-GET mutations
     blockOnChild: true,

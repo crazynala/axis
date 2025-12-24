@@ -1,14 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "@remix-run/react";
 import { useFind } from "~/base/find/FindContext";
 import { ProductFindModal } from "../components/ProductFindModal";
+import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 
 // Simple Product Find Modal leveraging existing URL param filtering (products loader reads params)
-export function ProductFindManager() {
+export function ProductFindManager({
+  metadataDefinitions = [],
+}: {
+  metadataDefinitions?: ProductAttributeDefinition[];
+}) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const { registerFindCallback } = useFind();
   const [open, setOpen] = useState(false);
+  const filterableDefs = useMemo(
+    () => metadataDefinitions.filter((def) => def.isFilterable),
+    [metadataDefinitions]
+  );
 
   // Legacy auto-open removed: modal opens only via registered hotkey/callback.
 
@@ -38,6 +47,7 @@ export function ProductFindManager() {
         }
         return base as any;
       })()}
+      metadataDefinitions={filterableDefs}
     />
   );
 }

@@ -26,6 +26,7 @@ export type ProductFindValues = {
   componentChildName?: string;
   componentChildSupplierId?: number | null;
   componentChildType?: string;
+  [key: string]: any;
 };
 
 export const productSearchSchema: SearchSchema<

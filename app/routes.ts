@@ -11,6 +11,7 @@ export default [
 
   // 2) Mount module routes (pick as many folders as you like):
   ...(await flatRoutes({ rootDirectory: "modules/company/routes" })),
+  ...(await flatRoutes({ rootDirectory: "modules/address/routes" })),
   ...(await flatRoutes({ rootDirectory: "modules/box/routes" })),
   ...(await flatRoutes({ rootDirectory: "modules/product/routes" })),
   ...(await flatRoutes({ rootDirectory: "modules/job/routes" })),

@@ -7,6 +7,18 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
       job: {
         include: {
           stockLocation: { select: { id: true, name: true } },
+          shipToLocation: { select: { id: true, name: true } },
+          shipToAddress: {
+            select: {
+              id: true,
+              name: true,
+              addressLine1: true,
+              addressTownCity: true,
+              addressCountyState: true,
+              addressZipPostCode: true,
+              addressCountry: true,
+            },
+          },
           company: { select: { id: true, priceMultiplier: true } },
         },
       },
@@ -27,6 +39,18 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
       },
       assemblyGroup: {
         select: { id: true, name: true },
+      },
+      shipToLocationOverride: { select: { id: true, name: true } },
+      shipToAddressOverride: {
+        select: {
+          id: true,
+          name: true,
+          addressLine1: true,
+          addressTownCity: true,
+          addressCountyState: true,
+          addressZipPostCode: true,
+          addressCountry: true,
+        },
       },
       costings: {
         include: {
@@ -231,4 +255,3 @@ export async function getVariantSetForProduct(opts: { productId: number }) {
   });
   return (p?.variantSet as any) || null;
 }
-

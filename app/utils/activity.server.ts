@@ -161,6 +161,44 @@ export async function createCutActivity(options: {
   return result;
 }
 
+export async function createCancelActivity(options: {
+  assemblyId: number;
+  jobId: number;
+  activityDate: Date;
+  qtyBreakdown: number[];
+  notes?: string | null;
+  groupKey?: string | null;
+}) {
+  const {
+    assemblyId,
+    jobId,
+    activityDate,
+    qtyBreakdown,
+    notes,
+    groupKey,
+  } = options;
+  const totalCanceled = (qtyBreakdown || []).reduce(
+    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
+    0
+  );
+  if (!totalCanceled) return null;
+  return prisma.assemblyActivity.create({
+    data: {
+      assemblyId,
+      jobId,
+      name: "Cancel",
+      stage: AssemblyStage.cancel,
+      kind: ActivityKind.normal,
+      action: ActivityAction.RECORDED,
+      activityDate,
+      qtyBreakdown: qtyBreakdown as any,
+      quantity: totalCanceled,
+      notes: notes ?? null,
+      groupKey: groupKey ?? null,
+    },
+  });
+}
+
 type FinishInventoryParams = {
   activityId: number;
   assemblyId: number;

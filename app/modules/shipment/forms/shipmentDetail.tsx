@@ -1,4 +1,5 @@
 import type { FieldConfig } from "~/base/forms/fieldConfigShared";
+import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 export { renderField } from "~/base/forms/fieldConfigShared";
 
 // Shipment primary fields (editable subset + read-only associations)
@@ -22,6 +23,7 @@ export const shipmentInfoFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "customer",
     findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
     showIf: ({ form, mode }) => {
       if (mode === "find") return true;
       const t = form.getValues()?.type;
@@ -34,6 +36,7 @@ export const shipmentInfoFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "contact",
     findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
     showIf: ({ form, mode }) => {
       if (mode === "find") return true;
       const t = form.getValues()?.type;
@@ -47,6 +50,8 @@ export const shipmentInfoFields: FieldConfig[] = [
     name: "status",
     label: "Status",
     findOp: "contains",
+    editable: false,
+    readOnly: true,
     showIf: ({ mode }) => mode !== "create",
   },
   {
@@ -83,18 +88,63 @@ export const shipmentInfoFields: FieldConfig[] = [
 ];
 
 export const shipmentAddressFields: FieldConfig[] = [
-  { name: "addressName", label: "Address Name", findOp: "contains" },
-  { name: "addressLine1", label: "Address Line 1", findOp: "contains" },
-  { name: "addressLine2", label: "Address Line 2", findOp: "contains" },
+  {
+    name: "addressIdShip",
+    render: ({ form, ctx }) => {
+      const options = ctx?.fieldOptions?.address_shipto ?? [];
+      const addressId = form.watch("addressIdShip") as number | null;
+      const previewAddress = {
+        name: form.watch("addressName"),
+        addressLine1: form.watch("addressLine1"),
+        addressLine2: form.watch("addressLine2"),
+        addressLine3: form.watch("addressLine3"),
+        addressTownCity: form.watch("addressTownCity") || form.watch("addressCity"),
+        addressCountyState: form.watch("addressCountyState"),
+        addressZipPostCode:
+          form.watch("addressZipPostCode") || form.watch("addressPostalCode"),
+        addressCountry: form.watch("addressCountry"),
+      };
+      return (
+        <AddressPickerField
+          label="Ship-To Address"
+          value={addressId ?? null}
+          options={options}
+          previewAddress={previewAddress}
+          onChange={(nextId) => form.setValue("addressIdShip", nextId)}
+          disabled={Boolean(ctx?.shipmentLocked)}
+        />
+      );
+    },
+  },
+  {
+    name: "addressName",
+    label: "Address Name",
+    findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
+  },
+  {
+    name: "addressLine1",
+    label: "Address Line 1",
+    findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
+  },
+  {
+    name: "addressLine2",
+    label: "Address Line 2",
+    findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
+  },
   {
     name: "addressCity",
     label: "City",
     findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
   },
   {
     name: "addressCountyState",
     label: "County/State",
     findOp: "contains",
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
   },
   {
     name: "addressPostalCode",
@@ -102,8 +152,15 @@ export const shipmentAddressFields: FieldConfig[] = [
     findOp: "contains",
     inlineWithNext: true,
     flex: 1,
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
   },
-  { name: "addressCountry", label: "Country", findOp: "contains", flex: 1 },
+  {
+    name: "addressCountry",
+    label: "Country",
+    findOp: "contains",
+    flex: 1,
+    readOnlyIf: ({ ctx }) => Boolean(ctx?.shipmentLocked),
+  },
 ];
 
 export const shipmentDetailFields: FieldConfig[] = [

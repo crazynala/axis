@@ -1,5 +1,7 @@
 export type ProductDetailVM = {
   product: any;
+  metadataDefinitions: any[];
+  metadataValuesByKey: Record<string, any>;
   stockByLocation: any[];
   stockByBatch: any[];
   productChoices: any[];
@@ -9,7 +11,11 @@ export type ProductDetailVM = {
   salePriceGroups: any[];
   usedInProducts: any[];
   costingAssemblies: any[];
+  hasCmtLine?: boolean;
+  pricingSpecOptions?: Array<{ value: string; label: string }>;
+  categoryLabel?: string | null;
+  subCategoryLabel?: string | null;
+  subCategoryOptions?: Array<{ value: string; label: string }>;
   userLevel: string | null;
   canDebug: boolean;
 };
-

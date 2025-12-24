@@ -1,5 +1,7 @@
 import { JOB_DATES_STATUS_FIELDS } from "~/constants/spec";
 import type { FieldConfig } from "~/base/forms/fieldConfigShared";
+import { AddressPickerField } from "~/components/addresses/AddressPickerField";
+import { formatAddressLines } from "~/utils/addressFormat";
 export { renderField } from "~/base/forms/fieldConfigShared";
 
 export const jobDateStatusLeft: FieldConfig[] = [
@@ -33,12 +35,19 @@ export const jobDateStatusRight: FieldConfig[] = [
     type: "date",
     findOp: "equals",
   },
-  { name: "targetDate", label: "Target Date", type: "date", findOp: "equals" },
+  {
+    name: "targetDate",
+    label: "Target Date",
+    type: "date",
+    findOp: "equals",
+    hiddenInModes: ["edit"],
+  },
   {
     name: "dropDeadDate",
     label: "Drop Dead Date",
     type: "date",
     findOp: "equals",
+    hiddenInModes: ["edit"],
   },
   {
     name: "stockLocationId",
@@ -46,6 +55,43 @@ export const jobDateStatusRight: FieldConfig[] = [
     widget: "select",
     optionsKey: "location",
     findOp: "equals",
+  },
+  {
+    name: "shipToAddressId",
+    render: ({ form, ctx }) => {
+      const addressById = (ctx as any)?.addressById as Map<number, any> | undefined;
+      const options = ctx?.fieldOptions?.job_shipto_address ?? [];
+      const shipToAddressId = form.watch("shipToAddressId") as number | null;
+      const legacyLocation = (ctx as any)?.jobShipToLocation;
+      const defaultAddress = (ctx as any)?.jobDefaultAddress;
+      const hintLines: string[] = [];
+      if (!shipToAddressId && defaultAddress) {
+        const lines = formatAddressLines(defaultAddress);
+        hintLines.push(`Default: ${lines.length ? lines.join(", ") : `Address ${defaultAddress.id}`}`);
+      }
+      if (!shipToAddressId && legacyLocation) {
+        hintLines.push(
+          `Legacy ship-to location: ${legacyLocation.name || `Location ${legacyLocation.id}`}`
+        );
+      }
+      const hint = hintLines.length ? hintLines.join(" · ") : null;
+      const previewAddress =
+        shipToAddressId != null && addressById
+          ? addressById.get(Number(shipToAddressId)) ?? null
+          : null;
+      return (
+        <AddressPickerField
+          label="Ship-To Address"
+          value={shipToAddressId ?? null}
+          options={options}
+          previewAddress={previewAddress}
+          hint={hint || undefined}
+          onChange={(nextId) => form.setValue("shipToAddressId", nextId)}
+        />
+      );
+    },
+    findOp: "equals",
+    hiddenInModes: ["find"],
   },
 ];
 

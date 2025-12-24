@@ -5,18 +5,27 @@ import type {
 } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { action as productAction } from "./products.$id._index";
-import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import {
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+} from "@remix-run/react";
 import { Button, Card, Group, Stack, Title } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { useForm } from "react-hook-form";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ProductDetailForm } from "../components/ProductDetailForm";
 import { prismaBase } from "~/utils/prisma.server";
 import { GlobalFormProvider, SaveCancelHeader } from "@aa/timber";
 import { computeProductValidation } from "../validation/computeProductValidation";
+import { getAllProductAttributeDefinitions } from "~/modules/productMetadata/services/productMetadata.server";
+import { buildProductMetadataDefaults } from "~/modules/productMetadata/utils/productMetadataFields";
 
 export const meta: MetaFunction = () => [{ title: "New Product" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
+  const metadataDefinitions = await getAllProductAttributeDefinitions();
   const productTemplates = await prismaBase.productTemplate.findMany({
     where: { isActive: true },
     select: {
@@ -48,6 +57,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       batchTrackingEnabled: false,
     },
     productTemplates,
+    metadataDefinitions,
   });
 }
 
@@ -63,11 +73,27 @@ export default function NewProductRoute() {
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
-  const { productTemplates } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const { productTemplates, metadataDefinitions } =
+    useLoaderData<typeof loader>();
   const [focusMissingRequired, setFocusMissingRequired] = useState<
     (() => void) | null
   >(null);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+  useEffect(() => {
+    if (!actionData || typeof actionData !== "object") return;
+    const error = (actionData as any).error;
+    if (!error) return;
+    notifications.show({
+      color: "red",
+      title: "Create failed",
+      message: String(error),
+    });
+  }, [actionData]);
+  const metadataDefaults = useMemo(
+    () => buildProductMetadataDefaults(metadataDefinitions, null),
+    [metadataDefinitions]
+  );
   const form = useForm({
     defaultValues: {
       sku: "",
@@ -81,6 +107,7 @@ export default function NewProductRoute() {
       templateId: "",
       categoryId: "",
       subCategoryId: "",
+      ...(metadataDefaults as any),
     },
   });
   const watched = form.watch();
@@ -180,6 +207,7 @@ export default function NewProductRoute() {
               templateDefs={Object.fromEntries(
                 productTemplates.map((t) => [String(t.id), t])
               )}
+              metadataDefinitions={metadataDefinitions}
             />
             <Group mt="md">
               <Button

@@ -608,11 +608,7 @@ export function AssemblyQuantitiesCard({
                         <Text fw={600} size="sm">
                           {internalRow.stage === "order" && editableOrdered && idx === 0
                             ? fmtNum(totalOrdered)
-                            : fmtNum(
-                                internalRow.stage === "order"
-                                  ? sum(internalRow.breakdown)
-                                  : internalRow.total
-                              )}
+                            : fmtNum(internalRow.total)}
                         </Text>
                       </Table.Td>
                       <Table.Td style={tdCenter} />

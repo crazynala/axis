@@ -15,6 +15,8 @@
     "seed:primary-costings": "tsx scripts/seed-primary-costings.ts",
     "seed:coverage-tolerance": "tsx scripts/seed-material-coverage-tolerance.ts",
     "seed:db-extensions": "tsx scripts/seed-db-extensions.ts",
+    "seed:product-metadata": "tsx scripts/seed-product-metadata.ts",
+    "seed:pricing-specs": "tsx scripts/seed-pricing-specs.ts",
     "backfill:assembly-actions": "tsx scripts/backfill-assembly-actions.ts",
     "debug": "node --inspect-brk server.mjs",
     "predev": "prisma generate",
@@ -35,6 +37,10 @@
     "spec:verify": "tsx ./scripts/verify-spec.ts",
     "precommit": "npm run spec:verify && npm run typecheck",
     "test": "npm run spec:verify && tsx ./scripts/test-buildWhere.ts",
+    "test:addresses": "tsx ./scripts/test-addresses.ts",
+    "test:pricing-spec-tiers": "tsx ./scripts/test-pricing-spec-tiers.ts",
+    "test:production-attention": "tsx ./scripts/test-production-attention.ts",
+    "test:target-overrides": "tsx ./scripts/test-target-overrides.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -2,6 +2,10 @@ import { json, redirect } from "@remix-run/node";
 import type { Params } from "@remix-run/react";
 import { requireUserId } from "~/utils/auth.server";
 import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
+import {
+  loadDefaultInternalTargetLeadDays,
+  resolveAssemblyTargets,
+} from "~/modules/job/services/targetOverrides.server";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 import { DefectDisposition, ActivityKind, ActivityAction, ExternalStepType } from "@prisma/client";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
@@ -10,11 +14,13 @@ import {
   buildStageRowsFromAggregation,
   type StageAggregation,
 } from "~/modules/job/services/stageRows.server";
+import { coerceBreakdown, sumBreakdownArrays } from "~/modules/job/quantityUtils";
 import { loadCoverageToleranceDefaults } from "~/modules/materials/services/coverageTolerance.server";
 import { loadAssemblyRollups } from "~/modules/production/services/rollups.server";
 import { loadMaterialCoverage } from "~/modules/production/services/materialCoverage.server";
 import { loadSupplierOptionsByExternalStepTypes } from "~/modules/company/services/companyOptions.server";
 import type { AssemblyDetailVM } from "~/modules/job/types/assemblyDetailVM";
+import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
 import {
   getActivitiesForAssemblies,
   getActiveProductsList,
@@ -223,6 +229,7 @@ export async function loadAssemblyDetailVM(opts: {
       else if (name.includes("finish") || name.includes("make")) stage = "finish";
       else if (name.includes("pack")) stage = "pack";
       else if (name.includes("qc")) stage = "qc";
+      else if (name.includes("cancel")) stage = "cancel";
       else stage = "other";
     }
     if (stage === "make") stage = "finish";
@@ -234,7 +241,9 @@ export async function loadAssemblyDetailVM(opts: {
     }
     const action =
       act?.action ||
-      (stage && ["cut", "sew", "finish", "pack"].includes(stage) ? ActivityAction.RECORDED : null);
+      (stage && ["cut", "sew", "finish", "pack", "cancel"].includes(stage)
+        ? ActivityAction.RECORDED
+        : null);
     return { ...act, stage, kind, defectDisposition: disp, action };
   };
   activities = (activities || []).map(normalizeActivity);
@@ -245,6 +254,19 @@ export async function loadAssemblyDetailVM(opts: {
     const arr = activitiesByAssembly.get(aid) || [];
     arr.push(act);
     activitiesByAssembly.set(aid, arr);
+  }
+
+  const canceledByAssembly = new Map<number, number[]>();
+  for (const [aid, acts] of activitiesByAssembly.entries()) {
+    const breakdowns = (acts || [])
+      .filter((act) => String(act?.stage || "").toLowerCase() === "cancel")
+      .map((act) => coerceBreakdown(act?.qtyBreakdown, act?.quantity));
+    const canceled = sumBreakdownArrays(breakdowns);
+    canceledByAssembly.set(aid, canceled);
+  }
+  for (const assembly of assemblies as any[]) {
+    (assembly as any).c_canceled_Breakdown =
+      canceledByAssembly.get(assembly.id) || [];
   }
 
   let activityConsumptionMap:
@@ -361,6 +383,8 @@ export async function loadAssemblyDetailVM(opts: {
         labels,
         numVariants: Number((a as any).c_numVariants || labels.length || 0) || 0,
       },
+      orderedRaw: aggregation.orderedRaw,
+      canceled: aggregation.canceled,
       ordered: aggregation.ordered,
       cut: aggregation.displayArrays.cut,
       sew: aggregation.displayArrays.sew,
@@ -427,6 +451,37 @@ export async function loadAssemblyDetailVM(opts: {
     (steps || []).forEach((step) => stepTypeSet.add(step.type));
   });
   const vendorOptionsByStep = await loadSupplierOptionsByExternalStepTypes(Array.from(stepTypeSet));
+  const locations = await prisma.location.findMany({
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  const shipToAddresses = jobCompanyId
+    ? await getCompanyAddressOptions(jobCompanyId)
+    : [];
+  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+  const assemblyTargetsById: Record<number, any> = Object.fromEntries(
+    assemblies.map((assembly: any) => {
+      const resolved = resolveAssemblyTargets({
+        job: {
+          createdAt: assembly.job?.createdAt ?? null,
+          internalTargetDate: assembly.job?.internalTargetDate ?? null,
+          customerTargetDate: assembly.job?.customerTargetDate ?? null,
+          dropDeadDate: assembly.job?.dropDeadDate ?? null,
+          shipToLocation: assembly.job?.shipToLocation ?? null,
+          shipToAddress: assembly.job?.shipToAddress ?? null,
+        },
+        assembly: {
+          internalTargetDateOverride: assembly.internalTargetDateOverride,
+          customerTargetDateOverride: assembly.customerTargetDateOverride,
+          dropDeadDateOverride: assembly.dropDeadDateOverride,
+          shipToLocationOverride: assembly.shipToLocationOverride ?? null,
+          shipToAddressOverride: assembly.shipToAddressOverride ?? null,
+        },
+        defaultLeadDays,
+      });
+      return [assembly.id, resolved];
+    })
+  );
 
   const primaryCostingIdByAssembly = Object.fromEntries(
     assemblies.map((a: any) => [a.id, (a as any).primaryCostingId ?? null])
@@ -459,6 +514,10 @@ export async function loadAssemblyDetailVM(opts: {
       assemblyId: assembly.id,
       coverage: materialCoverage.get(assembly.id) ?? null,
     })),
+    locations,
+    shipToAddresses,
+    defaultLeadDays,
+    assemblyTargetsById,
     canDebug: debugAccess.canDebug,
   };
 
@@ -467,4 +526,3 @@ export async function loadAssemblyDetailVM(opts: {
 
   return json(vm as any);
 }
-

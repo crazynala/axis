@@ -52,6 +52,13 @@ export default function AdminImportRoute() {
               <option value="auto">Auto (infer from filename)</option>
               <option value="import:jobs">Import: Jobs</option>
               <option value="import:companies">Import: Companies</option>
+              <option value="import:company_address_defaults">
+                Import: Company Address Defaults
+              </option>
+              <option value="import:contacts">Import: Contacts</option>
+              <option value="import:contact_address_defaults">
+                Import: Contact Address Defaults
+              </option>
               <option value="import:assemblies">Import: Assemblies</option>
               <option value="import:products">Import: Products</option>
               <option value="import:variant_sets">Import: Variant Sets</option>

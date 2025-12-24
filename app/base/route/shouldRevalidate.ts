@@ -40,6 +40,22 @@ export function makeModuleShouldRevalidate(
       const next = nextUrl?.searchParams as URLSearchParams | undefined;
       if (curr && next) {
         for (const k of watchKeys) {
+          if (k.endsWith("*")) {
+            const prefix = k.slice(0, -1);
+            const currKeys = Array.from(curr.keys())
+              .filter((key) => key.startsWith(prefix))
+              .sort();
+            const nextKeys = Array.from(next.keys())
+              .filter((key) => key.startsWith(prefix))
+              .sort();
+            if (currKeys.length !== nextKeys.length) return true;
+            for (let i = 0; i < currKeys.length; i++) {
+              const key = currKeys[i];
+              if (key !== nextKeys[i]) return true;
+              if (curr.get(key) !== next.get(key)) return true;
+            }
+            continue;
+          }
           if (curr.get(k) !== next.get(k)) return true;
         }
         return defaultShouldRevalidate;

@@ -3,10 +3,10 @@ import type {
   MetaFunction,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
 import {
   Link,
   Outlet,
+  useActionData,
   useRouteLoaderData,
   useNavigation,
   useSubmit,
@@ -27,6 +27,7 @@ import {
   Divider,
   Button,
   Modal,
+  Checkbox,
   TextInput,
   Switch,
   Badge,
@@ -34,44 +35,42 @@ import {
   ActionIcon,
   Menu,
   NativeSelect,
+  Select,
+  SegmentedControl,
+  Textarea,
 } from "@mantine/core";
+import { DatePickerInput } from "@mantine/dates";
 import {
   HotkeyAwareModal,
   HotkeyAwareModalRoot,
 } from "~/base/hotkeys/HotkeyAwareModal";
-import { DatePickerInput } from "@mantine/dates"; // still used elsewhere if any
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { useInitGlobalFormContext } from "@aa/timber";
-// useJobFindify removed (modal-based find standard)
-import { createAssemblyFromProductAndSeedCostings } from "~/modules/job/services/assemblyFromProduct.server";
-import { duplicateAssembly } from "~/modules/job/services/duplicateAssembly.server";
-// Legacy jobSearchSchema/buildWhere replaced by config-driven builder
-import { buildWhereFromConfig } from "../../../utils/buildWhereFromConfig.server";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import { IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
+import { IconBan, IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
-import * as jobDetail from "~/modules/job/forms/jobDetail";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
+
 import {
-  applyJobStateTransition,
-  JobStateError,
-  syncJobStateFromAssemblies,
-} from "~/modules/job/services/JobStateService";
-import {
+  computeEffectiveAssemblyHold,
   normalizeAssemblyState,
-  normalizeJobState,
 } from "~/modules/job/stateUtils";
+import {
+  computeEffectiveOrderedBreakdown,
+  computeOrderedTotal,
+  sumBreakdownArrays,
+} from "~/modules/job/quantityUtils";
 import { getSavedIndexSearch } from "~/hooks/useNavLocation";
-import { StateChangeButton } from "~/base/state/StateChangeButton";
-import { assemblyStateConfig, jobStateConfig } from "~/base/state/configs";
 import { loadJobDetailVM } from "~/modules/job/services/jobDetailVM.server";
 import { handleJobDetailAction } from "~/modules/job/services/jobDetailActions.server";
+import { OverrideIndicator } from "~/components/OverrideIndicator";
+import { formatAddressLines } from "~/utils/addressFormat";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -92,7 +91,12 @@ export function JobDetailView() {
     productChoices,
     groupsById,
     activityCounts,
+    shipToAddresses,
+    defaultLeadDays,
+    jobTargets,
+    assemblyTargetsById,
   } = useRouteLoaderData<typeof loader>("modules/job/routes/jobs.$id")!;
+  const actionData = useActionData<typeof action>() as any;
   const { setCurrentId } = useRecordContext();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -125,6 +129,14 @@ export function JobDetailView() {
     notifications.show({ color: "red", ...meta });
     navigate(`/jobs/${job.id}`, { replace: true });
   }, [sp, navigate, job.id]);
+  useEffect(() => {
+    if (!actionData?.error) return;
+    notifications.show({
+      color: "red",
+      title: "Unable to save job",
+      message: String(actionData.error),
+    });
+  }, [actionData]);
   useEffect(() => {
     const groupErr = sp.get("asmGroupErr");
     if (!groupErr) return;
@@ -174,6 +186,110 @@ export function JobDetailView() {
     notifications.show({ color: "red", ...meta });
     navigate(`/jobs/${job.id}`, { replace: true });
   }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("jobHoldErr");
+    if (!err) return;
+    notifications.show({
+      color: "red",
+      title: "Job hold update blocked",
+      message:
+        err === "reason_required"
+          ? "Job hold requires a reason."
+          : "Job hold update could not be applied.",
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("jobDateErr");
+    if (!err) return;
+    const message =
+      err === "internal_after_customer"
+        ? "Internal target date must be on or before customer target date."
+        : "Job dates could not be saved.";
+    notifications.show({
+      color: "red",
+      title: "Job date validation",
+      message,
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("jobPrimaryErr");
+    if (!err) return;
+    notifications.show({
+      color: "red",
+      title: "Job state update blocked",
+      message: "Invalid primary job state.",
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("jobCancelErr");
+    if (!err) return;
+    const messages: Record<string, { title: string; message: string }> = {
+      reason_required: {
+        title: "Job cancellation requires a reason",
+        message: "Enter a reason before canceling the job.",
+      },
+      complete_blocked: {
+        title: "Cannot cancel a complete job",
+        message: "Reopen the job to Active before canceling.",
+      },
+    };
+    const meta =
+      messages[err] ||
+      ({
+        title: "Job cancellation blocked",
+        message: "Unable to apply job cancellation.",
+      } as const);
+    notifications.show({ color: "red", ...meta });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("jobCompleteErr");
+    if (!err) return;
+    notifications.show({
+      color: "red",
+      title: "Job completion blocked",
+      message:
+        err === "incomplete"
+          ? "All assemblies must be complete or fully canceled before completing the job."
+          : "Unable to complete job.",
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("asmHoldErr");
+    if (!err) return;
+    notifications.show({
+      color: "red",
+      title: "Assembly hold update blocked",
+      message: `Hold reason required for assemblies: ${err}`,
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
+  useEffect(() => {
+    const err = sp.get("asmCancelErr");
+    if (!err) return;
+    const asmId = sp.get("asmCancelId");
+    const prefix = asmId ? `Assembly ${asmId}: ` : "";
+    const messages: Record<string, string> = {
+      reason_required: "Cancellation requires a reason.",
+      qty_invalid: "Canceled quantity exceeds ordered quantity.",
+      qty_below_progress:
+        "Canceled quantity would go below already finished/packed units.",
+      override_required:
+        "Cancellation goes below recorded progress and needs an override.",
+      has_activity:
+        "Assembly has production activity and cannot be fully canceled.",
+    };
+    notifications.show({
+      color: "red",
+      title: "Assembly cancellation blocked",
+      message: `${prefix}${messages[err] || "Unable to cancel assembly."}`,
+    });
+    navigate(`/jobs/${job.id}`, { replace: true });
+  }, [sp, navigate, job.id]);
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
@@ -189,29 +305,68 @@ export function JobDetailView() {
   const [cutModalOpen, setCutModalOpen] = useState(false);
   const [cutAsm, setCutAsm] = useState<any>(null);
   const [cutArr, setCutArr] = useState<number[]>([]);
+  const [cancelArr, setCancelArr] = useState<number[]>([]);
+  const [cancelLabels, setCancelLabels] = useState<string[]>([]);
+  const [jobCancelOpen, setJobCancelOpen] = useState(false);
+  const [jobCancelReason, setJobCancelReason] = useState("");
+  const [asmCancelOpen, setAsmCancelOpen] = useState(false);
+  const [asmCancelTarget, setAsmCancelTarget] = useState<any>(null);
+  const [asmCancelReason, setAsmCancelReason] = useState("");
+  const [asmCancelOverride, setAsmCancelOverride] = useState(false);
+  const [asmCancelMode, setAsmCancelMode] = useState<"full" | "remaining">(
+    "remaining"
+  );
+  const [asmCancelBaseline, setAsmCancelBaseline] = useState("ORDER");
   // Master table removed; navigation handled via RecordContext
   // Local edit form only
   const jobToDefaults = (j: any) => ({
     id: j.id,
     projectCode: j.projectCode || "",
     name: j.name || "",
-    status: j.status || "",
     jobType: j.jobType || "",
     endCustomerName: j.endCustomerName || "",
     customerPoNum: j.customerPoNum || "",
     statusWhiteboard: j.statusWhiteboard || "",
+    state: j.state || "DRAFT",
+    jobCancelReason: j.cancelReason || "",
+    jobCancelMode: "job_only",
+    jobHoldOn: Boolean(j.jobHoldOn),
+    jobHoldReason: j.jobHoldReason || "",
+    jobHoldType: j.jobHoldType || "",
     // Normalize to empty string so form value matches defaults and isn't marked dirty
     companyId: (j.companyId ?? j.company?.id ?? "") as any,
     // Consolidated stock location (prefer new field; fallback to legacy locationInId)
     stockLocationId: (j.stockLocationId ?? j.locationInId ?? "") as any,
-    customerOrderDate: j.customerOrderDate?.slice?.(0, 10) || "",
-    targetDate: j.targetDate?.slice?.(0, 10) || "",
-    dropDeadDate: j.dropDeadDate?.slice?.(0, 10) || "",
-    cutSubmissionDate: j.cutSubmissionDate?.slice?.(0, 10) || "",
+    shipToAddressId: (j.shipToAddressId ?? j.shipToAddress?.id ?? "") as any,
+    customerOrderDate: j.customerOrderDate ? new Date(j.customerOrderDate) : null,
+    internalTargetDate: jobTargets?.internal?.value
+      ? new Date(jobTargets.internal.value as any)
+      : null,
+    customerTargetDate: jobTargets?.customer?.value
+      ? new Date(jobTargets.customer.value as any)
+      : null,
+    targetDate: j.targetDate ? new Date(j.targetDate) : null,
+    dropDeadDate: j.dropDeadDate ? new Date(j.dropDeadDate) : null,
+    cutSubmissionDate: j.cutSubmissionDate ? new Date(j.cutSubmissionDate) : null,
     assemblyStatuses: Object.fromEntries(
       (j.assemblies || []).map((a: any) => [
         String(a.id),
         normalizeAssemblyState(a.status as string | null) ?? "DRAFT",
+      ])
+    ),
+    assemblyManualHoldOn: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [String(a.id), Boolean(a.manualHoldOn)])
+    ),
+    assemblyManualHoldReason: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [
+        String(a.id),
+        String(a.manualHoldReason || ""),
+      ])
+    ),
+    assemblyManualHoldType: Object.fromEntries(
+      (j.assemblies || []).map((a: any) => [
+        String(a.id),
+        String(a.manualHoldType || ""),
       ])
     ),
     assemblyWhiteboards: Object.fromEntries(
@@ -232,20 +387,67 @@ export function JobDetailView() {
   });
   const { registerFindCallback } = useFind();
   const save = (values: any) => {
+    const cancelReason = String(values.jobCancelReason || "").trim();
+    if (values.state === "CANCELED" && !cancelReason) {
+      notifications.show({
+        color: "red",
+        title: "Cancellation requires a reason",
+        message: "Enter a cancellation reason before saving.",
+      });
+      return;
+    }
+    const holdReason = String(values.jobHoldReason || "").trim();
+    if (values.jobHoldOn && !holdReason) {
+      notifications.show({
+        color: "red",
+        title: "Job hold requires a reason",
+        message: "Enter a reason before enabling a job hold.",
+      });
+      return;
+    }
+    const assemblyHoldOnMap =
+      (values.assemblyManualHoldOn as Record<string, boolean> | undefined) || {};
+    const assemblyHoldReasonMap =
+      (values.assemblyManualHoldReason as Record<string, string> | undefined) ||
+      {};
+    const missingAssemblyHoldReasons = Object.entries(assemblyHoldOnMap).filter(
+      ([id, on]) => on && !String(assemblyHoldReasonMap[id] || "").trim()
+    );
+    if (missingAssemblyHoldReasons.length) {
+      notifications.show({
+        color: "red",
+        title: "Assembly hold requires a reason",
+        message: `Add a hold reason for assemblies: ${missingAssemblyHoldReasons
+          .map(([id]) => id)
+          .join(", ")}`,
+      });
+      return;
+    }
     const fd = new FormData();
     fd.set("_intent", "job.update");
     const simple = [
       "projectCode",
       "name",
-      "status",
       "jobType",
       "endCustomerName",
       "customerPoNum",
       "statusWhiteboard",
+      "state",
+      "jobCancelMode",
+      "jobHoldType",
     ];
     simple.forEach((k) => {
       if (values[k] != null) fd.set(k, values[k]);
     });
+    if (Object.prototype.hasOwnProperty.call(values, "jobHoldOn")) {
+      fd.set("jobHoldOn", values.jobHoldOn ? "true" : "false");
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "jobCancelReason")) {
+      fd.set("jobCancelReason", cancelReason);
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "jobHoldReason")) {
+      fd.set("jobHoldReason", holdReason);
+    }
     // Always include companyId so clearing (empty string) propagates to the server
     if (Object.prototype.hasOwnProperty.call(values, "companyId")) {
       const raw = values.companyId;
@@ -256,6 +458,13 @@ export function JobDetailView() {
       const raw = values.stockLocationId;
       fd.set(
         "stockLocationId",
+        raw === undefined || raw === null ? "" : String(raw)
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "shipToAddressId")) {
+      const raw = values.shipToAddressId;
+      fd.set(
+        "shipToAddressId",
         raw === undefined || raw === null ? "" : String(raw)
       );
     }
@@ -270,18 +479,43 @@ export function JobDetailView() {
       }
       return "";
     };
+    const dirtyFields = jobForm.formState.dirtyFields as Record<string, any>;
+    const shouldSendDate = (field: string) => Boolean(dirtyFields?.[field]);
     [
       "customerOrderDate",
+      "internalTargetDate",
+      "customerTargetDate",
       "targetDate",
       "dropDeadDate",
       "cutSubmissionDate",
     ].forEach((df) => {
-      if (Object.prototype.hasOwnProperty.call(values, df)) {
+      if (
+        Object.prototype.hasOwnProperty.call(values, df) &&
+        shouldSendDate(df)
+      ) {
         fd.set(df, toDateString(values[df]));
       }
     });
     if (values.assemblyStatuses) {
       fd.set("assemblyStatuses", JSON.stringify(values.assemblyStatuses || {}));
+    }
+    if (values.assemblyManualHoldOn) {
+      fd.set(
+        "assemblyManualHoldOn",
+        JSON.stringify(values.assemblyManualHoldOn || {})
+      );
+    }
+    if (values.assemblyManualHoldReason) {
+      fd.set(
+        "assemblyManualHoldReason",
+        JSON.stringify(values.assemblyManualHoldReason || {})
+      );
+    }
+    if (values.assemblyManualHoldType) {
+      fd.set(
+        "assemblyManualHoldType",
+        JSON.stringify(values.assemblyManualHoldType || {})
+      );
     }
     if (values.assemblyWhiteboards) {
       fd.set(
@@ -333,6 +567,66 @@ export function JobDetailView() {
       (c.name || "").toLowerCase().includes(q)
     );
   }, [customers, customerSearch]);
+  const shipToAddressOptions = useMemo(() => {
+    return (shipToAddresses || []).map((addr: any) => {
+      const lines = formatAddressLines(addr);
+      const base = lines[0] || `Address ${addr.id}`;
+      const tail = lines.slice(1).join(", ");
+      return { value: String(addr.id), label: tail ? `${base} — ${tail}` : base };
+    });
+  }, [shipToAddresses]);
+  const shipToAddressById = useMemo(() => {
+    const map = new Map<number, any>();
+    (shipToAddresses || []).forEach((addr: any) => map.set(addr.id, addr));
+    return map;
+  }, [shipToAddresses]);
+  const companyDefaultAddress = useMemo(() => {
+    const defaultId = job?.company?.defaultAddressId ?? null;
+    if (!defaultId) return null;
+    return shipToAddressById.get(defaultId) ?? null;
+  }, [job?.company?.defaultAddressId, shipToAddressById]);
+  const toDateInputValue = (value: any) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isFinite(parsed.getTime()) ? parsed : null;
+    }
+    return null;
+  };
+  const formatDateLabel = (value: Date | string | null | undefined) => {
+    if (!value) return "—";
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return "—";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  const buildOverrideTooltip = (
+    label: string,
+    effective: Date | string | null | undefined,
+    jobValue: Date | string | null | undefined
+  ) => {
+    const effectiveLabel = formatDateLabel(effective);
+    const jobLabel = formatDateLabel(jobValue);
+    return `Pinned (${label}). Effective: ${effectiveLabel} · Job: ${jobLabel}`;
+  };
+  const jobInternalDate = toDateInputValue(jobForm.watch("internalTargetDate"));
+  const jobCustomerDate = toDateInputValue(jobForm.watch("customerTargetDate"));
+  const dirtyFields = jobForm.formState.dirtyFields as Record<string, any>;
+  const internalDerived =
+    jobTargets?.internal?.source === "DERIVED" &&
+    !dirtyFields?.internalTargetDate;
+  const customerDerived =
+    jobTargets?.customer?.source === "DERIVED" &&
+    !dirtyFields?.customerTargetDate;
+  const derivedNote = `Derived from job created + ${defaultLeadDays} days.`;
+  const jobDateError =
+    jobInternalDate && jobCustomerDate && jobInternalDate > jobCustomerDate
+      ? "Internal target date must be on or before customer target date."
+      : null;
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(true);
   const [assemblyOnly, setAssemblyOnly] = useState(true);
@@ -351,8 +645,14 @@ export function JobDetailView() {
     });
     return map;
   }, [job.assemblies]);
-  const assemblyStatusMap =
-    (jobForm.watch("assemblyStatuses") as Record<string, string | undefined>) ||
+  const assemblyManualHoldOnMap =
+    (jobForm.watch("assemblyManualHoldOn") as Record<string, boolean | undefined>) ||
+    {};
+  const assemblyManualHoldReasonMap =
+    (jobForm.watch("assemblyManualHoldReason") as Record<string, string | undefined>) ||
+    {};
+  const assemblyManualHoldTypeMap =
+    (jobForm.watch("assemblyManualHoldType") as Record<string, string | undefined>) ||
     {};
   const assemblyWhiteboardMap =
     (jobForm.watch("assemblyWhiteboards") as Record<
@@ -366,19 +666,6 @@ export function JobDetailView() {
     value: t.label || "",
     label: t.label || "",
   }));
-  const handleAssemblyStatusChange = useCallback(
-    (asmIds: number | number[], next: string | null) => {
-      if (!next) return;
-      const targets = Array.isArray(asmIds) ? asmIds : [asmIds];
-      targets.forEach((asmId) => {
-        jobForm.setValue(`assemblyStatuses.${asmId}` as any, next, {
-          shouldDirty: true,
-          shouldTouch: true,
-        });
-      });
-    },
-    [jobForm]
-  );
   const handleAssemblyWhiteboardChange = useCallback(
     (asmIds: number | number[], next: string) => {
       const targets = Array.isArray(asmIds) ? asmIds : [asmIds];
@@ -391,16 +678,6 @@ export function JobDetailView() {
     },
     [jobForm]
   );
-  const getAssemblyStatusValue = (asmId: number) => {
-    const raw =
-      assemblyStatusMap[String(asmId)] ??
-      (assembliesById.get(asmId)?.status as string | null);
-    return normalizeAssemblyState(raw ?? null) ?? "DRAFT";
-  };
-  const getGroupStatusValue = (asmIds: number[]) => {
-    const values = asmIds.map(getAssemblyStatusValue);
-    return { value: values[0], mixed: values.some((v) => v !== values[0]) };
-  };
   const getMergedWhiteboardValue = (asmIds: number[]) => {
     const seen = new Set<string>();
     const merged: string[] = [];
@@ -417,6 +694,88 @@ export function JobDetailView() {
     });
     return merged.join(" | ");
   };
+  const openAssemblyCancel = useCallback(
+    (assembly: any, mode: "full" | "remaining") => {
+      const ordered = Array.isArray(assembly.qtyOrderedBreakdown)
+        ? (assembly.qtyOrderedBreakdown as number[])
+        : [];
+      const existingCanceled = Array.isArray(
+        (assembly as any).c_canceled_Breakdown
+      )
+        ? ((assembly as any).c_canceled_Breakdown as number[])
+        : [];
+      const effectiveOrdered = computeEffectiveOrderedBreakdown({
+        orderedBySize: ordered,
+        canceledBySize: existingCanceled,
+      }).effective;
+      const cut = Array.isArray((assembly as any).c_qtyCut_Breakdown)
+        ? ((assembly as any).c_qtyCut_Breakdown as number[])
+        : [];
+      const sew = Array.isArray((assembly as any).c_qtySew_Breakdown)
+        ? ((assembly as any).c_qtySew_Breakdown as number[])
+        : [];
+      const finish = Array.isArray((assembly as any).c_qtyFinish_Breakdown)
+        ? ((assembly as any).c_qtyFinish_Breakdown as number[])
+        : [];
+      const pack = Array.isArray((assembly as any).c_qtyPack_Breakdown)
+        ? ((assembly as any).c_qtyPack_Breakdown as number[])
+        : [];
+      const hasPack = pack.some((n) => Number(n) > 0);
+      const hasFinish = finish.some((n) => Number(n) > 0);
+      const hasSew = sew.some((n) => Number(n) > 0);
+      const hasCut = cut.some((n) => Number(n) > 0);
+      const baselineLabel = hasPack
+        ? "PACK"
+        : hasFinish
+        ? "FINISH"
+        : hasSew
+        ? "SEW"
+        : hasCut
+        ? "CUT"
+        : "ORDER";
+      const baselineArr = hasPack
+        ? pack
+        : hasFinish
+        ? finish
+        : hasSew
+        ? sew
+        : hasCut
+        ? cut
+        : [];
+      const defaultCancel =
+        mode === "full"
+          ? effectiveOrdered
+          : effectiveOrdered.map((val, idx) =>
+              Math.max(0, Number(val || 0) - (Number(baselineArr[idx] || 0) || 0))
+            );
+      const labels = (assembly.product?.variantSet?.variants ||
+        assembly.variantSet?.variants ||
+        []) as string[];
+      const trimmedLabels = getVariantLabels(
+        labels,
+        (assembly as any).c_numVariants
+      );
+      const lastNonZero = Math.max(
+        ...defaultCancel.map((n, idx) => (Number(n) > 0 ? idx : -1)),
+        ...effectiveOrdered.map((n, idx) => (Number(n) > 0 ? idx : -1))
+      );
+      const effectiveLen = Math.max(trimmedLabels.length, lastNonZero + 1, 1);
+      const colLabels = Array.from({ length: effectiveLen }, (_, idx) => {
+        return trimmedLabels[idx] || `Variant ${idx + 1}`;
+      });
+      setAsmCancelTarget(assembly);
+      setCancelArr(
+        Array.from({ length: effectiveLen }, (_, idx) => defaultCancel[idx] || 0)
+      );
+      setCancelLabels(colLabels);
+      setAsmCancelReason("");
+      setAsmCancelOverride(false);
+      setAsmCancelMode(mode);
+      setAsmCancelBaseline(baselineLabel);
+      setAsmCancelOpen(true);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!qtyAsm) return;
@@ -495,9 +854,103 @@ export function JobDetailView() {
     [selectedAsmIds, assembliesById, activityCounts]
   );
 
-  const jobStatusValue =
-    normalizeJobState(jobForm.watch("status") ?? job.status) ?? "DRAFT";
   const jobWhiteboardValue = jobForm.watch("statusWhiteboard") ?? "";
+  const jobStateValue =
+    (jobForm.watch("state") as string | undefined) ||
+    ((job as any)?.state ?? "DRAFT");
+  const jobHoldOn = Boolean(
+    jobForm.watch("jobHoldOn") ?? (job as any)?.jobHoldOn
+  );
+  const jobHoldReason =
+    (jobForm.watch("jobHoldReason") as string | undefined) ||
+    ((job as any)?.jobHoldReason ?? "");
+  const jobHoldType =
+    (jobForm.watch("jobHoldType") as string | undefined) ||
+    ((job as any)?.jobHoldType ?? "");
+  const jobHoldSegmentValue = jobHoldOn
+    ? jobHoldType === "CLIENT"
+      ? "CLIENT"
+      : "INTERNAL"
+    : "OFF";
+
+  const jobHoldDisabled =
+    jobStateValue === "COMPLETE" || jobStateValue === "CANCELED";
+  const holdSegmentOptions = [
+    { value: "OFF", label: "Off" },
+    { value: "CLIENT", label: "Client hold" },
+    { value: "INTERNAL", label: "Internal hold" },
+  ];
+  const jobStateOptions = [
+    { label: "Draft", value: "DRAFT" },
+    { label: "Active", value: "ACTIVE" },
+    { label: "Complete", value: "COMPLETE" },
+    { label: "Canceled", value: "CANCELED" },
+  ];
+  const asmCancelOrderedBySize = Array.isArray(
+    asmCancelTarget?.qtyOrderedBreakdown
+  )
+    ? (asmCancelTarget.qtyOrderedBreakdown as number[])
+    : [];
+  const asmCancelExistingCanceled = Array.isArray(
+    (asmCancelTarget as any)?.c_canceled_Breakdown
+  )
+    ? ((asmCancelTarget as any).c_canceled_Breakdown as number[])
+    : [];
+  const asmCancelOrderedTotal = computeOrderedTotal(asmCancelOrderedBySize);
+  const asmCancelPackBySize = Array.isArray((asmCancelTarget as any)?.c_qtyPack_Breakdown)
+    ? ((asmCancelTarget as any).c_qtyPack_Breakdown as number[])
+    : [];
+  const asmCancelFinishBySize = Array.isArray((asmCancelTarget as any)?.c_qtyFinish_Breakdown)
+    ? ((asmCancelTarget as any).c_qtyFinish_Breakdown as number[])
+    : [];
+  const asmCancelCutBySize = Array.isArray((asmCancelTarget as any)?.c_qtyCut_Breakdown)
+    ? ((asmCancelTarget as any).c_qtyCut_Breakdown as number[])
+    : [];
+  const asmCancelSewBySize = Array.isArray((asmCancelTarget as any)?.c_qtySew_Breakdown)
+    ? ((asmCancelTarget as any).c_qtySew_Breakdown as number[])
+    : [];
+  const asmCancelCombinedCanceled = sumBreakdownArrays([
+    asmCancelExistingCanceled,
+    cancelArr,
+  ]);
+  const asmCancelComputed = computeEffectiveOrderedBreakdown({
+    orderedBySize: asmCancelOrderedBySize,
+    canceledBySize: asmCancelCombinedCanceled,
+  });
+  const asmCancelNewTotal = cancelArr.reduce(
+    (sum, value) => sum + (Number(value) || 0),
+    0
+  );
+  const asmCancelEffectiveOrdered = asmCancelComputed.total;
+  const asmCancelHardBlock = asmCancelComputed.effective.some(
+    (val, idx) =>
+      val < (Number(asmCancelPackBySize[idx] ?? 0) || 0) ||
+      val < (Number(asmCancelFinishBySize[idx] ?? 0) || 0)
+  );
+  const asmCancelSoftBlock = asmCancelComputed.effective.some(
+    (val, idx) =>
+      val <
+      Math.max(
+        Number(asmCancelCutBySize[idx] ?? 0) || 0,
+        Number(asmCancelSewBySize[idx] ?? 0) || 0
+      )
+  );
+  const applyJobCancel = (mode: "job_only" | "cancel_remaining") => {
+    const reason = jobCancelReason.trim();
+    jobForm.setValue("jobCancelReason", reason, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+    jobForm.setValue("jobCancelMode", mode, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+    jobForm.setValue("state", "CANCELED", {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+    setJobCancelOpen(false);
+  };
 
   // returnUrl no longer used (find handled externally)
   return (
@@ -516,7 +969,77 @@ export function JobDetailView() {
             />
           );
         })()}
-        <Group gap="sm" align="center">
+        <Group gap="sm" align="center" wrap="wrap">
+          <Stack gap={4}>
+            <SegmentedControl
+              data={jobStateOptions}
+              value={jobStateValue}
+              onChange={(value) => {
+                if (value === "CANCELED") {
+                  setJobCancelReason(
+                    String(jobForm.getValues("jobCancelReason") || "")
+                  );
+                  setJobCancelOpen(true);
+                  return;
+                }
+                jobForm.setValue("state", value, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                });
+              }}
+            />
+            <Badge variant="light" color="gray">
+              Legacy status: {job.status || "—"}
+            </Badge>
+          </Stack>
+          <Stack gap={4}>
+            <SegmentedControl
+              data={holdSegmentOptions}
+              value={jobHoldSegmentValue}
+              disabled={jobHoldDisabled}
+              onChange={(value) => {
+                if (value === "OFF") {
+                  jobForm.setValue("jobHoldOn", false, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  jobForm.setValue("jobHoldReason", "", {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  jobForm.setValue("jobHoldType", "", {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  return;
+                }
+                jobForm.setValue("jobHoldOn", true, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                });
+                jobForm.setValue("jobHoldType", value, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                });
+              }}
+              size="xs"
+            />
+            {jobHoldSegmentValue !== "OFF" ? (
+              <Textarea
+                placeholder="Hold reason"
+                value={jobHoldReason}
+                onChange={(e) =>
+                  jobForm.setValue("jobHoldReason", e.currentTarget.value, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
+                size="xs"
+                autosize
+                minRows={2}
+              />
+            ) : null}
+          </Stack>
           <TextInput
             placeholder="Whiteboard"
             aria-label="Job status whiteboard"
@@ -528,17 +1051,6 @@ export function JobDetailView() {
               })
             }
             style={{ minWidth: 220 }}
-          />
-          <StateChangeButton
-            value={jobStatusValue}
-            defaultValue={jobStatusValue}
-            onChange={(v) =>
-              jobForm.setValue("status", v, {
-                shouldDirty: true,
-                shouldTouch: true,
-              })
-            }
-            config={jobStateConfig}
           />
           <Menu position="bottom-end" withArrow>
             <Menu.Target>
@@ -582,12 +1094,82 @@ export function JobDetailView() {
         </Group>
       </Group>
 
+      <Card withBorder padding="md">
+        <Card.Section inheritPadding py="xs">
+          <Title order={4}>Dates & Shipping</Title>
+        </Card.Section>
+        <Divider my="xs" />
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <Stack gap={8}>
+            <DatePickerInput
+              label="Internal target date"
+              value={toDateInputValue(jobForm.watch("internalTargetDate"))}
+              onChange={(value) =>
+                jobForm.setValue("internalTargetDate", value ?? null, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                })
+              }
+              valueFormat="YYYY-MM-DD"
+              clearable
+            />
+            {internalDerived ? (
+              <Text size="xs" c="dimmed">
+                {derivedNote}
+              </Text>
+            ) : null}
+            <DatePickerInput
+              label="Customer target date"
+              value={toDateInputValue(jobForm.watch("customerTargetDate"))}
+              onChange={(value) =>
+                jobForm.setValue("customerTargetDate", value ?? null, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                })
+              }
+              valueFormat="YYYY-MM-DD"
+              clearable
+            />
+            {customerDerived ? (
+              <Text size="xs" c="dimmed">
+                {derivedNote}
+              </Text>
+            ) : null}
+          </Stack>
+          <Stack gap={8}>
+            <DatePickerInput
+              label="Drop-dead date"
+              value={toDateInputValue(jobForm.watch("dropDeadDate"))}
+              onChange={(value) =>
+                jobForm.setValue("dropDeadDate", value ?? null, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                })
+              }
+              valueFormat="YYYY-MM-DD"
+              clearable
+            />
+          </Stack>
+        </SimpleGrid>
+        {jobDateError ? (
+          <Text size="sm" c="red" mt="xs">
+            {jobDateError}
+          </Text>
+        ) : null}
+      </Card>
+
       <div>
         <JobDetailForm
           mode="edit"
           form={jobForm as any}
           job={job}
           openCustomerModal={() => setCustomerModalOpen(true)}
+          fieldCtx={{
+            fieldOptions: { job_shipto_address: shipToAddressOptions },
+            addressById: shipToAddressById,
+            jobShipToLocation: job.shipToLocation ?? null,
+            jobDefaultAddress: companyDefaultAddress,
+          }}
         />
       </div>
 
@@ -654,10 +1236,14 @@ export function JobDetailView() {
                 <Table.Th>Assembly Type</Table.Th>
                 <Table.Th>Variant Set</Table.Th>
                 <Table.Th># Ordered</Table.Th>
+                <Table.Th>Internal Target</Table.Th>
+                <Table.Th>Customer Target</Table.Th>
                 <Table.Th>Cut</Table.Th>
                 <Table.Th>Finish</Table.Th>
                 <Table.Th>Pack</Table.Th>
-                <Table.Th>Status</Table.Th>
+                <Table.Th>Legacy status</Table.Th>
+                <Table.Th>Manual Hold</Table.Th>
+                <Table.Th>Effective Hold</Table.Th>
                 <Table.Th>Whiteboard</Table.Th>
                 <Table.Th style={{ width: 40 }}></Table.Th>
               </Table.Tr>
@@ -743,16 +1329,67 @@ export function JobDetailView() {
                   const singleWhiteboardValue =
                     assemblyWhiteboardMap[String(a.id)] ??
                     (a.statusWhiteboard || "");
-                  const statusSummary = isGroupedRow
-                    ? getGroupStatusValue(memberIds)
-                    : { value: getAssemblyStatusValue(a.id), mixed: false };
                   const whiteboardSummary = isGroupedRow
                     ? getMergedWhiteboardValue(memberIds)
                     : singleWhiteboardValue;
+                  const manualHoldOn = Boolean(
+                    assemblyManualHoldOnMap[String(a.id)] ?? a.manualHoldOn
+                  );
+                  const manualHoldReason =
+                    assemblyManualHoldReasonMap[String(a.id)] ??
+                    a.manualHoldReason ??
+                    "";
+                  const manualHoldType =
+                    assemblyManualHoldTypeMap[String(a.id)] ??
+                    a.manualHoldType ??
+                    "";
+                  const manualHoldSegmentValue = manualHoldOn
+                    ? manualHoldType === "CLIENT"
+                      ? "CLIENT"
+                      : "INTERNAL"
+                    : "OFF";
+                  const effectiveHold = computeEffectiveAssemblyHold({
+                    jobHoldOn,
+                    manualHoldOn,
+                  });
+                  const effectiveHoldLabel = effectiveHold
+                    ? jobHoldOn && manualHoldOn
+                      ? "Held (Job + Assembly)"
+                      : jobHoldOn
+                      ? "Held (Job)"
+                      : "Held (Assembly)"
+                    : null;
                   const isHovered =
                     isGroupedRow &&
                     hoverGroupId != null &&
                     hoverGroupId === a.assemblyGroupId;
+                  const orderedBySize = Array.isArray(a.qtyOrderedBreakdown)
+                    ? (a.qtyOrderedBreakdown as number[])
+                    : [];
+                  const canceledBySize = Array.isArray(
+                    (a as any).c_canceled_Breakdown
+                  )
+                    ? ((a as any).c_canceled_Breakdown as number[])
+                    : [];
+                  const { effective, canceled, total } =
+                    computeEffectiveOrderedBreakdown({
+                      orderedBySize,
+                      canceledBySize,
+                    });
+                  const orderedTotal = computeOrderedTotal(orderedBySize);
+                  const canceledQty = canceled.reduce(
+                    (sum, value) => sum + (Number(value) || 0),
+                    0
+                  );
+                  const effectiveOrdered = total;
+                  const hasProductionActivity =
+                    Number((a as any).c_qtyCut ?? 0) > 0 ||
+                    Number((a as any).c_qtySew ?? 0) > 0 ||
+                    Number((a as any).c_qtyFinish ?? 0) > 0 ||
+                    Number((a as any).c_qtyPack ?? 0) > 0;
+                  const targets = assemblyTargetsById?.[a.id];
+                  const internalTarget = targets?.internal;
+                  const customerTarget = targets?.customer;
                   const rowClassName =
                     [
                       isGroupedRow ? "asm-row-group" : "",
@@ -838,18 +1475,55 @@ export function JobDetailView() {
                       </Table.Td>
                       <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
                       <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => {
-                            const labels = (p?.variantSet?.variants ||
-                              []) as string[];
-                            setQtyAsm({ ...a, labels });
-                            setQtyModalOpen(true);
-                          }}
-                        >
-                          {(a as any).c_qtyOrdered ?? 0}
-                        </Button>
+                        <Stack gap={4}>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            onClick={() => {
+                              const labels = (p?.variantSet?.variants ||
+                                []) as string[];
+                              setQtyAsm({ ...a, labels });
+                              setQtyModalOpen(true);
+                            }}
+                          >
+                            {effectiveOrdered}
+                          </Button>
+                          {canceledQty > 0 ? (
+                            <Badge size="xs" color="orange" variant="light">
+                              Canceled {canceledQty}/{orderedTotal}
+                            </Badge>
+                          ) : null}
+                        </Stack>
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4} wrap="nowrap">
+                          <Text size="sm">
+                            {formatDateLabel(internalTarget?.value)}
+                          </Text>
+                          <OverrideIndicator
+                            isOverridden={internalTarget?.source === "OVERRIDE"}
+                            tooltip={buildOverrideTooltip(
+                              "internal target",
+                              internalTarget?.value,
+                              internalTarget?.jobValue
+                            )}
+                          />
+                        </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4} wrap="nowrap">
+                          <Text size="sm">
+                            {formatDateLabel(customerTarget?.value)}
+                          </Text>
+                          <OverrideIndicator
+                            isOverridden={customerTarget?.source === "OVERRIDE"}
+                            tooltip={buildOverrideTooltip(
+                              "customer target",
+                              customerTarget?.value,
+                              customerTarget?.jobValue
+                            )}
+                          />
+                        </Group>
                       </Table.Td>
                       <Table.Td>
                         <Button
@@ -880,19 +1554,72 @@ export function JobDetailView() {
                       <Table.Td>{(a as any).c_qtyFinish ?? ""}</Table.Td>
                       <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
                       <Table.Td>
-                        {(!isGroupedRow || isGroupLeader) && (
-                          <StateChangeButton
-                            value={statusSummary.value}
-                            defaultValue={statusSummary.value}
-                            onChange={(value) =>
-                              handleAssemblyStatusChange(
-                                isGroupedRow ? memberIds : a.id,
-                                value as string
-                              )
-                            }
-                            disabled={busy}
-                            config={assemblyStateConfig}
+                        <Badge size="sm" color="gray" variant="light">
+                          Legacy status: {a.status || "—"}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Stack gap={4}>
+                          <SegmentedControl
+                            data={holdSegmentOptions}
+                            value={manualHoldSegmentValue}
+                            onChange={(value) => {
+                              if (value === "OFF") {
+                                jobForm.setValue(
+                                  `assemblyManualHoldOn.${a.id}` as any,
+                                  false,
+                                  { shouldDirty: true, shouldTouch: true }
+                                );
+                                jobForm.setValue(
+                                  `assemblyManualHoldReason.${a.id}` as any,
+                                  "",
+                                  { shouldDirty: true, shouldTouch: true }
+                                );
+                                jobForm.setValue(
+                                  `assemblyManualHoldType.${a.id}` as any,
+                                  "",
+                                  { shouldDirty: true, shouldTouch: true }
+                                );
+                                return;
+                              }
+                              jobForm.setValue(
+                                `assemblyManualHoldOn.${a.id}` as any,
+                                true,
+                                { shouldDirty: true, shouldTouch: true }
+                              );
+                              jobForm.setValue(
+                                `assemblyManualHoldType.${a.id}` as any,
+                                value,
+                                { shouldDirty: true, shouldTouch: true }
+                              );
+                            }}
+                            size="xs"
                           />
+                          {manualHoldSegmentValue !== "OFF" ? (
+                            <TextInput
+                              size="xs"
+                              placeholder="Reason"
+                              value={manualHoldReason}
+                              onChange={(e) =>
+                                jobForm.setValue(
+                                  `assemblyManualHoldReason.${a.id}` as any,
+                                  e.currentTarget.value,
+                                  { shouldDirty: true, shouldTouch: true }
+                                )
+                              }
+                            />
+                          ) : null}
+                        </Stack>
+                      </Table.Td>
+                      <Table.Td>
+                        {effectiveHoldLabel ? (
+                          <Badge size="sm" color="orange" variant="light">
+                            {effectiveHoldLabel}
+                          </Badge>
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            —
+                          </Text>
                         )}
                       </Table.Td>
                       <Table.Td>
@@ -916,6 +1643,11 @@ export function JobDetailView() {
                           disabled={jobForm.formState.isDirty}
                           canDelete={canDelete}
                           submit={submit}
+                          onCancelRemaining={() =>
+                            openAssemblyCancel(a, "remaining")
+                          }
+                          onCancelAssembly={() => openAssemblyCancel(a, "full")}
+                          hasProductionActivity={hasProductionActivity}
                         />
                       </Table.Td>
                     </Table.Tr>
@@ -1216,6 +1948,173 @@ export function JobDetailView() {
       </HotkeyAwareModal>
 
       <HotkeyAwareModal
+        opened={jobCancelOpen}
+        onClose={() => setJobCancelOpen(false)}
+        title="Cancel Job"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            Canceling a job stops pursuit of remaining work but preserves all
+            history (POs, receipts, activities).
+          </Text>
+          <Textarea
+            label="Cancellation reason"
+            placeholder="Why is this job being canceled?"
+            value={jobCancelReason}
+            onChange={(e) => setJobCancelReason(e.currentTarget.value)}
+            autosize
+            minRows={2}
+          />
+          <Group justify="space-between" mt="sm">
+            <Button variant="default" onClick={() => setJobCancelOpen(false)}>
+              Keep job active
+            </Button>
+            <Group gap="xs">
+              <Button
+                variant="default"
+                disabled={!jobCancelReason.trim()}
+                onClick={() => applyJobCancel("job_only")}
+              >
+                Cancel job only
+              </Button>
+              <Button
+                color="red"
+                disabled={!jobCancelReason.trim()}
+                onClick={() => applyJobCancel("cancel_remaining")}
+              >
+                Cancel job + remaining units
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </HotkeyAwareModal>
+
+      <HotkeyAwareModal
+        opened={asmCancelOpen}
+        onClose={() => setAsmCancelOpen(false)}
+        title={
+          asmCancelTarget
+            ? asmCancelMode === "full"
+              ? `Cancel assembly - A${asmCancelTarget.id}`
+              : `Cancel remaining units - A${asmCancelTarget.id}`
+            : asmCancelMode === "full"
+            ? "Cancel assembly"
+            : "Cancel remaining units"
+        }
+        centered
+        size="xl"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Ordered: {asmCancelOrderedTotal} | Effective: {asmCancelEffectiveOrdered} |
+            Canceled: {asmCancelComputed.canceled.reduce((t, v) => t + (Number(v) || 0), 0)}
+          </Text>
+          {asmCancelMode === "remaining" ? (
+            <Text size="xs" c="dimmed">
+              Defaulting to remaining based on {asmCancelBaseline} totals.
+            </Text>
+          ) : null}
+          {cancelLabels.length ? (
+            <Table withTableBorder withColumnBorders striped>
+              <Table.Thead>
+                <Table.Tr>
+                  {cancelLabels.map((label, i) => (
+                    <Table.Th key={`c-h-${i}`} ta="center">
+                      {label || `#${i + 1}`}
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                <Table.Tr>
+                  {cancelLabels.map((_label, i) => (
+                    <Table.Td key={`c-c-${i}`}>
+                      <TextInput
+                        w="60px"
+                        styles={{ input: { textAlign: "center" } }}
+                        type="number"
+                        value={cancelArr[i] ?? 0}
+                        onChange={(e) => {
+                          const v =
+                            e.currentTarget.value === ""
+                              ? 0
+                              : Number(e.currentTarget.value);
+                          setCancelArr((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? (Number.isFinite(v) ? v | 0 : 0) : x
+                            )
+                          );
+                        }}
+                      />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+          ) : (
+            <Text size="sm" c="dimmed">
+              No size breakdown available for this assembly.
+            </Text>
+          )}
+          <Textarea
+            label="Reason"
+            placeholder={
+              asmCancelMode === "full"
+                ? "Why is this assembly being canceled?"
+                : "Why are the remaining units being canceled?"
+            }
+            value={asmCancelReason}
+            onChange={(e) => setAsmCancelReason(e.currentTarget.value)}
+            autosize
+            minRows={2}
+          />
+          <Text size="sm">
+            Effective ordered after cancel: {asmCancelEffectiveOrdered}
+          </Text>
+          {asmCancelHardBlock ? (
+            <Text size="sm" c="red">
+              Cancellation cannot reduce below finished/packed quantities.
+            </Text>
+          ) : asmCancelSoftBlock ? (
+            <Checkbox
+              label="Override: allow cancel below recorded cut/sew progress"
+              checked={asmCancelOverride}
+              onChange={(e) => setAsmCancelOverride(e.currentTarget.checked)}
+            />
+          ) : null}
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setAsmCancelOpen(false)}>
+              Close
+            </Button>
+          <Button
+              color="red"
+              disabled={
+                asmCancelHardBlock ||
+                (asmCancelSoftBlock && !asmCancelOverride) ||
+                (asmCancelNewTotal > 0 && !asmCancelReason.trim())
+              }
+              onClick={() => {
+                if (!asmCancelTarget) return;
+                const fd = new FormData();
+                fd.set("_intent", "assembly.cancel");
+                fd.set("assemblyId", String(asmCancelTarget.id));
+                fd.set("canceledBySize", JSON.stringify(cancelArr));
+                fd.set("cancelReason", asmCancelReason.trim());
+                fd.set("cancelMode", asmCancelMode);
+                if (asmCancelOverride) fd.set("override", "true");
+                fd.set("returnTo", `/jobs/${job.id}`);
+                submit(fd, { method: "post" });
+                setAsmCancelOpen(false);
+              }}
+            >
+              Apply cancellation
+            </Button>
+          </Group>
+        </Stack>
+      </HotkeyAwareModal>
+
+      <HotkeyAwareModal
         opened={Boolean(groupGuardMessage)}
         onClose={() => setGroupGuardMessage(null)}
         title="Cannot Group Assemblies"
@@ -1240,7 +2139,15 @@ export default function JobDetailLayout() {
   return <Outlet />;
 }
 
-function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
+function AssemblyRowMenu({
+  assembly,
+  disabled,
+  canDelete,
+  submit,
+  onCancelRemaining,
+  onCancelAssembly,
+  hasProductionActivity,
+}: any) {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   return (
     <>
@@ -1272,6 +2179,24 @@ function AssemblyRowMenu({ assembly, disabled, canDelete, submit }: any) {
           >
             Duplicate
           </Menu.Item>
+          {!hasProductionActivity ? (
+            <Menu.Item
+              leftSection={<IconBan size={14} />}
+              disabled={disabled}
+              onClick={() => onCancelAssembly?.()}
+            >
+              Cancel assembly...
+            </Menu.Item>
+          ) : null}
+          {hasProductionActivity ? (
+            <Menu.Item
+              leftSection={<IconBan size={14} />}
+              disabled={disabled}
+              onClick={() => onCancelRemaining?.()}
+            >
+              Cancel remaining units...
+            </Menu.Item>
+          ) : null}
           <Menu.Item
             leftSection={<IconTrash size={14} />}
             disabled={!canDelete}

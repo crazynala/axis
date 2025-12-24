@@ -19,6 +19,7 @@ import { handleActivityUpdate } from "./actions/activityUpdate.server";
 import { handleActivityCreateDefect } from "./actions/activityCreateDefect.server";
 import { handleExternalStepSendReceive } from "./actions/externalStepSendReceive.server";
 import { handleAssemblyUpdateOrderedBreakdown } from "./actions/assemblyUpdateOrderedBreakdown.server";
+import { handleAssemblyCancel } from "./actions/assemblyCancel.server";
 
 export async function handleAssemblyDetailAction({
   request,
@@ -131,7 +132,9 @@ export async function handleAssemblyDetailAction({
   if (intentStr === "assembly.updateOrderedBreakdown") {
     return handleAssemblyUpdateOrderedBreakdown({ jobId, assemblyId, form });
   }
+  if (intentStr === "assembly.cancel") {
+    return handleAssemblyCancel({ jobId, assemblyId, form, rawAssemblyIdParam: raw });
+  }
 
   return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);
 }
-

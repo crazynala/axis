@@ -76,16 +76,32 @@ export function PurchaseOrderPdf({
           <View style={styles.box}>
             <Text style={styles.small}>Vendor</Text>
             <Text>{po?.company?.name ?? ""}</Text>
-            {po?.company?.address ? <Text>{po.company.address}</Text> : null}
-            {po?.company &&
-            (po.company.city || po.company.state || po.company.zip) ? (
+            {po?.company?.defaultAddress?.addressLine1 ? (
+              <Text>{po.company.defaultAddress.addressLine1}</Text>
+            ) : null}
+            {po?.company?.defaultAddress?.addressLine2 ? (
+              <Text>{po.company.defaultAddress.addressLine2}</Text>
+            ) : null}
+            {po?.company?.defaultAddress?.addressLine3 ? (
+              <Text>{po.company.defaultAddress.addressLine3}</Text>
+            ) : null}
+            {po?.company?.defaultAddress &&
+            (po.company.defaultAddress.addressTownCity ||
+              po.company.defaultAddress.addressCountyState ||
+              po.company.defaultAddress.addressZipPostCode) ? (
               <Text>
-                {[po.company.city, po.company.state, po.company.zip]
+                {[
+                  po.company.defaultAddress.addressTownCity,
+                  po.company.defaultAddress.addressCountyState,
+                  po.company.defaultAddress.addressZipPostCode,
+                ]
                   .filter(Boolean)
                   .join(", ")}
               </Text>
             ) : null}
-            {po?.company?.country ? <Text>{po.company.country}</Text> : null}
+            {po?.company?.defaultAddress?.addressCountry ? (
+              <Text>{po.company.defaultAddress.addressCountry}</Text>
+            ) : null}
             {po?.company?.email ? <Text>Email: {po.company.email}</Text> : null}
           </View>
           <View style={styles.box}>

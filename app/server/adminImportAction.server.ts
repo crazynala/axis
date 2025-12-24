@@ -33,6 +33,10 @@ import { importProductLocations } from "../importers/importProductLocations";
 import { runImporter } from "../utils/prisma.server";
 import { importProductCostGroups } from "../importers/importProductCostGroups";
 import { importProductCostRanges } from "../importers/importProductCostRanges";
+import {
+  applyCompanyDefaultAddresses,
+  applyContactDefaultAddresses,
+} from "../importers/importAddressDefaults";
 
 export async function adminImportAction({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_composeUploadHandlers(
@@ -89,28 +93,30 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     "import:forex_lines": 20,
     "import:variant_sets": 30,
     "import:companies": 40,
-    "import:addresses": 50,
-    "import:contacts": 60,
-    "import:locations": 70,
-    "import:product_cost_groups": 75,
-    "import:products": 80,
-    "import:product_cost_ranges": 85,
-    "import:jobs": 90,
-    "import:assemblies": 100,
-    "import:assembly_activities": 110,
-    "import:shipments": 120,
-    "import:shipment_lines": 130,
-    "import:purchase_orders": 140,
-    "import:purchase_order_lines": 150,
-    "import:expenses": 160,
-    "import:costings": 165,
-    "import:invoices": 170,
-    "import:invoice_lines": 180,
-    "import:product_batches": 190,
-    "import:product_locations": 200,
-    "import:product_movements": 210,
-    "import:product_movement_lines": 220,
-    "import:product_lines": 230,
+    "import:contacts": 50,
+    "import:addresses": 60,
+    "import:company_address_defaults": 70,
+    "import:contact_address_defaults": 80,
+    "import:locations": 90,
+    "import:product_cost_groups": 95,
+    "import:products": 100,
+    "import:product_cost_ranges": 105,
+    "import:jobs": 110,
+    "import:assemblies": 120,
+    "import:assembly_activities": 130,
+    "import:shipments": 140,
+    "import:shipment_lines": 150,
+    "import:purchase_orders": 160,
+    "import:purchase_order_lines": 170,
+    "import:expenses": 180,
+    "import:costings": 185,
+    "import:invoices": 190,
+    "import:invoice_lines": 200,
+    "import:product_batches": 210,
+    "import:product_locations": 220,
+    "import:product_movements": 230,
+    "import:product_movement_lines": 240,
+    "import:product_lines": 250,
   };
 
   const inferMode = (filename: string): string | null => {
@@ -119,6 +125,18 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
       return "import:product_cost_groups";
     if (n.startsWith("product_cost_ranges") || n.includes("cost_ranges"))
       return "import:product_cost_ranges";
+    if (
+      n.includes("company_address_defaults") ||
+      n.includes("company_default_addresses") ||
+      n.includes("companies_defaults")
+    )
+      return "import:company_address_defaults";
+    if (
+      n.includes("contact_address_defaults") ||
+      n.includes("contact_default_addresses") ||
+      n.includes("contacts_defaults")
+    )
+      return "import:contact_address_defaults";
     if (n.includes("contact")) return "import:contacts";
     if (n.includes("dhl")) return "import:dhl_report_lines";
     if (n.includes("forex") || n.includes("fx")) return "import:forex_lines";
@@ -238,8 +256,22 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }
+    if (finalMode === "import:contact_address_defaults") {
+      const r = await runImporter(finalMode, () =>
+        applyContactDefaultAddresses(rows)
+      );
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
     if (finalMode === "import:companies") {
       const r = await runImporter(finalMode, () => importCompanies(rows));
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
+    if (finalMode === "import:company_address_defaults") {
+      const r = await runImporter(finalMode, () =>
+        applyCompanyDefaultAddresses(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }

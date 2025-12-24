@@ -7,6 +7,7 @@ import { json, redirect } from "@remix-run/node";
 import {
   Link,
   Outlet,
+  useActionData,
   useNavigation,
   useRouteLoaderData,
   useSubmit,
@@ -24,23 +25,89 @@ import {
   Title,
   NumberInput,
   Select,
+  Modal,
 } from "@mantine/core";
 import { CompanyDetailForm } from "~/modules/company/forms/CompanyDetailForm";
 import { Controller, useForm } from "react-hook-form";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { getSavedIndexSearch } from "~/hooks/useNavLocation";
+import { formatAddressLines } from "~/utils/addressFormat";
+import type { AddressInput } from "~/modules/address/services/addresses.server";
+import {
+  createCompanyAddress,
+  deleteCompanyAddress,
+  setCompanyDefaultAddress,
+  updateCompanyAddress,
+} from "~/modules/address/services/addresses.server";
+import { assertAddressOwnedByCompany } from "~/utils/addressOwnership.server";
+import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   { title: data?.company?.name ? `Company ${data.company.name}` : "Company" },
 ];
 
+function readAddressInput(form: FormData): AddressInput {
+  const get = (key: string) => {
+    const raw = form.get(key);
+    if (raw == null) return null;
+    const value = String(raw).trim();
+    return value === "" ? null : value;
+  };
+  return {
+    name: get("name"),
+    addressCountry: get("addressCountry"),
+    addressCountyState: get("addressCountyState"),
+    addressLine1: get("addressLine1"),
+    addressLine2: get("addressLine2"),
+    addressLine3: get("addressLine3"),
+    addressTownCity: get("addressTownCity"),
+    addressZipPostCode: get("addressZipPostCode"),
+  };
+}
+
+function parseAddressId(raw: FormDataEntryValue | null) {
+  const value = raw == null ? NaN : Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
 export async function loader({ params }: LoaderFunctionArgs) {
   const id = Number(params.id);
   if (!id) return redirect("/companies");
-  const company = await prisma.company.findUnique({ where: { id } });
+  const company = await prisma.company.findUnique({
+    where: { id },
+    include: {
+      defaultAddress: true,
+      addresses: {
+        select: {
+          id: true,
+          name: true,
+          addressLine1: true,
+          addressLine2: true,
+          addressLine3: true,
+          addressTownCity: true,
+          addressCountyState: true,
+          addressZipPostCode: true,
+          addressCountry: true,
+        },
+        orderBy: { id: "asc" },
+      },
+      contacts: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phoneDirect: true,
+          phoneMobile: true,
+          defaultAddressId: true,
+        },
+        orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
+      },
+    },
+  });
   if (!company) return redirect("/companies");
   // Load vendor/customer mappings if this company is a customer
   const mappings = await prisma.vendorCustomerPricing.findMany({
@@ -62,6 +129,53 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const id = Number(params.id);
   const form = await request.formData();
   const intent = form.get("_intent");
+
+  if (
+    intent === "companyAddress.create" ||
+    intent === "companyAddress.update" ||
+    intent === "companyAddress.delete" ||
+    intent === "companyAddress.setDefault"
+  ) {
+    try {
+      if (intent === "companyAddress.create") {
+        await createCompanyAddress({ companyId: id, data: readAddressInput(form) });
+      } else if (intent === "companyAddress.update") {
+        const addressId = parseAddressId(form.get("addressId"));
+        if (!addressId) {
+          return json({ error: "Missing addressId" }, { status: 400 });
+        }
+        await updateCompanyAddress({
+          companyId: id,
+          addressId,
+          data: readAddressInput(form),
+        });
+      } else if (intent === "companyAddress.delete") {
+        const addressId = parseAddressId(form.get("addressId"));
+        if (!addressId) {
+          return json({ error: "Missing addressId" }, { status: 400 });
+        }
+        await deleteCompanyAddress({ companyId: id, addressId });
+      } else if (intent === "companyAddress.setDefault") {
+        const addressId = parseAddressId(form.get("addressId"));
+        if (addressId != null) {
+          const owned = await assertAddressOwnedByCompany(addressId, id);
+          if (!owned) {
+            return json(
+              { error: "Default address must belong to this company." },
+              { status: 400 }
+            );
+          }
+        }
+        await setCompanyDefaultAddress({ companyId: id, addressId: addressId ?? null });
+      }
+      return redirect(`/companies/${id}`);
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Request failed" },
+        { status: 400 }
+      );
+    }
+  }
 
   if (intent === "update") {
     const data = {
@@ -154,6 +268,7 @@ export function CompanyDetailView() {
   const { company, mappings, vendors } = useRouteLoaderData<typeof loader>(
     "modules/company/routes/companies.$id"
   )!;
+  const actionData = useActionData<typeof action>() as any;
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const submit = useSubmit();
@@ -321,6 +436,85 @@ export function CompanyDetailView() {
   };
 
   useInitGlobalFormContext(form as any, save, () => form.reset());
+  const defaultAddress = (company as any).defaultAddress;
+  const addresses = (company as any).addresses || [];
+  const contacts = (company as any).contacts || [];
+  const addressOptions = addresses.map((addr: any) => {
+    const lines = formatAddressLines(addr);
+    const base = lines[0] || `Address ${addr.id}`;
+    const tail = lines.slice(1).join(", ");
+    return { value: String(addr.id), label: tail ? `${base} — ${tail}` : base };
+  });
+  const addressById = new Map(addresses.map((addr: any) => [addr.id, addr]));
+  const [addressModalOpen, setAddressModalOpen] = useState(false);
+  const [editingAddress, setEditingAddress] = useState<any>(null);
+  const addressForm = useForm({
+    defaultValues: {
+      name: "",
+      addressLine1: "",
+      addressLine2: "",
+      addressLine3: "",
+      addressTownCity: "",
+      addressCountyState: "",
+      addressZipPostCode: "",
+      addressCountry: "",
+    },
+  });
+  useEffect(() => {
+    if (!editingAddress) {
+      addressForm.reset({
+        name: "",
+        addressLine1: "",
+        addressLine2: "",
+        addressLine3: "",
+        addressTownCity: "",
+        addressCountyState: "",
+        addressZipPostCode: "",
+        addressCountry: "",
+      });
+      return;
+    }
+    addressForm.reset({
+      name: editingAddress.name || "",
+      addressLine1: editingAddress.addressLine1 || "",
+      addressLine2: editingAddress.addressLine2 || "",
+      addressLine3: editingAddress.addressLine3 || "",
+      addressTownCity: editingAddress.addressTownCity || "",
+      addressCountyState: editingAddress.addressCountyState || "",
+      addressZipPostCode: editingAddress.addressZipPostCode || "",
+      addressCountry: editingAddress.addressCountry || "",
+    });
+  }, [editingAddress, addressForm]);
+  const submitAddress = (values: any) => {
+    const fd = new FormData();
+    fd.set(
+      "_intent",
+      editingAddress ? "companyAddress.update" : "companyAddress.create"
+    );
+    if (editingAddress?.id) fd.set("addressId", String(editingAddress.id));
+    fd.set("name", values.name || "");
+    fd.set("addressLine1", values.addressLine1 || "");
+    fd.set("addressLine2", values.addressLine2 || "");
+    fd.set("addressLine3", values.addressLine3 || "");
+    fd.set("addressTownCity", values.addressTownCity || "");
+    fd.set("addressCountyState", values.addressCountyState || "");
+    fd.set("addressZipPostCode", values.addressZipPostCode || "");
+    fd.set("addressCountry", values.addressCountry || "");
+    submit(fd, { method: "post" });
+    setAddressModalOpen(false);
+  };
+  const handleDeleteAddress = (addressId: number) => {
+    const fd = new FormData();
+    fd.set("_intent", "companyAddress.delete");
+    fd.set("addressId", String(addressId));
+    submit(fd, { method: "post" });
+  };
+  const handleSetDefaultAddress = (addressId: number | null) => {
+    const fd = new FormData();
+    fd.set("_intent", "companyAddress.setDefault");
+    fd.set("addressId", addressId == null ? "" : String(addressId));
+    submit(fd, { method: "post" });
+  };
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
@@ -342,6 +536,186 @@ export function CompanyDetailView() {
       </Group>
 
       <CompanyDetailForm mode="edit" form={form as any} company={company} />
+
+      {actionData?.error ? <Text c="red">{actionData.error}</Text> : null}
+
+      <Stack gap="xs">
+        <Title order={4}>Default Address</Title>
+        <AddressPickerField
+          label="Default Address"
+          value={company.defaultAddressId ?? null}
+          options={addressOptions}
+          previewAddress={addressById.get(company.defaultAddressId) ?? null}
+          hint="No default address."
+          onChange={(nextId) => handleSetDefaultAddress(nextId)}
+        />
+      </Stack>
+
+      <Stack gap="xs">
+        <Group justify="space-between" align="center">
+          <Title order={4}>Addresses</Title>
+          <Button
+            variant="light"
+            onClick={() => {
+              setEditingAddress(null);
+              setAddressModalOpen(true);
+            }}
+          >
+            Add Address
+          </Button>
+        </Group>
+        {addresses.length ? (
+          <Table withTableBorder withColumnBorders>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Preview</Table.Th>
+                <Table.Th>Default</Table.Th>
+                <Table.Th>Actions</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {addresses.map((addr: any) => {
+                const lines = formatAddressLines(addr);
+                const isDefault = company.defaultAddressId === addr.id;
+                return (
+                  <Table.Tr key={addr.id}>
+                    <Table.Td>{addr.id}</Table.Td>
+                    <Table.Td>{addr.name || ""}</Table.Td>
+                    <Table.Td>{lines.join(", ")}</Table.Td>
+                    <Table.Td>{isDefault ? "Default" : ""}</Table.Td>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => {
+                            setEditingAddress(addr);
+                            setAddressModalOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          color="red"
+                          variant="light"
+                          onClick={() => handleDeleteAddress(addr.id)}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        ) : (
+          <Text c="dimmed">No addresses yet.</Text>
+        )}
+      </Stack>
+
+      <Stack gap="xs">
+        <Title order={4}>Contacts</Title>
+        {contacts.length ? (
+          <Table withTableBorder withColumnBorders>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Email</Table.Th>
+                <Table.Th>Phone</Table.Th>
+                <Table.Th>Default Address</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {contacts.map((contact: any) => {
+                const name =
+                  [contact.firstName, contact.lastName]
+                    .filter(Boolean)
+                    .join(" ") || `Contact #${contact.id}`;
+                return (
+                  <Table.Tr key={contact.id}>
+                    <Table.Td>{contact.id}</Table.Td>
+                    <Table.Td>
+                      <Link to={`/contacts/${contact.id}`}>{name}</Link>
+                    </Table.Td>
+                    <Table.Td>{contact.email || ""}</Table.Td>
+                    <Table.Td>
+                      {contact.phoneDirect || contact.phoneMobile || ""}
+                    </Table.Td>
+                    <Table.Td>
+                      {contact.defaultAddressId != null
+                        ? `Address ${contact.defaultAddressId}`
+                        : ""}
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        ) : (
+          <Text c="dimmed">No contacts linked to this company.</Text>
+        )}
+      </Stack>
+
+      <Modal
+        opened={addressModalOpen}
+        onClose={() => setAddressModalOpen(false)}
+        title={editingAddress ? "Edit Address" : "Add Address"}
+      >
+        <Stack gap="sm">
+          <TextInput
+            label="Name"
+            {...addressForm.register("name")}
+          />
+          <TextInput
+            label="Address Line 1"
+            {...addressForm.register("addressLine1")}
+          />
+          <TextInput
+            label="Address Line 2"
+            {...addressForm.register("addressLine2")}
+          />
+          <TextInput
+            label="Address Line 3"
+            {...addressForm.register("addressLine3")}
+          />
+          <Group grow>
+            <TextInput
+              label="City"
+              {...addressForm.register("addressTownCity")}
+            />
+            <TextInput
+              label="County/State"
+              {...addressForm.register("addressCountyState")}
+            />
+          </Group>
+          <Group grow>
+            <TextInput
+              label="Postal Code"
+              {...addressForm.register("addressZipPostCode")}
+            />
+            <TextInput
+              label="Country"
+              {...addressForm.register("addressCountry")}
+            />
+          </Group>
+          <Group justify="end">
+            <Button
+              variant="default"
+              onClick={() => setAddressModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={addressForm.handleSubmit(submitAddress)}>
+              {editingAddress ? "Save" : "Create"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {company.isCustomer && (
         <Stack gap="xs">

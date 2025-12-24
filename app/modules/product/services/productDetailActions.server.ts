@@ -10,8 +10,180 @@ import {
 } from "~/modules/product/forms/productDetail";
 import { loadOptions } from "~/utils/options.server";
 import { deriveExternalStepTypeFromCategoryCode } from "~/modules/product/rules/productTypeRules";
+import { normalizeEnumOptions } from "~/modules/productMetadata/utils/productMetadataFields";
 
 const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
+const META_PREFIX = "meta__";
+
+function parseMetadataValue(
+  raw: FormDataEntryValue | null,
+  dataType: string
+): { hasValue: boolean; data: Record<string, any> } {
+  const data = {
+    valueString: null,
+    valueNumber: null,
+    valueBool: null,
+    valueJson: null,
+  } as Record<string, any>;
+  if (raw == null) return { hasValue: false, data };
+  const trimmed = String(raw).trim();
+  if (!trimmed) return { hasValue: false, data };
+  switch (dataType) {
+    case "NUMBER": {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) return { hasValue: false, data };
+      data.valueNumber = n;
+      return { hasValue: true, data };
+    }
+    case "BOOLEAN": {
+      if (trimmed !== "true" && trimmed !== "false")
+        return { hasValue: false, data };
+      data.valueBool = trimmed === "true";
+      return { hasValue: true, data };
+    }
+    case "JSON": {
+      try {
+        data.valueJson = JSON.parse(trimmed);
+      } catch {
+        data.valueString = trimmed;
+      }
+      return { hasValue: true, data };
+    }
+    case "ENUM":
+    case "STRING":
+    default: {
+      data.valueString = trimmed;
+      return { hasValue: true, data };
+    }
+  }
+}
+
+async function applyProductMetadataValues({
+  prisma,
+  productId,
+  form,
+  productType,
+}: {
+  prisma: any;
+  productId: number;
+  form: FormData;
+  productType: string | null;
+}) {
+  const keys = Array.from(form.keys())
+    .filter(
+      (key) =>
+        key.startsWith(META_PREFIX) &&
+        !key.endsWith("Min") &&
+        !key.endsWith("Max")
+    )
+    .map((key) => key.slice(META_PREFIX.length));
+  if (!keys.length) return;
+  const definitions = keys.length
+    ? await prisma.productAttributeDefinition.findMany({
+        where: { key: { in: keys } },
+        select: {
+          id: true,
+          key: true,
+          label: true,
+          dataType: true,
+          enumOptions: true,
+          isRequired: true,
+          appliesToProductTypes: true,
+        },
+      })
+    : [];
+  const defByKey = new Map(definitions.map((def: any) => [def.key, def]));
+  const ops: any[] = [];
+  const errors: string[] = [];
+  const normalizedType = productType ? String(productType).toLowerCase() : "";
+  const parsedByKey = new Map<string, { hasValue: boolean; data: Record<string, any> }>();
+  for (const key of keys) {
+    const def = defByKey.get(key);
+    if (!def) continue;
+    const fieldName = `${META_PREFIX}${key}`;
+    if (!form.has(fieldName)) continue;
+    const parsed = parseMetadataValue(form.get(fieldName), def.dataType);
+    parsedByKey.set(key, parsed);
+    const appliesToType =
+      !def.appliesToProductTypes?.length ||
+      (normalizedType &&
+        def.appliesToProductTypes.some(
+          (entry: string) => String(entry).toLowerCase() === normalizedType
+        ));
+    if (!parsed.hasValue) {
+      if (def.isRequired && appliesToType) {
+        errors.push(`${def.label || def.key} is required.`);
+        continue;
+      }
+      ops.push(
+        prisma.productAttributeValue.deleteMany({
+          where: { productId, definitionId: def.id },
+        })
+      );
+      continue;
+    }
+    if (def.dataType === "ENUM") {
+      const options = normalizeEnumOptions(def.enumOptions);
+      const values = new Set(options.map((opt) => opt.value));
+      const candidate = String(parsed.data.valueString ?? "");
+      if (values.size && !values.has(candidate)) {
+        errors.push(
+          `${def.label || def.key} must be one of: ${options
+            .map((opt) => opt.value)
+            .join(", ")}.`
+        );
+        continue;
+      }
+    }
+    ops.push(
+      prisma.productAttributeValue.upsert({
+        where: {
+          productId_definitionId: { productId, definitionId: def.id },
+        },
+        create: { productId, definitionId: def.id, ...parsed.data },
+        update: parsed.data,
+      })
+    );
+  }
+  if (normalizedType || keys.length) {
+    const requiredDefs = await prisma.productAttributeDefinition.findMany({
+      where: {
+        isRequired: true,
+        ...(normalizedType
+          ? {
+              OR: [
+                { appliesToProductTypes: { isEmpty: true } },
+                { appliesToProductTypes: { has: normalizedType } },
+              ],
+            }
+          : {}),
+      },
+      select: { id: true, key: true, label: true },
+    });
+    if (requiredDefs.length) {
+      const requiredIds = requiredDefs.map((def: any) => def.id);
+      const existingValues = await prisma.productAttributeValue.findMany({
+        where: { productId, definitionId: { in: requiredIds } },
+        select: { definitionId: true },
+      });
+      const existingSet = new Set(existingValues.map((v: any) => v.definitionId));
+      for (const def of requiredDefs) {
+        const parsed = parsedByKey.get(def.key);
+        if (parsed?.hasValue) continue;
+        if (!parsed && existingSet.has(def.id)) continue;
+        errors.push(`${def.label || def.key} is required.`);
+        break;
+      }
+    }
+  }
+  if (errors.length) {
+    return { ok: false, error: errors[0] };
+  }
+  if (ops.length) {
+    await prisma.$transaction(ops);
+  }
+  return { ok: true };
+}
 
 export async function handleProductDetailAction({
   request,
@@ -96,9 +268,21 @@ export async function handleProductDetailAction({
   const { buildProductData } = await import("~/modules/product/services/productForm.server");
   if (isNew || intent === "create") {
     if (!form) form = await request.formData();
-    const created = await prismaBase.product.create({
-      data: buildProductData(form),
+    const data = buildProductData(form);
+    const created = await prismaBase.product.create({ data });
+    const metaResult = await applyProductMetadataValues({
+      prisma: prismaBase,
+      productId: created.id,
+      form,
+      productType: String((data as any).type || "") || null,
     });
+    if (metaResult && !metaResult.ok) {
+      await prismaBase.product.delete({ where: { id: created.id } });
+      return json(
+        { intent: "create", error: metaResult.error },
+        { status: 400 }
+      );
+    }
     return redirect(`/products/${created.id}`);
   }
 
@@ -190,6 +374,18 @@ export async function handleProductDetailAction({
       externalStepType: (data as any).externalStepType,
     });
     await prismaBase.product.update({ where: { id }, data });
+    const metaResult = await applyProductMetadataValues({
+      prisma: prismaBase,
+      productId: id,
+      form,
+      productType: String((data as any).type || "") || null,
+    });
+    if (metaResult && !metaResult.ok) {
+      return json(
+        { intent: "update", error: metaResult.error },
+        { status: 400 }
+      );
+    }
     try {
       const raw = form.get("tagNames") as string | null;
       if (raw != null) {
@@ -207,6 +403,37 @@ export async function handleProductDetailAction({
     } catch (e) {
       console.warn("Failed to update product tags from form", e);
     }
+
+    try {
+      const rawUpdates = form.get("bomUpdates") as string | null;
+      const rawCreates = form.get("bomCreates") as string | null;
+      const rawDeletes = form.get("bomDeletes") as string | null;
+      const updates = rawUpdates ? JSON.parse(rawUpdates) : [];
+      const creates = rawCreates ? JSON.parse(rawCreates) : [];
+      const deletes = rawDeletes ? JSON.parse(rawDeletes) : [];
+      if (
+        Array.isArray(updates) ||
+        Array.isArray(creates) ||
+        Array.isArray(deletes)
+      ) {
+        const safeUpdates = Array.isArray(updates) ? updates : [];
+        const safeCreates = Array.isArray(creates) ? creates : [];
+        const safeDeletes = Array.isArray(deletes) ? deletes : [];
+        if (
+          safeUpdates.length ||
+          safeCreates.length ||
+          safeDeletes.length
+        ) {
+          const { applyBomBatch } = await import(
+            "~/modules/product/services/productBom.server"
+          );
+          await applyBomBatch(id, safeUpdates, safeCreates, safeDeletes);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to apply BOM changes from form", e);
+    }
+
     return redirect(`/products/${id}`);
   }
 
@@ -477,6 +704,156 @@ export async function handleProductDetailAction({
     return json(result);
   }
 
+  if (intent === "bom.createCmt") {
+    const f = form || (await request.formData());
+    const parentProductId = Number(
+      jsonBody?.parentProductId ?? f.get("parentProductId") ?? id
+    );
+    const pricingSpecId = Number(jsonBody?.pricingSpecId ?? f.get("pricingSpecId"));
+    const anchorPrice = Number(jsonBody?.anchorPrice ?? f.get("anchorPrice"));
+    const subCategoryIdRaw = jsonBody?.subCategoryId ?? f.get("subCategoryId");
+    const nameOverride = String(jsonBody?.name ?? f.get("name") ?? "").trim();
+    const subCategoryId =
+      subCategoryIdRaw == null || subCategoryIdRaw === ""
+        ? null
+        : Number(subCategoryIdRaw);
+
+    if (!Number.isFinite(parentProductId)) {
+      return json({ error: "Invalid parent product id" }, { status: 400 });
+    }
+    if (!Number.isFinite(pricingSpecId)) {
+      return json({ error: "Pricing spec is required" }, { status: 400 });
+    }
+    if (!Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+      return json({ error: "Anchor price must be greater than 0" }, { status: 400 });
+    }
+
+    const userId = await requireUserId(request);
+    const { generateSalePriceRangesForProduct } = await import(
+      "~/modules/pricing/services/generateSaleTiers.server"
+    );
+
+    try {
+      const result = await prismaBase.$transaction(async (tx) => {
+        const parent = await tx.product.findUnique({
+          where: { id: parentProductId },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            categoryId: true,
+            subCategoryId: true,
+            productLines: {
+              select: {
+                id: true,
+                flagAssemblyOmit: true,
+                child: { select: { id: true, type: true } },
+              },
+            },
+          },
+        });
+        if (!parent) throw new Error("Parent product not found");
+        if (parent.type !== "Finished")
+          throw new Error("Parent must be Finished");
+        if (!parent.categoryId) throw new Error("Parent category is required");
+
+        const hasCmt = parent.productLines.some(
+          (pl) => pl.child?.type === "CMT" && !pl.flagAssemblyOmit
+        );
+        if (hasCmt) throw new Error("BOM already has a CMT line");
+
+        const category = await tx.valueList.findUnique({
+          where: { id: parent.categoryId },
+          select: { label: true, code: true },
+        });
+        const effectiveSubCategoryId =
+          Number.isFinite(subCategoryId) && (subCategoryId as number) > 0
+            ? (subCategoryId as number)
+            : parent.subCategoryId ?? null;
+        const subCategory = effectiveSubCategoryId
+          ? await tx.valueList.findUnique({
+              where: { id: effectiveSubCategoryId },
+              select: { label: true, code: true },
+            })
+          : null;
+
+        const categoryLabel =
+          category?.label?.trim() ||
+          category?.code?.trim() ||
+          `#${parent.categoryId}`;
+        const subCategoryLabel = subCategory
+          ? subCategory.label?.trim() ||
+            subCategory.code?.trim() ||
+            `#${effectiveSubCategoryId}`
+          : null;
+
+        const resolvedName =
+          nameOverride ||
+          `CMT - ${categoryLabel}${
+            subCategoryLabel ? ` (${subCategoryLabel})` : ""
+          }`;
+
+        const newCmt = await tx.product.create({
+          data: {
+            name: resolvedName,
+            type: "CMT",
+            categoryId: parent.categoryId,
+            subCategoryId: effectiveSubCategoryId,
+            pricingSpecId,
+          },
+          select: { id: true },
+        });
+
+        const tiers = await generateSalePriceRangesForProduct({
+          productId: newCmt.id,
+          pricingSpecId,
+          paramsOverride: { anchorPrice },
+          prismaClient: tx as any,
+        });
+
+        const line = await tx.productLine.create({
+          data: {
+            parentId: parent.id,
+            childId: newCmt.id,
+            quantity: 1,
+            activityUsed: "make",
+            flagAssemblyOmit: false,
+          },
+          select: { id: true },
+        });
+
+        await tx.operationLog.create({
+          data: {
+            userId,
+            action: "CMT_CREATED_FROM_BOM",
+            entityType: "Product",
+            entityId: newCmt.id,
+            detail: {
+              parentProductId: parent.id,
+              newCmtProductId: newCmt.id,
+              pricingSpecId,
+              anchorPrice,
+              tierHash: tiers.hash,
+            },
+          },
+        });
+
+        return {
+          newCmtProductId: newCmt.id,
+          productLineId: line.id,
+          tierCount: tiers.createdCount,
+          hash: tiers.hash,
+        };
+      });
+
+      return json({ ok: true, ...result });
+    } catch (error: any) {
+      return json(
+        { error: error?.message || "Failed to create CMT" },
+        { status: 400 }
+      );
+    }
+  }
+
   return redirect(`/products/${id}`);
 }
-

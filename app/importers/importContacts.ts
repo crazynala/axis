@@ -19,7 +19,6 @@ export async function importContacts(rows: any[]): Promise<ImportResult> {
     }
     const data: any = {
       id,
-      addressId: asNum(pick(r, ["a_AddressID_c"])) as number | null,
       companyId: asNum(pick(r, ["a_CompanyID"])) as number | null,
       email: (pick(r, ["Email"]) ?? "").toString().trim() || null,
       department: (pick(r, ["Department"]) ?? "").toString().trim() || null,

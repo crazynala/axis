@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useParams } from "@remix-run/react";
+import { useLoaderData, useParams, useRevalidator } from "@remix-run/react";
 import ProductBomSpreadsheet from "../components/ProductBomSpreadsheet";
 import type { BOMRow } from "../components/ProductBomSpreadsheet";
 import { prismaBase } from "~/utils/prisma.server";
@@ -7,13 +7,16 @@ import { prismaBase } from "~/utils/prisma.server";
 import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
 import { notifications } from "@mantine/notifications";
 // import { useNavigate } from "@remix-run/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useInitGlobalFormContext } from "@aa/timber";
 import {
   SheetExitButton,
   SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
+import { Stack } from "@mantine/core";
+import { ValueListType } from "@prisma/client";
+import { CreateCmtFromBomHelper } from "../components/CreateCmtFromBomHelper";
 
 export async function loader({ params }: any) {
   const id = Number(params.id);
@@ -25,7 +28,11 @@ export async function loader({ params }: any) {
     where: { id },
     include: {
       productLines: {
-        include: {
+        select: {
+          id: true,
+          quantity: true,
+          activityUsed: true,
+          flagAssemblyOmit: true,
           child: {
             select: {
               id: true,
@@ -49,22 +56,102 @@ export async function loader({ params }: any) {
     supplier: pl.child?.supplier?.name || "",
     quantity: Number(pl.quantity ?? 0) || 0,
   }));
-  return json({ rows });
+  const hasCmtLine = (product.productLines || []).some(
+    (pl: any) => pl.child?.type === "CMT" && !pl.flagAssemblyOmit
+  );
+  const categoryId = product.categoryId ?? null;
+  const subCategoryId = product.subCategoryId ?? null;
+  const [category, subCategory, subCategoryOptions, pricingSpecs] =
+    await Promise.all([
+      categoryId
+        ? prismaBase.valueList.findUnique({
+            where: { id: categoryId },
+            select: { id: true, label: true, code: true },
+          })
+        : Promise.resolve(null),
+      subCategoryId
+        ? prismaBase.valueList.findUnique({
+            where: { id: subCategoryId },
+            select: { id: true, label: true, code: true },
+          })
+        : Promise.resolve(null),
+      categoryId
+        ? prismaBase.valueList.findMany({
+            where: { type: ValueListType.Category, parentId: categoryId },
+            orderBy: { label: "asc" },
+            select: { id: true, label: true, code: true },
+          })
+        : Promise.resolve([]),
+      prismaBase.pricingSpec.findMany({
+        where: { curveFamily: { in: ["CMT_MOQ_50", "CMT_MOQ_100"] } },
+        orderBy: { id: "asc" },
+        select: { id: true, name: true, code: true, curveFamily: true },
+      }),
+    ]);
+
+  const pricingSpecOptions = pricingSpecs.map((spec) => ({
+    value: String(spec.id),
+    label:
+      spec.name ||
+      (spec.curveFamily === "CMT_MOQ_50"
+        ? "MOQ 50"
+        : spec.curveFamily === "CMT_MOQ_100"
+        ? "MOQ 100"
+        : spec.code),
+  }));
+
+  const subCategorySelect = subCategoryOptions.map((opt) => ({
+    value: String(opt.id),
+    label: opt.label || opt.code || `#${opt.id}`,
+  }));
+
+  return json({
+    rows,
+    product: {
+      id: product.id,
+      name: product.name,
+      type: product.type,
+      categoryId,
+      subCategoryId,
+    },
+    hasCmtLine,
+    pricingSpecOptions,
+    categoryLabel: category?.label || category?.code || null,
+    subCategoryLabel: subCategory?.label || subCategory?.code || null,
+    subCategoryOptions: subCategorySelect,
+  });
 }
 
 export default function ProductBomRoute() {
-  const { rows } = useLoaderData<typeof loader>();
+  const {
+    rows,
+    product,
+    hasCmtLine,
+    pricingSpecOptions,
+    categoryLabel,
+    subCategoryLabel,
+    subCategoryOptions,
+  } = useLoaderData<typeof loader>();
   // const navigate = useNavigate();
   const params = useParams();
   const productId = Number(params.id);
 
   const [editedRows, setEditedRows] = useState<BOMRow[]>(rows);
+  const [refreshOnNextRows, setRefreshOnNextRows] = useState(false);
   const [saving, setSaving] = useState(false);
   useSheetDirtyPrompt();
   const exitUrl = Number.isFinite(productId)
     ? `/products/${productId}`
     : "/products";
   const originalRef = useRef<BOMRow[]>(rows);
+  const revalidator = useRevalidator();
+
+  useEffect(() => {
+    if (!refreshOnNextRows) return;
+    originalRef.current = rows;
+    setEditedRows(rows);
+    setRefreshOnNextRows(false);
+  }, [refreshOnNextRows, rows]);
 
   type RowLite = {
     id: number | null;
@@ -223,14 +310,31 @@ export default function ProductBomRoute() {
       right={<SheetSaveButton saving={saving} />}
     >
       {(gridHeight) => (
-        <ProductBomSpreadsheet
-          rows={editedRows}
-          onSave={() => {}}
-          loading={false}
-          dirty={dirty}
-          onRowsChange={setEditedRows}
-          height={gridHeight}
-        />
+        <Stack h={gridHeight} gap="md">
+          <CreateCmtFromBomHelper
+            parentProductId={productId}
+            parentType={product?.type ?? null}
+            parentCategoryId={product?.categoryId ?? null}
+            parentSubCategoryId={product?.subCategoryId ?? null}
+            categoryLabel={categoryLabel}
+            subCategoryLabel={subCategoryLabel}
+            hasCmtLine={hasCmtLine}
+            pricingSpecOptions={pricingSpecOptions}
+            subCategoryOptions={subCategoryOptions}
+            onSuccess={() => {
+              setRefreshOnNextRows(true);
+              revalidator.revalidate();
+            }}
+          />
+          <ProductBomSpreadsheet
+            rows={editedRows}
+            onSave={() => {}}
+            loading={false}
+            dirty={dirty}
+            onRowsChange={setEditedRows}
+            height={gridHeight - 72}
+          />
+        </Stack>
       )}
     </FullzoomAppShell>
   );

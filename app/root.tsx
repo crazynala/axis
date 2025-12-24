@@ -85,6 +85,7 @@ import {
   IconBoxSeam,
   IconShieldCheck,
   IconListDetails,
+  IconMapPin,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
 import {
@@ -371,6 +372,7 @@ export default function App() {
     { kind: "divider", key: "nav-top-after-boxes" },
     { to: "/companies", icon: <IconAffiliate />, label: "Companies" },
     { to: "/contacts", icon: <IconWoman />, label: "Contacts" },
+    { to: "/addresses", icon: <IconMapPin />, label: "Addresses" },
     { kind: "divider", key: "nav-top-after-contacts" },
     { to: "/invoices", icon: <IconFileDollar />, label: "Invoices" },
     { to: "/expenses", icon: <IconCalendarDollar />, label: "Expenses" },
