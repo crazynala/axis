@@ -1,8 +1,7 @@
 import type { FieldConfig } from "../../../base/forms/fieldConfigShared";
 import { calcPrice } from "../calc/calcPrice";
-import { Badge, Group, TextInput, Tooltip } from "@mantine/core";
+import { Tooltip } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
-import { Controller, type UseFormReturn } from "react-hook-form";
 import {
   deriveExternalStepTypeFromCategoryCode,
   rulesForType,
@@ -17,63 +16,6 @@ const EXTERNAL_STEP_OPTIONS = [
   { value: "WASH", label: "Wash" },
   { value: "DYE", label: "Dye" },
 ];
-
-const SUPPLY_ATTENTION_TYPES = new Set(["FABRIC", "TRIM", "SERVICE"]);
-
-function renderLeadTimeInput({
-  form,
-  mode,
-}: {
-  form: UseFormReturn<any>;
-  mode: "edit" | "create" | "find";
-}) {
-  const value = form.watch("leadTimeDays");
-  const typeValue = form.watch("type");
-  const type = typeof typeValue === "string" ? typeValue.toUpperCase() : "";
-  const highlight = SUPPLY_ATTENTION_TYPES.has(type);
-  const label = (
-    <Group gap={6}>
-      <span>Lead time (days)</span>
-      {highlight && (
-        <Badge color="grape" variant="light" size="sm" radius="sm">
-          Supply-critical
-        </Badge>
-      )}
-    </Group>
-  );
-  return (
-    <Controller
-      control={form.control}
-      name="leadTimeDays"
-      render={({ field }) => (
-        <TextInput
-          key="leadTimeDays"
-          label={label}
-          type="number"
-          inputMode="numeric"
-          placeholder="e.g. 14"
-          value={field.value ?? ""}
-          onChange={(e) => field.onChange(e.currentTarget.value)}
-          rightSection={
-            <Tooltip
-              label="Overrides supplier default lead time"
-              withArrow
-              multiline
-              maw={220}
-            >
-              <IconInfoCircle
-                size={16}
-                stroke={1.5}
-                style={{ cursor: "help" }}
-              />
-            </Tooltip>
-          }
-          disabled={mode === "find"}
-        />
-      )}
-    />
-  );
-}
 
 // Overview / identity fields
 export const productIdentityFields: FieldConfig[] = [
@@ -113,6 +55,14 @@ export const productAssocFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "subcategory",
     findOp: "equals",
+  },
+  {
+    name: "templateId",
+    label: "Template",
+    widget: "select",
+    optionsKey: "productTemplate",
+    findOp: "equals",
+    showIf: ({ ctx }) => !ctx?.hideTemplateField,
   },
   {
     name: "supplierId",
@@ -159,8 +109,18 @@ export const productAssocFields: FieldConfig[] = [
     name: "leadTimeDays",
     label: "Lead time (days)",
     hiddenInModes: ["find"],
-    render: ({ form, mode }) =>
-      renderLeadTimeInput({ form, mode: mode as "edit" | "create" | "find" }),
+    widget: "numberRange",
+    placeholder: "e.g. 14",
+    rightSection: () => (
+      <Tooltip
+        label="Overrides supplier default lead time"
+        withArrow
+        multiline
+        maw={220}
+      >
+        <IconInfoCircle size={16} stroke={1.5} style={{ cursor: "help" }} />
+      </Tooltip>
+    ),
   },
   {
     name: "externalStepType",

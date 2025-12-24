@@ -1,5 +1,7 @@
 export type ProductDetailVM = {
   product: any;
+  effectivePricingMode?: string | null;
+  pricingModeLabel?: string | null;
   metadataDefinitions: any[];
   metadataValuesByKey: Record<string, any>;
   stockByLocation: any[];

@@ -11,6 +11,7 @@ export const jobDateStatusLeft: FieldConfig[] = [
     widget: "select",
     optionsKey: "jobStatus",
     findOp: "contains",
+    hiddenInModes: ["edit", "create"],
   },
   {
     name: "jobType",

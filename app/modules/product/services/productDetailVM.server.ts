@@ -4,6 +4,11 @@ import { requireUserId } from "~/utils/auth.server";
 import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import type { ProductDetailVM } from "~/modules/product/types/productDetailVM";
 import { ValueListType } from "@prisma/client";
+import {
+  inferPricingModeFromData,
+  PRICING_MODE_LABELS,
+  type PricingMode,
+} from "~/modules/product/services/pricingMode.server";
 
 export async function loadProductDetailVM(opts: {
   params: Params;
@@ -26,6 +31,7 @@ export async function loadProductDetailVM(opts: {
       include: {
         customer: { select: { id: true, priceMultiplier: true } },
         costGroup: { include: { costRanges: true } },
+        pricingSpec: { select: { id: true, name: true, code: true, curveFamily: true } },
         salePriceGroup: { include: { saleRanges: true } },
         salePriceRanges: true,
       productLines: {
@@ -353,6 +359,13 @@ export async function loadProductDetailVM(opts: {
     }
     const vm: ProductDetailVM = {
       product,
+      effectivePricingMode:
+        (product as any)?.pricingMode ?? inferPricingModeFromData(product),
+      pricingModeLabel:
+        PRICING_MODE_LABELS[
+          ((product as any)?.pricingMode ??
+            inferPricingModeFromData(product)) as PricingMode
+        ],
       metadataDefinitions: metadataDefinitions || [],
       metadataValuesByKey,
       stockByLocation,

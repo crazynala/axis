@@ -1,5 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
-import { Button, Group, Modal, NumberInput, Select, Stack, Text, TextInput } from "@mantine/core";
+import {
+  Button,
+  Group,
+  Modal,
+  NumberInput,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  Tooltip,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
 export type CreateCmtFromBomHelperProps = {
@@ -13,6 +23,7 @@ export type CreateCmtFromBomHelperProps = {
   pricingSpecOptions: Array<{ value: string; label: string }>;
   subCategoryOptions?: Array<{ value: string; label: string }>;
   onSuccess?: () => void;
+  disabledReason?: string | null;
 };
 
 export function CreateCmtFromBomHelper({
@@ -26,10 +37,13 @@ export function CreateCmtFromBomHelper({
   pricingSpecOptions,
   subCategoryOptions = [],
   onSuccess,
+  disabledReason,
 }: CreateCmtFromBomHelperProps) {
   const isFinished = String(parentType || "") === "Finished";
   const canCreate =
     isFinished && !hasCmtLine && Number.isFinite(parentCategoryId ?? NaN);
+  const blockedByDirty = Boolean(disabledReason);
+  const createDisabled = !canCreate || blockedByDirty;
 
   const [opened, setOpened] = useState(false);
   const [pricingSpecId, setPricingSpecId] = useState(
@@ -49,6 +63,7 @@ export function CreateCmtFromBomHelper({
   }, [categoryLabel, subCategoryLabel]);
 
   const handleSubmit = useCallback(async () => {
+    if (blockedByDirty) return;
     if (!Number.isFinite(parentProductId)) return;
     if (!pricingSpecId) {
       notifications.show({
@@ -101,6 +116,7 @@ export function CreateCmtFromBomHelper({
     }
   }, [
     anchorPrice,
+    blockedByDirty,
     nameOverride,
     onSuccess,
     parentProductId,
@@ -114,14 +130,18 @@ export function CreateCmtFromBomHelper({
     <Stack gap="xs">
       <Group justify="space-between" align="center">
         <Text>No CMT line on this BOM.</Text>
-        <Button
-          size="xs"
-          variant="light"
-          onClick={() => setOpened(true)}
-          disabled={!canCreate}
-        >
-          Create CMT…
-        </Button>
+        <Tooltip label={disabledReason} disabled={!blockedByDirty} withArrow>
+          <span>
+            <Button
+              size="xs"
+              variant="light"
+              onClick={() => setOpened(true)}
+              disabled={createDisabled}
+            >
+              Create CMT…
+            </Button>
+          </span>
+        </Tooltip>
       </Group>
       {!canCreate ? (
         <Text size="sm" c="dimmed">
@@ -137,6 +157,10 @@ export function CreateCmtFromBomHelper({
         <Stack gap="sm">
           <Text size="sm" c="dimmed">
             Parent category: {parentSummary}
+          </Text>
+          <Text size="sm" c="dimmed">
+            Creates a new CMT product immediately. Save/Discard current edits
+            separately.
           </Text>
           <Select
             label="Pricing Spec"
@@ -175,9 +199,17 @@ export function CreateCmtFromBomHelper({
             <Button variant="default" onClick={() => setOpened(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} loading={saving}>
-              Create
-            </Button>
+            <Tooltip label={disabledReason} disabled={!blockedByDirty} withArrow>
+              <span>
+                <Button
+                  onClick={handleSubmit}
+                  loading={saving}
+                  disabled={createDisabled}
+                >
+                  Create
+                </Button>
+              </span>
+            </Tooltip>
           </Group>
         </Stack>
       </Modal>

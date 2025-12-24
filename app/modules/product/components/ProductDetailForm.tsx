@@ -1,9 +1,9 @@
 import React from "react";
 import {
   Card,
+  Center,
   Grid,
   SimpleGrid,
-  Center,
   Group,
   Stack,
   Text,
@@ -11,18 +11,21 @@ import {
   Accordion,
   Badge,
   Button,
+  Drawer,
+  Select,
 } from "@mantine/core";
+import { modals } from "@mantine/modals";
 import type { UseFormReturn } from "react-hook-form";
-import { RenderGroup } from "../../../base/forms/fieldConfigShared";
 import {
-  getGlobalOptions,
-  type OptionsData,
-} from "../../../base/options/OptionsClient";
+  RenderField,
+  RenderGroup,
+} from "../../../base/forms/fieldConfigShared";
+import { getGlobalOptions } from "../../../base/options/OptionsClient";
 import {
   deriveExternalStepTypeFromCategoryCode,
   rulesForType,
 } from "../rules/productTypeRules";
-import { AxisChip, type AxisChipTone } from "~/components/AxisChip";
+import { AxisChip } from "~/components/AxisChip";
 import { useOptions } from "~/base/options/OptionsContext";
 import {
   productIdentityFields,
@@ -74,6 +77,9 @@ export type ProductDetailFormProps = {
     }
   >;
   metadataDefinitions?: ProductAttributeDefinition[];
+  effectivePricingMode?: string | null;
+  pricingModeLabel?: string | null;
+  pricingSpecOptions?: Array<{ value: string; label: string }>;
 };
 
 export function ProductDetailForm({
@@ -88,12 +94,14 @@ export function ProductDetailForm({
   onRegisterMissingFocus,
   visibilityPolicy = "conservative",
   attemptedSubmit = false,
-  showSectionRollups = true,
   requiredIndicatorMode = "chips",
   hasMovements,
   requireTemplate = false,
   hideTemplateField,
   metadataDefinitions = [],
+  effectivePricingMode,
+  pricingModeLabel,
+  pricingSpecOptions = [],
 }: ProductDetailFormProps) {
   const optionsCtx = useOptions();
   const [tiersOpen, setTiersOpen] = React.useState(false);
@@ -300,17 +308,23 @@ export function ProductDetailForm({
     return fetched.length > 1;
   }, [product, watchedCostGroupId, costGroupRangesById]);
   const pricingPrefs = usePricingPrefsFromWidget();
+  const [pricingSettingsOpen, setPricingSettingsOpen] = React.useState(false);
+  const [allowModeChange, setAllowModeChange] = React.useState(false);
   const templateId = form.watch("templateId");
   const template =
     templateId && templateDefs ? templateDefs[String(templateId)] : null;
   const needsTemplate = Boolean(requireTemplate && !template);
   const typeValue = form.watch("type");
-  const supplierId = form.watch("supplierId");
-  const customerId = form.watch("customerId");
-  const variantSetId = form.watch("variantSetId");
   const stockTracking = form.watch("stockTrackingEnabled");
   const batchTracking = form.watch("batchTrackingEnabled");
   const costPriceValue = form.watch("costPrice");
+  const purchaseTaxId = form.watch("purchaseTaxId");
+  const salePriceGroupId = form.watch("salePriceGroupId");
+  const costGroupId = form.watch("costGroupId");
+  const manualSalePrice = form.watch("manualSalePrice");
+  const manualMargin = form.watch("manualMargin");
+  const pricingModeValue = form.watch("pricingMode");
+  const pricingSpecId = form.watch("pricingSpecId");
   const categoryId = form.watch("categoryId");
   const externalStepValue = form.watch("externalStepType");
   const requirements = React.useMemo(
@@ -348,6 +362,19 @@ export function ProductDetailForm({
     (fields: any[]) => fields.filter((f) => shouldRenderField(f.name)),
     [shouldRenderField]
   );
+  const fieldByName = React.useMemo(() => {
+    const all = [
+      ...productIdentityFields,
+      ...productAssocFields,
+      ...productPricingFields,
+    ];
+    const map: Record<string, any> = {};
+    for (const field of all) {
+      if (!field?.name) continue;
+      map[field.name] = field;
+    }
+    return map;
+  }, []);
   const legacyEntries = React.useMemo(() => {
     const list: Array<{ name: string; label: string }> = [];
     for (const [name, meta] of Object.entries(productRequirementSpec)) {
@@ -366,16 +393,26 @@ export function ProductDetailForm({
     > = {};
     const touched = form.formState.touchedFields || {};
     const missingRequired = (fieldName: string) =>
-      requirements.fields[fieldName] === "required" && !isFieldFilled(fieldName);
+      requirements.fields[fieldName] === "required" &&
+      !isFieldFilled(fieldName);
     const warnGate =
       requiredIndicatorMode === "inline" &&
       (attemptedSubmit || !!typeValue || Object.keys(touched || {}).length > 0);
     for (const name of Object.keys(requirements.fields)) {
       if (!missingRequired(name)) continue;
       if (attemptedSubmit) {
-        map[name] = { state: "error", message: "Required" };
+        map[name] = { state: "error", message: "" };
       } else if (warnGate) {
-        map[name] = { state: "warn", message: "Required" };
+        map[name] = { state: "warn", message: "" };
+      }
+    }
+    const typeUpper = String(typeValue || product?.type || "").toUpperCase();
+    const needsPurchaseTax = typeUpper === "TRIM" || typeUpper === "FABRIC";
+    if (needsPurchaseTax && !isFieldFilled("purchaseTaxId")) {
+      if (attemptedSubmit) {
+        map.purchaseTaxId = { state: "error", message: "" };
+      } else if (warnGate) {
+        map.purchaseTaxId = { state: "warn", message: "" };
       }
     }
     return map;
@@ -386,6 +423,7 @@ export function ProductDetailForm({
     form.formState.touchedFields,
     typeValue,
     requiredIndicatorMode,
+    product?.type,
   ]);
   const globalOptions = getGlobalOptions();
   const categoryMetaById =
@@ -407,10 +445,7 @@ export function ProductDetailForm({
       optionsCtx?.categoryOptions ||
       globalOptions?.categoryOptions ||
       [];
-    const meta =
-      categoryMetaById ||
-      globalOptions?.categoryMetaById ||
-      {};
+    const meta = categoryMetaById || globalOptions?.categoryMetaById || {};
     console.log("[product form] category meta available", {
       fromCtx: !!optionsCtx?.categoryMetaById,
       fromGlobal: !!globalOptions?.categoryMetaById,
@@ -431,40 +466,49 @@ export function ProductDetailForm({
     return filtered;
   }, [categoryOptions, categoryMetaById, typeValue]);
 
+  const setValueIfChanged = React.useCallback(
+    (name: string, nextValue: any) => {
+      const normalize = (value: any) => (value === "" ? null : value);
+      const current = normalize(form.getValues(name as any));
+      const next = normalize(nextValue);
+      if (Object.is(current, next)) return;
+      form.setValue(name as any, nextValue, {
+        shouldDirty: false,
+        shouldTouch: false,
+        shouldValidate: false,
+      });
+    },
+    [form]
+  );
+
   React.useEffect(() => {
     if (!template || !requireTemplate) return;
-    form.setValue("type", template.productType, { shouldDirty: true });
+    setValueIfChanged("type", template.productType);
     if (template.defaultCategoryId) {
-      form.setValue("categoryId", template.defaultCategoryId, {
-        shouldDirty: true,
-      });
+      setValueIfChanged("categoryId", template.defaultCategoryId);
     }
     if (template.defaultSubCategoryId) {
-      form.setValue("subCategoryId", template.defaultSubCategoryId, {
-        shouldDirty: true,
-      });
+      setValueIfChanged("subCategoryId", template.defaultSubCategoryId);
     } else {
-      form.setValue("subCategoryId", "", { shouldDirty: true });
+      setValueIfChanged("subCategoryId", "");
     }
-    form.setValue(
+    setValueIfChanged(
       "stockTrackingEnabled",
-      template.defaultStockTracking ?? false,
-      { shouldDirty: true }
+      template.defaultStockTracking ?? false
     );
-      form.setValue("batchTrackingEnabled", template.defaultBatchTracking ?? false, {
-        shouldDirty: true,
-      });
+    setValueIfChanged(
+      "batchTrackingEnabled",
+      template.defaultBatchTracking ?? false
+    );
     if (template.defaultExternalStepType) {
-      form.setValue("externalStepType", template.defaultExternalStepType, {
-        shouldDirty: true,
-      });
+      setValueIfChanged("externalStepType", template.defaultExternalStepType);
     }
-  }, [template, form, requireTemplate]);
+  }, [template, requireTemplate, setValueIfChanged]);
 
   React.useEffect(() => {
     const isService = String(typeValue || "").toUpperCase() === "SERVICE";
     if (!isService) {
-      form.setValue("externalStepType", null, { shouldDirty: true });
+      setValueIfChanged("externalStepType", null);
       return;
     }
     const meta = categoryMetaById?.[String(categoryId)];
@@ -478,178 +522,11 @@ export function ProductDetailForm({
     });
     const current = form.getValues("externalStepType");
     if (implied && current !== implied) {
-      form.setValue("externalStepType", implied, { shouldDirty: true });
+      setValueIfChanged("externalStepType", implied);
     } else if (!implied && current) {
-      form.setValue("externalStepType", null, { shouldDirty: true });
+      setValueIfChanged("externalStepType", null);
     }
-  }, [typeValue, categoryId, categoryMetaById, form]);
-
-  type InlineChip = {
-    tone: AxisChipTone;
-    label: string;
-    tooltip: string;
-    action?: { label: string; onClick: () => void; tooltip?: string };
-  };
-  const assocChips = React.useMemo(() => {
-    const chips: InlineChip[] = [];
-    const rules = rulesForType(typeValue);
-    const typeLabel =
-      String(typeValue || product?.type || "Product").toUpperCase();
-    const isFabric = typeLabel === "FABRIC";
-    if (!categoryId) {
-      chips.push({
-        tone: "warning",
-        label: "Category missing",
-        tooltip: "Pick a category to align templates and SKU rules.",
-      });
-    }
-    if (needsTemplate) {
-      chips.push({
-        tone: "warning",
-        label: "Template required",
-        tooltip: "Select a template to continue editing this product.",
-      });
-    }
-    if (rules.requireSupplier && !supplierId) {
-      chips.push({
-        tone: "warning",
-        label: "Supplier required",
-        tooltip: `${typeLabel} products need a supplier.`,
-      });
-    }
-    if (rules.requireCustomer && !customerId) {
-      chips.push({
-        tone: "warning",
-        label: "Customer required",
-        tooltip: `${typeLabel} products need a customer.`,
-      });
-    }
-    if (!variantSetId && typeLabel === "FINISHED") {
-      chips.push({
-        tone: "info",
-        label: "No variant set",
-        tooltip: "Add a variant set to manage sizes/colors if applicable.",
-      });
-    }
-    return chips;
-  }, [
-    typeValue,
-    product?.type,
-    categoryId,
-    needsTemplate,
-    supplierId,
-    customerId,
-    variantSetId,
-  ]);
-
-  const stockChips = React.useMemo(() => {
-    const chips: InlineChip[] = [];
-    const rules = rulesForType(typeValue);
-    const typeLabel =
-      String(typeValue || product?.type || "Product").toUpperCase();
-    const isSupply =
-      ["FABRIC", "TRIM", "PACKAGING"].includes(typeLabel) ||
-      (rules.requireSupplier && typeLabel !== "SERVICE");
-    if (typeLabel === "FABRIC") {
-      if (!stockTracking) {
-        chips.push({
-          tone: "warning",
-          label: "⚠ Stock tracking OFF for FABRIC",
-        tooltip: "Fabric must track stock to manage inventory accurately.",
-        action: {
-          label: "Enable",
-          tooltip: "Toggle on stock tracking",
-          onClick: () => form.setValue("stockTrackingEnabled", true, { shouldDirty: true }),
-        },
-      });
-    } else if (batchTracking === false) {
-      chips.push({
-        tone: "warning",
-        label: "⚠ Batch tracking OFF for FABRIC",
-        tooltip: "Fabric with stock tracking should also enable batch tracking.",
-        action: {
-          label: "Enable",
-          tooltip: "Toggle on batch tracking",
-          onClick: () => form.setValue("batchTrackingEnabled", true, { shouldDirty: true }),
-        },
-      });
-    }
-    } else {
-      if (isSupply && !stockTracking) {
-        chips.push({
-          tone: "warning",
-          label: `⚠ Stock tracking OFF for ${typeLabel}`,
-          tooltip: "Enable stock tracking for supply items to maintain on-hand counts.",
-        });
-      }
-      if (isSupply && batchTracking === false) {
-        chips.push({
-          tone: "info",
-          label: "Batch tracking off",
-          tooltip: "Turn on batch tracking when you need lot traceability.",
-        });
-      }
-    }
-    if (costPriceValue == null || costPriceValue === "") {
-      chips.push({
-        tone: "neutral",
-        label: "Cost price empty",
-        tooltip: "Enter cost to improve pricing previews and costings.",
-      });
-    }
-    return chips;
-  }, [
-    typeValue,
-    product?.type,
-    stockTracking,
-    batchTracking,
-    costPriceValue,
-  ]);
-
-  const renderInlineChips = (chips: InlineChip[], keyPrefix: string) =>
-    chips.map((chip, idx) => (
-      <Tooltip
-        key={`${keyPrefix}-${idx}-${chip.label}`}
-        label={chip.tooltip}
-        withArrow
-        multiline
-        maw={260}
-      >
-        <AxisChip tone={chip.tone}>
-          <Group gap={6} align="center" wrap="nowrap">
-            <span>{chip.label}</span>
-            {chip.action ? (
-              <Tooltip
-                label={chip.action.tooltip || ""}
-                withArrow
-                position="bottom"
-                maw={240}
-              >
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    chip.action?.onClick();
-                  }}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    color: "inherit",
-                    textDecoration: "underline",
-                    cursor: "pointer",
-                    fontSize: 12,
-                  }}
-                >
-                  {chip.action.label}
-                </button>
-              </Tooltip>
-            ) : null}
-          </Group>
-        </AxisChip>
-      </Tooltip>
-    ));
+  }, [typeValue, categoryId, categoryMetaById, form, setValueIfChanged]);
 
   const focusField = React.useCallback(
     (fieldName?: string | null) => {
@@ -667,56 +544,26 @@ export function ProductDetailForm({
     [form]
   );
 
-  const renderSectionRollup = (
-    sectionKey:
-      | "identity"
-      | "classification"
-      | "associations"
-      | "pricing"
-      | "inventory",
-    label: string
-  ) => {
-    if (!validation) return null;
-    const info = validation.bySection[sectionKey];
-    if (!info) return null;
-    const missingReq = info.missingRequired.length;
-    const missingRec = info.missingRecommended.length;
-    if (!missingReq && !missingRec) return null;
-    const tone: AxisChipTone = missingReq ? "warning" : "info";
-    const text = missingReq
-      ? `Missing required: ${missingReq}`
-      : `Recommended: ${missingRec} missing`;
-    const tooltipLines = [
-      missingReq ? `Required: ${info.missingRequired.join(", ")}` : null,
-      missingRec ? `Recommended: ${info.missingRecommended.join(", ")}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    return (
-      <AxisChip
-        tone={tone}
-        onClick={() => focusField(info.firstMissingField)}
-        style={{ cursor: "pointer" }}
-      >
-        <Tooltip label={tooltipLines || label} withArrow multiline maw={280}>
-          <span>{text}</span>
-        </Tooltip>
-      </AxisChip>
-    );
-  };
-
   React.useEffect(() => {
     if (!onRegisterMissingFocus) return;
     if (!validation || !validation.missingRequired.length) {
       onRegisterMissingFocus(null);
       return;
     }
-    const sections = ["identity", "classification", "associations", "pricing", "inventory"] as const;
+    const sections = [
+      "identity",
+      "classification",
+      "associations",
+      "pricing",
+      "inventory",
+    ] as const;
     const firstSection = sections.find(
       (s) => validation.bySection[s]?.missingRequired.length
     );
     const firstField =
-      (firstSection ? validation.bySection[firstSection]?.firstMissingField : null) || null;
+      (firstSection
+        ? validation.bySection[firstSection]?.firstMissingField
+        : null) || null;
     onRegisterMissingFocus(() => focusField(firstField));
   }, [onRegisterMissingFocus, validation, focusField]);
 
@@ -758,6 +605,7 @@ export function ProductDetailForm({
       costPriceLocked,
       requiredStates,
       hasMovements,
+      hideTemplateField,
     }),
     [
       hasCostTiers,
@@ -774,8 +622,153 @@ export function ProductDetailForm({
       costPriceLocked,
       templateOptions,
       requiredStates,
+      hideTemplateField,
     ]
   );
+  const renderFieldByName = React.useCallback(
+    (name: string) => {
+      const field = fieldByName[name];
+      if (!field) return null;
+      if (hideTemplateField && name === "templateId") return null;
+      if (!shouldRenderField(name)) return null;
+      return (
+        <RenderField form={form} field={field} mode={mode as any} ctx={ctx} />
+      );
+    },
+    [fieldByName, form, mode, ctx, shouldRenderField, hideTemplateField]
+  );
+  const renderFieldCol = React.useCallback(
+    (
+      name: string,
+      colSpan: { base: number; md?: number },
+      wrapperStyle?: React.CSSProperties
+    ) => {
+      const fieldNode = renderFieldByName(name);
+      if (!fieldNode) return null;
+      return (
+        <Grid.Col span={colSpan}>
+          {wrapperStyle ? (
+            <div style={wrapperStyle}>{fieldNode}</div>
+          ) : (
+            fieldNode
+          )}
+        </Grid.Col>
+      );
+    },
+    [renderFieldByName]
+  );
+  const resolvedPricingMode =
+    (pricingModeValue as string | null) ?? effectivePricingMode ?? null;
+  const pricingModeLabelResolved =
+    pricingModeLabel ??
+    (resolvedPricingMode === "FIXED_PRICE"
+      ? "Fixed Price"
+      : resolvedPricingMode === "FIXED_MARGIN"
+      ? "Fixed Margin"
+      : resolvedPricingMode === "TIERED_COST"
+      ? "Tiered Cost"
+      : resolvedPricingMode === "TIERED_SELL"
+      ? "Tiered Sell"
+      : resolvedPricingMode === "GENERATED"
+      ? "Generated"
+      : "Unspecified");
+  const pricingModeOptions = React.useMemo(
+    () => [
+      { value: "FIXED_PRICE", label: "Fixed Price" },
+      { value: "FIXED_MARGIN", label: "Fixed Margin" },
+      { value: "TIERED_COST", label: "Tiered Cost" },
+      { value: "TIERED_SELL", label: "Tiered Sell" },
+      { value: "GENERATED", label: "Generated" },
+    ],
+    []
+  );
+  const confirmPricingModeChange = React.useCallback(
+    (nextMode: string) => {
+      const clearMap: Record<string, string[]> = {
+        FIXED_PRICE: [
+          "manualMargin",
+          "costGroupId",
+          "salePriceGroupId",
+          "pricingSpecId",
+        ],
+        FIXED_MARGIN: ["manualSalePrice", "salePriceGroupId", "pricingSpecId"],
+        TIERED_COST: ["manualSalePrice", "salePriceGroupId", "pricingSpecId"],
+        TIERED_SELL: ["manualSalePrice", "manualMargin", "pricingSpecId"],
+        GENERATED: [
+          "manualSalePrice",
+          "manualMargin",
+          "salePriceGroupId",
+          "costGroupId",
+        ],
+      };
+      const clears = clearMap[nextMode] || [];
+      const label =
+        pricingModeOptions.find((opt) => opt.value === nextMode)?.label ||
+        nextMode;
+      const body = clears.length
+        ? `Changing to ${label} will clear: ${clears.join(", ")}. Continue?`
+        : `Change pricing model to ${label}?`;
+      modals.openConfirmModal({
+        title: "Change pricing model?",
+        children: <Text size="sm">{body}</Text>,
+        labels: { confirm: "Change", cancel: "Cancel" },
+        confirmProps: { color: "red" },
+        onConfirm: () => {
+          form.setValue("pricingMode", nextMode, { shouldDirty: true });
+          for (const field of clears) {
+            form.setValue(field as any, null, { shouldDirty: true });
+          }
+        },
+      });
+    },
+    [form, pricingModeOptions]
+  );
+  const modeSelectorEnabled = allowModeChange || product?.pricingMode == null;
+  const derivedMargin = React.useMemo(() => {
+    const cost = Number(costPriceValue ?? 0);
+    const sell = Number(form.getValues("manualSalePrice") ?? 0);
+    if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(sell))
+      return null;
+    return (sell - cost) / cost;
+  }, [costPriceValue, manualSalePrice, form]);
+  const derivedSell = React.useMemo(() => {
+    const cost = Number(costPriceValue ?? 0);
+    const margin = Number(form.getValues("manualMargin") ?? 0);
+    if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(margin))
+      return null;
+    return cost * (1 + margin);
+  }, [costPriceValue, manualMargin, form]);
+  const tierSummary = React.useMemo(() => {
+    const productTiers = (product?.salePriceRanges || []).length;
+    const groupTiers = (product?.salePriceGroup?.saleRanges || []).length;
+    if (productTiers) return `Product sell tiers: ${productTiers}`;
+    if (groupTiers) return `Group sell tiers: ${groupTiers}`;
+    return "No sell tiers";
+  }, [product]);
+  const costTierSummary = React.useMemo(() => {
+    const groupTiers = (product?.costGroup?.costRanges || []).length;
+    if (groupTiers) return `Group cost tiers: ${groupTiers}`;
+    if (product?.costPrice != null) return "Cost price on product";
+    return "No cost tiers";
+  }, [product]);
+  const specSummary = React.useMemo(() => {
+    if (pricingSpecId != null) {
+      const match = pricingSpecOptions.find(
+        (opt) => opt.value === String(pricingSpecId)
+      );
+      if (match) return match.label;
+    }
+    const spec = product?.pricingSpec;
+    if (!spec) return "No pricing spec";
+    return spec.name || spec.code || `Spec #${spec.id}`;
+  }, [product, pricingSpecId, pricingSpecOptions]);
+  const generatedTierSummary = React.useMemo(() => {
+    const rows = (product?.salePriceRanges || []).filter(
+      (r: any) => r.generatedBySpecId != null
+    );
+    if (!rows.length) return "No generated tiers";
+    return `Generated tiers: ${rows.length}`;
+  }, [product]);
   const metadataFields = React.useMemo(
     () => buildProductMetadataFields(metadataDefinitions),
     [metadataDefinitions]
@@ -789,142 +782,213 @@ export function ProductDetailForm({
         value={externalStepValue ?? ""}
         data-debug="externalStepType-hidden"
       />
+      <input
+        type="hidden"
+        name="pricingMode"
+        value={pricingModeValue ?? ""}
+        data-debug="pricingMode-hidden"
+      />
+      <input
+        type="hidden"
+        name="pricingSpecId"
+        value={pricingSpecId ?? ""}
+        data-debug="pricingSpecId-hidden"
+      />
       <Grid.Col span={{ base: 12, md: 12 }}>
-        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center" gap="xs">
-                <Text size="sm" fw={600}>
-                  Identity
-                </Text>
-                <Group gap="xs" wrap="wrap">
-                  {showSectionRollups && requiredIndicatorMode !== "inline"
-                    ? renderSectionRollup("identity", "Identity")
-                    : null}
-                </Group>
-              </Group>
-            </Card.Section>
-            <RenderGroup
-              form={form as any}
-              fields={
-                hideTemplateField
-                  ? (filterFields(
-                      productIdentityFields.filter(
-                        (f) => f.name !== "templateId"
-                      )
-                    ) as any)
-                  : (filterFields(productIdentityFields) as any)
-              }
-              mode={mode as any}
-              ctx={ctx as any}
-            />
-          </Card>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center" gap="xs">
-                <Text size="sm" fw={600}>
-                  Classification / Supplier / Inventory
-                </Text>
-                <Group gap="xs" wrap="wrap">
-                  {showSectionRollups && requiredIndicatorMode !== "inline"
-                    ? renderSectionRollup("classification", "Classification")
-                    : null}
-                  {showSectionRollups && requiredIndicatorMode !== "inline"
-                    ? renderSectionRollup("associations", "Associations")
-                    : null}
-                  {showSectionRollups && requiredIndicatorMode !== "inline"
-                    ? renderSectionRollup("inventory", "Inventory")
-                    : null}
-                  {renderInlineChips(assocChips, "assoc")}
-                </Group>
-              </Group>
-            </Card.Section>
-            {needsTemplate ? (
-              <Center mih={120}>Please select a template to continue.</Center>
-            ) : (
-              <RenderGroup
-                form={form as any}
-                fields={filterFields(productAssocFields) as any}
-                mode={mode as any}
-                ctx={ctx as any}
-              />
-            )}
-          </Card>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center" gap="xs">
-                <Text size="sm" fw={600}>
-                  Stock & Pricing
-                </Text>
-                <Group gap="xs" wrap="wrap">
-                  {showSectionRollups && requiredIndicatorMode !== "inline"
-                    ? renderSectionRollup("pricing", "Pricing")
-                    : null}
-                  {renderInlineChips(stockChips, "stock")}
-                </Group>
-              </Group>
-            </Card.Section>
-            <Card.Section inheritPadding py={4}>
-              <Stack gap={4}>
-                {!stockTracking ? (
-                  <Text size="xs" c="yellow.8">
-                    Stock tracking is disabled; movements will not be recorded.
-                  </Text>
-                ) : batchTracking === false &&
-                  String(typeValue || product?.type || "")
-                    .toUpperCase()
-                    .includes("FABRIC") ? (
-                  <Text size="xs" c="yellow.8">
-                    Batch tracking is disabled; receipts will not be attributed to batches.
-                  </Text>
+        <Grid>
+          <Grid.Col span={7}>
+            <Card withBorder padding="md">
+              <Grid gutter="md">
+                {renderFieldCol("name", { base: 12, md: 6 })}
+                {renderFieldCol("sku", { base: 12, md: 6 })}
+                {renderFieldCol("categoryId", { base: 12, md: 6 })}
+                {renderFieldCol("type", { base: 12, md: 6 }, { opacity: 0.75 })}
+                {renderFieldCol("subCategoryId", { base: 12, md: 6 })}
+                {renderFieldCol("templateId", { base: 12, md: 6 })}
+                {renderFieldCol("supplierId", { base: 12, md: 6 })}
+                {renderFieldCol("customerId", { base: 12, md: 6 })}
+                {renderFieldCol("variantSetId", { base: 12, md: 6 })}
+                {renderFieldCol("externalStepType", { base: 12, md: 6 })}
+                {renderFieldCol("description", { base: 12 })}
+                {metadataFields.length ? (
+                  <Grid.Col span={{ base: 12 }}>
+                    <div style={{ opacity: 0.8 }}>
+                      <RenderGroup
+                        form={form as any}
+                        fields={metadataFields as any}
+                        mode={mode as any}
+                        ctx={ctx as any}
+                      />
+                    </div>
+                  </Grid.Col>
                 ) : null}
-                {stockTracking && hasMovements === false ? (
+                {product?.id ? (
+                  <Grid.Col span={{ base: 12 }}>
+                    <Group justify="flex-end">
+                      <Text size="xs" c="dimmed">
+                        ID: {product?.id}
+                      </Text>
+                    </Group>
+                  </Grid.Col>
+                ) : null}
+              </Grid>
+            </Card>
+          </Grid.Col>
+          <Grid.Col span={5}>
+            <Card withBorder padding="md">
+              <Stack gap="sm">
+                {needsTemplate ? (
                   <Text size="xs" c="dimmed">
-                    No stock movements yet.
+                    Select a template to unlock template-driven defaults.
                   </Text>
                 ) : null}
+                <Group justify="space-between" align="center" wrap="wrap">
+                  <Text size="xs" c="dimmed">
+                    Pricing model: {pricingModeLabelResolved}
+                  </Text>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => setPricingSettingsOpen(true)}
+                    style={{ padding: 0 }}
+                  >
+                    Pricing settings...
+                  </Button>
+                </Group>
+                {resolvedPricingMode === "FIXED_PRICE" ? (
+                  <Stack gap="xs">
+                    {renderFieldByName("costPrice")}
+                    {renderFieldByName("manualSalePriceOverride")}
+                    <Text size="xs" c="dimmed">
+                      Margin (derived):{" "}
+                      {derivedMargin == null
+                        ? "—"
+                        : `${Math.round(derivedMargin * 1000) / 10}%`}
+                    </Text>
+                  </Stack>
+                ) : resolvedPricingMode === "FIXED_MARGIN" ? (
+                  <Stack gap="xs">
+                    {renderFieldByName("costPrice")}
+                    {renderFieldByName("manualMargin")}
+                    <Text size="xs" c="dimmed">
+                      Sell (derived):{" "}
+                      {derivedSell == null
+                        ? "—"
+                        : (Math.round(derivedSell * 100) / 100).toFixed(2)}
+                    </Text>
+                  </Stack>
+                ) : resolvedPricingMode === "TIERED_COST" ? (
+                  <Stack gap="xs">
+                    {renderFieldByName("manualMargin")}
+                    <Text size="xs" c="dimmed">
+                      {costTierSummary}
+                    </Text>
+                  </Stack>
+                ) : resolvedPricingMode === "TIERED_SELL" ? (
+                  <Text size="xs" c="dimmed">
+                    {tierSummary}
+                  </Text>
+                ) : resolvedPricingMode === "GENERATED" ? (
+                  <Stack gap="xs">
+                    <Text size="xs" c="dimmed">
+                      Spec: {specSummary}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {generatedTierSummary}
+                    </Text>
+                  </Stack>
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    Pricing mode not set.
+                  </Text>
+                )}
+                {renderFieldByName("purchaseTaxId")}
+                <div style={{ height: 6 }} />
+                {renderFieldByName("leadTimeDays")}
+                <Stack gap={4} id="product-tracking-status">
+                  <Text size="xs" c="dimmed">
+                    Stock tracking: {stockTracking ? "ON" : "OFF"}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Batch tracking:{" "}
+                    {stockTracking ? (batchTracking ? "ON" : "OFF") : "n/a"}
+                  </Text>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="subtle"
+                    onClick={(e) => e.preventDefault()}
+                    style={{ padding: 0, alignSelf: "flex-start" }}
+                  >
+                    Change tracking in settings
+                  </Button>
+                </Stack>
               </Stack>
-            </Card.Section>
-            {needsTemplate ? null : (
-              <RenderGroup
-                form={form as any}
-                fields={filterFields(productPricingFields) as any}
-                mode={mode as any}
-                ctx={ctx as any}
-              />
-            )}
-            {product?.id ? (
-              <Card.Section bg="dark.6" py={5} mt="xs">
-                <Center>
-                  <PricingPreviewWidget
-                    productId={product.id}
-                    vendorId={product?.supplierId ?? null}
-                  />
-                </Center>
-              </Card.Section>
-            ) : null}
-          </Card>
-        </SimpleGrid>
+              {product?.id ? (
+                <Card.Section bg="dark.6" py={5} mt="xs">
+                  <Center>
+                    <PricingPreviewWidget
+                      productId={product.id}
+                      vendorId={product?.supplierId ?? null}
+                    />
+                  </Center>
+                </Card.Section>
+              ) : null}
+            </Card>
+          </Grid.Col>
+        </Grid>
       </Grid.Col>
-      {metadataFields.length ? (
-        <Grid.Col span={{ base: 12 }}>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center" gap="xs">
-                <Text size="sm" fw={600}>
-                  Metadata
-                </Text>
-              </Group>
-            </Card.Section>
-            <RenderGroup
-              form={form as any}
-              fields={metadataFields as any}
-              mode={mode as any}
-              ctx={ctx as any}
+      <Drawer
+        opened={pricingSettingsOpen}
+        onClose={() => {
+          setPricingSettingsOpen(false);
+          setAllowModeChange(false);
+        }}
+        position="right"
+        title="Pricing settings"
+        size="sm"
+      >
+        <Stack gap="sm">
+          {modeSelectorEnabled ? (
+            <Select
+              label="Pricing model"
+              data={pricingModeOptions}
+              value={resolvedPricingMode ?? ""}
+              onChange={(next) => {
+                if (!next || next === resolvedPricingMode) return;
+                confirmPricingModeChange(next);
+              }}
             />
-          </Card>
-        </Grid.Col>
-      ) : null}
+          ) : (
+            <Group justify="space-between" align="center">
+              <Text size="sm" c="dimmed">
+                Pricing model: {pricingModeLabelResolved}
+              </Text>
+              <Button
+                type="button"
+                size="xs"
+                variant="light"
+                onClick={() => setAllowModeChange(true)}
+              >
+                Change model
+              </Button>
+            </Group>
+          )}
+          {renderFieldByName("costGroupId")}
+          {renderFieldByName("salePriceGroupId")}
+          <Select
+            label="Pricing Spec"
+            data={pricingSpecOptions}
+            value={pricingSpecId != null ? String(pricingSpecId) : ""}
+            placeholder="Select spec"
+            onChange={(val) => {
+              const next = val ? Number(val) : null;
+              form.setValue("pricingSpecId", next, { shouldDirty: true });
+            }}
+          />
+        </Stack>
+      </Drawer>
       {legacyEntries.length ? (
         <Grid.Col span={{ base: 12 }}>
           <Accordion

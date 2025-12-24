@@ -266,9 +266,9 @@ export function renderField(
   const common: any = { label: field.label, mod: "data-autosize" };
   const requiredState = (ctx as any)?.requiredStates?.[field.name];
   if (requiredState?.state === "error") {
-    common.error = requiredState.message || "Required";
+    common.error = requiredState.message ?? "Required";
   } else if (requiredState?.state === "warn") {
-    common.description = requiredState.message || "Required";
+    common.description = requiredState.message ?? "Required";
     common.styles = {
       input: {
         borderColor: "var(--mantine-color-yellow-6)",
@@ -442,6 +442,7 @@ export function renderField(
             });
             const [search, setSearch] = React.useState<string>("");
             const clickedByMouseRef = React.useRef(false);
+            const wasFocusedRef = React.useRef(false);
 
             const baseList =
               primary && primary.length ? primary : fallback || [];
@@ -505,6 +506,7 @@ export function renderField(
                       }}
                       onFocus={(event) => {
                         setSearch(selectedLabel);
+                        wasFocusedRef.current = true;
                         if (clickedByMouseRef.current) {
                           combobox.openDropdown();
                           combobox.updateSelectedOptionIndex();
@@ -520,9 +522,12 @@ export function renderField(
                         combobox.updateSelectedOptionIndex();
                       }}
                       onBlur={(e) => {
-                        f.onBlur();
+                        if (wasFocusedRef.current) {
+                          f.onBlur();
+                        }
                         combobox.closeDropdown();
                         clickedByMouseRef.current = false;
+                        wasFocusedRef.current = false;
                       }}
                       rightSection={
                         valueStr != null ||
@@ -636,6 +641,7 @@ export function renderField(
         <TextInput
           {...common}
           type="number"
+          placeholder={field.placeholder}
           readOnly={resolvedReadOnly}
           rightSection={
             field.rightSection

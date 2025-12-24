@@ -1,4 +1,5 @@
 import { ProductType, ExternalStepType } from "@prisma/client";
+import { resolvePricingModeForImport } from "../modules/product/services/pricingMode.server";
 import { prisma } from "../utils/prisma.server";
 import type { ImportResult } from "./utils";
 import { asBool, asNum, pick, fixMojibake, resetSequence } from "./utils";
@@ -493,6 +494,11 @@ export async function importProducts(rows: any[]): Promise<ImportResult> {
         costPrice,
         ...(costCurrency ? { costCurrency } : {}),
         manualSalePrice,
+        pricingMode: resolvePricingModeForImport({
+          type: type ? String(type) : null,
+          manualSalePrice,
+          costGroupId: resolvedCostGroupId,
+        }),
         stockTrackingEnabled,
         batchTrackingEnabled,
         ...(resolvedVariantSetId != null

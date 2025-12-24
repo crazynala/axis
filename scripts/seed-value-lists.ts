@@ -106,6 +106,13 @@ const currencies = [
   { code: "TL", label: "Turkish Lira" },
 ];
 
+const taxes = [
+  { id: 129, code: "KDV-10", label: "10% KDV", value: "0.1" },
+  { id: 130, code: "KDV-18", label: "18% KDV", value: "0.18" },
+  { id: 132, code: "KDV-8", label: "8% KDV", value: "0.08" },
+  { id: 133, code: "KDV-20", label: "20% KDV", value: "0.2" },
+];
+
 const shippingMethods = [
   "Air - Worldwide Express",
   "Ground",
@@ -161,6 +168,23 @@ async function seedCurrencies() {
         code: currency.code,
         label: currency.label,
         type: ValueListType.Currency,
+      },
+    });
+  }
+}
+
+async function seedTaxes() {
+  await prisma.valueList.deleteMany({
+    where: { type: ValueListType.Tax },
+  });
+  for (const tax of taxes) {
+    await prisma.valueList.create({
+      data: {
+        id: tax.id,
+        code: tax.code,
+        label: tax.label,
+        value: tax.value,
+        type: ValueListType.Tax,
       },
     });
   }
@@ -336,6 +360,7 @@ async function main() {
   await seedSimpleList(ValueListType.AssemblyType, assemblyTypes);
   await seedSimpleList(ValueListType.DefectReason, defectReasons);
   await seedCurrencies();
+  await seedTaxes();
   await seedSimpleList(ValueListType.ShippingMethod, shippingMethods);
   await seedProductTemplates();
   console.log("Seeded value lists");

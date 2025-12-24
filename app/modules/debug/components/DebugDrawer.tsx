@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Button,
   Drawer,
@@ -20,6 +20,8 @@ type DebugDrawerProps = {
   title: string;
   payload?: DebugExplainPayload | null;
   loading?: boolean;
+  formStatePanel?: ReactNode;
+  formStateCopyText?: string;
 };
 
 export function DebugDrawer({
@@ -28,6 +30,8 @@ export function DebugDrawer({
   title,
   payload,
   loading,
+  formStatePanel,
+  formStateCopyText,
 }: DebugDrawerProps) {
   const [tab, setTab] = useState<string>("summary");
 
@@ -57,6 +61,27 @@ export function DebugDrawer({
       .join("\n");
   }, [payload]);
 
+  const numbersText = useMemo(() => {
+    if (!payload) return "";
+    return JSON.stringify(
+      {
+        rollups: payload.rollups ?? null,
+        inputs: payload.inputs ?? null,
+        derived: payload.derived ?? null,
+      },
+      null,
+      2
+    );
+  }, [payload]);
+
+  const activeCopyText = useMemo(() => {
+    if (tab === "summary") return summaryText;
+    if (tab === "numbers") return numbersText;
+    if (tab === "json") return jsonText;
+    if (tab === "formState") return formStateCopyText || "";
+    return "";
+  }, [formStateCopyText, jsonText, numbersText, summaryText, tab]);
+
   const handleCopy = async (text: string) => {
     if (!text) return;
     try {
@@ -73,83 +98,117 @@ export function DebugDrawer({
     }
   };
 
+  const hasPayload = !!payload;
+  const hasFormState = !!formStatePanel;
+  const showTabs = hasPayload || hasFormState;
+
+  useEffect(() => {
+    if (!hasFormState && tab === "formState") {
+      setTab("summary");
+    }
+  }, [hasFormState, tab]);
+
   return (
-    <Drawer opened={opened} onClose={onClose} title={title} position="right" size="lg">
+    <Drawer
+      opened={opened}
+      onClose={onClose}
+      title={title}
+      position="right"
+      size="lg"
+    >
       <Stack gap="sm">
         <Group justify="flex-end" gap="xs">
           <Button
             size="xs"
             variant="light"
-            onClick={() => handleCopy(summaryText)}
-            disabled={!payload}
+            onClick={() => handleCopy(activeCopyText)}
+            disabled={!activeCopyText}
           >
-            Copy summary
-          </Button>
-          <Button
-            size="xs"
-            variant="light"
-            onClick={() => handleCopy(jsonText)}
-            disabled={!payload}
-          >
-            Copy JSON
+            Copy tab
           </Button>
         </Group>
-        {loading ? (
+        {loading && !hasFormState ? (
           <Text size="sm" c="dimmed">
             Loading debug payload…
           </Text>
-        ) : !payload ? (
-          <Text size="sm" c="dimmed">
-            No debug payload loaded.
-          </Text>
-        ) : (
+        ) : showTabs ? (
           <Tabs value={tab} onChange={handleTabChange}>
             <Tabs.List>
               <Tabs.Tab value="summary">Summary</Tabs.Tab>
               <Tabs.Tab value="numbers">Numbers</Tabs.Tab>
               <Tabs.Tab value="json">JSON</Tabs.Tab>
+              {hasFormState ? (
+                <Tabs.Tab value="formState">Form State</Tabs.Tab>
+              ) : null}
             </Tabs.List>
             <Tabs.Panel value="summary" pt="sm">
-              <Stack gap="xs">
-                {payload.reasoning?.length ? (
-                  payload.reasoning.map((entry) => (
-                    <Stack key={entry.code} gap={2}>
-                      <Text fw={600}>{entry.label}</Text>
-                      <Text size="sm">{entry.why}</Text>
-                      {entry.evidence ? (
-                        <DebugKeyValueTable
-                          data={entry.evidence}
-                          title="Evidence"
-                        />
-                      ) : null}
-                    </Stack>
-                  ))
-                ) : (
-                  <Text size="sm" c="dimmed">
-                    No reasoning entries.
-                  </Text>
-                )}
-              </Stack>
+              {payload ? (
+                <Stack gap="xs">
+                  {payload.reasoning?.length ? (
+                    payload.reasoning.map((entry) => (
+                      <Stack key={entry.code} gap={2}>
+                        <Text fw={600}>{entry.label}</Text>
+                        <Text size="sm">{entry.why}</Text>
+                        {entry.evidence ? (
+                          <DebugKeyValueTable
+                            data={entry.evidence}
+                            title="Evidence"
+                          />
+                        ) : null}
+                      </Stack>
+                    ))
+                  ) : (
+                    <Text size="sm" c="dimmed">
+                      No reasoning entries.
+                    </Text>
+                  )}
+                </Stack>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No debug payload loaded.
+                </Text>
+              )}
             </Tabs.Panel>
             <Tabs.Panel value="numbers" pt="sm">
-              <Stack gap="sm">
-                {payload.rollups ? (
-                  <DebugKeyValueTable data={payload.rollups} title="Rollups" />
-                ) : null}
-                {payload.inputs ? (
-                  <DebugKeyValueTable data={payload.inputs} title="Inputs" />
-                ) : null}
-                {payload.derived ? (
-                  <DebugKeyValueTable data={payload.derived} title="Derived" />
-                ) : null}
-              </Stack>
+              {payload ? (
+                <Stack gap="sm">
+                  {payload.rollups ? (
+                    <DebugKeyValueTable data={payload.rollups} title="Rollups" />
+                  ) : null}
+                  {payload.inputs ? (
+                    <DebugKeyValueTable data={payload.inputs} title="Inputs" />
+                  ) : null}
+                  {payload.derived ? (
+                    <DebugKeyValueTable data={payload.derived} title="Derived" />
+                  ) : null}
+                </Stack>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No debug payload loaded.
+                </Text>
+              )}
             </Tabs.Panel>
             <Tabs.Panel value="json" pt="sm">
-              <ScrollArea h={400}>
-                <Code block>{jsonText}</Code>
-              </ScrollArea>
+              {payload ? (
+                <ScrollArea h={400}>
+                  <Code block>{jsonText}</Code>
+                </ScrollArea>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No debug payload loaded.
+                </Text>
+              )}
             </Tabs.Panel>
+            {hasFormState ? (
+              <Tabs.Panel value="formState" pt="sm">
+                {formStatePanel}
+              </Tabs.Panel>
+            ) : null}
           </Tabs>
+        ) : (
+          <Text size="sm" c="dimmed">
+            No debug payload loaded.
+          </Text>
         )}
       </Stack>
     </Drawer>

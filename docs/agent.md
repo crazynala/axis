@@ -37,6 +37,14 @@ Detail pages always support found-set navigation:
 
 Wherever possible, edits are **UI-only** until explicit Save/Discard.
 
+- Default: edits remain local in RHF until explicit Save/Discard.
+- Immediate server actions are allowed only when they are:
+
+  - multi-entity transactional work, OR
+  - irreversible historical mutations, OR
+  - create/duplicate/delete whole entities, OR
+  - read-only lookups/previews.
+
 - Use a `SaveCancelHeader` with:
 
   - Save / Discard controls
@@ -47,10 +55,40 @@ Wherever possible, edits are **UI-only** until explicit Save/Discard.
   - disabled when dirty
   - show toast feedback on success/failure
 
+**Dirty gating:** If the page has unsaved RHF edits (`isDirty`), immediate actions must be:
+
+- disabled, OR
+- require an explicit “Save/Discard first” confirmation (rare),
+  and must show a clear hint (“You have unsaved changes”).
+
+**Exception labeling:** If an action is intentionally immediate while the page is otherwise staged (e.g., `bom.createCmt`),
+the UI must explicitly communicate that it bypasses staged edits (copy near button/menu item).
+
+#### 1.3.1 Dirty correctness + debugging
+
+- After Save or Discard, the form must not remain dirty.
+- On successful Save, call `reset(nextDefaults)` with the server-normalized values that reflect what was persisted.
+- After Save success, must call reset(nextDefaults) (not “hope loader refresh fixes it”).
+- Never use reset(..., { keepTouched: true }) on a detail form.
+- Any derivation effect must do “set-if-changed” with shouldDirty:false.
+- Avoid post-reset `setValue()` calls that mark fields dirty unintentionally.
+
+Debugging support:
+
+- Detail routes should expose a debug drawer tab “Form State” showing:
+  - current values, default values, dirtyFields/touchedFields, and a diff list.
+
 ### 1.4 Drawers and modals
 
-- Use **drawers** for history, details, and resolution flows.
-- Use **modals** for “commit an event” flows (record activity, send/receive, etc).
+- Use **drawers** for:
+
+  - history, details, and resolution flows.
+  - “why + resolution” details behind warning/attention chips
+  - movement detail exploration and history drilldowns
+
+- Use **modals** for:
+  - commit-event flows that create irreversible history (inventory amend/transfer, record activity, send/receive, etc)
+  - destructive confirms (delete movement/product)
 - Any “chip” that implies risk/attention should be **clickable** and open a drawer showing:
 
   - why it exists (inputs / rules)
@@ -122,6 +160,14 @@ Chips should not be used for trivial attribution (“this is a DB cell”), exce
 
 ### 3.1 Chip categories
 
+- Prefer rendering chips through a shared component (e.g., HealthChipBucket) that enforces click targets for warnings and overflow discipline.
+
+- Do NOT render chips for values already visible as fields on the page (e.g., Type, SKU, ID, Lead Time, Template ID).
+- Chips are for:
+  1. exceptions/risks not otherwise visible,
+  2. summaries of hidden complexity,
+  3. rollups (“Issues (N)”) that navigate the user to problems.
+
 **A) Status chips (neutral)**
 
 - Indicate a stable state (“Fully Cut”, “Pending”, “No ETA”)
@@ -145,20 +191,19 @@ Chips should not be used for trivial attribution (“this is a DB cell”), exce
 ### 3.2 Chip grammar (visual + wording)
 
 - Keep chip text short; the row or drawer provides the detail.
-- Prefer a consistent prefix vocabulary:
-
-  - `HOLD`, `LATE`, `NO ETA`, `LOW CONF`, `MISSING`, `IMPLICIT DONE`
+- Avoid emoji prefixes (e.g., ⚠) in chip labels.
+- Use the consistent prefix vocabulary: `HOLD`, `LATE`, `NO ETA`, `LOW CONF`, `MISSING`, `BLOCKED`.
 
 - If a chip implies actionability, clicking should lead somewhere useful.
 
 ### 3.3 Chip placement rules
 
 - Avoid blowing up row height with stacked text under the stage label.
-- Prefer:
 
-  - 0–2 chips visible inline
-  - overflow → “+N” chip or a single summary chip
-  - details in drawer
+- Chip rows should enforce overflow discipline everywhere, not just the top health row:
+  - show 0–2 chips inline
+  - overflow into “+N” (or a single summary chip)
+  - full details in drawer
 
 ---
 
@@ -257,6 +302,12 @@ Sheet views exist to enable high-throughput editing and Excel-like workflows wit
 
 Route files must stay **UI-oriented**.
 
+- Sheet routes are still routes: keep loaders/actions thin.
+- Route files for sheet views must not contain deep Prisma query shapes or VM shaping.
+- Extract to services:
+  - `services/*VM.server.ts` for loader view models
+  - `services/*Actions.server.ts` for action handlers
+
 They may contain:
 
 - meta, default React component, small UI glue
@@ -300,6 +351,9 @@ Actions should dispatch to goal-specific handlers in services.
 - Small intent parsing in route is ok
 - Each intent handler lives in `services/*Actions.server.ts`
 - Validation/invariants belong in handlers/services
+- Intent handlers that apply multiple related writes for a single Save should be transactionally consistent.
+  - If a user clicks Save once, prefer a single transaction boundary for “product + tags + BOM”.
+- Cross-product batch saves should live in services (not route files) and should document transaction boundaries.
 
 ### 8.5 Prisma query discipline
 
@@ -318,6 +372,18 @@ When an invariant prevents regression, encode it twice:
 
 1. as validation logic
 2. as an explicit guardrail comment (as above)
+
+#### Product/BOM invariants
+
+- If there is a rule like “only one CMT line per BOM,” encode it twice:
+
+  1. as server-side validation in BOM apply services
+  2. as a guardrail comment next to the relevant service entrypoint
+
+- Staged vs immediate semantics must be explicit:
+  - `bom.batch` is staged (Save/Cancel)
+  - `bom.createCmt` is immediate (transactional create)
+    Add comments near both intents making this semantic split explicit.
 
 ---
 

@@ -17,6 +17,7 @@ export type ProductFindFormValues = {
   categoryId?: number | null;
   customerId?: number | null;
   supplierId?: number | null;
+  subCategoryId?: number | null;
   costGroupId?: number | null;
   stockTrackingEnabled?: boolean;
   batchTrackingEnabled?: boolean;
@@ -29,6 +30,8 @@ export type ProductFindFormValues = {
   tagNames?: string[];
   pricingGroupId?: number | null;
   salePriceGroupId?: number | null;
+  pricingSpecId?: number | null;
+  pricingMode?: string | null;
   // search-only ranges + component criteria
   costPriceMin?: number | null;
   costPriceMax?: number | null;
@@ -63,9 +66,12 @@ export function buildProductEditDefaults(
     categoryId: p.categoryId,
     customerId: p.customerId,
     supplierId: p.supplierId,
+    subCategoryId: p.subCategoryId ?? null,
     variantSetId: p.variantSetId,
     costGroupId: p.costGroupId,
     salePriceGroupId: p.salePriceGroupId,
+    pricingSpecId: p.pricingSpecId ?? null,
+    pricingMode: (p as any).pricingMode ?? null,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
     whiteboard: p.whiteboard || "",
@@ -97,6 +103,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     categoryId: undefined,
     customerId: undefined,
     supplierId: undefined,
+    subCategoryId: undefined,
     stockTrackingEnabled: undefined,
     batchTrackingEnabled: undefined,
     whiteboard: "",
@@ -113,6 +120,8 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     componentChildType: undefined,
     externalStepType: undefined,
     bomDirty: undefined,
+    pricingSpecId: undefined,
+    pricingMode: undefined,
   };
 }
 
@@ -155,6 +164,8 @@ export function useProductFindify(
     put("supplierId", values.supplierId);
     put("costGroupId", values.costGroupId);
     put("salePriceGroupId", values.salePriceGroupId);
+    put("pricingSpecId", values.pricingSpecId);
+    put("pricingMode", values.pricingMode);
     put("whiteboard", values.whiteboard);
     put("leadTimeDays", values.leadTimeDays);
     put("externalStepType", values.externalStepType);

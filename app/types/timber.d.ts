@@ -8,7 +8,12 @@ declare module "packages/timber" {
   export const RecordBrowserProvider: any;
   export const RecordNavButtons: any;
   export function useRecordBrowser(currentId: any, masterRecords?: any[] | null): any;
-  export function useInitGlobalFormContext<T>(formHandlers: any, onSubmit: (data: T) => void, onCancel: () => void): any;
+  export function useInitGlobalFormContext<T>(
+    formHandlers: any,
+    onSubmit: (data: T) => void,
+    onCancel: () => void,
+    options?: { formInstanceId?: string | null }
+  ): any;
   // Keyboard
   export type HotkeyTuple = [string, (event: KeyboardEvent) => void, { preventDefault?: boolean }?];
   export function useKeyboardShortcuts(hotkeys: HotkeyTuple[], deps?: any[]): void;

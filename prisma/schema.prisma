@@ -110,6 +110,7 @@ model Product {
   costGroupId           Int?
   salePriceGroupId      Int?
   pricingSpecId         Int?
+  pricingMode           PricingMode?
   createdBy             String?
   modifiedBy            String?
   createdAt             DateTime?               @default(now())
@@ -1250,6 +1251,14 @@ enum ProductType {
 enum PricingSpecTarget {
   SELL
   COST
+}
+
+enum PricingMode {
+  FIXED_PRICE
+  FIXED_MARGIN
+  TIERED_COST
+  TIERED_SELL
+  GENERATED
 }
 
 enum PricingCurveFamily {

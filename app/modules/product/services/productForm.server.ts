@@ -36,9 +36,12 @@ export function buildProductData(form: FormData) {
   num("templateId");
   num("customerId");
   num("supplierId");
+  num("pricingSpecId");
+  num("costGroupId");
   num("salePriceGroupId");
   num("leadTimeDays");
   str("externalStepType");
+  str("pricingMode");
   // booleans
   bool("stockTrackingEnabled");
   bool("batchTrackingEnabled");

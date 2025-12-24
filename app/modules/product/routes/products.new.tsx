@@ -101,6 +101,7 @@ export default function NewProductRoute() {
       type: "",
       costPrice: undefined as any,
       manualSalePrice: undefined as any,
+      pricingMode: "FIXED_MARGIN",
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
       leadTimeDays: "",

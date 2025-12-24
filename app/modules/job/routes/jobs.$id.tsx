@@ -13,6 +13,8 @@ import {
   Form,
   useSearchParams,
   useNavigate,
+  useMatches,
+  useFetcher,
 } from "@remix-run/react";
 import { notifications } from "@mantine/notifications";
 import {
@@ -44,18 +46,24 @@ import {
   HotkeyAwareModal,
   HotkeyAwareModalRoot,
 } from "~/base/hotkeys/HotkeyAwareModal";
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { useForm } from "react-hook-form";
-import { BreadcrumbSet } from "@aa/timber";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useForm, FormProvider } from "react-hook-form";
+import { BreadcrumbSet, useGlobalFormContext } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import { IconBan, IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
+import { IconBan, IconBug, IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
+import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import {
+  FormStateDebugPanel,
+  buildFormStateDebugData,
+  buildFormStateDebugText,
+} from "~/base/debug/FormStateDebugPanel";
 
 import {
   computeEffectiveAssemblyHold,
@@ -98,6 +106,10 @@ export function JobDetailView() {
   } = useRouteLoaderData<typeof loader>("modules/job/routes/jobs.$id")!;
   const actionData = useActionData<typeof action>() as any;
   const { setCurrentId } = useRecordContext();
+  const matches = useMatches();
+  const rootData = matches.find((m) => m.id === "root")?.data as
+    | { userLevel?: string | null }
+    | undefined;
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const submit = useSubmit();
@@ -382,9 +394,26 @@ export function JobDetailView() {
       ])
     ),
   });
+  const formInstanceIdRef = useRef(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `job-edit-${crypto.randomUUID()}`
+      : `job-edit-${Math.random().toString(36).slice(2, 10)}`
+  );
   const jobForm = useForm<any>({
     defaultValues: jobToDefaults(job),
   });
+  const formInstanceId = formInstanceIdRef.current;
+  const { isDirty: globalIsDirty, formInstanceId: globalFormInstanceId } =
+    useGlobalFormContext();
+  const debugFetcher = useFetcher();
+  const [debugOpen, setDebugOpen] = useState(false);
+  const isDev =
+    (typeof import.meta !== "undefined" &&
+      (import.meta as any).env?.DEV === true) ||
+    (typeof process !== "undefined" && process.env.NODE_ENV !== "production");
+  const isAdminUser =
+    !rootData?.userLevel || rootData?.userLevel === "Admin";
+  const canDebug = Boolean(isDev && isAdminUser);
   const { registerFindCallback } = useFind();
   const save = (values: any) => {
     const cancelReason = String(values.jobCancelReason || "").trim();
@@ -528,13 +557,18 @@ export function JobDetailView() {
     }
     submit(fd, { method: "post" });
   };
-  useInitGlobalFormContext(jobForm as any, save, () => {
-    // Reset to current defaultValues (kept in sync on loader change)
-    jobForm.reset();
-    console.log("[jobs.$id] discard changes -> form reset to original", {
-      id: job.id,
-    });
-  });
+  useInitGlobalFormContext(
+    jobForm as any,
+    save,
+    () => {
+      // Reset to current defaultValues (kept in sync on loader change)
+      jobForm.reset();
+      console.log("[jobs.$id] discard changes -> form reset to original", {
+        id: job.id,
+      });
+    },
+    { formInstanceId }
+  );
 
   // When loader returns a new job (e.g., after save/redirect), refresh defaults and clear dirty
   useEffect(() => {
@@ -1076,6 +1110,16 @@ export function JobDetailView() {
               >
                 Duplicate Job
               </Menu.Item>
+              {canDebug ? (
+                <Menu.Item
+                  leftSection={<IconBug size={14} />}
+                  onClick={() => {
+                    setDebugOpen(true);
+                  }}
+                >
+                  Debug
+                </Menu.Item>
+              ) : null}
               <Menu.Item
                 leftSection={<IconTrash size={14} />}
                 color="red"
@@ -1172,6 +1216,82 @@ export function JobDetailView() {
           }}
         />
       </div>
+
+      {canDebug
+        ? (() => {
+            const debugDefaults = jobToDefaults(job);
+            const dirtySources = {
+              rhf: {
+                isDirty: jobForm.formState.isDirty,
+                dirtyFieldsCount: Object.keys(
+                  jobForm.formState.dirtyFields || {}
+                ).length,
+                touchedFieldsCount: Object.keys(
+                  jobForm.formState.touchedFields || {}
+                ).length,
+                submitCount: jobForm.formState.submitCount,
+                formInstanceId,
+              },
+              global: {
+                isDirty: globalIsDirty,
+                formInstanceId: globalFormInstanceId,
+              },
+              computed: {
+                headerIsDirty: globalIsDirty,
+              },
+            };
+            const formInstances = {
+              globalFormInstanceId,
+              jobFormInstanceId: formInstanceId,
+            };
+            const globalIdMissing = !globalFormInstanceId;
+            const assertions = {
+              globalMatchesEdit: globalIdMissing
+                ? null
+                : Boolean(
+                    formInstanceId &&
+                      globalFormInstanceId === formInstanceId
+                  ),
+              globalIdMissing,
+            };
+            const debugData = buildFormStateDebugData({
+              formId: `job-${job.id}`,
+              formState: jobForm.formState,
+              values: jobForm.getValues(),
+              builderDefaults: debugDefaults,
+              rhfDefaults: jobForm.control?._defaultValues ?? null,
+              rhfValues: jobForm.control?._formValues ?? null,
+              control: jobForm.control,
+            });
+            const debugText = buildFormStateDebugText(debugData, true, {
+              dirtySources,
+              formInstances,
+              assertions,
+            });
+            return (
+              <DebugDrawer
+                opened={debugOpen}
+                onClose={() => setDebugOpen(false)}
+                title={`Debug – Job ${job.id}`}
+                payload={debugFetcher.data as any}
+                loading={debugFetcher.state !== "idle"}
+                formStateCopyText={debugText}
+                formStatePanel={
+                  <FormProvider {...jobForm}>
+                    <FormStateDebugPanel
+                      formId={`job-${job.id}`}
+                      getDefaultValues={() => debugDefaults}
+                      collapseLong
+                      dirtySources={dirtySources}
+                      formInstances={formInstances}
+                      assertions={assertions}
+                    />
+                  </FormProvider>
+                }
+              />
+            );
+          })()
+        : null}
 
       <JobFindManager jobSample={job} />
 

@@ -1,4 +1,8 @@
-import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
+import {
+  BreadcrumbSet,
+  useGlobalFormContext,
+  useInitGlobalFormContext,
+} from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   Button,
@@ -37,10 +41,17 @@ import {
   useMatches,
   useSubmit,
 } from "@remix-run/react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Controller, useForm } from "react-hook-form";
-import { AxisChip, type AxisChipTone } from "~/components/AxisChip";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
+import { AxisChip } from "~/components/AxisChip";
 import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
+import { rulesForType } from "~/modules/product/rules/productTypeRules";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -67,12 +78,19 @@ import {
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import {
+  FormStateDebugPanel,
+  buildFormStateDebugData,
+  buildFormStateDebugText,
+} from "~/base/debug/FormStateDebugPanel";
 import { loadProductDetailVM } from "~/modules/product/services/productDetailVM.server";
 import { handleProductDetailAction } from "~/modules/product/services/productDetailActions.server";
 
 // BOM spreadsheet modal removed; see /products/:id/bom page
 
 const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
+const UNSAVED_CHANGES_TOOLTIP =
+  "You have unsaved changes. Save or Discard to continue.";
 const fmtDate = (value: string | Date | null | undefined) => {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
@@ -109,13 +127,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
 function GlobalFormInit({
   form,
   onSave,
+  onReset,
+  formInstanceId,
 }: {
   form: any;
   onSave: (values: any) => void;
+  onReset?: () => void;
+  formInstanceId?: string;
 }) {
   const resetForm = useCallback(() => form.reset(), [form]);
   // Call the timber hook with stable callbacks
-  useInitGlobalFormContext(form as any, onSave, resetForm);
+  useInitGlobalFormContext(form as any, onSave, onReset ?? resetForm, {
+    formInstanceId,
+  });
   return null;
 }
 
@@ -123,17 +147,32 @@ function DeferredGlobalFormInit({
   form,
   onSave,
   onReset,
+  formInstanceId,
 }: {
   form: any;
   onSave: (values: any) => void;
   onReset: () => void;
+  formInstanceId?: string;
 }) {
   const [ready, setReady] = useState(false);
   useEffect(() => setReady(true), []);
   if (!ready) return null;
-  // Call the timber hook only after initial mount to avoid HMR timing issues
-  useInitGlobalFormContext(form as any, onSave, onReset);
-  return null;
+  // 2025-12-24: keep the hook call unconditional within a mounted child.
+  // This preserves the original "defer until after mount" intent while
+  // avoiding hook-order violations now that timber's hook uses router hooks.
+  return (
+    <GlobalFormInit
+      form={form}
+      onSave={onSave}
+      onReset={onReset}
+      formInstanceId={formInstanceId}
+    />
+  );
+}
+
+function useImmediateActionDisabledReason() {
+  const { isDirty } = useGlobalFormContext();
+  return isDirty ? UNSAVED_CHANGES_TOOLTIP : null;
 }
 
 export default function ProductDetailRoute() {
@@ -161,9 +200,21 @@ export default function ProductDetailRoute() {
     subCategoryLabel,
     subCategoryOptions,
     shipmentLines,
+    effectivePricingMode,
+    pricingModeLabel,
     userLevel,
     canDebug,
   } = useLoaderData<typeof loader>();
+  const editFormInstanceIdRef = useRef(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `product-edit-${crypto.randomUUID()}`
+      : `product-edit-${Math.random().toString(36).slice(2, 10)}`
+  );
+  const findFormInstanceIdRef = useRef(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `product-find-${crypto.randomUUID()}`
+      : `product-find-${Math.random().toString(36).slice(2, 10)}`
+  );
   const matches = useMatches();
   const rootData = matches.find((m) => m.id === "root")?.data as
     | { userLevel?: string | null }
@@ -174,6 +225,30 @@ export default function ProductDetailRoute() {
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const { isDirty: globalIsDirty, formInstanceId: globalFormInstanceId } =
+    useGlobalFormContext();
+  const immediateActionDisabledReason = useImmediateActionDisabledReason();
+  const immediateActionDisabled = Boolean(immediateActionDisabledReason);
+  const pendingSaveRef = useRef<number | null>(null);
+  const [lastSaveAt, setLastSaveAt] = useState<string | null>(null);
+  const [lastDiscardAt, setLastDiscardAt] = useState<string | null>(null);
+  const [lastResetAt, setLastResetAt] = useState<string | null>(null);
+  const [lastResetReason, setLastResetReason] = useState<
+    "saveOk" | "discard" | "loaderRefresh" | null
+  >(null);
+  const [lastChange, setLastChange] = useState<{
+    name: string | null;
+    type: string | null;
+    at: string | null;
+  } | null>(null);
+  const [lastResetOptions, setLastResetOptions] = useState<Record<
+    string,
+    any
+  > | null>(null);
+  const [lastSaveStatus, setLastSaveStatus] = useState<
+    "idle" | "pending" | "ok" | "error"
+  >("idle");
+  const [watchEnabled, setWatchEnabled] = useState(false);
   useEffect(() => {
     if (!actionData || typeof actionData !== "object") return;
     const error = (actionData as any).error;
@@ -196,25 +271,79 @@ export default function ProductDetailRoute() {
   const submit = useSubmit();
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
-  const { editForm, buildUpdatePayload } = useProductFindify(
+  const { editForm, findForm, buildUpdatePayload } = useProductFindify(
     product,
     nav,
     metadataDefinitions
   );
-  useEffect(() => {
-    editForm.reset(buildProductEditDefaults(product, metadataDefinitions), {
-      keepDirty: false,
-      keepDefaultValues: false,
-    });
-  }, [product, metadataDefinitions]);
-
-  console.log("!! form values:", editForm.getValues());
-  console.log(
-    "!! form dirty:",
-    editForm.formState.isDirty,
-    editForm.formState.dirtyFields,
-    editForm.formState.defaultValues
+  const editFormInstanceId = editFormInstanceIdRef.current;
+  const findFormInstanceId = findForm ? findFormInstanceIdRef.current : null;
+  const applyReset = useCallback(
+    (values: any, reason: "saveOk" | "discard" | "loaderRefresh") => {
+      const options = {
+        keepDirty: false,
+        keepTouched: false,
+        keepErrors: false,
+        keepDirtyValues: false,
+        keepDefaultValues: false,
+      };
+      editForm.reset(values, options);
+      editForm.clearErrors();
+      if (reason === "saveOk") {
+        queueMicrotask(() => {
+          editForm.reset(values, options);
+          editForm.clearErrors();
+        });
+      }
+      setLastResetAt(new Date().toISOString());
+      setLastResetReason(reason);
+      setLastResetOptions(options);
+    },
+    [editForm]
   );
+  useEffect(() => {
+    applyReset(
+      buildProductEditDefaults(product, metadataDefinitions),
+      "loaderRefresh"
+    );
+  }, [applyReset, product, metadataDefinitions]);
+
+  useEffect(() => {
+    if (lastResetReason !== "saveOk") return;
+    setWatchEnabled(true);
+    const timer = setTimeout(() => setWatchEnabled(false), 1000);
+    return () => clearTimeout(timer);
+  }, [lastResetReason, lastResetAt]);
+
+  useEffect(() => {
+    if (!watchEnabled) return;
+    const subscription = editForm.watch((_value, info) => {
+      setLastChange({
+        name: info?.name ?? null,
+        type: info?.type ?? null,
+        at: new Date().toISOString(),
+      });
+    });
+    return () => subscription.unsubscribe();
+  }, [editForm, watchEnabled]);
+
+  //!!!!!!!!!!!!!!!
+  useEffect(() => {
+    const sub = editForm.watch((values, info) => {
+      if (info?.name) {
+        console.log(
+          "[RHF watch]",
+          info.name,
+          info.type,
+          values[info.name as keyof typeof values]
+        );
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [editForm]);
+  useEffect(() => {
+    console.log("[RHF isDirty]", editForm.formState.isDirty);
+  }, [editForm.formState.isDirty]);
 
   // Find modal is handled via ProductFindManager now (no inline find toggle)
 
@@ -238,6 +367,26 @@ export default function ProductDetailRoute() {
   useEffect(() => {
     resetBomDraftRows();
   }, [product.id, resetBomDraftRows]);
+
+  useEffect(() => {
+    if (!pendingSaveRef.current) return;
+    if (nav.state !== "idle") return;
+    const actionError =
+      actionData &&
+      typeof actionData === "object" &&
+      (actionData as any).intent === "update" &&
+      (actionData as any).error;
+    if (actionError) {
+      setLastSaveStatus("error");
+      pendingSaveRef.current = null;
+      return;
+    }
+    pendingSaveRef.current = null;
+    setLastSaveStatus("ok");
+    setLastSaveAt(new Date().toISOString());
+    applyReset(editForm.getValues(), "saveOk");
+    resetBomDraftRows();
+  }, [actionData, applyReset, editForm, nav.state, resetBomDraftRows]);
 
   const visibleBomRows = useMemo(
     () => bomDraftRows.filter((row) => !row.deleted),
@@ -293,8 +442,22 @@ export default function ProductDetailRoute() {
     return { creates, updates, deletes };
   }, [bomDraftRows, product.productLines]);
 
+  const bomDraftSummary = useMemo(() => {
+    const batch = buildBomBatchFromDraft();
+    return {
+      draftDirty:
+        batch.creates.length + batch.updates.length + batch.deletes.length > 0,
+      draftRowCount: bomDraftRows.length,
+      creates: batch.creates.length,
+      updates: batch.updates.length,
+      deletes: batch.deletes.length,
+    };
+  }, [buildBomBatchFromDraft, bomDraftRows.length]);
+
   const saveUpdate = useCallback(
     (values: any) => {
+      pendingSaveRef.current = Date.now();
+      setLastSaveStatus("pending");
       const updatePayload = buildUpdatePayload(values);
       const bomBatch = buildBomBatchFromDraft();
       if (
@@ -317,17 +480,20 @@ export default function ProductDetailRoute() {
   const [pickerOpen, setPickerOpen] = useState(false);
   // BOM spreadsheet modal removed (now a dedicated full-page route)
 
-  const handleBomDelete = useCallback((line: BomDraftRow) => {
-    setBomDraftRows((rows) => {
-      if (line.id == null) {
-        return rows.filter((r) => r.tempId !== line.tempId);
-      }
-      return rows.map((r) =>
-        r.id === line.id ? { ...r, deleted: true } : r
-      );
-    });
-    editForm.setValue("bomDirty", String(Date.now()), { shouldDirty: true });
-  }, [editForm]);
+  const handleBomDelete = useCallback(
+    (line: BomDraftRow) => {
+      setBomDraftRows((rows) => {
+        if (line.id == null) {
+          return rows.filter((r) => r.tempId !== line.tempId);
+        }
+        return rows.map((r) =>
+          r.id === line.id ? { ...r, deleted: true } : r
+        );
+      });
+      editForm.setValue("bomDirty", String(Date.now()), { shouldDirty: true });
+    },
+    [editForm]
+  );
   const [pickerSearch, setPickerSearch] = useState("");
   const [assemblyItemOnly, setAssemblyItemOnly] = useState(false);
   // Movements view: header-level ProductMovement vs line-level ProductMovementLine
@@ -444,6 +610,11 @@ export default function ProductDetailRoute() {
     codeMill?: string | null;
     codeSartor?: string | null;
   } | null>(null);
+  const batchEditFormInstanceIdRef = useRef(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `product-batch-edit-${crypto.randomUUID()}`
+      : `product-batch-edit-${Math.random().toString(36).slice(2, 10)}`
+  );
   const batchEditForm = useForm<{
     name: string;
     codeMill: string;
@@ -460,6 +631,7 @@ export default function ProductDetailRoute() {
     error?: string;
     intent?: string;
   }>();
+  const batchEditFormInstanceId = batchEditFormInstanceIdRef.current;
   const [batchEditSubmissionId, setBatchEditSubmissionId] = useState<
     number | null
   >(null);
@@ -623,10 +795,47 @@ export default function ProductDetailRoute() {
   const [focusMissingRequired, setFocusMissingRequired] = useState<
     (() => void) | null
   >(null);
-  const requiredIndicatorMode: "inline" | "chips" = "chips";
+  const requiredIndicatorMode: "inline" | "chips" = "inline";
   const hasMovements = lines.length > 0;
 
-  const watched = editForm.watch() as Record<string, any>;
+  const watched = useWatch({ control: editForm.control }) as Record<string, any>;
+  const stockTrackingEnabled = Boolean(
+    watched?.stockTrackingEnabled ?? product.stockTrackingEnabled
+  );
+  const batchTrackingEnabled = Boolean(
+    watched?.batchTrackingEnabled ?? product.batchTrackingEnabled
+  );
+  const trackingDisabledReason = !stockTrackingEnabled
+    ? "Tracking is OFF"
+    : null;
+  const batchActionDisabledReason = !stockTrackingEnabled
+    ? "Tracking is OFF"
+    : !batchTrackingEnabled
+    ? "Batch tracking is OFF"
+    : null;
+  const mutationDisabledReason =
+    trackingDisabledReason || immediateActionDisabledReason;
+  const focusField = useCallback(
+    (fieldName?: string | null) => {
+      if (!fieldName) return;
+      try {
+        editForm.setFocus(fieldName as any);
+        const el = document?.querySelector?.(
+          `[name="${fieldName}"]`
+        ) as HTMLElement | null;
+        if (el?.scrollIntoView) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      } catch {}
+    },
+    [editForm]
+  );
+  const focusTrackingStatus = useCallback(() => {
+    const el = document.getElementById("product-tracking-status");
+    if (el?.scrollIntoView) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
   const validation = useMemo(
     () =>
       computeProductValidation({
@@ -644,223 +853,112 @@ export default function ProductDetailRoute() {
       }),
     [watched, product]
   );
-
-  type HealthChip = {
-    tone: AxisChipTone;
-    label: string;
-    tooltip: string;
-    icon?: ReactNode;
-    onClick?: () => void;
-  };
-  const topHealth = useMemo(() => {
-    const warnings: HealthChip[] = [];
-    const infos: HealthChip[] = [];
-    const neutral: HealthChip[] = [];
-    const typeLabel = product.type || "Unspecified";
-    const typeUpper = String(typeLabel || "").toUpperCase();
-    const supplyTypes = new Set(["FABRIC", "TRIM", "PACKAGING"]);
-    const requiresSupplier =
-      supplyTypes.has(typeUpper) ||
-      (typeUpper === "SERVICE" && !!product.externalStepType);
-    const requiresCustomer = typeUpper === "FINISHED" || typeUpper === "CMT";
-    const isFabric = typeUpper === "FABRIC";
-
-    if (!product.type) {
-      warnings.push({
+  const headerChips = useMemo(() => {
+    const chips: Array<{
+      tone: "warning" | "info" | "neutral";
+      label: string;
+      tooltip: string;
+      onClick?: () => void;
+    }> = [];
+    if (validation.missingRequired.length) {
+      chips.push({
         tone: "warning",
-        label: "Type missing",
-        tooltip: "Select a product type to enable template and SKU rules.",
-        icon: "⚠",
-      });
-    }
-    if (requiresSupplier && !product.supplierId) {
-      warnings.push({
-        tone: "warning",
-        label: "Supplier required",
-        tooltip: `${typeLabel} should link a supplier for ordering and costing.`,
-        icon: "⚠",
-      });
-    }
-    if (requiresCustomer && !product.customerId) {
-      warnings.push({
-        tone: "warning",
-        label: "Customer required",
-        tooltip: `${typeLabel} should link a customer for pricing and BOM rules.`,
-        icon: "⚠",
-      });
-    }
-    if (isFabric) {
-      if (!product.stockTrackingEnabled) {
-        warnings.push({
-          tone: "warning",
-          label: "Stock tracking off",
-          tooltip: "Fabric must track stock to manage inventory accurately.",
-          icon: "⚠",
-        });
-      } else if (product.stockTrackingEnabled && product.batchTrackingEnabled === false) {
-        warnings.push({
-          tone: "warning",
-          label: "Batch tracking off",
-          tooltip: "Fabric with stock tracking should also enable batch tracking.",
-          icon: "⚠",
-        });
-      }
-    } else if (supplyTypes.has(typeUpper) && !product.stockTrackingEnabled) {
-      warnings.push({
-        tone: "warning",
-        label: `Stock tracking off (${typeLabel})`,
-        tooltip: `Enable stock tracking for ${typeLabel.toLowerCase()} to manage inventory.`,
-        icon: "⚠",
-      });
-    }
-    if (typeUpper === "SERVICE" && !product.templateId) {
-      warnings.push({
-        tone: "warning",
-        label: "Template missing",
-        tooltip: "Service products need a template to set expected steps and SKU rules.",
-        icon: "⚠",
-      });
-    }
-    if (validation.missingRequired.length && requiredIndicatorMode !== "inline") {
-      const grouped = Object.entries(validation.bySection)
-        .map(([section, data]) =>
-          data.missingRequired.length
-            ? `${section}: ${data.missingRequired.join(", ")}`
-            : null
-        )
-        .filter(Boolean)
-        .join("\n");
-      warnings.push({
-        tone: "warning",
-        label: `Missing required: ${validation.missingRequired.length}`,
-        tooltip: grouped || "Missing required fields",
-        icon: "⚠",
+        label: "Field Missing",
+        tooltip: `Missing required: ${validation.missingRequired.join(", ")}`,
         onClick: focusMissingRequired || undefined,
       });
     }
-
-    if (product.type) {
-      infos.push({
-        tone: "info",
-        label: `Type: ${typeLabel}`,
-        tooltip: "Current product type drives rules for suppliers/customers.",
-      });
+    const rules = rulesForType(watched?.type ?? product.type);
+    if (!stockTrackingEnabled) {
+      if (rules.defaultStockTracking) {
+        chips.push({
+          tone: "warning",
+          label: "Enable Stock",
+          tooltip: "Stock tracking is required for this product type.",
+          onClick: focusTrackingStatus,
+        });
+      } else {
+        chips.push({
+          tone: "info",
+          label: "Stock Tracking Off",
+          tooltip: "Stock tracking is optional for this product type.",
+          onClick: focusTrackingStatus,
+        });
+      }
     }
-    if (product.templateId) {
-      infos.push({
-        tone: "info",
-        label: `Template #${product.templateId}`,
-        tooltip: "Template linked for defaults and SKU series.",
-      });
+    if (stockTrackingEnabled && !batchTrackingEnabled) {
+      if (rules.defaultBatchTracking) {
+        chips.push({
+          tone: "warning",
+          label: "Enable Batch",
+          tooltip: "Batch tracking is required for this product type.",
+          onClick: focusTrackingStatus,
+        });
+      } else {
+        chips.push({
+          tone: "info",
+          label: "Batch Tracking Off",
+          tooltip: "Batch tracking is optional for this product type.",
+          onClick: focusTrackingStatus,
+        });
+      }
     }
-    if (product.externalStepType) {
-      infos.push({
-        tone: "info",
-        label: `External: ${product.externalStepType}`,
-        tooltip: "External step expectation applied to services and BOM costings.",
-      });
-    }
-    if (product.leadTimeDays != null) {
-      infos.push({
-        tone: "info",
-        label: `Lead time ${product.leadTimeDays}d`,
-        tooltip: "Overrides supplier default lead time for ETAs.",
-      });
-    }
-    const variantSetId = product.variantSetId ?? product.variantSet?.id ?? null;
-    if (!variantSetId && typeUpper === "FINISHED") {
-      infos.push({
-        tone: "neutral",
-        label: "Variant set optional",
-        tooltip: "No variant set selected; add one to manage sizes/colors if needed.",
-      });
-    }
-
-    neutral.push({
-      tone: "neutral",
-      label: `SKU ${product.sku || "—"}`,
-      tooltip: product.sku ? "SKU assigned" : "No SKU on record",
-    });
-    neutral.push({
-      tone: "neutral",
-      label: `ID ${product.id}`,
-      tooltip: "Internal product id",
-    });
-
-    return { warnings, infos, neutral };
-  }, [product]);
-
-  const renderHealthChip = (chip: HealthChip, key: string) => (
-    <Tooltip
-      key={key}
-      label={chip.tooltip}
-      withArrow
-      multiline
-      maw={260}
-      position="bottom"
-    >
-      <AxisChip
-        tone={chip.tone}
-        leftSection={chip.icon}
-        onClick={chip.onClick}
-        style={chip.onClick ? { cursor: "pointer" } : undefined}
-      >
-        {chip.label}
-      </AxisChip>
-    </Tooltip>
-  );
-
-  const renderBucket = (
-    chips: HealthChip[],
-    maxVisible: number,
-    fallbackTone: AxisChipTone
-  ) => {
-    if (!chips.length) return null;
-    const visible = chips.slice(0, maxVisible);
-    const overflow = chips.slice(maxVisible);
-    const rendered = visible.map((chip, idx) =>
-      renderHealthChip(chip, `${chip.label}-${idx}`)
-    );
-    if (overflow.length) {
-      const summary = overflow.map((c) => `• ${c.label}`).join("\n");
-      rendered.push(
-        <Tooltip
-          key={`more-${fallbackTone}`}
-          label={summary || "More"}
-          withArrow
-          multiline
-          maw={260}
-        >
-          <AxisChip tone={fallbackTone} leftSection="+">
-            +{overflow.length}
-          </AxisChip>
-        </Tooltip>
-      );
-    }
-    return rendered;
-  };
+    return chips;
+  }, [
+    validation.missingRequired,
+    focusMissingRequired,
+    watched?.type,
+    product.type,
+    stockTrackingEnabled,
+    batchTrackingEnabled,
+    focusTrackingStatus,
+  ]);
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between" align="center">
-        {(() => {
-          const appendHref = useFindHrefAppender();
-          const saved = getSavedIndexSearch("/products");
-          const hrefProducts = saved
-            ? `/products${saved}`
-            : appendHref("/products");
-          return (
-            <BreadcrumbSet
-              breadcrumbs={[
-                { label: "Products", href: hrefProducts },
-                {
-                  label: String(product.id),
-                  href: appendHref(`/products/${product.id}`),
-                },
-              ]}
-            />
-          );
-        })()}
+      <Group justify="space-between" align="center" wrap="wrap">
+        <Group gap="xs" align="center" wrap="wrap">
+          {(() => {
+            const appendHref = useFindHrefAppender();
+            const saved = getSavedIndexSearch("/products");
+            const hrefProducts = saved
+              ? `/products${saved}`
+              : appendHref("/products");
+            return (
+              <BreadcrumbSet
+                breadcrumbs={[
+                  { label: "Products", href: hrefProducts },
+                  {
+                    label: String(product.id),
+                    href: appendHref(`/products/${product.id}`),
+                  },
+                ]}
+              />
+            );
+          })()}
+          {headerChips.length ? (
+            <Group gap="xs" align="center" wrap="wrap">
+              {headerChips.map((chip) => (
+                <Tooltip
+                  key={chip.label}
+                  label={chip.tooltip}
+                  withArrow
+                  multiline
+                  maw={260}
+                  position="bottom"
+                >
+                  <AxisChip
+                    tone={chip.tone}
+                    onClick={chip.onClick}
+                    style={chip.onClick ? { cursor: "pointer" } : undefined}
+                  >
+                    {chip.label}
+                  </AxisChip>
+                </Tooltip>
+              ))}
+            </Group>
+          ) : null}
+        </Group>
         <Group
           gap="xs"
           style={{ minWidth: 200, maxWidth: 520, flex: 1 }}
@@ -910,15 +1008,25 @@ export default function ProductDetailRoute() {
               <Menu.Item component={Link} to="/products/new">
                 New Product
               </Menu.Item>
-              <Menu.Item
-                onClick={() => {
-                  const fd = new FormData();
-                  fd.set("_intent", "product.duplicate");
-                  submit(fd, { method: "post" });
-                }}
+              <Tooltip
+                label={immediateActionDisabledReason}
+                disabled={!immediateActionDisabled}
+                withArrow
+                position="left"
               >
-                Duplicate Product
-              </Menu.Item>
+                <span>
+                  <Menu.Item
+                    disabled={immediateActionDisabled}
+                    onClick={() => {
+                      const fd = new FormData();
+                      fd.set("_intent", "product.duplicate");
+                      submit(fd, { method: "post" });
+                    }}
+                  >
+                    Duplicate Product
+                  </Menu.Item>
+                </span>
+              </Tooltip>
               {canDebug ? (
                 <Menu.Item
                   leftSection={<IconBug size={14} />}
@@ -930,29 +1038,61 @@ export default function ProductDetailRoute() {
                   Debug
                 </Menu.Item>
               ) : null}
-              <Menu.Item
-                onClick={() =>
-                  refreshFetcher.submit(
-                    { _intent: "stock.refresh" },
-                    { method: "post" }
-                  )
-                }
+              <Tooltip
+                label={immediateActionDisabledReason}
+                disabled={!immediateActionDisabled}
+                withArrow
+                position="left"
               >
-                Refresh Stock View
-              </Menu.Item>
-              <Menu.Item
-                color="red"
-                onClick={() => {
-                  setDeleteConfirmation("");
-                  setDeleteModalOpen(true);
-                }}
+                <span>
+                  <Menu.Item
+                    disabled={immediateActionDisabled}
+                    onClick={() =>
+                      refreshFetcher.submit(
+                        { _intent: "stock.refresh" },
+                        { method: "post" }
+                      )
+                    }
+                  >
+                    Refresh Stock View
+                  </Menu.Item>
+                </span>
+              </Tooltip>
+              <Tooltip
+                label={immediateActionDisabledReason}
+                disabled={!immediateActionDisabled}
+                withArrow
+                position="left"
               >
-                Delete Product
-              </Menu.Item>
+                <span>
+                  <Menu.Item
+                    color="red"
+                    disabled={immediateActionDisabled}
+                    onClick={() => {
+                      setDeleteConfirmation("");
+                      setDeleteModalOpen(true);
+                    }}
+                  >
+                    Delete Product
+                  </Menu.Item>
+                </span>
+              </Tooltip>
             </Menu.Dropdown>
           </Menu>
         </Group>
       </Group>
+      {product.flagIsDisabled ? (
+        <Card withBorder padding="xs" bg="red.1">
+          <Group gap="xs" align="center" wrap="wrap">
+            <Text fw={700} c="red.7">
+              DISABLED
+            </Text>
+            <Text size="sm" c="red.7">
+              This product is disabled and should not be used for new work.
+            </Text>
+          </Group>
+        </Card>
+      ) : null}
       <MantineText size="xs" c="dimmed">
         {(() => {
           const ts = fmtDate(product.updatedAt || product.modifiedAt);
@@ -961,43 +1101,122 @@ export default function ProductDetailRoute() {
           return by ? `Last updated ${ts} by ${by}` : `Last updated ${ts}`;
         })()}
       </MantineText>
-      <div
-        style={{
-          overflowX: "auto",
-          padding: "2px 2px",
-        }}
-      >
-        <Group gap="xs" wrap="nowrap" align="center">
-          {renderBucket(topHealth.warnings, 2, "warning")}
-          {renderBucket(topHealth.infos, 2, "info")}
-          {topHealth.neutral.map((chip, idx) =>
-            renderHealthChip(chip, `neutral-${idx}`)
-          )}
-        </Group>
-      </div>
+      {immediateActionDisabled ? (
+        <MantineText size="xs" c="orange.7">
+          {UNSAVED_CHANGES_TOOLTIP}
+        </MantineText>
+      ) : null}
       <ProductFindManager metadataDefinitions={metadataDefinitions} />
-      <DebugDrawer
-        opened={debugOpen}
-        onClose={() => setDebugOpen(false)}
-        title={`Debug – Product ${product.id}`}
-        payload={debugFetcher.data as any}
-        loading={debugFetcher.state !== "idle"}
-      />
+      {(() => {
+        const debugDefaults = buildProductEditDefaults(
+          product,
+          metadataDefinitions
+        );
+        const dirtySources = {
+          rhf: {
+            isDirty: editForm.formState.isDirty,
+            dirtyFieldsCount: Object.keys(editForm.formState.dirtyFields || {})
+              .length,
+            touchedFieldsCount: Object.keys(
+              editForm.formState.touchedFields || {}
+            ).length,
+            submitCount: editForm.formState.submitCount,
+            formInstanceId: editFormInstanceId,
+          },
+          global: {
+            isDirty: globalIsDirty,
+            formInstanceId: globalFormInstanceId,
+          },
+          bom: bomDraftSummary,
+          sheets: {
+            isDirty: null,
+          },
+          computed: {
+            headerIsDirty: globalIsDirty,
+          },
+        };
+        const saveSignals = {
+          lastSaveAt,
+          lastDiscardAt,
+          lastResetAt,
+          lastResetReason,
+          lastResetOptions,
+          lastSaveStatus,
+          pendingSaveId: pendingSaveRef.current,
+          lastChange,
+        };
+        const formInstances = {
+          globalFormInstanceId,
+          editFormInstanceId,
+          findFormInstanceId,
+          batchEditFormInstanceId,
+          batchEditVisible: Boolean(batchEdit),
+        };
+        const globalIdMissing = !globalFormInstanceId;
+        const assertions = {
+          globalMatchesEdit: globalIdMissing
+            ? null
+            : Boolean(
+                editFormInstanceId &&
+                  globalFormInstanceId === editFormInstanceId
+              ),
+          globalIdMissing,
+        };
+        const debugData = buildFormStateDebugData({
+          formId: `product-${product.id}`,
+          formState: editForm.formState,
+          values: editForm.getValues(),
+          builderDefaults: debugDefaults,
+          rhfDefaults: editForm.control?._defaultValues ?? null,
+          rhfValues: editForm.control?._formValues ?? null,
+          control: editForm.control,
+        });
+        const debugText = buildFormStateDebugText(debugData, true, {
+          dirtySources,
+          saveSignals,
+          formInstances,
+          assertions,
+        });
+        return (
+          <DebugDrawer
+            opened={debugOpen}
+            onClose={() => setDebugOpen(false)}
+            title={`Debug – Product ${product.id}`}
+            payload={debugFetcher.data as any}
+            loading={debugFetcher.state !== "idle"}
+            formStateCopyText={debugText}
+            formStatePanel={
+              <FormProvider {...editForm}>
+                <FormStateDebugPanel
+                  formId={`product-${product.id}`}
+                  getDefaultValues={() => debugDefaults}
+                  collapseLong
+                  dirtySources={dirtySources}
+                  saveSignals={saveSignals}
+                  formInstances={formInstances}
+                  assertions={assertions}
+                />
+              </FormProvider>
+            }
+          />
+        );
+      })()}
       <Form id="product-form" method="post">
         {/* Isolate global form init into a dedicated child to reduce HMR churn */}
         <DeferredGlobalFormInit
           form={editForm as any}
           onSave={saveUpdate}
           onReset={() => {
-            editForm.reset(
+            applyReset(
               buildProductEditDefaults(product, metadataDefinitions),
-              {
-                keepDirty: false,
-                keepDefaultValues: false,
-              }
+              "discard"
             );
             resetBomDraftRows();
+            pendingSaveRef.current = null;
+            setLastSaveStatus("idle");
+            setLastDiscardAt(new Date().toISOString());
           }}
+          formInstanceId={editFormInstanceId}
         />
         <ProductDetailForm
           mode={"edit" as any}
@@ -1008,6 +1227,9 @@ export default function ProductDetailRoute() {
           onRegisterMissingFocus={setFocusMissingRequired}
           requiredIndicatorMode={requiredIndicatorMode}
           hasMovements={hasMovements}
+          effectivePricingMode={effectivePricingMode}
+          pricingModeLabel={pricingModeLabel}
+          pricingSpecOptions={pricingSpecOptions || []}
         />
       </Form>
       {/* Tags block removed; now handled by TagsInput in header and saved via global form */}
@@ -1043,6 +1265,7 @@ export default function ProductDetailRoute() {
             pricingSpecOptions={pricingSpecOptions || []}
             subCategoryOptions={subCategoryOptions || []}
             onSuccess={() => revalidate()}
+            disabledReason={immediateActionDisabledReason}
           />
           {visibleBomRows.length > 0 && (
             <Table striped withTableBorder withColumnBorders highlightOnHover>
@@ -1126,6 +1349,13 @@ export default function ProductDetailRoute() {
           ) : null}
         </Tabs.List>
         <Tabs.Panel value="stock" pt="md">
+          {!stockTrackingEnabled ? (
+            <Card withBorder padding="sm" mb="md">
+              <Text size="sm" c="yellow.8">
+                Stock tracking is OFF. Data below is legacy/read-only.
+              </Text>
+            </Card>
+          ) : null}
           <Grid gutter="md">
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>
@@ -1193,20 +1423,43 @@ export default function ProductDetailRoute() {
                           clearable={false}
                           w={200}
                         />
-                        <Button
-                          size="xs"
-                          variant="light"
-                          onClick={() => {
-                            const rows: BatchRowLite[] =
-                              filteredBatchRowsLite.map((r) => ({ ...r }));
-                            setActiveBatch({ rows });
-                            setAmendProductOpen(true);
-                          }}
+                        <Tooltip
+                          label={batchActionDisabledReason}
+                          disabled={
+                            stockTrackingEnabled && batchTrackingEnabled
+                          }
+                          withArrow
                         >
-                          Amend All…
-                        </Button>
+                          <span>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              disabled={
+                                !stockTrackingEnabled || !batchTrackingEnabled
+                              }
+                              onClick={() => {
+                                if (
+                                  !stockTrackingEnabled ||
+                                  !batchTrackingEnabled
+                                )
+                                  return;
+                                const rows: BatchRowLite[] =
+                                  filteredBatchRowsLite.map((r) => ({ ...r }));
+                                setActiveBatch({ rows });
+                                setAmendProductOpen(true);
+                              }}
+                            >
+                              Amend All…
+                            </Button>
+                          </span>
+                        </Tooltip>
                       </Group>
                     </Group>
+                    {!batchTrackingEnabled ? (
+                      <Text size="xs" c="dimmed" px={8}>
+                        Batch tracking is OFF. Batch data is read-only.
+                      </Text>
+                    ) : null}
                   </Card.Section>
                   <Card.Section>
                     <Table withColumnBorders>
@@ -1282,26 +1535,26 @@ export default function ProductDetailRoute() {
                                   )}
                                 </Table.Td>
 
+                                <Table.Td>
+                                  {row.location_name ||
+                                    (row.location_id
+                                      ? `${row.location_id}`
+                                      : "")}
+                                </Table.Td>
+                                <Table.Td>
+                                  {row.received_at
+                                    ? new Date(
+                                        row.received_at
+                                      ).toLocaleDateString()
+                                    : ""}
+                                </Table.Td>
+                              </>
+                            )}
                             <Table.Td>
-                              {row.location_name ||
-                                (row.location_id
-                                  ? `${row.location_id}`
-                                  : "")}
+                              {Number(row.qty ?? 0) === 0
+                                ? ""
+                                : Number(row.qty ?? 0)}
                             </Table.Td>
-                            <Table.Td>
-                              {row.received_at
-                                ? new Date(
-                                    row.received_at
-                                  ).toLocaleDateString()
-                                : ""}
-                            </Table.Td>
-                          </>
-                        )}
-                        <Table.Td>
-                          {Number(row.qty ?? 0) === 0
-                            ? ""
-                            : Number(row.qty ?? 0)}
-                        </Table.Td>
                             <Table.Td>
                               <Menu
                                 withinPortal
@@ -1313,41 +1566,108 @@ export default function ProductDetailRoute() {
                                     variant="subtle"
                                     size="sm"
                                     aria-label="Batch actions"
+                                    disabled={
+                                      !stockTrackingEnabled ||
+                                      !batchTrackingEnabled
+                                    }
                                   >
                                     <IconMenu2 size={16} />
                                   </ActionIcon>
                                 </Menu.Target>
                                 <Menu.Dropdown>
-                                  <Menu.Item
-                                    disabled={row.batch_id == null}
-                                    onClick={() => {
-                                      if (row.batch_id == null) return;
-                                      setBatchEdit({
-                                        batchId: Number(row.batch_id),
-                                        name: row.batch_name ?? "",
-                                        codeMill: row.code_mill ?? "",
-                                        codeSartor: row.code_sartor ?? "",
-                                      });
-                                    }}
+                                  <Tooltip
+                                    label={batchActionDisabledReason}
+                                    disabled={
+                                      stockTrackingEnabled &&
+                                      batchTrackingEnabled
+                                    }
+                                    withArrow
+                                    position="left"
                                   >
-                                    Edit details
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    onClick={() => {
-                                      setActiveBatch(row);
-                                      setAmendBatchOpen(true);
-                                    }}
+                                    <span>
+                                      <Menu.Item
+                                        disabled={
+                                          row.batch_id == null ||
+                                          !stockTrackingEnabled ||
+                                          !batchTrackingEnabled
+                                        }
+                                        onClick={() => {
+                                          if (
+                                            row.batch_id == null ||
+                                            !stockTrackingEnabled ||
+                                            !batchTrackingEnabled
+                                          )
+                                            return;
+                                          setBatchEdit({
+                                            batchId: Number(row.batch_id),
+                                            name: row.batch_name ?? "",
+                                            codeMill: row.code_mill ?? "",
+                                            codeSartor: row.code_sartor ?? "",
+                                          });
+                                        }}
+                                      >
+                                        Edit details
+                                      </Menu.Item>
+                                    </span>
+                                  </Tooltip>
+                                  <Tooltip
+                                    label={batchActionDisabledReason}
+                                    disabled={
+                                      stockTrackingEnabled &&
+                                      batchTrackingEnabled
+                                    }
+                                    withArrow
+                                    position="left"
                                   >
-                                    Amend
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    onClick={() => {
-                                      setActiveBatch(row);
-                                      setTransferOpen(true);
-                                    }}
+                                    <span>
+                                      <Menu.Item
+                                        disabled={
+                                          !stockTrackingEnabled ||
+                                          !batchTrackingEnabled
+                                        }
+                                        onClick={() => {
+                                          if (
+                                            !stockTrackingEnabled ||
+                                            !batchTrackingEnabled
+                                          )
+                                            return;
+                                          setActiveBatch(row);
+                                          setAmendBatchOpen(true);
+                                        }}
+                                      >
+                                        Amend
+                                      </Menu.Item>
+                                    </span>
+                                  </Tooltip>
+                                  <Tooltip
+                                    label={batchActionDisabledReason}
+                                    disabled={
+                                      stockTrackingEnabled &&
+                                      batchTrackingEnabled
+                                    }
+                                    withArrow
+                                    position="left"
                                   >
-                                    Transfer
-                                  </Menu.Item>
+                                    <span>
+                                      <Menu.Item
+                                        disabled={
+                                          !stockTrackingEnabled ||
+                                          !batchTrackingEnabled
+                                        }
+                                        onClick={() => {
+                                          if (
+                                            !stockTrackingEnabled ||
+                                            !batchTrackingEnabled
+                                          )
+                                            return;
+                                          setActiveBatch(row);
+                                          setTransferOpen(true);
+                                        }}
+                                      >
+                                        Transfer
+                                      </Menu.Item>
+                                    </span>
+                                  </Tooltip>
                                 </Menu.Dropdown>
                               </Menu>
                             </Table.Td>
@@ -1453,13 +1773,28 @@ export default function ProductDetailRoute() {
                           >
                             Cancel
                           </Button>
-                          <Button
-                            type="submit"
-                            loading={batchEditBusy}
-                            disabled={batchEditBusy}
+                          <Tooltip
+                            label={batchActionDisabledReason}
+                            disabled={
+                              batchEditBusy ||
+                              (stockTrackingEnabled && batchTrackingEnabled)
+                            }
+                            withArrow
                           >
-                            Save
-                          </Button>
+                            <span>
+                              <Button
+                                type="submit"
+                                loading={batchEditBusy}
+                                disabled={
+                                  batchEditBusy ||
+                                  !stockTrackingEnabled ||
+                                  !batchTrackingEnabled
+                                }
+                              >
+                                Save
+                              </Button>
+                            </span>
+                          </Tooltip>
                         </Group>
                       </Stack>
                     </form>
@@ -1612,19 +1947,36 @@ export default function ProductDetailRoute() {
                                         Details
                                       </Menu.Item>
                                       {isAdminUser && (
-                                        <Menu.Item
-                                          color="red"
-                                          onClick={() => {
-                                            if (!ml.movement?.id) return;
-                                            setPendingDeleteMovementId(
-                                              ml.movement.id
-                                            );
-                                            setMovementDeleteInput("");
-                                          }}
-                                          disabled={!ml.movement?.id}
+                                        <Tooltip
+                                          label={mutationDisabledReason}
+                                          disabled={
+                                            !mutationDisabledReason ||
+                                            !ml.movement?.id
+                                          }
+                                          withArrow
+                                          position="left"
                                         >
-                                          Delete
-                                        </Menu.Item>
+                                          <span>
+                                            <Menu.Item
+                                              color="red"
+                                              onClick={() => {
+                                                if (mutationDisabledReason)
+                                                  return;
+                                                if (!ml.movement?.id) return;
+                                                setPendingDeleteMovementId(
+                                                  ml.movement.id
+                                                );
+                                                setMovementDeleteInput("");
+                                              }}
+                                              disabled={
+                                                !ml.movement?.id ||
+                                                Boolean(mutationDisabledReason)
+                                              }
+                                            >
+                                              Delete
+                                            </Menu.Item>
+                                          </span>
+                                        </Tooltip>
                                       )}
                                     </Menu.Dropdown>
                                   </Menu>
@@ -1683,19 +2035,35 @@ export default function ProductDetailRoute() {
                                       Details
                                     </Menu.Item>
                                     {isAdminUser && (
-                                      <Menu.Item
-                                        color="red"
-                                        onClick={() => {
-                                          if (!mh.id) return;
-                                          setPendingDeleteMovementId(
-                                            mh.id as number
-                                          );
-                                          setMovementDeleteInput("");
-                                        }}
-                                        disabled={!mh.id}
+                                      <Tooltip
+                                        label={mutationDisabledReason}
+                                        disabled={
+                                          !mutationDisabledReason || !mh.id
+                                        }
+                                        withArrow
+                                        position="left"
                                       >
-                                        Delete
-                                      </Menu.Item>
+                                        <span>
+                                          <Menu.Item
+                                            color="red"
+                                            onClick={() => {
+                                              if (mutationDisabledReason)
+                                                return;
+                                              if (!mh.id) return;
+                                              setPendingDeleteMovementId(
+                                                mh.id as number
+                                              );
+                                              setMovementDeleteInput("");
+                                            }}
+                                            disabled={
+                                              !mh.id ||
+                                              Boolean(mutationDisabledReason)
+                                            }
+                                          >
+                                            Delete
+                                          </Menu.Item>
+                                        </span>
+                                      </Tooltip>
                                     )}
                                   </Menu.Dropdown>
                                 </Menu>
@@ -1861,19 +2229,29 @@ export default function ProductDetailRoute() {
                       >
                         Cancel
                       </Button>
-                      <Button
-                        color="red"
-                        loading={movementActionFetcher.state !== "idle"}
-                        disabled={
-                          movementDeleteInput.replace(/\u2019/g, "'").trim() !==
-                          movementDeletePhrase
-                        }
-                        onClick={() =>
-                          handleDeleteMovement(pendingDeleteMovementId)
-                        }
+                      <Tooltip
+                        label={mutationDisabledReason}
+                        disabled={!mutationDisabledReason}
+                        withArrow
                       >
-                        Delete
-                      </Button>
+                        <span>
+                          <Button
+                            color="red"
+                            loading={movementActionFetcher.state !== "idle"}
+                            disabled={
+                              Boolean(mutationDisabledReason) ||
+                              movementDeleteInput
+                                .replace(/\u2019/g, "'")
+                                .trim() !== movementDeletePhrase
+                            }
+                            onClick={() =>
+                              handleDeleteMovement(pendingDeleteMovementId)
+                            }
+                          >
+                            Delete
+                          </Button>
+                        </span>
+                      </Tooltip>
                     </Group>
                   </Stack>
                 </Modal>
@@ -2012,7 +2390,9 @@ export default function ProductDetailRoute() {
               deleted: false,
             },
           ]);
-          editForm.setValue("bomDirty", String(Date.now()), { shouldDirty: true });
+          editForm.setValue("bomDirty", String(Date.now()), {
+            shouldDirty: true,
+          });
           setPickerOpen(false);
         }}
       />
