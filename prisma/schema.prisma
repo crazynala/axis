@@ -228,6 +228,9 @@ model Company {
   invoicePercentOnOrder           Decimal?                @db.Decimal(5, 2)
   defaultLeadTimeDays             Int?
   code                            String?                 @unique
+  shortCode                       String?                 @unique
+  shortName                       String?
+  projectCodeNextNumber           Int                     @default(1)
   defaultAddressId                Int?
   addresses                       Address[]               @relation("CompanyAddresses")
   assemblyActivitiesAsVendor      AssemblyActivity[]      @relation("AssemblyActivity_vendorCompany")
@@ -606,6 +609,7 @@ model Job {
   notes                   String?
   statusWhiteboard        String?
   endCustomerName         String?
+  endCustomerContactId    Int?
   companyId               Int?
   stockLocationId         Int?
   customerOrderDate       DateTime?
@@ -635,6 +639,7 @@ model Job {
   expenses                Expense[]
   invoiceLines            InvoiceLine[]
   company                 Company?             @relation(fields: [companyId], references: [id])
+  endCustomerContact      Contact?             @relation("JobEndCustomerContact", fields: [endCustomerContactId], references: [id], onDelete: SetNull)
   stockLocation           Location?            @relation("Job_stockLocation", fields: [stockLocationId], references: [id])
   shipToLocation          Location?            @relation("Job_shipToLocation", fields: [shipToLocationId], references: [id])
   shipToAddress           Address?             @relation("JobShipToAddress", fields: [shipToAddressId], references: [id], onDelete: SetNull)
@@ -1061,6 +1066,7 @@ model Contact {
   defaultAddress   Address?  @relation("ContactDefaultAddress", fields: [defaultAddressId], references: [id], onDelete: SetNull)
   addresses        Address[] @relation("ContactAddresses")
   company          Company?  @relation(fields: [companyId], references: [id])
+  endCustomerJobs  Job[]     @relation("JobEndCustomerContact")
 }
 
 model PurchaseOrder {

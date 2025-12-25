@@ -250,6 +250,7 @@ const theme = createTheme({
     Card: Card.extend({
       defaultProps: {
         bg: "var(--aa-card-bg)",
+        bd: "2px solid var(--aa-card-bg)",
       },
     }),
   },

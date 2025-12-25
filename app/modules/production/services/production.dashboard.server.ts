@@ -7,7 +7,11 @@ import {
   loadAssemblyRollups,
   type AssemblyRollup,
 } from "~/modules/production/services/rollups.server";
-import { loadDefaultInternalTargetLeadDays } from "~/modules/job/services/targetOverrides.server";
+import {
+  loadDefaultInternalTargetLeadDays,
+  loadDefaultInternalTargetBufferDays,
+  loadDefaultDropDeadEscalationBufferDays,
+} from "~/modules/job/services/targetOverrides.server";
 import {
   loadMaterialCoverage,
   type AssemblyMaterialCoverage,
@@ -76,6 +80,8 @@ export type LoaderData = {
   assemblies: LoaderAssembly[];
   toleranceDefaults: CoverageToleranceDefaults;
   defaultLeadDays: number;
+  bufferDays: number;
+  escalationBufferDays: number;
 };
 
 export const activeAssemblyFilter = {
@@ -150,7 +156,11 @@ const assemblyIncludes = {
 
 export async function loadDashboardData(take: number): Promise<LoaderData> {
   const toleranceDefaults = await loadCoverageToleranceDefaults();
-  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+  const [defaultLeadDays, bufferDays, escalationBufferDays] = await Promise.all([
+    loadDefaultInternalTargetLeadDays(prisma),
+    loadDefaultInternalTargetBufferDays(prisma),
+    loadDefaultDropDeadEscalationBufferDays(prisma),
+  ]);
   const assemblies = await prisma.assembly.findMany({
     where: activeAssemblyFilter,
     include: assemblyIncludes,
@@ -168,6 +178,8 @@ export async function loadDashboardData(take: number): Promise<LoaderData> {
     assemblies: hydrated,
     toleranceDefaults,
     defaultLeadDays,
+    bufferDays,
+    escalationBufferDays,
   };
 }
 

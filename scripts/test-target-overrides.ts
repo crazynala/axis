@@ -24,11 +24,13 @@ const derived = resolveAssemblyTargets({
   job: jobBase,
   assembly: assemblyBase,
   defaultLeadDays: 28,
+  bufferDays: 3,
+  escalationBufferDays: 5,
   now,
 });
 
 assert.equal(derived.internal.source, "DERIVED");
-assert.equal(derived.customer.source, "DERIVED");
+assert.equal(derived.customer.source, "NONE");
 assert.equal(derived.dropDead.source, "JOB");
 assert.equal(derived.shipTo.source, "JOB");
 assert.equal(derived.internalWasClamped, false);
@@ -44,6 +46,8 @@ const override = resolveAssemblyTargets({
     shipToLocationOverride: { id: 11, name: "Boutique" },
   },
   defaultLeadDays: 28,
+  bufferDays: 3,
+  escalationBufferDays: 5,
   now,
 });
 

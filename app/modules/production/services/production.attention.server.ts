@@ -74,6 +74,8 @@ export async function buildProductionAttentionRows(options: {
   filters: ProductionAttentionFilters;
   sort: ProductionAttentionSort;
   defaultLeadDays: number;
+  bufferDays: number;
+  escalationBufferDays: number;
   today?: Date;
 }): Promise<ProductionAttentionRow[]> {
   const { assemblies, filters, sort } = options;
@@ -127,6 +129,7 @@ export async function buildProductionAttentionRows(options: {
     const resolved = resolveAssemblyTargets({
       job: {
         createdAt: job?.createdAt ?? null,
+        customerOrderDate: job?.customerOrderDate ?? null,
         internalTargetDate: job?.internalTargetDate ?? null,
         customerTargetDate: job?.customerTargetDate ?? null,
         dropDeadDate: job?.dropDeadDate ?? null,
@@ -139,6 +142,8 @@ export async function buildProductionAttentionRows(options: {
         shipToLocationOverride: assembly.shipToLocationOverride ?? null,
       },
       defaultLeadDays: options.defaultLeadDays,
+      bufferDays: options.bufferDays,
+      escalationBufferDays: options.escalationBufferDays,
     });
 
     if (!filters.includeHeld && effectiveHold) continue;

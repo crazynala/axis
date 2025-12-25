@@ -46,6 +46,24 @@ export const companyPanelOneFields: FieldConfig[] = [
     findOp: "equals",
   },
   { name: "name", label: "Name", findOp: "contains" },
+  {
+    name: "shortCode",
+    label: "Short code",
+    findOp: "contains",
+    hiddenInModes: ["find"],
+  },
+  {
+    name: "shortName",
+    label: "Short name",
+    findOp: "contains",
+    hiddenInModes: ["find"],
+  },
+  {
+    name: "projectCodeNextNumber",
+    label: "Next project code #",
+    widget: "text",
+    hiddenInModes: ["find"],
+  },
   { name: "notes", label: "Notes", findOp: "contains" },
   { name: "isCarrier", label: "Carrier", widget: "triBool", findOp: "equals" },
   {

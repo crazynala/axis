@@ -19,9 +19,23 @@ import {
 import { createCancelActivity } from "~/utils/activity.server";
 import {
   loadDefaultInternalTargetLeadDays,
+  loadDefaultInternalTargetBufferDays,
+  loadDefaultDropDeadEscalationBufferDays,
   resolveAssemblyTargets,
 } from "~/modules/job/services/targetOverrides.server";
-import { assertAddressOwnedByCompany } from "~/utils/addressOwnership.server";
+import { deriveInternalTargetDate } from "~/modules/job/services/jobTargetDefaults";
+import { isCompanyImmutableViolation } from "~/modules/job/services/jobUpdateRules";
+import {
+  resolveJobSetupDefaults,
+} from "~/modules/job/services/jobSetupDefaults";
+import {
+  buildProjectCodeFromIncrement,
+  parseJobProjectCodeNumber,
+} from "~/modules/job/services/jobProjectCode";
+import { loadJobProjectCodePrefix } from "~/modules/job/services/jobProjectCode.server";
+import {
+  assertAddressAllowedForShipment,
+} from "~/utils/addressOwnership.server";
 
 const HOLD_TYPES = new Set(["CLIENT", "INTERNAL"]);
 
@@ -49,15 +63,39 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
   const data: any = {};
   let nextCompanyId: number | null = null;
   let resolvedCompanyId: number | null = null;
+  let nextEndCustomerContactId: number | null = null;
+  let resolvedContactId: number | null = null;
+  let assignProjectCodeCompanyId: number | null = null;
+  let assignProjectCodeShortCode: string | null = null;
+  const jobProjectCodePrefix = await loadJobProjectCodePrefix(prisma);
   const fields = [
-    "projectCode",
     "name",
     "jobType",
-    "endCustomerName",
     "customerPoNum",
     "statusWhiteboard",
   ];
   for (const f of fields) if (opts.form.has(f)) data[f] = (opts.form.get(f) as string) || null;
+  let nextProjectCode: string | null = null;
+  if (opts.form.has("projectCode")) {
+    const raw = String(opts.form.get("projectCode") ?? "").trim();
+    nextProjectCode = raw || null;
+    data.projectCode = nextProjectCode;
+  }
+  if (opts.form.has("endCustomerContactId")) {
+    const raw = String(opts.form.get("endCustomerContactId") ?? "").trim();
+    if (!raw) {
+      nextEndCustomerContactId = null;
+      data.endCustomerContactId = null;
+      data.endCustomerName = null;
+    } else {
+      const parsed = Number(raw);
+      nextEndCustomerContactId = Number.isFinite(parsed) ? parsed : null;
+      data.endCustomerContactId = nextEndCustomerContactId;
+    }
+  }
+  if (nextEndCustomerContactId != null) {
+    resolvedContactId = nextEndCustomerContactId;
+  }
   let nextStatus: string | null = null;
   if (opts.form.has("status")) {
     const rawStatus = String(opts.form.get("status") ?? "").trim();
@@ -88,6 +126,31 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
         select: { state: true },
       })
     : null;
+  const needsJobDefaultsLookup =
+    opts.form.has("companyId") ||
+    opts.form.has("endCustomerContactId") ||
+    opts.form.has("projectCode") ||
+    opts.form.has("shipToAddressId") ||
+    opts.form.has("customerOrderDate") ||
+    opts.form.has("internalTargetDate") ||
+    opts.form.has("customerTargetDate");
+  const existingJob = needsJobDefaultsLookup
+    ? await prisma.job.findUnique({
+        where: { id: opts.id },
+        select: {
+          companyId: true,
+          projectCode: true,
+          endCustomerContactId: true,
+          customerOrderDate: true,
+          createdAt: true,
+          internalTargetDate: true,
+          customerTargetDate: true,
+          dropDeadDate: true,
+        },
+      })
+    : null;
+  nextCompanyId = existingJob?.companyId ?? null;
+  resolvedCompanyId = nextCompanyId;
   if (nextState && !normalizedState) {
     return redirect(`/jobs/${opts.id}?jobPrimaryErr=invalid`);
   }
@@ -136,29 +199,55 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
   }
   if (opts.form.has("companyId")) {
     const raw = String(opts.form.get("companyId") ?? "");
-    if (raw === "") {
-      data.company = { disconnect: true };
-      nextCompanyId = null;
-    } else {
-      const cid = Number(raw);
-      if (Number.isFinite(cid)) {
-        data.company = { connect: { id: cid } };
-        nextCompanyId = cid;
-        const company = await prisma.company.findUnique({
-          where: { id: cid },
-          select: { stockLocationId: true },
-        });
-        const locId = company?.stockLocationId ?? null;
-        if (locId != null) data.stockLocation = { connect: { id: locId } };
-      }
+    const parsed = raw === "" ? null : Number(raw);
+    const next = Number.isFinite(parsed as number) ? (parsed as number) : null;
+    if (
+      isCompanyImmutableViolation({
+        existingCompanyId: nextCompanyId,
+        nextCompanyId: next,
+      })
+    ) {
+      return json(
+        { error: "Customer cannot be changed after job creation." },
+        { status: 400 }
+      );
     }
   }
-  if (opts.form.has("stockLocationId")) {
-    const raw = String(opts.form.get("stockLocationId") ?? "");
-    if (raw === "") data.stockLocation = { disconnect: true };
-    else {
-      const lid = Number(raw);
-      if (Number.isFinite(lid)) data.stockLocation = { connect: { id: lid } };
+  if (nextEndCustomerContactId != null) {
+    const contact = await prisma.contact.findUnique({
+      where: { id: nextEndCustomerContactId },
+      select: { companyId: true, firstName: true, lastName: true },
+    });
+    const targetCompanyId = nextCompanyId ?? existingJob?.companyId ?? null;
+    if (!contact) {
+      return json(
+        { error: "End-customer contact could not be found." },
+        { status: 400 }
+      );
+    }
+    if (targetCompanyId != null && contact.companyId !== targetCompanyId) {
+      return json(
+        { error: "End-customer contact must belong to the selected company." },
+        { status: 400 }
+      );
+    }
+    const name = [contact.firstName, contact.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    data.endCustomerName = name || null;
+  }
+  if (!nextProjectCode && !existingJob?.projectCode) {
+    const targetCompanyId = nextCompanyId ?? null;
+    if (targetCompanyId != null && assignProjectCodeShortCode == null) {
+      const company = await prisma.company.findUnique({
+        where: { id: targetCompanyId },
+        select: { shortCode: true },
+      });
+      if (company?.shortCode) {
+        assignProjectCodeCompanyId = targetCompanyId;
+        assignProjectCodeShortCode = company.shortCode;
+      }
     }
   }
   if (opts.form.has("shipToLocationId")) {
@@ -172,28 +261,41 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
   if (opts.form.has("shipToAddressId")) {
     const raw = String(opts.form.get("shipToAddressId") ?? "");
     if (raw === "") {
-      data.shipToAddress = { disconnect: true };
+      if (nextCompanyId != null) {
+        const company = await prisma.company.findUnique({
+          where: { id: nextCompanyId },
+          select: { defaultAddressId: true, stockLocationId: true },
+        });
+        const defaults = resolveJobSetupDefaults({ company });
+        if (defaults.shipToAddressId != null) {
+          data.shipToAddress = { connect: { id: defaults.shipToAddressId } };
+        } else {
+          data.shipToAddress = { disconnect: true };
+        }
+      } else {
+        data.shipToAddress = { disconnect: true };
+      }
     } else {
       const addrId = Number(raw);
       if (Number.isFinite(addrId)) {
         if (resolvedCompanyId == null) {
-          if (nextCompanyId != null) {
-            resolvedCompanyId = nextCompanyId;
-          } else {
-            const job = await prisma.job.findUnique({
-              where: { id: opts.id },
-              select: { companyId: true },
-            });
-            resolvedCompanyId = job?.companyId ?? null;
-          }
+          resolvedCompanyId =
+            nextCompanyId ?? existingJob?.companyId ?? null;
         }
-        const owned =
-          resolvedCompanyId != null
-            ? await assertAddressOwnedByCompany(addrId, resolvedCompanyId)
-            : false;
-        if (!owned) {
+        if (resolvedContactId == null) {
+          resolvedContactId = existingJob?.endCustomerContactId ?? null;
+        }
+        const allowed = await assertAddressAllowedForShipment(
+          addrId,
+          resolvedCompanyId,
+          resolvedContactId
+        );
+        if (!allowed) {
           return json(
-            { error: "Ship-to address must belong to the job's company." },
+            {
+              error:
+                "Ship-to address must belong to the job's company or end-customer contact.",
+            },
             { status: 400 }
           );
         }
@@ -241,25 +343,63 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
   }
   if (
     Object.prototype.hasOwnProperty.call(dateValues, "internalTargetDate") ||
-    Object.prototype.hasOwnProperty.call(dateValues, "customerTargetDate")
+    Object.prototype.hasOwnProperty.call(dateValues, "customerTargetDate") ||
+    Object.prototype.hasOwnProperty.call(dateValues, "customerOrderDate")
   ) {
     const current = await prisma.job.findUnique({
       where: { id: opts.id },
       select: {
         createdAt: true,
+        customerOrderDate: true,
         internalTargetDate: true,
         customerTargetDate: true,
         dropDeadDate: true,
       },
     });
-    const nextInternal =
+    let nextInternal =
       dateValues.internalTargetDate ?? current?.internalTargetDate ?? null;
     const nextCustomer =
       dateValues.customerTargetDate ?? current?.customerTargetDate ?? null;
-    const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+    const nextOrderDate =
+      dateValues.customerOrderDate ?? current?.customerOrderDate ?? null;
+    const [defaultLeadDays, bufferDays, escalationBufferDays] = await Promise.all(
+      [
+        loadDefaultInternalTargetLeadDays(prisma),
+        loadDefaultInternalTargetBufferDays(prisma),
+        loadDefaultDropDeadEscalationBufferDays(prisma),
+      ]
+    );
+    const derivedCurrent = deriveInternalTargetDate({
+      baseDate: current?.customerOrderDate ?? current?.createdAt ?? null,
+      customerTargetDate: current?.customerTargetDate ?? null,
+      defaultLeadDays,
+      bufferDays,
+      now: new Date(),
+    });
+    const derivedNext = deriveInternalTargetDate({
+      baseDate: nextOrderDate ?? current?.createdAt ?? null,
+      customerTargetDate: nextCustomer ?? null,
+      defaultLeadDays,
+      bufferDays,
+      now: new Date(),
+    });
+    const sameDay = (a: Date | null, b: Date | null) =>
+      a && b
+        ? a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10)
+        : false;
+    const shouldUpdateInternalFromOrder =
+      !dateValues.internalTargetDate &&
+      dateValues.customerOrderDate != null &&
+      (!current?.internalTargetDate ||
+        (derivedCurrent && sameDay(derivedCurrent, current.internalTargetDate)));
+    if (shouldUpdateInternalFromOrder && derivedNext) {
+      data.internalTargetDate = derivedNext;
+      nextInternal = derivedNext;
+    }
     const resolved = resolveAssemblyTargets({
       job: {
         createdAt: current?.createdAt ?? null,
+        customerOrderDate: nextOrderDate ?? current?.customerOrderDate ?? null,
         internalTargetDate: nextInternal,
         customerTargetDate: nextCustomer,
         dropDeadDate: current?.dropDeadDate ?? null,
@@ -268,6 +408,8 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
       },
       assembly: null,
       defaultLeadDays,
+      bufferDays,
+      escalationBufferDays,
     });
     if (dateValues.internalTargetDate && resolved.internalWasClamped) {
       data.internalTargetDate = resolved.internal.value;
@@ -380,7 +522,57 @@ export async function handleJobDetailUpdate(opts: { id: number; form: FormData }
   try {
     if (Object.keys(data).length) {
       // TODO: add OperationLog entries for job state/hold changes.
-      await prisma.job.update({ where: { id: opts.id }, data });
+      let projectCodeSync:
+        | { companyId: number; nextNumber: number }
+        | null = null;
+      if (nextProjectCode) {
+        const targetCompanyId = nextCompanyId ?? existingJob?.companyId ?? null;
+        if (targetCompanyId != null) {
+          const company = await prisma.company.findUnique({
+            where: { id: targetCompanyId },
+            select: { shortCode: true, projectCodeNextNumber: true },
+          });
+          const parsed = parseJobProjectCodeNumber({
+            code: nextProjectCode,
+            shortCode: company?.shortCode,
+            prefix: jobProjectCodePrefix,
+          });
+          if (parsed != null) {
+            const base = Number(company?.projectCodeNextNumber ?? 1) || 1;
+            projectCodeSync = {
+              companyId: targetCompanyId,
+              nextNumber: Math.max(base, parsed + 1),
+            };
+          }
+        }
+      }
+
+      if (assignProjectCodeCompanyId != null && assignProjectCodeShortCode) {
+        await prisma.$transaction(async (tx) => {
+          const updated = await tx.company.update({
+            where: { id: assignProjectCodeCompanyId },
+            data: { projectCodeNextNumber: { increment: 1 } },
+            select: { projectCodeNextNumber: true },
+          });
+          const assigned = buildProjectCodeFromIncrement({
+            shortCode: assignProjectCodeShortCode,
+            prefix: jobProjectCodePrefix,
+            nextNumberAfterIncrement: updated.projectCodeNextNumber,
+          });
+          if (assigned) data.projectCode = assigned;
+          await tx.job.update({ where: { id: opts.id }, data });
+        });
+      } else if (projectCodeSync) {
+        await prisma.$transaction(async (tx) => {
+          await tx.job.update({ where: { id: opts.id }, data });
+          await tx.company.update({
+            where: { id: projectCodeSync.companyId },
+            data: { projectCodeNextNumber: projectCodeSync.nextNumber },
+          });
+        });
+      } else {
+        await prisma.job.update({ where: { id: opts.id }, data });
+      }
     }
     if (normalizedState === "CANCELED" && cancelMode === "cancel_remaining") {
       const assemblies = await prisma.assembly.findMany({

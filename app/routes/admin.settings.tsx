@@ -12,6 +12,7 @@ import {
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
 import { prisma } from "~/utils/prisma.server";
@@ -25,10 +26,20 @@ import {
   DEFAULT_INTERNAL_TARGET_LEAD_DAYS_KEY,
   DEFAULT_INTERNAL_TARGET_LEAD_DAYS_FALLBACK,
 } from "~/modules/job/services/targetOverrides.server";
+import {
+  JOB_PROJECT_CODE_PREFIX_DEFAULT,
+  JOB_PROJECT_CODE_PREFIX_REGEX,
+  normalizeJobProjectCodePrefix,
+} from "~/modules/job/services/jobProjectCode";
+import {
+  JOB_PROJECT_CODE_PREFIX_KEY,
+  loadJobProjectCodePrefix,
+} from "~/modules/job/services/jobProjectCode.server";
 
 type LoaderData = {
   defaultMargin: number;
   defaultInternalTargetLeadDays: number;
+  jobProjectCodePrefix: string;
   tolerance: Awaited<ReturnType<typeof loadCoverageToleranceDefaults>>;
 };
 
@@ -43,13 +54,15 @@ export const meta: MetaFunction = () => [{ title: "Global Settings" }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAdminUser(request);
-  const [marginSetting, leadSetting, tolerance] = await Promise.all([
+  const [marginSetting, leadSetting, jobProjectCodePrefix, tolerance] =
+    await Promise.all([
     prisma.setting.findUnique({
       where: { key: "defaultMargin" },
     }),
     prisma.setting.findUnique({
       where: { key: DEFAULT_INTERNAL_TARGET_LEAD_DAYS_KEY },
     }),
+    loadJobProjectCodePrefix(prisma),
     loadCoverageToleranceDefaults(),
   ]);
   const defaultMargin =
@@ -67,6 +80,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json<LoaderData>({
     defaultMargin,
     defaultInternalTargetLeadDays,
+    jobProjectCodePrefix,
     tolerance,
   });
 }
@@ -78,6 +92,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const defaultInternalTargetLeadDays = clampInt(
     Number(fd.get("defaultInternalTargetLeadDays") || 0)
   );
+  const jobProjectCodePrefixRaw = String(
+    fd.get("jobProjectCodePrefix") ?? ""
+  ).trim();
+  const jobProjectCodePrefix =
+    normalizeJobProjectCodePrefix(jobProjectCodePrefixRaw) ??
+    JOB_PROJECT_CODE_PREFIX_DEFAULT;
 
   const tolerancePayload: Record<string, { pct: number; abs: number }> = {};
   TOLERANCE_FIELDS.forEach(({ key }) => {
@@ -101,6 +121,14 @@ export async function action({ request }: ActionFunctionArgs) {
         number: defaultInternalTargetLeadDays,
       },
       update: { number: defaultInternalTargetLeadDays },
+    });
+    await tx.setting.upsert({
+      where: { key: JOB_PROJECT_CODE_PREFIX_KEY },
+      create: {
+        key: JOB_PROJECT_CODE_PREFIX_KEY,
+        value: jobProjectCodePrefix,
+      },
+      update: { value: jobProjectCodePrefix },
     });
     await tx.setting.upsert({
       where: { key: MATERIAL_TOLERANCE_SETTING_KEY },
@@ -130,8 +158,12 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function GlobalSettingsRoute() {
-  const { defaultMargin, defaultInternalTargetLeadDays, tolerance } =
-    useLoaderData<typeof loader>();
+  const {
+    defaultMargin,
+    defaultInternalTargetLeadDays,
+    jobProjectCodePrefix,
+    tolerance,
+  } = useLoaderData<typeof loader>();
   return (
     <Stack gap="lg">
       <Title order={2}>Global Settings</Title>
@@ -161,6 +193,21 @@ export default function GlobalSettingsRoute() {
               max={365}
               defaultValue={defaultInternalTargetLeadDays}
             />
+          </Stack>
+
+          <Stack w={360}>
+            <Title order={4}>Project code defaults</Title>
+            <TextInput
+              name="jobProjectCodePrefix"
+              label="Job project code prefix"
+              description="Uppercase letters/numbers, 2-6 characters (e.g. ORD)"
+              defaultValue={jobProjectCodePrefix}
+              placeholder={JOB_PROJECT_CODE_PREFIX_DEFAULT}
+            />
+            <Text size="xs" c="dimmed">
+              Format: {`<SHORTCODE>-<PREFIX>-###`} (e.g. TS-ORD-001).
+              Prefix must match {JOB_PROJECT_CODE_PREFIX_REGEX.source}.
+            </Text>
           </Stack>
 
           <Stack>

@@ -4,6 +4,8 @@ import { syncJobStateFromAssemblies } from "~/modules/job/services/JobStateServi
 import { normalizeAssemblyState } from "~/modules/job/stateUtils";
 import {
   loadDefaultInternalTargetLeadDays,
+  loadDefaultInternalTargetBufferDays,
+  loadDefaultDropDeadEscalationBufferDays,
   resolveAssemblyTargets,
 } from "~/modules/job/services/targetOverrides.server";
 import { assertAddressOwnedByCompany } from "~/utils/addressOwnership.server";
@@ -132,10 +134,15 @@ export async function handleAssemblyUpdate(opts: {
         );
       }
     }
-    const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+    const [defaultLeadDays, bufferDays, escalationBufferDays] = await Promise.all([
+      loadDefaultInternalTargetLeadDays(prisma),
+      loadDefaultInternalTargetBufferDays(prisma),
+      loadDefaultDropDeadEscalationBufferDays(prisma),
+    ]);
     const resolved = resolveAssemblyTargets({
       job: {
         createdAt: assembly.job?.createdAt ?? null,
+        customerOrderDate: assembly.job?.customerOrderDate ?? null,
         internalTargetDate: assembly.job?.internalTargetDate ?? null,
         customerTargetDate: assembly.job?.customerTargetDate ?? null,
         dropDeadDate: assembly.job?.dropDeadDate ?? null,
@@ -156,6 +163,8 @@ export async function handleAssemblyUpdate(opts: {
             : null,
       },
       defaultLeadDays,
+      bufferDays,
+      escalationBufferDays,
     });
     if (opts.form.has("internalTargetDateOverride")) {
       data.internalTargetDateOverride =

@@ -14,9 +14,12 @@ import {
 import { coerceBreakdown, sumBreakdownArrays } from "~/modules/job/quantityUtils";
 import {
   loadDefaultInternalTargetLeadDays,
+  loadDefaultInternalTargetBufferDays,
+  loadDefaultDropDeadEscalationBufferDays,
   resolveAssemblyTargets,
 } from "~/modules/job/services/targetOverrides.server";
 import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
+import { loadJobProjectCodePrefix } from "~/modules/job/services/jobProjectCode.server";
 
 export async function loadJobDetailVM(opts: { params: Params }) {
   const id = Number(opts.params.id);
@@ -75,11 +78,33 @@ export async function loadJobDetailVM(opts: { params: Params }) {
   const shipToAddresses = job.companyId
     ? await getCompanyAddressOptions(job.companyId)
     : [];
-  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+  const contacts = await prisma.contact.findMany({
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      companyId: true,
+      defaultAddressId: true,
+    },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
+    take: 5000,
+  });
+  const [
+    defaultLeadDays,
+    internalTargetBufferDays,
+    dropDeadEscalationBufferDays,
+    jobProjectCodePrefix,
+  ] = await Promise.all([
+    loadDefaultInternalTargetLeadDays(prisma),
+    loadDefaultInternalTargetBufferDays(prisma),
+    loadDefaultDropDeadEscalationBufferDays(prisma),
+    loadJobProjectCodePrefix(prisma),
+  ]);
 
   const jobTargets = resolveAssemblyTargets({
     job: {
       createdAt: job.createdAt,
+      customerOrderDate: job.customerOrderDate ?? null,
       internalTargetDate: job.internalTargetDate,
       customerTargetDate: job.customerTargetDate,
       dropDeadDate: job.dropDeadDate,
@@ -88,6 +113,8 @@ export async function loadJobDetailVM(opts: { params: Params }) {
     },
     assembly: null,
     defaultLeadDays,
+    bufferDays: internalTargetBufferDays,
+    escalationBufferDays: dropDeadEscalationBufferDays,
   });
 
   const assemblyTargetsById: Record<number, any> = Object.fromEntries(
@@ -95,6 +122,7 @@ export async function loadJobDetailVM(opts: { params: Params }) {
       const resolved = resolveAssemblyTargets({
         job: {
           createdAt: job.createdAt,
+          customerOrderDate: job.customerOrderDate ?? null,
           internalTargetDate: job.internalTargetDate,
           customerTargetDate: job.customerTargetDate,
           dropDeadDate: job.dropDeadDate,
@@ -109,6 +137,8 @@ export async function loadJobDetailVM(opts: { params: Params }) {
           shipToAddressOverride: assembly.shipToAddressOverride ?? null,
         },
         defaultLeadDays,
+        bufferDays: internalTargetBufferDays,
+        escalationBufferDays: dropDeadEscalationBufferDays,
       });
       return [assembly.id, resolved];
     })
@@ -135,8 +165,12 @@ export async function loadJobDetailVM(opts: { params: Params }) {
     groupsById,
     activityCounts,
     locations,
+    contacts,
     shipToAddresses,
     defaultLeadDays,
+    internalTargetBufferDays,
+    dropDeadEscalationBufferDays,
+    jobProjectCodePrefix,
     jobTargets,
     assemblyTargetsById,
   };

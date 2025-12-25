@@ -36,10 +36,10 @@ import {
   Tooltip,
   ActionIcon,
   Menu,
-  NativeSelect,
   Select,
   SegmentedControl,
   Textarea,
+  Drawer,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import {
@@ -53,12 +53,22 @@ import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { getVariantLabels } from "../../../utils/getVariantLabels";
 import React from "react";
-import { IconBan, IconBug, IconCopy, IconLink, IconMenu2, IconTrash } from "@tabler/icons-react";
+import {
+  IconBan,
+  IconBug,
+  IconCopy,
+  IconChevronDown,
+  IconEdit,
+  IconInfoCircle,
+  IconLink,
+  IconMenu2,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
-import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 import {
   FormStateDebugPanel,
   buildFormStateDebugData,
@@ -66,7 +76,6 @@ import {
 } from "~/base/debug/FormStateDebugPanel";
 
 import {
-  computeEffectiveAssemblyHold,
   normalizeAssemblyState,
 } from "~/modules/job/stateUtils";
 import {
@@ -79,6 +88,14 @@ import { loadJobDetailVM } from "~/modules/job/services/jobDetailVM.server";
 import { handleJobDetailAction } from "~/modules/job/services/jobDetailActions.server";
 import { OverrideIndicator } from "~/components/OverrideIndicator";
 import { formatAddressLines } from "~/utils/addressFormat";
+import {
+  ASSEMBLY_OPERATIONAL_STATUS_LABELS,
+  deriveAssemblyHoldOverlay,
+  deriveAssemblyOperationalStatus,
+} from "~/modules/assembly/derived/assemblyOperationalStatus";
+import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
+import { buildEndCustomerOptions } from "~/modules/job/services/endCustomerOptions";
+import { deriveInternalTargetDate } from "~/modules/job/services/jobTargetDefaults";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -91,19 +108,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export function JobDetailView() {
+  const loaderData = useRouteLoaderData<typeof loader>(
+    "modules/job/routes/jobs.$id"
+  )!;
   const {
     job,
     productsById,
-    assemblyTypes,
     customers,
+    contacts,
     productChoices,
     groupsById,
     activityCounts,
     shipToAddresses,
     defaultLeadDays,
+    internalTargetBufferDays,
     jobTargets,
     assemblyTargetsById,
-  } = useRouteLoaderData<typeof loader>("modules/job/routes/jobs.$id")!;
+  } = loaderData;
+  const locations = loaderData?.locations ?? [];
   const actionData = useActionData<typeof action>() as any;
   const { setCurrentId } = useRecordContext();
   const matches = useMatches();
@@ -321,6 +343,10 @@ export function JobDetailView() {
   const [cancelLabels, setCancelLabels] = useState<string[]>([]);
   const [jobCancelOpen, setJobCancelOpen] = useState(false);
   const [jobCancelReason, setJobCancelReason] = useState("");
+  const [jobStateConfirmOpen, setJobStateConfirmOpen] = useState(false);
+  const [pendingJobState, setPendingJobState] = useState<string | null>(null);
+  const [setupDrawerOpen, setSetupDrawerOpen] = useState(false);
+  const [targetsDrawerOpen, setTargetsDrawerOpen] = useState(false);
   const [asmCancelOpen, setAsmCancelOpen] = useState(false);
   const [asmCancelTarget, setAsmCancelTarget] = useState<any>(null);
   const [asmCancelReason, setAsmCancelReason] = useState("");
@@ -331,12 +357,14 @@ export function JobDetailView() {
   const [asmCancelBaseline, setAsmCancelBaseline] = useState("ORDER");
   // Master table removed; navigation handled via RecordContext
   // Local edit form only
+  const companyAddressFetcher = useFetcher();
+  const contactAddressFetcher = useFetcher();
   const jobToDefaults = (j: any) => ({
     id: j.id,
     projectCode: j.projectCode || "",
     name: j.name || "",
     jobType: j.jobType || "",
-    endCustomerName: j.endCustomerName || "",
+    endCustomerContactId: (j.endCustomerContactId ?? "") as any,
     customerPoNum: j.customerPoNum || "",
     statusWhiteboard: j.statusWhiteboard || "",
     state: j.state || "DRAFT",
@@ -358,7 +386,11 @@ export function JobDetailView() {
       ? new Date(jobTargets.customer.value as any)
       : null,
     targetDate: j.targetDate ? new Date(j.targetDate) : null,
-    dropDeadDate: j.dropDeadDate ? new Date(j.dropDeadDate) : null,
+    dropDeadDate: jobTargets?.dropDead?.value
+      ? new Date(jobTargets.dropDead.value as any)
+      : j.dropDeadDate
+        ? new Date(j.dropDeadDate)
+        : null,
     cutSubmissionDate: j.cutSubmissionDate ? new Date(j.cutSubmissionDate) : null,
     assemblyStatuses: Object.fromEntries(
       (j.assemblies || []).map((a: any) => [
@@ -458,7 +490,6 @@ export function JobDetailView() {
       "projectCode",
       "name",
       "jobType",
-      "endCustomerName",
       "customerPoNum",
       "statusWhiteboard",
       "state",
@@ -477,16 +508,14 @@ export function JobDetailView() {
     if (Object.prototype.hasOwnProperty.call(values, "jobHoldReason")) {
       fd.set("jobHoldReason", holdReason);
     }
-    // Always include companyId so clearing (empty string) propagates to the server
-    if (Object.prototype.hasOwnProperty.call(values, "companyId")) {
-      const raw = values.companyId;
-      fd.set("companyId", raw === undefined || raw === null ? "" : String(raw));
-    }
-    // Always include stockLocationId so clearing propagates
-    if (Object.prototype.hasOwnProperty.call(values, "stockLocationId")) {
-      const raw = values.stockLocationId;
+    const dirtyFields = jobForm.formState.dirtyFields as Record<string, any>;
+    if (
+      Object.prototype.hasOwnProperty.call(values, "endCustomerContactId") &&
+      (dirtyFields?.endCustomerContactId || values.endCustomerContactId)
+    ) {
+      const raw = values.endCustomerContactId;
       fd.set(
-        "stockLocationId",
+        "endCustomerContactId",
         raw === undefined || raw === null ? "" : String(raw)
       );
     }
@@ -508,7 +537,6 @@ export function JobDetailView() {
       }
       return "";
     };
-    const dirtyFields = jobForm.formState.dirtyFields as Record<string, any>;
     const shouldSendDate = (field: string) => Boolean(dirtyFields?.[field]);
     [
       "customerOrderDate",
@@ -601,24 +629,170 @@ export function JobDetailView() {
       (c.name || "").toLowerCase().includes(q)
     );
   }, [customers, customerSearch]);
-  const shipToAddressOptions = useMemo(() => {
-    return (shipToAddresses || []).map((addr: any) => {
+  const customerById = useMemo(() => {
+    const map = new Map<number, any>();
+    (customers || []).forEach((c: any) => {
+      if (c?.id != null) map.set(Number(c.id), c);
+    });
+    return map;
+  }, [customers]);
+  const [companyAddresses, setCompanyAddresses] = useState<any[]>(
+    shipToAddresses || []
+  );
+  const [contactAddresses, setContactAddresses] = useState<any[]>([]);
+  useEffect(() => {
+    setCompanyAddresses(shipToAddresses || []);
+  }, [shipToAddresses]);
+  const shipToAddressId = jobForm.watch("shipToAddressId") as
+    | number
+    | string
+    | null;
+  const stockLocationId = jobForm.watch("stockLocationId") as
+    | number
+    | string
+    | null;
+  const companyId = jobForm.watch("companyId") as number | string | null;
+  const endCustomerContactId = jobForm.watch("endCustomerContactId") as
+    | number
+    | string
+    | null;
+  const contactOptions = useMemo(() => {
+    const companyKey = companyId != null && companyId !== "" ? Number(companyId) : null;
+    return buildEndCustomerOptions(contacts || [], companyKey);
+  }, [contacts, companyId]);
+  const customerLabel = useMemo(() => {
+    if (companyId == null || companyId === "") return "—";
+    const id = Number(companyId);
+    const match = (customers || []).find((c: any) => Number(c.id) === id);
+    return match?.name || String(companyId);
+  }, [companyId, customers]);
+  const endCustomerContactLabel = useMemo(() => {
+    if (endCustomerContactId == null || endCustomerContactId === "") return "—";
+    const id = Number(endCustomerContactId);
+    const match = (contacts || []).find((c: any) => Number(c.id) === id);
+    return (
+      [match?.firstName, match?.lastName].filter(Boolean).join(" ") ||
+      (Number.isFinite(id) ? `Contact ${id}` : "—")
+    );
+  }, [contacts, endCustomerContactId]);
+  const stockLocationLabel = useMemo(() => {
+    if (stockLocationId == null || stockLocationId === "") return "—";
+    const locId = Number(stockLocationId);
+    const match = (locations || []).find((loc) => Number(loc.id) === locId);
+    return match?.name || `Location ${locId}`;
+  }, [locations, stockLocationId]);
+  const companyAddressOptions = useMemo(() => {
+    return (companyAddresses || []).map((addr: any) => {
       const lines = formatAddressLines(addr);
       const base = lines[0] || `Address ${addr.id}`;
       const tail = lines.slice(1).join(", ");
-      return { value: String(addr.id), label: tail ? `${base} — ${tail}` : base };
+      return {
+        value: String(addr.id),
+        label: tail ? `${base} — ${tail}` : base,
+        group: "Customer addresses",
+      };
     });
-  }, [shipToAddresses]);
+  }, [companyAddresses]);
+  const contactAddressOptions = useMemo(() => {
+    return (contactAddresses || []).map((addr: any) => {
+      const lines = formatAddressLines(addr);
+      const base = lines[0] || `Address ${addr.id}`;
+      const tail = lines.slice(1).join(", ");
+      return {
+        value: String(addr.id),
+        label: tail ? `${base} — ${tail}` : base,
+        group: "End-customer addresses",
+      };
+    });
+  }, [contactAddresses]);
+  const shipToAddressOptions = useMemo(() => {
+    return endCustomerContactId
+      ? [...companyAddressOptions, ...contactAddressOptions]
+      : [...companyAddressOptions];
+  }, [companyAddressOptions, contactAddressOptions, endCustomerContactId]);
   const shipToAddressById = useMemo(() => {
     const map = new Map<number, any>();
-    (shipToAddresses || []).forEach((addr: any) => map.set(addr.id, addr));
+    [...companyAddresses, ...contactAddresses].forEach((addr: any) => {
+      if (addr?.id != null) map.set(Number(addr.id), addr);
+    });
     return map;
-  }, [shipToAddresses]);
+  }, [companyAddresses, contactAddresses]);
   const companyDefaultAddress = useMemo(() => {
-    const defaultId = job?.company?.defaultAddressId ?? null;
+    if (companyId == null || companyId === "") return null;
+    const company = customerById.get(Number(companyId));
+    const defaultId = company?.defaultAddressId ?? null;
     if (!defaultId) return null;
-    return shipToAddressById.get(defaultId) ?? null;
-  }, [job?.company?.defaultAddressId, shipToAddressById]);
+    return shipToAddressById.get(Number(defaultId)) ?? null;
+  }, [companyId, customerById, shipToAddressById]);
+  const buildShipToHint = () => {
+    const hintLines: string[] = [];
+    if (!shipToAddressId && companyDefaultAddress) {
+      const lines = formatAddressLines(companyDefaultAddress);
+      hintLines.push(
+        `Default: ${
+          lines.length ? lines.join(", ") : `Address ${companyDefaultAddress.id}`
+        }`
+      );
+    }
+    if (!shipToAddressId && job?.shipToLocation) {
+      hintLines.push(
+        `Legacy ship-to location: ${
+          job.shipToLocation.name || `Location ${job.shipToLocation.id}`
+        }`
+      );
+    }
+    return hintLines.length ? hintLines.join(" · ") : null;
+  };
+  useEffect(() => {
+    const nextCompanyId =
+      companyId != null && companyId !== "" ? Number(companyId) : null;
+    if (!nextCompanyId) return;
+    if (companyAddressFetcher.state === "idle") {
+      companyAddressFetcher.load(
+        `/api/company-addresses?companyId=${nextCompanyId}`
+      );
+    }
+  }, [companyId, companyAddressFetcher]);
+  useEffect(() => {
+    const data = companyAddressFetcher.data as { addresses?: any[] } | undefined;
+    if (data?.addresses) {
+      setCompanyAddresses(data.addresses);
+    }
+  }, [companyAddressFetcher.data]);
+  const prevContactIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const nextContactId =
+      endCustomerContactId != null && endCustomerContactId !== ""
+        ? Number(endCustomerContactId)
+        : null;
+    if (prevContactIdRef.current === nextContactId) return;
+    prevContactIdRef.current = nextContactId;
+    if (!nextContactId) {
+      setContactAddresses([]);
+      return;
+    }
+    if (contactAddressFetcher.state === "idle") {
+      contactAddressFetcher.load(
+        `/api/contact-addresses?contactId=${nextContactId}`
+      );
+    }
+  }, [endCustomerContactId, contactAddressFetcher]);
+  useEffect(() => {
+    if (!endCustomerContactId || contactAddresses.length) return;
+    const nextContactId = Number(endCustomerContactId);
+    if (!Number.isFinite(nextContactId)) return;
+    if (contactAddressFetcher.state === "idle") {
+      contactAddressFetcher.load(
+        `/api/contact-addresses?contactId=${nextContactId}`
+      );
+    }
+  }, [endCustomerContactId, contactAddresses.length, contactAddressFetcher]);
+  useEffect(() => {
+    const data = contactAddressFetcher.data as { addresses?: any[] } | undefined;
+    if (data?.addresses) {
+      setContactAddresses(data.addresses);
+    }
+  }, [contactAddressFetcher.data]);
   const toDateInputValue = (value: any) => {
     if (!value) return null;
     if (value instanceof Date) return value;
@@ -650,17 +824,22 @@ export function JobDetailView() {
   const jobInternalDate = toDateInputValue(jobForm.watch("internalTargetDate"));
   const jobCustomerDate = toDateInputValue(jobForm.watch("customerTargetDate"));
   const dirtyFields = jobForm.formState.dirtyFields as Record<string, any>;
-  const internalDerived =
-    jobTargets?.internal?.source === "DERIVED" &&
-    !dirtyFields?.internalTargetDate;
-  const customerDerived =
-    jobTargets?.customer?.source === "DERIVED" &&
-    !dirtyFields?.customerTargetDate;
-  const derivedNote = `Derived from job created + ${defaultLeadDays} days.`;
   const jobDateError =
     jobInternalDate && jobCustomerDate && jobInternalDate > jobCustomerDate
       ? "Internal target date must be on or before customer target date."
       : null;
+  const shipToPreviewAddress =
+    shipToAddressId != null && shipToAddressId !== ""
+      ? shipToAddressById.get(Number(shipToAddressId)) ?? null
+      : null;
+  const shipToSummaryLabel = (() => {
+    if (shipToPreviewAddress) {
+      const lines = formatAddressLines(shipToPreviewAddress);
+      return lines[0] || shipToPreviewAddress.name || "Selected address";
+    }
+    if (job?.shipToLocation?.name) return job.shipToLocation.name;
+    return "—";
+  })();
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(true);
   const [assemblyOnly, setAssemblyOnly] = useState(true);
@@ -688,46 +867,6 @@ export function JobDetailView() {
   const assemblyManualHoldTypeMap =
     (jobForm.watch("assemblyManualHoldType") as Record<string, string | undefined>) ||
     {};
-  const assemblyWhiteboardMap =
-    (jobForm.watch("assemblyWhiteboards") as Record<
-      string,
-      string | undefined
-    >) || {};
-  const assemblyTypeMap =
-    (jobForm.watch("assemblyTypes") as Record<string, string | undefined>) ||
-    {};
-  const assemblyTypeOptions = (assemblyTypes || []).map((t) => ({
-    value: t.label || "",
-    label: t.label || "",
-  }));
-  const handleAssemblyWhiteboardChange = useCallback(
-    (asmIds: number | number[], next: string) => {
-      const targets = Array.isArray(asmIds) ? asmIds : [asmIds];
-      targets.forEach((asmId) => {
-        jobForm.setValue(`assemblyWhiteboards.${asmId}` as any, next, {
-          shouldDirty: true,
-          shouldTouch: true,
-        });
-      });
-    },
-    [jobForm]
-  );
-  const getMergedWhiteboardValue = (asmIds: number[]) => {
-    const seen = new Set<string>();
-    const merged: string[] = [];
-    asmIds.forEach((asmId) => {
-      const rawValue =
-        assemblyWhiteboardMap[String(asmId)] ??
-        (assembliesById.get(asmId)?.statusWhiteboard as string | null) ??
-        "";
-      const key = rawValue.trim();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        merged.push(rawValue);
-      }
-    });
-    return merged.join(" | ");
-  };
   const openAssemblyCancel = useCallback(
     (assembly: any, mode: "full" | "remaining") => {
       const ordered = Array.isArray(assembly.qtyOrderedBreakdown)
@@ -907,6 +1046,77 @@ export function JobDetailView() {
       : "INTERNAL"
     : "OFF";
 
+  const openEntityModal = useCallback(
+    ({ entity, id }: { entity: string; id: string | number }) => {
+      if (id == null || id === "") return;
+      if (entity === "Address") {
+        navigate(`/addresses/${id}`);
+      }
+    },
+    [navigate]
+  );
+
+  const jobFieldCtx = useMemo(
+    () => ({
+      jobState: jobStateValue,
+      stockLocationLabel,
+      addressById: shipToAddressById,
+      jobShipToLocation: job?.shipToLocation ?? null,
+      jobDefaultAddress: companyDefaultAddress,
+      openEntityModal,
+      fieldOptions: {
+        endCustomerContact: contactOptions,
+        job_shipto_address: shipToAddressOptions,
+      },
+    }),
+    [
+      jobStateValue,
+      stockLocationLabel,
+      shipToAddressById,
+      job?.shipToLocation,
+      companyDefaultAddress,
+      openEntityModal,
+      contactOptions,
+      shipToAddressOptions,
+    ]
+  );
+
+  const jobOrderDate = jobForm.watch("customerOrderDate") as Date | null;
+  const jobCustomerTargetDate = jobForm.watch("customerTargetDate") as
+    | Date
+    | null;
+  useEffect(() => {
+    if (jobStateValue !== "DRAFT") return;
+    const dirty = jobForm.formState.dirtyFields as Record<string, any>;
+    if (dirty?.internalTargetDate) return;
+    const derived = deriveInternalTargetDate({
+      baseDate: jobOrderDate,
+      customerTargetDate: jobCustomerTargetDate,
+      defaultLeadDays,
+      bufferDays: internalTargetBufferDays,
+      now: new Date(),
+    });
+    if (!derived) return;
+    const current = jobForm.getValues("internalTargetDate") as Date | null;
+    const sameDay =
+      current && derived
+        ? current.toISOString().slice(0, 10) === derived.toISOString().slice(0, 10)
+        : false;
+    if (!sameDay) {
+      jobForm.setValue("internalTargetDate", derived, {
+        shouldDirty: false,
+        shouldTouch: false,
+      });
+    }
+  }, [
+    jobStateValue,
+    jobOrderDate,
+    jobCustomerTargetDate,
+    defaultLeadDays,
+    internalTargetBufferDays,
+    jobForm,
+  ]);
+
   const jobHoldDisabled =
     jobStateValue === "COMPLETE" || jobStateValue === "CANCELED";
   const holdSegmentOptions = [
@@ -916,10 +1126,56 @@ export function JobDetailView() {
   ];
   const jobStateOptions = [
     { label: "Draft", value: "DRAFT" },
+    { label: "New", value: "NEW" },
     { label: "Active", value: "ACTIVE" },
     { label: "Complete", value: "COMPLETE" },
     { label: "Canceled", value: "CANCELED" },
   ];
+  const jobStateLabels = Object.fromEntries(
+    jobStateOptions.map((opt) => [opt.value, opt.label])
+  ) as Record<string, string>;
+  const jobStateLabel = jobStateLabels[jobStateValue] || jobStateValue;
+  const isDraftMode = jobStateValue === "DRAFT";
+  const isCalmMode = !isDraftMode;
+  const stateTransitionMeta: Record<
+    string,
+    { title: string; text: string; confirmLabel: string }
+  > = {
+    "DRAFT->NEW": {
+      title: "Move job to New?",
+      text: "This signals setup is complete and shifts the detail view into execution mode.",
+      confirmLabel: "Move to New",
+    },
+    "NEW->ACTIVE": {
+      title: "Start job?",
+      text: "This begins execution and marks the job as active.",
+      confirmLabel: "Start job",
+    },
+    "ACTIVE->COMPLETE": {
+      title: "Complete job?",
+      text: "Completing a job should only happen once assemblies are done.",
+      confirmLabel: "Mark complete",
+    },
+  };
+  const transitionKey = (from: string, to: string) => `${from}->${to}`;
+  const requiresStateConfirm = (from: string, to: string) =>
+    Boolean(stateTransitionMeta[transitionKey(from, to)]);
+  const pendingStateMeta =
+    pendingJobState && jobStateValue
+      ? stateTransitionMeta[transitionKey(jobStateValue, pendingJobState)]
+      : null;
+  const stickyRailStyle = {
+    position: "sticky" as const,
+    left: 0,
+    background: "var(--mantine-color-body)",
+    zIndex: 2,
+  };
+  const stickyAssemblyStyle = {
+    position: "sticky" as const,
+    left: 25,
+    background: "var(--mantine-color-body)",
+    zIndex: 1,
+  };
   const asmCancelOrderedBySize = Array.isArray(
     asmCancelTarget?.qtyOrderedBreakdown
   )
@@ -985,6 +1241,32 @@ export function JobDetailView() {
     });
     setJobCancelOpen(false);
   };
+  const requestJobStateChange = (nextState: string) => {
+    if (!nextState || nextState === jobStateValue) return;
+    if (nextState === "CANCELED") {
+      setJobCancelReason(String(jobForm.getValues("jobCancelReason") || ""));
+      setJobCancelOpen(true);
+      return;
+    }
+    if (requiresStateConfirm(jobStateValue, nextState)) {
+      setPendingJobState(nextState);
+      setJobStateConfirmOpen(true);
+      return;
+    }
+    jobForm.setValue("state", nextState, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+  };
+  const confirmJobStateChange = () => {
+    if (!pendingJobState) return;
+    jobForm.setValue("state", pendingJobState, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
+    setPendingJobState(null);
+    setJobStateConfirmOpen(false);
+  };
 
   // returnUrl no longer used (find handled externally)
   return (
@@ -1005,26 +1287,27 @@ export function JobDetailView() {
         })()}
         <Group gap="sm" align="center" wrap="wrap">
           <Stack gap={4}>
-            <SegmentedControl
-              data={jobStateOptions}
-              value={jobStateValue}
-              onChange={(value) => {
-                if (value === "CANCELED") {
-                  setJobCancelReason(
-                    String(jobForm.getValues("jobCancelReason") || "")
-                  );
-                  setJobCancelOpen(true);
-                  return;
-                }
-                jobForm.setValue("state", value, {
-                  shouldDirty: true,
-                  shouldTouch: true,
-                });
-              }}
-            />
-            <Badge variant="light" color="gray">
-              Legacy status: {job.status || "—"}
-            </Badge>
+            <Menu position="bottom-start" withArrow>
+              <Menu.Target>
+                <Button
+                  variant="light"
+                  rightSection={<IconChevronDown size={16} />}
+                >
+                  {jobStateLabel}
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {jobStateOptions.map((opt) => (
+                  <Menu.Item
+                    key={opt.value}
+                    disabled={opt.value === jobStateValue}
+                    onClick={() => requestJobStateChange(opt.value)}
+                  >
+                    {opt.label}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
           </Stack>
           <Stack gap={4}>
             <SegmentedControl
@@ -1137,85 +1420,291 @@ export function JobDetailView() {
           </Menu>
         </Group>
       </Group>
+      <Text size="xs" c="dimmed">
+        Legacy status: {job.status || "—"}
+      </Text>
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Title order={4}>Dates & Shipping</Title>
-        </Card.Section>
-        <Divider my="xs" />
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-          <Stack gap={8}>
-            <DatePickerInput
-              label="Internal target date"
-              value={toDateInputValue(jobForm.watch("internalTargetDate"))}
-              onChange={(value) =>
-                jobForm.setValue("internalTargetDate", value ?? null, {
-                  shouldDirty: true,
-                  shouldTouch: true,
-                })
-              }
-              valueFormat="YYYY-MM-DD"
-              clearable
-            />
-            {internalDerived ? (
-              <Text size="xs" c="dimmed">
-                {derivedNote}
-              </Text>
-            ) : null}
-            <DatePickerInput
-              label="Customer target date"
-              value={toDateInputValue(jobForm.watch("customerTargetDate"))}
-              onChange={(value) =>
-                jobForm.setValue("customerTargetDate", value ?? null, {
-                  shouldDirty: true,
-                  shouldTouch: true,
-                })
-              }
-              valueFormat="YYYY-MM-DD"
-              clearable
-            />
-            {customerDerived ? (
-              <Text size="xs" c="dimmed">
-                {derivedNote}
-              </Text>
-            ) : null}
-          </Stack>
-          <Stack gap={8}>
-            <DatePickerInput
-              label="Drop-dead date"
-              value={toDateInputValue(jobForm.watch("dropDeadDate"))}
-              onChange={(value) =>
-                jobForm.setValue("dropDeadDate", value ?? null, {
-                  shouldDirty: true,
-                  shouldTouch: true,
-                })
-              }
-              valueFormat="YYYY-MM-DD"
-              clearable
-            />
-          </Stack>
-        </SimpleGrid>
-        {jobDateError ? (
-          <Text size="sm" c="red" mt="xs">
-            {jobDateError}
-          </Text>
-        ) : null}
-      </Card>
-
-      <div>
+      {isDraftMode ? (
         <JobDetailForm
           mode="edit"
           form={jobForm as any}
           job={job}
           openCustomerModal={() => setCustomerModalOpen(true)}
-          fieldCtx={{
-            fieldOptions: { job_shipto_address: shipToAddressOptions },
-            addressById: shipToAddressById,
-            jobShipToLocation: job.shipToLocation ?? null,
-            jobDefaultAddress: companyDefaultAddress,
-          }}
+          fieldCtx={jobFieldCtx}
         />
-      </div>
+      ) : (
+        <Stack gap="md">
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Title order={4}>Promise</Title>
+                <Button
+                  variant="light"
+                  leftSection={<IconEdit size={16} />}
+                  onClick={() => setTargetsDrawerOpen(true)}
+                >
+                  Edit targets
+                </Button>
+              </Group>
+            </Card.Section>
+            <Divider my="xs" />
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Customer delivery
+                </Text>
+                <Text>{formatDateLabel(jobForm.watch("customerTargetDate"))}</Text>
+              </Stack>
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Internal target
+                </Text>
+                <Text>{formatDateLabel(jobForm.watch("internalTargetDate"))}</Text>
+              </Stack>
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Drop-dead
+                </Text>
+                <Text>{formatDateLabel(jobForm.watch("dropDeadDate"))}</Text>
+              </Stack>
+            </SimpleGrid>
+            <Divider my="xs" />
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed">
+                Ship to
+              </Text>
+              <Text>{shipToSummaryLabel}</Text>
+            </Stack>
+          </Card>
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Title order={4}>Job details</Title>
+                <Button
+                  variant="default"
+                  leftSection={<IconEdit size={16} />}
+                  onClick={() => setSetupDrawerOpen(true)}
+                >
+                  Edit job
+                </Button>
+              </Group>
+            </Card.Section>
+            <Divider my="xs" />
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Customer
+                </Text>
+                <Text>{customerLabel}</Text>
+              </Stack>
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  End customer
+                </Text>
+                <Text>
+                  {endCustomerContactLabel !== "—"
+                    ? endCustomerContactLabel
+                    : job.endCustomerName || "—"}
+                </Text>
+              </Stack>
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Project code
+                </Text>
+                <Text>{jobForm.watch("projectCode") || "—"}</Text>
+              </Stack>
+              <Stack gap={4}>
+                <Text size="xs" c="dimmed">
+                  Name
+                </Text>
+                <Text>{jobForm.watch("name") || "—"}</Text>
+              </Stack>
+            </SimpleGrid>
+          </Card>
+        </Stack>
+      )}
+
+      <Drawer
+        opened={targetsDrawerOpen}
+        onClose={() => setTargetsDrawerOpen(false)}
+        title="Targets & Delivery"
+        position="right"
+        size="lg"
+      >
+        <Stack gap="md">
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <Stack gap="sm">
+              <DatePickerInput
+                label="Internal target date"
+                value={toDateInputValue(jobForm.watch("internalTargetDate"))}
+                onChange={(value) =>
+                  jobForm.setValue("internalTargetDate", value ?? null, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+              <DatePickerInput
+                label="Customer target date"
+                value={toDateInputValue(jobForm.watch("customerTargetDate"))}
+                onChange={(value) =>
+                  jobForm.setValue("customerTargetDate", value ?? null, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+            </Stack>
+            <Stack gap="sm">
+              <DatePickerInput
+                label="Drop-dead date"
+                value={toDateInputValue(jobForm.watch("dropDeadDate"))}
+                onChange={(value) =>
+                  jobForm.setValue("dropDeadDate", value ?? null, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
+                valueFormat="YYYY-MM-DD"
+                clearable
+              />
+              <AddressPickerField
+                label="Ship to"
+                value={
+                  shipToAddressId != null && shipToAddressId !== ""
+                    ? Number(shipToAddressId)
+                    : null
+                }
+                options={shipToAddressOptions}
+                previewAddress={shipToPreviewAddress}
+                hint={buildShipToHint() || undefined}
+                onChange={(nextId) =>
+                  jobForm.setValue("shipToAddressId", nextId, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
+              />
+              <Stack gap={4}>
+                <Group gap="xs">
+                  <Text size="xs" c="dimmed">
+                    Stock location
+                  </Text>
+                  <Tooltip
+                    label="Derived from customer company depot; used for material consumption."
+                    withArrow
+                  >
+                    <span>
+                      <IconInfoCircle size={14} />
+                    </span>
+                  </Tooltip>
+                </Group>
+                <Text size="sm">{stockLocationLabel}</Text>
+              </Stack>
+            </Stack>
+          </SimpleGrid>
+          {jobDateError ? (
+            <Text size="sm" c="red">
+              {jobDateError}
+            </Text>
+          ) : null}
+          <Divider />
+          <Stack gap="xs">
+            <Title order={5}>Assembly impact</Title>
+            <div style={{ overflowX: "auto" }}>
+              <Table withRowBorders>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Assembly</Table.Th>
+                    <Table.Th>Internal target</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {(job.assemblies || []).map((assembly: any) => {
+                    const product = assembly.productId
+                      ? (productsById as any)[assembly.productId]
+                      : null;
+                    const targets = assemblyTargetsById?.[assembly.id];
+                    const internalTarget = targets?.internal;
+                    const derived = deriveAssemblyOperationalStatus({
+                      orderedBySize: assembly.qtyOrderedBreakdown,
+                      canceledBySize: (assembly as any).c_canceled_Breakdown,
+                      qtyCut: (assembly as any).c_qtyCut,
+                      qtySew: (assembly as any).c_qtySew,
+                      qtyFinish: (assembly as any).c_qtyFinish,
+                      qtyPack: (assembly as any).c_qtyPack,
+                    });
+                    return (
+                      <Table.Tr key={`impact-${assembly.id}`}>
+                        <Table.Td>
+                          <Link to={`assembly/${assembly.id}`}>
+                            {assembly.name || product?.name || `Assembly ${assembly.id}`}
+                          </Link>
+                        </Table.Td>
+                        <Table.Td>{formatDateLabel(internalTarget?.value)}</Table.Td>
+                        <Table.Td>
+                          {ASSEMBLY_OPERATIONAL_STATUS_LABELS[derived.status]}
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </div>
+          </Stack>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => setTargetsDrawerOpen(false)}
+            >
+              Close
+            </Button>
+            <Button
+              disabled={!jobForm.formState.isDirty}
+              onClick={() => save(jobForm.getValues())}
+            >
+              Save changes
+            </Button>
+          </Group>
+        </Stack>
+      </Drawer>
+
+      <Drawer
+        opened={setupDrawerOpen}
+        onClose={() => setSetupDrawerOpen(false)}
+        title="Edit job setup"
+        position="right"
+        size="lg"
+      >
+        <Stack gap="md">
+          <JobDetailForm
+            mode="edit"
+            form={jobForm as any}
+            job={job}
+            openCustomerModal={() => setCustomerModalOpen(true)}
+            fieldCtx={jobFieldCtx}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => setSetupDrawerOpen(false)}
+            >
+              Close
+            </Button>
+            <Button
+              disabled={!jobForm.formState.isDirty}
+              onClick={() => save(jobForm.getValues())}
+            >
+              Save changes
+            </Button>
+          </Group>
+        </Stack>
+      </Drawer>
 
       {canDebug
         ? (() => {
@@ -1338,33 +1827,27 @@ export function JobDetailView() {
               </Form>
             </Group>
           </Group>
-          <Table
-            // withTableBorder
-            withRowBorders
-            withColumnBorders
-            highlightOnHover
-            className="asm-rail-table"
-          >
-            <Table.Thead>
+          <div style={{ overflowX: "auto" }}>
+            <Table
+              // withTableBorder
+              withRowBorders
+              withColumnBorders
+              highlightOnHover
+              className="asm-rail-table"
+            >
+              <Table.Thead>
               <Table.Tr>
-                <Table.Th className="asm-rail-cell" style={{ width: 25 }} />
-                <Table.Th style={{ width: 60, textAlign: "center" }}>
-                  ID
-                </Table.Th>
-                <Table.Th>Product SKU</Table.Th>
-                <Table.Th>Assembly Name</Table.Th>
-                <Table.Th>Assembly Type</Table.Th>
-                <Table.Th>Variant Set</Table.Th>
+                <Table.Th
+                  className="asm-rail-cell"
+                  style={{ width: 25, ...stickyRailStyle }}
+                />
+                <Table.Th style={stickyAssemblyStyle}>Assembly</Table.Th>
                 <Table.Th># Ordered</Table.Th>
-                <Table.Th>Internal Target</Table.Th>
-                <Table.Th>Customer Target</Table.Th>
                 <Table.Th>Cut</Table.Th>
-                <Table.Th>Finish</Table.Th>
-                <Table.Th>Pack</Table.Th>
-                <Table.Th>Legacy status</Table.Th>
-                <Table.Th>Manual Hold</Table.Th>
-                <Table.Th>Effective Hold</Table.Th>
-                <Table.Th>Whiteboard</Table.Th>
+                <Table.Th>Made</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Holds / Blockers</Table.Th>
+                <Table.Th>Internal Target</Table.Th>
                 <Table.Th style={{ width: 40 }}></Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -1446,12 +1929,6 @@ export function JobDetailView() {
                       : [a.id];
                   const isGroupedRow = memberIds.length > 1;
                   const isGroupLeader = isGroupedRow && pos === "first";
-                  const singleWhiteboardValue =
-                    assemblyWhiteboardMap[String(a.id)] ??
-                    (a.statusWhiteboard || "");
-                  const whiteboardSummary = isGroupedRow
-                    ? getMergedWhiteboardValue(memberIds)
-                    : singleWhiteboardValue;
                   const manualHoldOn = Boolean(
                     assemblyManualHoldOnMap[String(a.id)] ?? a.manualHoldOn
                   );
@@ -1463,22 +1940,14 @@ export function JobDetailView() {
                     assemblyManualHoldTypeMap[String(a.id)] ??
                     a.manualHoldType ??
                     "";
-                  const manualHoldSegmentValue = manualHoldOn
-                    ? manualHoldType === "CLIENT"
-                      ? "CLIENT"
-                      : "INTERNAL"
-                    : "OFF";
-                  const effectiveHold = computeEffectiveAssemblyHold({
+                  const holdOverlay = deriveAssemblyHoldOverlay({
                     jobHoldOn,
+                    jobHoldType,
+                    jobHoldReason,
                     manualHoldOn,
+                    manualHoldType,
+                    manualHoldReason,
                   });
-                  const effectiveHoldLabel = effectiveHold
-                    ? jobHoldOn && manualHoldOn
-                      ? "Held (Job + Assembly)"
-                      : jobHoldOn
-                      ? "Held (Job)"
-                      : "Held (Assembly)"
-                    : null;
                   const isHovered =
                     isGroupedRow &&
                     hoverGroupId != null &&
@@ -1509,7 +1978,14 @@ export function JobDetailView() {
                     Number((a as any).c_qtyPack ?? 0) > 0;
                   const targets = assemblyTargetsById?.[a.id];
                   const internalTarget = targets?.internal;
-                  const customerTarget = targets?.customer;
+                  const derivedStatus = deriveAssemblyOperationalStatus({
+                    orderedBySize: a.qtyOrderedBreakdown,
+                    canceledBySize: (a as any).c_canceled_Breakdown,
+                    qtyCut: (a as any).c_qtyCut,
+                    qtySew: (a as any).c_qtySew,
+                    qtyFinish: (a as any).c_qtyFinish,
+                    qtyPack: (a as any).c_qtyPack,
+                  });
                   const rowClassName =
                     [
                       isGroupedRow ? "asm-row-group" : "",
@@ -1532,6 +2008,7 @@ export function JobDetailView() {
                         className={`asm-rail-cell ${pos ? "is-in-group" : ""} ${
                           pos === "first" ? "is-first" : ""
                         } ${pos === "last" ? "is-last" : ""}`}
+                        style={stickyRailStyle}
                       >
                         {pos === "first" ? (
                           <Tooltip label="Linked group">
@@ -1560,60 +2037,65 @@ export function JobDetailView() {
                         )}
                       </Table.Td>
 
-                      <Table.Td align="center">
-                        {a.assemblyGroupId ? (
+                      <Table.Td style={stickyAssemblyStyle}>
+                        <Stack gap={2}>
                           <Link
-                            to={`assembly/${(
-                              groupMembers.get(a.assemblyGroupId) || [a.id]
-                            ).join(",")}`}
+                            to={
+                              a.assemblyGroupId
+                                ? `assembly/${(
+                                    groupMembers.get(a.assemblyGroupId) || [a.id]
+                                  ).join(",")}`
+                                : `assembly/${a.id}`
+                            }
                           >
-                            {a.id}
+                            {a.name || p?.name || `Assembly ${a.id}`}
                           </Link>
-                        ) : (
-                          <Link to={`assembly/${a.id}`}>{a.id}</Link>
-                        )}
+                          <Text size="xs" c="dimmed">
+                            {p?.sku ? `SKU ${p.sku}` : `Assembly ${a.id}`}
+                          </Text>
+                        </Stack>
                       </Table.Td>
-                      <Table.Td>{p?.sku || ""}</Table.Td>
-                      <Table.Td>{a.name || p?.name || ""}</Table.Td>
                       <Table.Td>
-                        <NativeSelect
-                          data={assemblyTypeOptions}
-                          value={
-                            assemblyTypeMap[String(a.id)] ??
-                            (a as any).assemblyType ??
-                            "Prod"
-                          }
-                          onChange={(e) =>
-                            jobForm.setValue(
-                              `assemblyTypes.${a.id}` as any,
-                              e.currentTarget.value,
-                              { shouldDirty: true, shouldTouch: true }
-                            )
-                          }
-                          size="xs"
-                        />
-                      </Table.Td>
-                      <Table.Td>{p?.variantSet?.name || ""}</Table.Td>
-                      <Table.Td>
-                        <Stack gap={4}>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            onClick={() => {
-                              const labels = (p?.variantSet?.variants ||
-                                []) as string[];
-                              setQtyAsm({ ...a, labels });
-                              setQtyModalOpen(true);
-                            }}
-                          >
-                            {effectiveOrdered}
-                          </Button>
+                        <Stack gap={2}>
+                          <Text size="sm">{effectiveOrdered}</Text>
                           {canceledQty > 0 ? (
-                            <Badge size="xs" color="orange" variant="light">
+                            <Text size="xs" c="dimmed">
                               Canceled {canceledQty}/{orderedTotal}
-                            </Badge>
+                            </Text>
                           ) : null}
                         </Stack>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{derivedStatus.cutQty}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{derivedStatus.makeQty}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">
+                          {ASSEMBLY_OPERATIONAL_STATUS_LABELS[derivedStatus.status]}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        {holdOverlay.hasHold ? (
+                          <Group gap="xs" wrap="wrap">
+                            {holdOverlay.labels.map((hold, index) => (
+                              <Tooltip
+                                key={`${a.id}-hold-${index}`}
+                                label={hold.reason || undefined}
+                                disabled={!hold.reason}
+                              >
+                                <Badge size="xs" color="orange" variant="light">
+                                  {hold.label}
+                                </Badge>
+                              </Tooltip>
+                            ))}
+                          </Group>
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            —
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="nowrap">
@@ -1629,133 +2111,6 @@ export function JobDetailView() {
                             )}
                           />
                         </Group>
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap={4} wrap="nowrap">
-                          <Text size="sm">
-                            {formatDateLabel(customerTarget?.value)}
-                          </Text>
-                          <OverrideIndicator
-                            isOverridden={customerTarget?.source === "OVERRIDE"}
-                            tooltip={buildOverrideTooltip(
-                              "customer target",
-                              customerTarget?.value,
-                              customerTarget?.jobValue
-                            )}
-                          />
-                        </Group>
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => {
-                            const labels = (p?.variantSet?.variants ||
-                              []) as string[];
-                            const cols = getVariantLabels(
-                              labels,
-                              p?.variantSet?.variants?.length as any
-                            );
-                            const current = Array.isArray(a.qtyCutBreakdown)
-                              ? a.qtyCutBreakdown
-                              : [];
-                            const initial = Array.from(
-                              { length: cols.length },
-                              (_, i) => current[i] || 0
-                            );
-                            setCutAsm({ ...a, labels: cols });
-                            setCutArr(initial);
-                            setCutModalOpen(true);
-                          }}
-                        >
-                          {(a as any).c_qtyCut ?? 0}
-                        </Button>
-                      </Table.Td>
-                      <Table.Td>{(a as any).c_qtyFinish ?? ""}</Table.Td>
-                      <Table.Td>{(a as any).c_qtyPack ?? ""}</Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color="gray" variant="light">
-                          Legacy status: {a.status || "—"}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Stack gap={4}>
-                          <SegmentedControl
-                            data={holdSegmentOptions}
-                            value={manualHoldSegmentValue}
-                            onChange={(value) => {
-                              if (value === "OFF") {
-                                jobForm.setValue(
-                                  `assemblyManualHoldOn.${a.id}` as any,
-                                  false,
-                                  { shouldDirty: true, shouldTouch: true }
-                                );
-                                jobForm.setValue(
-                                  `assemblyManualHoldReason.${a.id}` as any,
-                                  "",
-                                  { shouldDirty: true, shouldTouch: true }
-                                );
-                                jobForm.setValue(
-                                  `assemblyManualHoldType.${a.id}` as any,
-                                  "",
-                                  { shouldDirty: true, shouldTouch: true }
-                                );
-                                return;
-                              }
-                              jobForm.setValue(
-                                `assemblyManualHoldOn.${a.id}` as any,
-                                true,
-                                { shouldDirty: true, shouldTouch: true }
-                              );
-                              jobForm.setValue(
-                                `assemblyManualHoldType.${a.id}` as any,
-                                value,
-                                { shouldDirty: true, shouldTouch: true }
-                              );
-                            }}
-                            size="xs"
-                          />
-                          {manualHoldSegmentValue !== "OFF" ? (
-                            <TextInput
-                              size="xs"
-                              placeholder="Reason"
-                              value={manualHoldReason}
-                              onChange={(e) =>
-                                jobForm.setValue(
-                                  `assemblyManualHoldReason.${a.id}` as any,
-                                  e.currentTarget.value,
-                                  { shouldDirty: true, shouldTouch: true }
-                                )
-                              }
-                            />
-                          ) : null}
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>
-                        {effectiveHoldLabel ? (
-                          <Badge size="sm" color="orange" variant="light">
-                            {effectiveHoldLabel}
-                          </Badge>
-                        ) : (
-                          <Text size="sm" c="dimmed">
-                            —
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        {(!isGroupedRow || isGroupLeader) && (
-                          <TextInput
-                            size="xs"
-                            placeholder="Whiteboard"
-                            value={whiteboardSummary}
-                            onChange={(e) =>
-                              handleAssemblyWhiteboardChange(
-                                isGroupedRow ? memberIds : a.id,
-                                e.currentTarget.value
-                              )
-                            }
-                          />
-                        )}
                       </Table.Td>
                       <Table.Td align="center">
                         <AssemblyRowMenu
@@ -1774,8 +2129,9 @@ export function JobDetailView() {
                   );
                 });
               })()}
-            </Table.Tbody>
-          </Table>
+              </Table.Tbody>
+            </Table>
+          </div>
         </Card>
       )}
 
@@ -2062,6 +2418,37 @@ export function JobDetailView() {
               }}
             >
               Delete Job
+            </Button>
+          </Group>
+        </Stack>
+      </HotkeyAwareModal>
+
+      <HotkeyAwareModal
+        opened={jobStateConfirmOpen}
+        onClose={() => {
+          setJobStateConfirmOpen(false);
+          setPendingJobState(null);
+        }}
+        title={pendingStateMeta?.title || "Change job state"}
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            {pendingStateMeta?.text ||
+              "Confirm the job state change before continuing."}
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => {
+                setJobStateConfirmOpen(false);
+                setPendingJobState(null);
+              }}
+            >
+              Back
+            </Button>
+            <Button onClick={confirmJobStateChange}>
+              {pendingStateMeta?.confirmLabel || "Confirm"}
             </Button>
           </Group>
         </Stack>

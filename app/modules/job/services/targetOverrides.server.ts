@@ -1,9 +1,16 @@
 import type { FieldSource } from "~/modules/job/services/targetOverrides.shared";
 import { formatSourceChip } from "~/modules/job/services/targetOverrides.shared";
+import { deriveInternalTargetDate } from "~/modules/job/services/jobTargetDefaults";
 
 export const DEFAULT_INTERNAL_TARGET_LEAD_DAYS_KEY =
   "defaultInternalTargetLeadDays";
 export const DEFAULT_INTERNAL_TARGET_LEAD_DAYS_FALLBACK = 28;
+export const DEFAULT_INTERNAL_TARGET_BUFFER_DAYS_KEY =
+  "defaultInternalTargetBufferDays";
+export const DEFAULT_INTERNAL_TARGET_BUFFER_DAYS_FALLBACK = 3;
+export const DEFAULT_DROP_DEAD_ESCALATION_BUFFER_DAYS_KEY =
+  "defaultDropDeadEscalationBufferDays";
+export const DEFAULT_DROP_DEAD_ESCALATION_BUFFER_DAYS_FALLBACK = 5;
 
 export type { FieldSource };
 export { formatSourceChip };
@@ -29,6 +36,7 @@ export type ResolvedField<T> = {
 export type ResolveAssemblyTargetsArgs = {
   job: {
     createdAt?: Date | string | null;
+    customerOrderDate?: Date | string | null;
     internalTargetDate?: Date | string | null;
     customerTargetDate?: Date | string | null;
     dropDeadDate?: Date | string | null;
@@ -43,6 +51,8 @@ export type ResolveAssemblyTargetsArgs = {
     shipToAddressOverride?: AddressRef | null;
   } | null;
   defaultLeadDays: number;
+  bufferDays: number;
+  escalationBufferDays: number;
   now?: Date;
 };
 
@@ -60,15 +70,19 @@ export function resolveAssemblyTargets(args: ResolveAssemblyTargetsArgs) {
   const jobInternal = toDate(job?.internalTargetDate);
   const jobCustomer = toDate(job?.customerTargetDate);
   const jobDropDead = toDate(job?.dropDeadDate);
+  const jobOrderDate = toDate(job?.customerOrderDate) ?? toDate(job?.createdAt);
   const jobShipTo = job?.shipToLocation ?? null;
   const jobShipToAddress = job?.shipToAddress ?? null;
 
   const derivedInternal = jobInternal
     ? null
-    : deriveInternalFromJobCreatedAt(job?.createdAt, args.defaultLeadDays, now);
-  const derivedCustomer = jobCustomer
-    ? null
-    : deriveInternalFromJobCreatedAt(job?.createdAt, args.defaultLeadDays, now);
+    : deriveInternalTargetDate({
+        baseDate: jobOrderDate ?? now,
+        customerTargetDate: customerOverride ?? jobCustomer ?? null,
+        defaultLeadDays: args.defaultLeadDays,
+        bufferDays: args.bufferDays,
+        now,
+      });
 
   const internalCandidate =
     internalOverride ??
@@ -84,14 +98,12 @@ export function resolveAssemblyTargets(args: ResolveAssemblyTargetsArgs) {
         : "NONE";
 
   const customerCandidate =
-    customerOverride ?? jobCustomer ?? derivedCustomer ?? null;
+    customerOverride ?? jobCustomer ?? null;
   const customerSource: FieldSource = customerOverride
     ? "OVERRIDE"
     : jobCustomer
       ? "JOB"
-      : derivedCustomer
-        ? "DERIVED"
-        : "NONE";
+      : "NONE";
 
   let internal = internalCandidate;
   let internalWasClamped = false;
@@ -100,13 +112,23 @@ export function resolveAssemblyTargets(args: ResolveAssemblyTargetsArgs) {
     internalWasClamped = true;
   }
 
+  const derivedDropDead =
+    dropDeadOverride || jobDropDead
+      ? null
+      : customerCandidate
+        ? addDays(customerCandidate, args.escalationBufferDays)
+        : internalCandidate
+          ? addDays(internalCandidate, args.escalationBufferDays)
+          : null;
   const dropDead =
-    dropDeadOverride ?? jobDropDead ?? null;
+    dropDeadOverride ?? jobDropDead ?? derivedDropDead ?? null;
   const dropDeadSource: FieldSource = dropDeadOverride
     ? "OVERRIDE"
     : jobDropDead
       ? "JOB"
-      : "NONE";
+      : derivedDropDead
+        ? "DERIVED"
+        : "NONE";
 
   const legacyShipToLocation =
     shipToOverride ?? jobShipTo ?? null;
@@ -141,13 +163,13 @@ export function resolveAssemblyTargets(args: ResolveAssemblyTargetsArgs) {
     customer: {
       value: customerCandidate,
       source: customerSource,
-      jobValue: jobCustomer ?? derivedCustomer ?? null,
+      jobValue: jobCustomer ?? null,
       overrideValue: customerOverride ?? null,
     },
     dropDead: {
       value: dropDead,
       source: dropDeadSource,
-      jobValue: jobDropDead ?? null,
+      jobValue: jobDropDead ?? derivedDropDead ?? null,
       overrideValue: dropDeadOverride ?? null,
     },
     shipTo: {
@@ -189,15 +211,38 @@ export async function loadDefaultInternalTargetLeadDays(prisma: {
   return DEFAULT_INTERNAL_TARGET_LEAD_DAYS_FALLBACK;
 }
 
-export function deriveInternalFromJobCreatedAt(
-  createdAt: Date | string | null | undefined,
-  leadDays: number,
-  now: Date
-): Date | null {
-  const base = toDate(createdAt) ?? now;
-  if (!Number.isFinite(base.getTime())) return null;
-  const days = Number.isFinite(leadDays) ? leadDays : DEFAULT_INTERNAL_TARGET_LEAD_DAYS_FALLBACK;
-  return new Date(base.getTime() + Math.max(0, Math.floor(days)) * 86400000);
+export async function loadDefaultInternalTargetBufferDays(prisma: {
+  setting: { findUnique: (args: { where: { key: string } }) => Promise<any> };
+}): Promise<number> {
+  const setting = await prisma.setting.findUnique({
+    where: { key: DEFAULT_INTERNAL_TARGET_BUFFER_DAYS_KEY },
+  });
+  if (setting?.number != null) return Number(setting.number);
+  if (setting?.value != null) {
+    const parsed = Number(setting.value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return DEFAULT_INTERNAL_TARGET_BUFFER_DAYS_FALLBACK;
+}
+
+export async function loadDefaultDropDeadEscalationBufferDays(prisma: {
+  setting: { findUnique: (args: { where: { key: string } }) => Promise<any> };
+}): Promise<number> {
+  const setting = await prisma.setting.findUnique({
+    where: { key: DEFAULT_DROP_DEAD_ESCALATION_BUFFER_DAYS_KEY },
+  });
+  if (setting?.number != null) return Number(setting.number);
+  if (setting?.value != null) {
+    const parsed = Number(setting.value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return DEFAULT_DROP_DEAD_ESCALATION_BUFFER_DAYS_FALLBACK;
+}
+
+export { deriveInternalTargetDate } from "./jobTargetDefaults";
+
+function addDays(value: Date, days: number): Date {
+  return new Date(value.getTime() + Math.floor(days) * 86400000);
 }
 
 function toDate(value: Date | string | null | undefined): Date | null {

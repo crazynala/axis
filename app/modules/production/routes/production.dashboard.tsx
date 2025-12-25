@@ -106,6 +106,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     filters: attentionFilters,
     sort: attentionSort,
     defaultLeadDays: data.defaultLeadDays,
+    bufferDays: data.bufferDays,
+    escalationBufferDays: data.escalationBufferDays,
   });
   const stepTypes = new Set<ExternalStepType>();
   (data.assemblies || []).forEach((assembly) => {

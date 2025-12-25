@@ -3,7 +3,6 @@ import { Controller, type UseFormReturn } from "react-hook-form";
 import { DatePickerInput } from "@mantine/dates";
 import {
   TextInput,
-  Select,
   Group,
   SegmentedControl,
   Checkbox,
@@ -15,8 +14,29 @@ import {
 } from "@mantine/core";
 import { useOptions } from "../options/OptionsContext";
 import { IconEditCircle } from "@tabler/icons-react";
+import { buildCommonInputProps } from "./fieldRequired";
+import { getSelectOptions } from "./fieldOptions";
+import { resolveFieldState } from "./fieldState";
+import { renderTrailingActionWrapper } from "./fieldTrailingAction";
 
 export type FieldMode = "edit" | "find" | "create";
+
+export type TrailingActionArgs = {
+  form: UseFormReturn<any>;
+  mode: FieldMode;
+  field: FieldConfig;
+  ctx?: RenderContext;
+  value: any;
+  label: string;
+};
+
+export type TrailingActionConfig = {
+  kind: "openEntityModal";
+  entity: string;
+  tooltip?: (args: TrailingActionArgs) => React.ReactNode;
+  disabledWhen?: (args: TrailingActionArgs) => boolean;
+  getId?: (args: TrailingActionArgs) => string | number | null;
+};
 
 export type FieldConfig = {
   name: string;
@@ -37,6 +57,18 @@ export type FieldConfig = {
   editable?: boolean;
   readOnly?: boolean;
   readOnlyIf?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
+  readonlyWhen?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
+  disabledWhen?: (args: {
     form: UseFormReturn<any>;
     mode: FieldMode;
     field: FieldConfig;
@@ -78,6 +110,12 @@ export type FieldConfig = {
     field: FieldConfig;
     ctx?: RenderContext;
   }) => boolean;
+  visibleWhen?: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    field: FieldConfig;
+    ctx?: RenderContext;
+  }) => boolean;
   // Layout: render this field inline with the next visible field on the same row
   inlineWithNext?: boolean;
   // Layout: flex grow/basis for inline items (defaults to 1)
@@ -95,12 +133,15 @@ export type FieldConfig = {
     field: FieldConfig;
     ctx?: RenderContext;
   }) => React.ReactNode;
+  // Optional trailing action rendered outside the input control
+  trailingAction?: TrailingActionConfig;
 };
 
 export type RenderContext = {
   fieldOptions?: Record<string, { value: string; label: string }[]>;
   options?: any; // full OptionsData if available
   openCustomerModal?: () => void;
+  openEntityModal?: (args: { entity: string; id: string | number }) => void;
   [key: string]: any;
 };
 
@@ -258,53 +299,24 @@ export function renderField(
   ctx?: RenderContext
 ) {
   if (field.hiddenInModes && field.hiddenInModes.includes(mode)) return null;
+  if (field.visibleWhen && !field.visibleWhen({ form, mode, field, ctx })) {
+    return null;
+  }
   if (field.showIf && !field.showIf({ form, mode, field, ctx })) {
     return null;
   }
-  if (field.render) return field.render({ form, mode, field, ctx });
   const widget = field.widget || (field.type === "date" ? "date" : "text");
-  const common: any = { label: field.label, mod: "data-autosize" };
-  const requiredState = (ctx as any)?.requiredStates?.[field.name];
-  if (requiredState?.state === "error") {
-    common.error = requiredState.message ?? "Required";
-  } else if (requiredState?.state === "warn") {
-    common.description = requiredState.message ?? "Required";
-    common.styles = {
-      input: {
-        borderColor: "var(--mantine-color-yellow-6)",
-      },
-    };
-  }
-  const dynamicReadOnly = field.readOnlyIf
-    ? field.readOnlyIf({ form, mode, field, ctx })
-    : false;
-  const resolvedReadOnly =
-    dynamicReadOnly ||
-    (mode === "edit" && (field.editable === false || field.readOnly));
+  const common: any = buildCommonInputProps(field, ctx);
+  const { resolvedReadOnly, resolvedDisabled } = resolveFieldState({
+    form,
+    field,
+    mode,
+    ctx,
+  });
 
-  const getSelectOptions = () => {
-    // Always return an object with primary/fallback arrays
-    if (field.options && field.options.length) {
-      return {
-        primary: field.options,
-        fallback: [] as { value: string; label: string }[],
-      };
-    }
-    const primary =
-      field.optionsKey && ctx?.fieldOptions?.[field.optionsKey]
-        ? ctx.fieldOptions[field.optionsKey]
-        : [];
-    const fallback =
-      field.allOptionsKey && ctx?.fieldOptions?.[field.allOptionsKey]
-        ? ctx.fieldOptions[field.allOptionsKey]
-        : [];
-    return { primary, fallback } as {
-      primary: { value: string; label: string }[];
-      fallback: { value: string; label: string }[];
-    };
-  };
-
-  switch (widget) {
+  const renderControl = () => {
+    if (field.render) return field.render({ form, mode, field, ctx });
+    switch (widget) {
     case "computed": {
       const values = form.getValues();
       const out = field.compute
@@ -408,6 +420,7 @@ export function renderField(
                 ref={f.ref as any}
                 clearable
                 renderDay={dayRenderer}
+                disabled={resolvedReadOnly || resolvedDisabled}
               />
             );
           }}
@@ -415,7 +428,7 @@ export function renderField(
       );
     }
     case "select": {
-      const { primary, fallback } = getSelectOptions() as any;
+      const { primary, fallback } = getSelectOptions(field, ctx) as any;
       return (
         <Controller
           control={form.control}
@@ -473,6 +486,25 @@ export function renderField(
                 : v ?? null;
               f.onChange(out);
             };
+
+            if (resolvedReadOnly) {
+              return (
+                <>
+                  <input
+                    type="hidden"
+                    name={field.name}
+                    value={valueStr ?? ""}
+                    aria-hidden
+                  />
+                  <TextInput
+                    {...common}
+                    value={selectedLabel}
+                    readOnly
+                    disabled={resolvedDisabled}
+                  />
+                </>
+              );
+            }
 
             return (
               <>
@@ -548,6 +580,7 @@ export function renderField(
                           : undefined
                       }
                       ref={f.ref as any}
+                      disabled={resolvedDisabled}
                     />
                   </Combobox.Target>
                   <Combobox.Dropdown>
@@ -643,6 +676,7 @@ export function renderField(
           type="number"
           placeholder={field.placeholder}
           readOnly={resolvedReadOnly}
+          disabled={resolvedDisabled}
           rightSection={
             field.rightSection
               ? field.rightSection({ form, mode, field, ctx })
@@ -674,10 +708,15 @@ export function renderField(
           }
           {...form.register(field.name as any)}
           readOnly={resolvedReadOnly}
+          disabled={resolvedDisabled}
         />
       );
     }
-  }
+    }
+  };
+
+  const control = renderControl();
+  return renderTrailingActionWrapper({ control, form, field, mode, ctx });
 }
 
 // JSX wrapper that pulls options via context and maps to renderField
@@ -765,9 +804,12 @@ export function RenderGroup({
   form.watch();
   const list: FieldConfig[] = Array.isArray(fields) ? fields : [];
   // Filter out fields hidden for this mode to avoid duplicate keys from hidden siblings
-  const visible = list.filter(
-    (f) => !(f.hiddenInModes && f.hiddenInModes.includes(mode))
-  );
+  const visible = list.filter((f) => {
+    if (f.hiddenInModes && f.hiddenInModes.includes(mode)) return false;
+    if (f.visibleWhen && !f.visibleWhen({ form, mode, field: f, ctx })) return false;
+    if (f.showIf && !f.showIf({ form, mode, field: f, ctx })) return false;
+    return true;
+  });
   const rows: React.ReactNode[] = [];
   for (let i = 0; i < visible.length; i++) {
     const field = visible[i];

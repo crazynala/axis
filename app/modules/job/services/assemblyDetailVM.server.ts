@@ -4,6 +4,8 @@ import { requireUserId } from "~/utils/auth.server";
 import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import {
   loadDefaultInternalTargetLeadDays,
+  loadDefaultInternalTargetBufferDays,
+  loadDefaultDropDeadEscalationBufferDays,
   resolveAssemblyTargets,
 } from "~/modules/job/services/targetOverrides.server";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
@@ -458,12 +460,17 @@ export async function loadAssemblyDetailVM(opts: {
   const shipToAddresses = jobCompanyId
     ? await getCompanyAddressOptions(jobCompanyId)
     : [];
-  const defaultLeadDays = await loadDefaultInternalTargetLeadDays(prisma);
+  const [defaultLeadDays, bufferDays, escalationBufferDays] = await Promise.all([
+    loadDefaultInternalTargetLeadDays(prisma),
+    loadDefaultInternalTargetBufferDays(prisma),
+    loadDefaultDropDeadEscalationBufferDays(prisma),
+  ]);
   const assemblyTargetsById: Record<number, any> = Object.fromEntries(
     assemblies.map((assembly: any) => {
       const resolved = resolveAssemblyTargets({
         job: {
           createdAt: assembly.job?.createdAt ?? null,
+          customerOrderDate: assembly.job?.customerOrderDate ?? null,
           internalTargetDate: assembly.job?.internalTargetDate ?? null,
           customerTargetDate: assembly.job?.customerTargetDate ?? null,
           dropDeadDate: assembly.job?.dropDeadDate ?? null,
@@ -478,6 +485,8 @@ export async function loadAssemblyDetailVM(opts: {
           shipToAddressOverride: assembly.shipToAddressOverride ?? null,
         },
         defaultLeadDays,
+        bufferDays,
+        escalationBufferDays,
       });
       return [assembly.id, resolved];
     })

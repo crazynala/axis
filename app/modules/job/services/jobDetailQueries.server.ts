@@ -80,7 +80,15 @@ export async function getAssemblyTypes() {
 export async function getCustomers() {
   return prisma.company.findMany({
     where: { isCustomer: true },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      defaultAddressId: true,
+      stockLocationId: true,
+      shortCode: true,
+      shortName: true,
+      projectCodeNextNumber: true,
+    },
     orderBy: { name: "asc" },
     take: 1000,
   });

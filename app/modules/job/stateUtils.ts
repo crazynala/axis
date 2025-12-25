@@ -3,7 +3,12 @@ import { assemblyStateKeys, jobStateKeys } from "~/base/state/configs";
 export type AssemblyState = (typeof assemblyStateKeys)[number];
 export type JobState = (typeof jobStateKeys)[number];
 
-export type JobPrimaryState = "DRAFT" | "ACTIVE" | "COMPLETE" | "CANCELED";
+export type JobPrimaryState =
+  | "DRAFT"
+  | "NEW"
+  | "ACTIVE"
+  | "COMPLETE"
+  | "CANCELED";
 
 const ASSEMBLY_STATE_SET = new Set<AssemblyState>(assemblyStateKeys);
 const JOB_STATE_SET = new Set<JobState>(jobStateKeys);
@@ -66,10 +71,11 @@ export function mapLegacyJobStatusToState(
   const upper = (statusRaw || "").toString().trim().toUpperCase().replace(/\s+/g, "_");
   if (!upper) return "DRAFT";
   if (upper === "DRAFT") return "DRAFT";
+  if (upper === "NEW") return "NEW";
   if (upper === "COMPLETE") return "COMPLETE";
   if (upper === "CANCELED" || upper === "CANCELLED") return "CANCELED";
   if (upper === "ON_HOLD") return "ACTIVE";
-  if (["NEW", "PENDING", "IN_WORK", "ACTIVE", "WIP"].includes(upper))
+  if (["PENDING", "IN_WORK", "ACTIVE", "WIP"].includes(upper))
     return "ACTIVE";
   return "ACTIVE";
 }
@@ -105,6 +111,7 @@ export function normalizeJobPrimaryState(
   const upper = value.toUpperCase().replace(/\s+/g, "_");
   if (
     upper === "DRAFT" ||
+    upper === "NEW" ||
     upper === "ACTIVE" ||
     upper === "COMPLETE" ||
     upper === "CANCELED"

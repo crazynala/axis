@@ -178,8 +178,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   if (intent === "update") {
+    const projectCodeNextNumberValue = (() => {
+      const raw = String(form.get("projectCodeNextNumber") ?? "").trim();
+      if (!raw) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? Math.max(1, Math.floor(parsed)) : null;
+    })();
     const data = {
       name: (form.get("name") as string) || null,
+      shortCode: (() => {
+        const raw = String(form.get("shortCode") ?? "").trim().toUpperCase();
+        return raw ? raw : null;
+      })(),
+      shortName: (() => {
+        const raw = String(form.get("shortName") ?? "").trim();
+        return raw ? raw.slice(0, 5) : null;
+      })(),
       isCarrier: form.get("isCarrier") === "on",
       isCustomer: form.get("isCustomer") === "on",
       isConsignee: form.get("isConsignee") === "on",
@@ -213,6 +227,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
           ? Number(form.get("defaultLeadTimeDays"))
           : null,
     } as any;
+    if (projectCodeNextNumberValue != null) {
+      data.projectCodeNextNumber = projectCodeNextNumberValue;
+    }
     // Stock location: empty string clears to null
     if (form.has("stockLocationId")) {
       const raw = String(form.get("stockLocationId") ?? "");
@@ -281,6 +298,9 @@ export function CompanyDetailView() {
   const form = useForm<{
     id: number;
     name: string;
+    shortCode?: string | null;
+    shortName?: string | null;
+    projectCodeNextNumber?: number | string | null;
     notes: string;
     isCarrier: boolean;
     isCustomer: boolean;
@@ -298,6 +318,12 @@ export function CompanyDetailView() {
     defaultValues: {
       id: company.id,
       name: company.name || "",
+      shortCode: (company as any).shortCode || "",
+      shortName: (company as any).shortName || "",
+      projectCodeNextNumber:
+        (company as any).projectCodeNextNumber != null
+          ? Number((company as any).projectCodeNextNumber)
+          : 1,
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,
       isCustomer: !!company.isCustomer,
@@ -336,6 +362,12 @@ export function CompanyDetailView() {
     const next = {
       id: company.id,
       name: company.name || "",
+      shortCode: (company as any).shortCode || "",
+      shortName: (company as any).shortName || "",
+      projectCodeNextNumber:
+        (company as any).projectCodeNextNumber != null
+          ? Number((company as any).projectCodeNextNumber)
+          : 1,
       notes: company.notes || "",
       isCarrier: !!company.isCarrier,
       isCustomer: !!company.isCustomer,
@@ -372,6 +404,9 @@ export function CompanyDetailView() {
   // Wire this form into the global Save/Cancel header via GlobalFormProvider in root
   type FormValues = {
     name: string;
+    shortCode?: string | null;
+    shortName?: string | null;
+    projectCodeNextNumber?: number | string | null;
     notes: string;
     isCarrier: boolean;
     isCustomer: boolean;
@@ -390,6 +425,19 @@ export function CompanyDetailView() {
     const fd = new FormData();
     fd.set("_intent", "update");
     fd.set("name", values.name ?? "");
+    if (Object.prototype.hasOwnProperty.call(values, "shortCode")) {
+      fd.set("shortCode", values.shortCode ? String(values.shortCode) : "");
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "shortName")) {
+      fd.set("shortName", values.shortName ? String(values.shortName) : "");
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "projectCodeNextNumber")) {
+      const raw: any = (values as any).projectCodeNextNumber;
+      fd.set(
+        "projectCodeNextNumber",
+        raw === undefined || raw === null || raw === "" ? "" : String(raw)
+      );
+    }
     if (values.notes) fd.set("notes", values.notes);
     if (values.isCarrier) fd.set("isCarrier", "on");
     if (values.isCustomer) fd.set("isCustomer", "on");
