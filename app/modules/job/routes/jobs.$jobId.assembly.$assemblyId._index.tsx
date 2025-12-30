@@ -11,6 +11,7 @@ import {
   useSearchParams,
   useSubmit,
   useRevalidator,
+  Link,
 } from "@remix-run/react";
 import {
   Badge,
@@ -20,6 +21,7 @@ import {
   Divider,
   Drawer,
   Group,
+  SimpleGrid,
   Menu,
   Modal,
   SegmentedControl,
@@ -28,6 +30,7 @@ import {
   Text,
   TextInput,
   Textarea,
+  Title,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import {
@@ -57,6 +60,7 @@ import { getVariantLabels } from "~/utils/getVariantLabels";
 import { OverridableField } from "~/components/OverridableField";
 import { formatAddressLines } from "~/utils/addressFormat";
 import { AddressPickerField } from "~/components/addresses/AddressPickerField";
+import { DisplayField } from "~/base/forms/components/DisplayField";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -107,6 +111,8 @@ export default function JobAssemblyRoute() {
   const [groupDrawerOpen, setGroupDrawerOpen] = useState(false);
   const canDebug = Boolean(data?.canDebug);
   const primaryAssembly = assemblies?.[0] ?? null;
+  const jobState = primaryAssembly?.job?.state ?? data?.job?.state ?? null;
+  const isLoudMode = jobState === "DRAFT";
   const overrideTargets = primaryAssembly
     ? assemblyTargetsById[primaryAssembly.id]
     : null;
@@ -182,6 +188,16 @@ export default function JobAssemblyRoute() {
   const shipToHint = !effectiveShipToAddress && jobShipToLocation
     ? `Legacy ship-to location: ${jobShipToLocation.name || `Location ${jobShipToLocation.id}`}`
     : undefined;
+  const shipToDisplay =
+    formatAddressLabel(effectiveShipToAddress) ||
+    jobShipToLocation?.name ||
+    "—";
+  const productForAssembly =
+    primaryAssembly?.productId != null
+      ? (products || []).find(
+          (p: any) => Number(p.id) === Number(primaryAssembly.productId)
+        )
+      : null;
 
   const initialInternalOverride = useMemo(
     () => toDateInputValue(primaryAssembly?.internalTargetDateOverride),
@@ -502,6 +518,8 @@ export default function JobAssemblyRoute() {
     "remaining"
   );
   const [cancelBaseline, setCancelBaseline] = useState("ORDER");
+  const [assemblyDrawerOpen, setAssemblyDrawerOpen] = useState(false);
+  const [promisesDrawerOpen, setPromisesDrawerOpen] = useState(false);
   const holdSegmentOptions = [
     { value: "OFF", label: "Off" },
     { value: "CLIENT", label: "Client hold" },
@@ -885,87 +903,193 @@ export default function JobAssemblyRoute() {
   return (
     <Stack gap="lg">
       {!isGroup && primaryAssembly ? (
-        <Card withBorder padding="md">
-          <Card.Section inheritPadding py="xs">
-            <Group justify="space-between" align="center">
-              <Text fw={600}>Overrides</Text>
-              <Button
-                size="xs"
-                variant="light"
-                onClick={handleOverridesSave}
-              >
-                Save overrides
-              </Button>
-            </Group>
-          </Card.Section>
-          <Divider my="xs" />
-          <Stack gap="md">
-            <OverridableField
-              label="Internal target date"
-              isOverridden={internalOverride != null}
-              jobValue={formatDateLabel(overrideTargets?.internal?.jobValue)}
-              onClear={() => setInternalOverride(null)}
-            >
-              <DatePickerInput
-                value={internalOverride ?? effectiveInternalValue}
-                onChange={(value) => setInternalOverride(value ?? null)}
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-            </OverridableField>
-            <OverridableField
-              label="Customer target date"
-              isOverridden={customerOverride != null}
-              jobValue={formatDateLabel(overrideTargets?.customer?.jobValue)}
-              onClear={() => setCustomerOverride(null)}
-            >
-              <DatePickerInput
-                value={customerOverride ?? effectiveCustomerValue}
-                onChange={(value) => setCustomerOverride(value ?? null)}
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-            </OverridableField>
-            <OverridableField
-              label="Drop-dead date"
-              isOverridden={dropDeadOverride != null}
-              jobValue={formatDateLabel(overrideTargets?.dropDead?.jobValue)}
-              onClear={() => setDropDeadOverride(null)}
-            >
-              <DatePickerInput
-                value={dropDeadOverride ?? effectiveDropDeadValue}
-                onChange={(value) => setDropDeadOverride(value ?? null)}
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-            </OverridableField>
-            <OverridableField
-              label="Ship-To Address"
-              isOverridden={shipToAddressOverrideId != null}
-              jobValue={formatAddressLabel(jobShipToAddress)}
-              onClear={() => setShipToAddressOverrideId(null)}
-            >
-              <AddressPickerField
-                label="Ship-To Address"
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs" style={{ position: "relative" }}>
+              <Group justify="space-between" align="center">
+                <Title order={4}>Assembly</Title>
+                {!isLoudMode ? (
+                  <button
+                    type="button"
+                    className="drawerToggle"
+                    aria-label="Edit"
+                    onClick={() => setAssemblyDrawerOpen(true)}
+                  />
+                ) : null}
+              </Group>
+            </Card.Section>
+            <Stack gap="xs" mt="sm">
+              <DisplayField
+                label="Assembly"
                 value={
-                  shipToAddressOverrideId != null
-                    ? shipToAddressOverrideId
-                    : effectiveShipToAddressId != null
-                      ? effectiveShipToAddressId
-                      : null
+                  primaryAssembly?.name ||
+                  (primaryAssembly?.id ? `Assembly ${primaryAssembly.id}` : "—")
                 }
-                options={shipToAddressOptions}
-                previewAddress={
-                  shipToAddressOverrideId != null
-                    ? shipToAddressById.get(shipToAddressOverrideId) ?? null
-                    : effectiveShipToAddress ?? null
-                }
-                hint={shipToHint}
-                onChange={(nextId) => setShipToAddressOverrideId(nextId)}
               />
-            </OverridableField>
-          </Stack>
-        </Card>
+              <DisplayField
+                label="Type"
+                value={primaryAssembly?.assemblyType || "—"}
+              />
+              <DisplayField
+                label="Product"
+                value={
+                  primaryAssembly?.productId ? (
+                    <Link to={`/products/${primaryAssembly.productId}`}>
+                      {productForAssembly?.name ||
+                        `Product ${primaryAssembly.productId}`}
+                    </Link>
+                  ) : (
+                    "—"
+                  )
+                }
+              />
+              <DisplayField label="Job ID" value={job?.id ?? "—"} />
+              <DisplayField
+                label="Assembly ID"
+                value={
+                  primaryAssembly?.id != null ? `A${primaryAssembly.id}` : "—"
+                }
+              />
+            </Stack>
+          </Card>
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs" style={{ position: "relative" }}>
+              <Group justify="space-between" align="center">
+                <Title order={4}>Promises</Title>
+                {isLoudMode ? (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={handleOverridesSave}
+                  >
+                    Save overrides
+                  </Button>
+                ) : (
+                  <button
+                    type="button"
+                    className="drawerToggle"
+                    aria-label="Edit"
+                    onClick={() => setPromisesDrawerOpen(true)}
+                  />
+                )}
+              </Group>
+            </Card.Section>
+            {isLoudMode ? (
+              <Stack gap="md" mt="sm">
+                <OverridableField
+                  label="Internal target date"
+                  isOverridden={internalOverride != null}
+                  jobValue={formatDateLabel(overrideTargets?.internal?.jobValue)}
+                  onClear={() => setInternalOverride(null)}
+                >
+                  <DatePickerInput
+                    value={internalOverride ?? effectiveInternalValue}
+                    onChange={(value) => setInternalOverride(value ?? null)}
+                    valueFormat="YYYY-MM-DD"
+                    clearable
+                  />
+                </OverridableField>
+                <OverridableField
+                  label="Customer target date"
+                  isOverridden={customerOverride != null}
+                  jobValue={formatDateLabel(overrideTargets?.customer?.jobValue)}
+                  onClear={() => setCustomerOverride(null)}
+                >
+                  <DatePickerInput
+                    value={customerOverride ?? effectiveCustomerValue}
+                    onChange={(value) => setCustomerOverride(value ?? null)}
+                    valueFormat="YYYY-MM-DD"
+                    clearable
+                  />
+                </OverridableField>
+                <OverridableField
+                  label="Drop-dead date"
+                  isOverridden={dropDeadOverride != null}
+                  jobValue={formatDateLabel(overrideTargets?.dropDead?.jobValue)}
+                  onClear={() => setDropDeadOverride(null)}
+                >
+                  <DatePickerInput
+                    value={dropDeadOverride ?? effectiveDropDeadValue}
+                    onChange={(value) => setDropDeadOverride(value ?? null)}
+                    valueFormat="YYYY-MM-DD"
+                    clearable
+                  />
+                </OverridableField>
+                <OverridableField
+                  label="Ship-To Address"
+                  isOverridden={shipToAddressOverrideId != null}
+                  jobValue={formatAddressLabel(jobShipToAddress)}
+                  onClear={() => setShipToAddressOverrideId(null)}
+                >
+                  <AddressPickerField
+                    label="Ship-To Address"
+                    value={
+                      shipToAddressOverrideId != null
+                        ? shipToAddressOverrideId
+                        : effectiveShipToAddressId != null
+                          ? effectiveShipToAddressId
+                          : null
+                    }
+                    options={shipToAddressOptions}
+                    previewAddress={
+                      shipToAddressOverrideId != null
+                        ? shipToAddressById.get(shipToAddressOverrideId) ?? null
+                        : effectiveShipToAddress ?? null
+                    }
+                    hint={shipToHint}
+                    onChange={(nextId) => setShipToAddressOverrideId(nextId)}
+                  />
+                </OverridableField>
+              </Stack>
+            ) : (
+              <Stack gap="xs" mt="sm">
+                <DisplayField
+                  label="Internal target"
+                  value={formatDateLabel(effectiveInternalValue)}
+                />
+                <DisplayField
+                  label="Customer target"
+                  value={formatDateLabel(effectiveCustomerValue)}
+                />
+                <DisplayField
+                  label="Drop-dead"
+                  value={formatDateLabel(effectiveDropDeadValue)}
+                />
+                <DisplayField label="Ship-to" value={shipToDisplay} />
+              </Stack>
+            )}
+          </Card>
+          {!isLoudMode ? (
+            <>
+              <Drawer
+                opened={assemblyDrawerOpen}
+                onClose={() => setAssemblyDrawerOpen(false)}
+                title="Edit assembly"
+                position="right"
+                size="lg"
+              >
+                <Stack gap="sm">
+                  <Text size="sm" c="dimmed">
+                    TODO: Assembly edit drawer (stub for Chunk 1).
+                  </Text>
+                </Stack>
+              </Drawer>
+              <Drawer
+                opened={promisesDrawerOpen}
+                onClose={() => setPromisesDrawerOpen(false)}
+                title="Edit promises"
+                position="right"
+                size="lg"
+              >
+                <Stack gap="sm">
+                  <Text size="sm" c="dimmed">
+                    TODO: Promises edit drawer (stub for Chunk 1).
+                  </Text>
+                </Stack>
+              </Drawer>
+            </>
+          ) : null}
+        </SimpleGrid>
       ) : null}
       <AssembliesEditor
         job={job as any}
