@@ -13,5 +13,8 @@ export function buildCommonInputProps(field: FieldConfig, ctx?: RenderContext) {
       },
     };
   }
+  if (ctx?.uiMode === "quiet" && !common.error && !common.description) {
+    common.labelProps = { size: "xs", c: "dimmed" };
+  }
   return common;
 }

@@ -27,6 +27,54 @@
     border: none;
   }
 
+  /* Card Button */ 
+  .mantine-Card-root {
+    position: relative;
+  }
+
+.drawerToggle {
+  position: absolute;
+  top: 0;
+  right: 0px;                 /* extra reach beyond card edge */
+  width: 64px;                 /* “padding width” target */
+  height: 100%;
+  padding: 0;                  /* keep it simple */
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+
+  /* optional: ensure it's easy to tap/click */
+  touch-action: manipulation;
+}
+
+/* The visible slim line */
+.drawerToggle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 5px;                  /* centers within the 16px hit zone */
+  transform: translateY(-50%);
+  width: 16px;                  /* slim stereo pill */
+  height: 4px;                 /* default thin line */
+  border-radius: 3px;
+
+  background: var(--mantine-color-blue-6);
+  opacity: 0.5;
+
+  transition:
+    height 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+/* Hover: grow to your current 6px “active” height */
+
+.drawerToggle:hover::before {
+  height: 6px;
+  width: 24px;
+  opacity: 1;
+}
+
 /* DSG overrides */
 .dsg-container {
   color: var(--mantine-text-color);  

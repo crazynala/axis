@@ -24,7 +24,6 @@ import {
   Table,
   Text,
   Card,
-  SimpleGrid,
   Grid,
   Divider,
   Button,
@@ -39,9 +38,7 @@ import {
   Select,
   SegmentedControl,
   Textarea,
-  Drawer,
 } from "@mantine/core";
-import { DatePickerInput } from "@mantine/dates";
 import {
   HotkeyAwareModal,
   HotkeyAwareModalRoot,
@@ -58,8 +55,6 @@ import {
   IconBug,
   IconCopy,
   IconChevronDown,
-  IconEdit,
-  IconInfoCircle,
   IconLink,
   IconMenu2,
   IconTrash,
@@ -68,7 +63,6 @@ import { useFind } from "../../../base/find/FindContext";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { JobFindManager } from "~/modules/job/findify/JobFindManager";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
-import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 import {
   FormStateDebugPanel,
   buildFormStateDebugData,
@@ -345,8 +339,6 @@ export function JobDetailView() {
   const [jobCancelReason, setJobCancelReason] = useState("");
   const [jobStateConfirmOpen, setJobStateConfirmOpen] = useState(false);
   const [pendingJobState, setPendingJobState] = useState<string | null>(null);
-  const [setupDrawerOpen, setSetupDrawerOpen] = useState(false);
-  const [targetsDrawerOpen, setTargetsDrawerOpen] = useState(false);
   const [asmCancelOpen, setAsmCancelOpen] = useState(false);
   const [asmCancelTarget, setAsmCancelTarget] = useState<any>(null);
   const [asmCancelReason, setAsmCancelReason] = useState("");
@@ -643,10 +635,6 @@ export function JobDetailView() {
   useEffect(() => {
     setCompanyAddresses(shipToAddresses || []);
   }, [shipToAddresses]);
-  const shipToAddressId = jobForm.watch("shipToAddressId") as
-    | number
-    | string
-    | null;
   const stockLocationId = jobForm.watch("stockLocationId") as
     | number
     | string
@@ -660,21 +648,6 @@ export function JobDetailView() {
     const companyKey = companyId != null && companyId !== "" ? Number(companyId) : null;
     return buildEndCustomerOptions(contacts || [], companyKey);
   }, [contacts, companyId]);
-  const customerLabel = useMemo(() => {
-    if (companyId == null || companyId === "") return "—";
-    const id = Number(companyId);
-    const match = (customers || []).find((c: any) => Number(c.id) === id);
-    return match?.name || String(companyId);
-  }, [companyId, customers]);
-  const endCustomerContactLabel = useMemo(() => {
-    if (endCustomerContactId == null || endCustomerContactId === "") return "—";
-    const id = Number(endCustomerContactId);
-    const match = (contacts || []).find((c: any) => Number(c.id) === id);
-    return (
-      [match?.firstName, match?.lastName].filter(Boolean).join(" ") ||
-      (Number.isFinite(id) ? `Contact ${id}` : "—")
-    );
-  }, [contacts, endCustomerContactId]);
   const stockLocationLabel = useMemo(() => {
     if (stockLocationId == null || stockLocationId === "") return "—";
     const locId = Number(stockLocationId);
@@ -724,25 +697,6 @@ export function JobDetailView() {
     if (!defaultId) return null;
     return shipToAddressById.get(Number(defaultId)) ?? null;
   }, [companyId, customerById, shipToAddressById]);
-  const buildShipToHint = () => {
-    const hintLines: string[] = [];
-    if (!shipToAddressId && companyDefaultAddress) {
-      const lines = formatAddressLines(companyDefaultAddress);
-      hintLines.push(
-        `Default: ${
-          lines.length ? lines.join(", ") : `Address ${companyDefaultAddress.id}`
-        }`
-      );
-    }
-    if (!shipToAddressId && job?.shipToLocation) {
-      hintLines.push(
-        `Legacy ship-to location: ${
-          job.shipToLocation.name || `Location ${job.shipToLocation.id}`
-        }`
-      );
-    }
-    return hintLines.length ? hintLines.join(" · ") : null;
-  };
   useEffect(() => {
     const nextCompanyId =
       companyId != null && companyId !== "" ? Number(companyId) : null;
@@ -828,18 +782,6 @@ export function JobDetailView() {
     jobInternalDate && jobCustomerDate && jobInternalDate > jobCustomerDate
       ? "Internal target date must be on or before customer target date."
       : null;
-  const shipToPreviewAddress =
-    shipToAddressId != null && shipToAddressId !== ""
-      ? shipToAddressById.get(Number(shipToAddressId)) ?? null
-      : null;
-  const shipToSummaryLabel = (() => {
-    if (shipToPreviewAddress) {
-      const lines = formatAddressLines(shipToPreviewAddress);
-      return lines[0] || shipToPreviewAddress.name || "Selected address";
-    }
-    if (job?.shipToLocation?.name) return job.shipToLocation.name;
-    return "—";
-  })();
   const [productSearch, setProductSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState(true);
   const [assemblyOnly, setAssemblyOnly] = useState(true);
@@ -1063,6 +1005,10 @@ export function JobDetailView() {
       addressById: shipToAddressById,
       jobShipToLocation: job?.shipToLocation ?? null,
       jobDefaultAddress: companyDefaultAddress,
+      jobDateError,
+      job,
+      productsById,
+      assemblyTargetsById,
       openEntityModal,
       fieldOptions: {
         endCustomerContact: contactOptions,
@@ -1078,6 +1024,10 @@ export function JobDetailView() {
       openEntityModal,
       contactOptions,
       shipToAddressOptions,
+      jobDateError,
+      job,
+      productsById,
+      assemblyTargetsById,
     ]
   );
 
@@ -1135,8 +1085,6 @@ export function JobDetailView() {
     jobStateOptions.map((opt) => [opt.value, opt.label])
   ) as Record<string, string>;
   const jobStateLabel = jobStateLabels[jobStateValue] || jobStateValue;
-  const isDraftMode = jobStateValue === "DRAFT";
-  const isCalmMode = !isDraftMode;
   const stateTransitionMeta: Record<
     string,
     { title: string; text: string; confirmLabel: string }
@@ -1424,287 +1372,15 @@ export function JobDetailView() {
         Legacy status: {job.status || "—"}
       </Text>
 
-      {isDraftMode ? (
-        <JobDetailForm
-          mode="edit"
-          form={jobForm as any}
-          job={job}
-          openCustomerModal={() => setCustomerModalOpen(true)}
-          fieldCtx={jobFieldCtx}
-        />
-      ) : (
-        <Stack gap="md">
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Promise</Title>
-                <Button
-                  variant="light"
-                  leftSection={<IconEdit size={16} />}
-                  onClick={() => setTargetsDrawerOpen(true)}
-                >
-                  Edit targets
-                </Button>
-              </Group>
-            </Card.Section>
-            <Divider my="xs" />
-            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Customer delivery
-                </Text>
-                <Text>{formatDateLabel(jobForm.watch("customerTargetDate"))}</Text>
-              </Stack>
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Internal target
-                </Text>
-                <Text>{formatDateLabel(jobForm.watch("internalTargetDate"))}</Text>
-              </Stack>
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Drop-dead
-                </Text>
-                <Text>{formatDateLabel(jobForm.watch("dropDeadDate"))}</Text>
-              </Stack>
-            </SimpleGrid>
-            <Divider my="xs" />
-            <Stack gap={4}>
-              <Text size="xs" c="dimmed">
-                Ship to
-              </Text>
-              <Text>{shipToSummaryLabel}</Text>
-            </Stack>
-          </Card>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Job details</Title>
-                <Button
-                  variant="default"
-                  leftSection={<IconEdit size={16} />}
-                  onClick={() => setSetupDrawerOpen(true)}
-                >
-                  Edit job
-                </Button>
-              </Group>
-            </Card.Section>
-            <Divider my="xs" />
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Customer
-                </Text>
-                <Text>{customerLabel}</Text>
-              </Stack>
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  End customer
-                </Text>
-                <Text>
-                  {endCustomerContactLabel !== "—"
-                    ? endCustomerContactLabel
-                    : job.endCustomerName || "—"}
-                </Text>
-              </Stack>
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Project code
-                </Text>
-                <Text>{jobForm.watch("projectCode") || "—"}</Text>
-              </Stack>
-              <Stack gap={4}>
-                <Text size="xs" c="dimmed">
-                  Name
-                </Text>
-                <Text>{jobForm.watch("name") || "—"}</Text>
-              </Stack>
-            </SimpleGrid>
-          </Card>
-        </Stack>
-      )}
+      <JobDetailForm
+        mode="edit"
+        form={jobForm as any}
+        job={job}
+        openCustomerModal={() => setCustomerModalOpen(true)}
+        fieldCtx={jobFieldCtx}
+        onSave={(values) => save(values)}
+      />
 
-      <Drawer
-        opened={targetsDrawerOpen}
-        onClose={() => setTargetsDrawerOpen(false)}
-        title="Targets & Delivery"
-        position="right"
-        size="lg"
-      >
-        <Stack gap="md">
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-            <Stack gap="sm">
-              <DatePickerInput
-                label="Internal target date"
-                value={toDateInputValue(jobForm.watch("internalTargetDate"))}
-                onChange={(value) =>
-                  jobForm.setValue("internalTargetDate", value ?? null, {
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-              <DatePickerInput
-                label="Customer target date"
-                value={toDateInputValue(jobForm.watch("customerTargetDate"))}
-                onChange={(value) =>
-                  jobForm.setValue("customerTargetDate", value ?? null, {
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-            </Stack>
-            <Stack gap="sm">
-              <DatePickerInput
-                label="Drop-dead date"
-                value={toDateInputValue(jobForm.watch("dropDeadDate"))}
-                onChange={(value) =>
-                  jobForm.setValue("dropDeadDate", value ?? null, {
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-                valueFormat="YYYY-MM-DD"
-                clearable
-              />
-              <AddressPickerField
-                label="Ship to"
-                value={
-                  shipToAddressId != null && shipToAddressId !== ""
-                    ? Number(shipToAddressId)
-                    : null
-                }
-                options={shipToAddressOptions}
-                previewAddress={shipToPreviewAddress}
-                hint={buildShipToHint() || undefined}
-                onChange={(nextId) =>
-                  jobForm.setValue("shipToAddressId", nextId, {
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-              />
-              <Stack gap={4}>
-                <Group gap="xs">
-                  <Text size="xs" c="dimmed">
-                    Stock location
-                  </Text>
-                  <Tooltip
-                    label="Derived from customer company depot; used for material consumption."
-                    withArrow
-                  >
-                    <span>
-                      <IconInfoCircle size={14} />
-                    </span>
-                  </Tooltip>
-                </Group>
-                <Text size="sm">{stockLocationLabel}</Text>
-              </Stack>
-            </Stack>
-          </SimpleGrid>
-          {jobDateError ? (
-            <Text size="sm" c="red">
-              {jobDateError}
-            </Text>
-          ) : null}
-          <Divider />
-          <Stack gap="xs">
-            <Title order={5}>Assembly impact</Title>
-            <div style={{ overflowX: "auto" }}>
-              <Table withRowBorders>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Assembly</Table.Th>
-                    <Table.Th>Internal target</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {(job.assemblies || []).map((assembly: any) => {
-                    const product = assembly.productId
-                      ? (productsById as any)[assembly.productId]
-                      : null;
-                    const targets = assemblyTargetsById?.[assembly.id];
-                    const internalTarget = targets?.internal;
-                    const derived = deriveAssemblyOperationalStatus({
-                      orderedBySize: assembly.qtyOrderedBreakdown,
-                      canceledBySize: (assembly as any).c_canceled_Breakdown,
-                      qtyCut: (assembly as any).c_qtyCut,
-                      qtySew: (assembly as any).c_qtySew,
-                      qtyFinish: (assembly as any).c_qtyFinish,
-                      qtyPack: (assembly as any).c_qtyPack,
-                    });
-                    return (
-                      <Table.Tr key={`impact-${assembly.id}`}>
-                        <Table.Td>
-                          <Link to={`assembly/${assembly.id}`}>
-                            {assembly.name || product?.name || `Assembly ${assembly.id}`}
-                          </Link>
-                        </Table.Td>
-                        <Table.Td>{formatDateLabel(internalTarget?.value)}</Table.Td>
-                        <Table.Td>
-                          {ASSEMBLY_OPERATIONAL_STATUS_LABELS[derived.status]}
-                        </Table.Td>
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </div>
-          </Stack>
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              onClick={() => setTargetsDrawerOpen(false)}
-            >
-              Close
-            </Button>
-            <Button
-              disabled={!jobForm.formState.isDirty}
-              onClick={() => save(jobForm.getValues())}
-            >
-              Save changes
-            </Button>
-          </Group>
-        </Stack>
-      </Drawer>
-
-      <Drawer
-        opened={setupDrawerOpen}
-        onClose={() => setSetupDrawerOpen(false)}
-        title="Edit job setup"
-        position="right"
-        size="lg"
-      >
-        <Stack gap="md">
-          <JobDetailForm
-            mode="edit"
-            form={jobForm as any}
-            job={job}
-            openCustomerModal={() => setCustomerModalOpen(true)}
-            fieldCtx={jobFieldCtx}
-          />
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              onClick={() => setSetupDrawerOpen(false)}
-            >
-              Close
-            </Button>
-            <Button
-              disabled={!jobForm.formState.isDirty}
-              onClick={() => save(jobForm.getValues())}
-            >
-              Save changes
-            </Button>
-          </Group>
-        </Stack>
-      </Drawer>
 
       {canDebug
         ? (() => {

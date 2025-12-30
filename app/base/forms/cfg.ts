@@ -6,18 +6,29 @@
 //     policy.lockWhenNotDraft(locked)(f.text("name", "Name")),
 //     mod.hide("edit", "create")(f.select("status", "Status", "jobStatus")),
 //   ];
-import type { FieldConfig, FieldMode } from "./fieldConfigShared";
+import type {
+  FieldConfig,
+  FieldMode,
+  FormItem,
+  DividerItem,
+  LabelDividerItem,
+  SpacerItem,
+  HeaderItem,
+  RowItem,
+} from "./fieldConfigShared";
 
 type FC = FieldConfig;
 
 export type FieldGroup = {
   key?: string;
-  fields: FC[];
+  items?: FormItem[];
+  fields?: FC[];
   visibleWhen?: FC["visibleWhen"];
 };
 
 export type FieldColumn = {
-  fields: FC[];
+  items?: FormItem[];
+  fields?: FC[];
   visibleWhen?: FC["visibleWhen"];
 };
 
@@ -114,10 +125,47 @@ export const policy = {
 };
 
 export const g = {
-  group: (key: string, fields: FC[], extra: Partial<FieldGroup> = {}): FieldGroup => ({
+  group: (
+    key: string,
+    items: FormItem[],
+    extra: Partial<FieldGroup> = {}
+  ): FieldGroup => ({
     key,
-    fields,
+    items,
     ...extra,
   }),
   columns: (...cols: FieldColumn[]) => cols,
+};
+
+export const ui = {
+  divider: (key?: string): DividerItem => ({ kind: "divider", key }),
+  labelDivider: (label: string, key?: string): LabelDividerItem => ({
+    kind: "labelDivider",
+    label,
+    key,
+  }),
+  spacer: (size?: SpacerItem["size"], key?: string): SpacerItem => ({
+    kind: "spacer",
+    size,
+    key,
+  }),
+  header: (
+    label: string,
+    extra: Omit<HeaderItem, "kind" | "label"> = {}
+  ): HeaderItem => ({
+    kind: "header",
+    label,
+    ...extra,
+  }),
+  row: (
+    left: FieldConfig,
+    right: FieldConfig,
+    weights?: RowItem["weights"],
+    key?: string
+  ): RowItem => ({
+    kind: "row",
+    items: [left, right],
+    weights,
+    key,
+  }),
 };

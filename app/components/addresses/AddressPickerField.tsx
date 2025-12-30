@@ -4,7 +4,11 @@ import { Group, Select, Stack, Text } from "@mantine/core";
 import type { SelectProps } from "@mantine/core";
 import { formatAddressLines, type AddressLike } from "~/utils/addressFormat";
 
-export type AddressPickerOption = { value: string; label: string; group?: string };
+export type AddressPickerOption = {
+  value: string;
+  label: string;
+  group?: string;
+};
 export type AddressPickerOptions = SelectProps["data"];
 
 export type AddressPickerFieldProps = {
@@ -35,8 +39,14 @@ export function AddressPickerField({
   const safeOptions = useMemo(() => {
     if (!Array.isArray(options)) return [];
     const ungrouped: { value: string; label: string }[] = [];
-    const grouped = new Map<string, { group: string; items: { value: string; label: string }[] }>();
-    const pushGrouped = (groupLabel: string, item: { value: string; label: string }) => {
+    const grouped = new Map<
+      string,
+      { group: string; items: { value: string; label: string }[] }
+    >();
+    const pushGrouped = (
+      groupLabel: string,
+      item: { value: string; label: string }
+    ) => {
       const key = groupLabel.trim();
       if (!key) {
         ungrouped.push(item);
@@ -97,6 +107,7 @@ export function AddressPickerField({
     <Stack gap={4}>
       <Select
         label={label}
+        mod="data-autosize"
         data={safeOptions}
         value={hasSelection ? String(value) : null}
         onChange={(next) => {
@@ -110,7 +121,7 @@ export function AddressPickerField({
         clearable={allowClear}
         disabled={disabled}
       />
-      {hasSelection ? (
+      {hasSelection && 0 ? ( // DN disabled live preview 251229
         <Stack gap={2}>
           {lines.length ? (
             lines.map((line) => (
