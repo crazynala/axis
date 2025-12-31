@@ -145,6 +145,8 @@ export function AssembliesEditor(props: {
   rollupsByAssembly?: Record<number, any> | null;
   vendorOptionsByStep?: Record<string, CompanyOption[]> | null;
   legacyStatusReadOnly?: boolean;
+  topContent?: ReactNode;
+  showAssemblySummary?: boolean;
 }) {
   const {
     job,
@@ -168,6 +170,8 @@ export function AssembliesEditor(props: {
     rollupsByAssembly,
     vendorOptionsByStep,
     legacyStatusReadOnly,
+    topContent,
+    showAssemblySummary = true,
   } = props;
   const activityList = activitiesProp || [];
   const submit = useSubmit();
@@ -175,6 +179,16 @@ export function AssembliesEditor(props: {
   const revalidator = useRevalidator();
   const isGroup = (assemblies?.length ?? 0) > 1;
   const firstAssembly = assemblies[0];
+  const holdByAssemblyId = useMemo(() => {
+    const map: Record<number, { jobHold: boolean; assemblyHold: boolean }> = {};
+    (assemblies || []).forEach((a) => {
+      map[a.id] = {
+        jobHold: Boolean(a.job?.jobHoldOn),
+        assemblyHold: Boolean((a as any).manualHoldOn),
+      };
+    });
+    return map;
+  }, [assemblies]);
   const assemblyTypeData = (
     assemblyTypeOptions || ["Prod", "Keep", "PP", "SMS"]
   ).map((label) => ({
@@ -1554,6 +1568,7 @@ export function AssembliesEditor(props: {
   return (
     <>
       {statusBarContent}
+      {topContent ? <Stack gap="lg" mt="md">{topContent}</Stack> : null}
 
       <Grid>
         {(assemblies || []).map((a) => {
@@ -1570,70 +1585,72 @@ export function AssembliesEditor(props: {
             "Prod";
           return (
             <Fragment key={a.id}>
-              <Grid.Col span={5}>
-                <Card bg="transparent" padding="md">
-                  <TextInput
-                    label="Name"
-                    value={editForm.watch(`names.${a.id}` as const) || ""}
-                    onChange={(e) =>
-                      editForm.setValue(
-                        `names.${a.id}` as const,
-                        e.currentTarget.value,
-                        { shouldDirty: true, shouldTouch: true }
-                      )
-                    }
-                    onBlur={() => {
-                      sendAssemblyUpdate(a.id, {
-                        name: editForm.getValues().names[String(a.id)] || "",
-                      });
-                    }}
-                    mod="data-autosize"
-                  />
-                  <NativeSelect
-                    data={assemblyTypeData}
-                    label="Assembly Type"
-                    value={assemblyTypeValue}
-                    onChange={(e) => {
-                      editForm.setValue(
-                        `assemblyTypes.${a.id}` as const,
-                        e.currentTarget.value,
-                        { shouldDirty: true, shouldTouch: true }
-                      );
-                    }}
-                    onBlur={(e) => {
-                      sendAssemblyUpdate(a.id, {
-                        assemblyType: e.currentTarget.value || "Prod",
-                      });
-                    }}
-                  />
-                  <Stack gap={4}>
-                    <Text size="sm" fw={500}>
-                      Product
-                    </Text>
-                    {((a as any).product?.id || (a as any).productId) ? (
-                      <JumpLink
-                        to={`/products/${(a as any).product?.id ?? (a as any).productId}`}
-                        label={
-                          ((a as any).product?.name as string) ||
-                          ((a as any).product?.sku as string) ||
-                          `Product ${(a as any).productId ?? ""}`
-                        }
-                      />
-                    ) : (
-                      <Text>
-                        {((a as any).product?.name as string) || "—"}
+              {showAssemblySummary ? (
+                <Grid.Col span={5}>
+                  <Card bg="transparent" padding="md">
+                    <TextInput
+                      label="Name"
+                      value={editForm.watch(`names.${a.id}` as const) || ""}
+                      onChange={(e) =>
+                        editForm.setValue(
+                          `names.${a.id}` as const,
+                          e.currentTarget.value,
+                          { shouldDirty: true, shouldTouch: true }
+                        )
+                      }
+                      onBlur={() => {
+                        sendAssemblyUpdate(a.id, {
+                          name: editForm.getValues().names[String(a.id)] || "",
+                        });
+                      }}
+                      mod="data-autosize"
+                    />
+                    <NativeSelect
+                      data={assemblyTypeData}
+                      label="Assembly Type"
+                      value={assemblyTypeValue}
+                      onChange={(e) => {
+                        editForm.setValue(
+                          `assemblyTypes.${a.id}` as const,
+                          e.currentTarget.value,
+                          { shouldDirty: true, shouldTouch: true }
+                        );
+                      }}
+                      onBlur={(e) => {
+                        sendAssemblyUpdate(a.id, {
+                          assemblyType: e.currentTarget.value || "Prod",
+                        });
+                      }}
+                    />
+                    <Stack gap={4}>
+                      <Text size="sm" fw={500}>
+                        Product
                       </Text>
-                    )}
-                  </Stack>
-                  <TextInput
-                    readOnly
-                    value={a.id || ""}
-                    label="ID"
-                    mod="data-autosize"
-                  />
-                </Card>
-              </Grid.Col>
-              <Grid.Col span={7}>
+                      {((a as any).product?.id || (a as any).productId) ? (
+                        <JumpLink
+                          to={`/products/${(a as any).product?.id ?? (a as any).productId}`}
+                          label={
+                            ((a as any).product?.name as string) ||
+                            ((a as any).product?.sku as string) ||
+                            `Product ${(a as any).productId ?? ""}`
+                          }
+                        />
+                      ) : (
+                        <Text>
+                          {((a as any).product?.name as string) || "—"}
+                        </Text>
+                      )}
+                    </Stack>
+                    <TextInput
+                      readOnly
+                      value={a.id || ""}
+                      label="ID"
+                      mod="data-autosize"
+                    />
+                  </Card>
+                </Grid.Col>
+              ) : null}
+              <Grid.Col span={showAssemblySummary ? 7 : 12}>
                 <Stack gap="sm">
                   <Group justify="flex-end">
                     <Button
@@ -1651,6 +1668,7 @@ export function AssembliesEditor(props: {
                         label: `Assembly ${a.id}`,
                         assemblyId: a.id,
                         ordered: item.ordered,
+                        canceled: item.canceled,
                         cut: item.cut,
                         sew: item.sew,
                         finish: item.finish,
@@ -1661,6 +1679,8 @@ export function AssembliesEditor(props: {
                     ]}
                     editableOrdered
                     hideInlineActions
+                    showOperationalSummary={!isGroup}
+                    holdByAssemblyId={holdByAssemblyId}
                     orderedValue={editForm.watch(
                       `orderedByAssembly.${a.id}` as any
                     )}

@@ -50,4 +50,7 @@ export type CardNode = {
   drawerUiMode?: UiModeResolver;
   surfaceAllowEdit?: AllowEditResolver;
   drawerAllowEdit?: AllowEditResolver;
+  isDirtyWhen?: EditablePredicate;
+  onSave?: (args: { form: UseFormReturn<any>; mode: "edit" | "find"; ctx?: any }) => void;
+  onCancel?: (args: { form: UseFormReturn<any>; mode: "edit" | "find"; ctx?: any }) => void;
 };

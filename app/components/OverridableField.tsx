@@ -7,12 +7,14 @@ export function OverridableField({
   isOverridden,
   jobValue,
   onClear,
+  clearLabel = "Clear override",
   children,
 }: {
   label: string;
   isOverridden: boolean;
   jobValue?: string | null;
   onClear?: () => void;
+  clearLabel?: string;
   children?: ReactNode;
 }) {
   const tooltip = jobValue ? `Job: ${jobValue}` : "Job value";
@@ -27,7 +29,7 @@ export function OverridableField({
         </Group>
         {isOverridden ? (
           <Button size="xs" variant="subtle" onClick={onClear}>
-            Clear override
+            {clearLabel}
           </Button>
         ) : null}
       </Group>

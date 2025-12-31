@@ -1085,6 +1085,7 @@ export function JobDetailView() {
     jobStateOptions.map((opt) => [opt.value, opt.label])
   ) as Record<string, string>;
   const jobStateLabel = jobStateLabels[jobStateValue] || jobStateValue;
+  const legacyJobStatusLabel = job.status || "—";
   const stateTransitionMeta: Record<
     string,
     { title: string; text: string; confirmLabel: string }
@@ -1234,6 +1235,9 @@ export function JobDetailView() {
           );
         })()}
         <Group gap="sm" align="center" wrap="wrap">
+          <Text size="xs" c="dimmed">
+            Legacy: {legacyJobStatusLabel}
+          </Text>
           <Stack gap={4}>
             <Menu position="bottom-start" withArrow>
               <Menu.Target>
@@ -1368,9 +1372,6 @@ export function JobDetailView() {
           </Menu>
         </Group>
       </Group>
-      <Text size="xs" c="dimmed">
-        Legacy status: {job.status || "—"}
-      </Text>
 
       <JobDetailForm
         mode="edit"

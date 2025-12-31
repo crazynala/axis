@@ -13,7 +13,9 @@ import {
   useRevalidator,
   Link,
 } from "@remix-run/react";
+import { useForm } from "react-hook-form";
 import {
+  ActionIcon,
   Badge,
   Button,
   Card,
@@ -21,7 +23,6 @@ import {
   Divider,
   Drawer,
   Group,
-  SimpleGrid,
   Menu,
   Modal,
   SegmentedControl,
@@ -30,9 +31,7 @@ import {
   Text,
   TextInput,
   Textarea,
-  Title,
 } from "@mantine/core";
-import { DatePickerInput } from "@mantine/dates";
 import {
   useEffect,
   useState,
@@ -43,11 +42,15 @@ import {
 import { BreadcrumbSet, getLogger, useInitGlobalFormContext } from "@aa/timber";
 import { useRecordContext } from "../../../base/record/RecordContext";
 import { AssembliesEditor } from "~/modules/job/components/AssembliesEditor";
-import { computeEffectiveAssemblyHold } from "~/modules/job/stateUtils";
+import { computeEffectiveAssemblyHold, normalizeAssemblyState } from "~/modules/job/stateUtils";
 import { useRegisterNavLocation } from "~/hooks/useNavLocation";
 import { MaterialCoverageDetails } from "~/modules/materials/components/MaterialCoverageDetails";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
-import { IconBan, IconBug, IconMenu2 } from "@tabler/icons-react";
+import {
+  IconBan,
+  IconBug,
+  IconMenu2,
+} from "@tabler/icons-react";
 import { showToastError } from "~/utils/toast";
 import { loadAssemblyDetailVM } from "~/modules/job/services/assemblyDetailVM.server";
 import { handleAssemblyDetailAction } from "~/modules/job/services/assemblyDetailActions.server";
@@ -57,10 +60,10 @@ import {
   sumBreakdownArrays,
 } from "~/modules/job/quantityUtils";
 import { getVariantLabels } from "~/utils/getVariantLabels";
-import { OverridableField } from "~/components/OverridableField";
 import { formatAddressLines } from "~/utils/addressFormat";
-import { AddressPickerField } from "~/components/addresses/AddressPickerField";
-import { DisplayField } from "~/base/forms/components/DisplayField";
+import { LayoutFormRenderer } from "~/base/forms/LayoutFormRenderer";
+import { assemblyDetailPage } from "./assemblyDetailPage";
+import { assemblyStateConfig } from "~/base/state/configs";
 
 export const meta: MetaFunction = () => [{ title: "Job Assembly" }];
 
@@ -113,6 +116,27 @@ export default function JobAssemblyRoute() {
   const primaryAssembly = assemblies?.[0] ?? null;
   const jobState = primaryAssembly?.job?.state ?? data?.job?.state ?? null;
   const isLoudMode = jobState === "DRAFT";
+  const jobStateOptions = [
+    { label: "Draft", value: "DRAFT" },
+    { label: "New", value: "NEW" },
+    { label: "Active", value: "ACTIVE" },
+    { label: "Complete", value: "COMPLETE" },
+    { label: "Canceled", value: "CANCELED" },
+  ];
+  const jobStateLabels = Object.fromEntries(
+    jobStateOptions.map((opt) => [opt.value, opt.label])
+  ) as Record<string, string>;
+  const jobStateLabel = jobStateLabels[jobState || ""] || jobState || "—";
+  const legacyAssemblyStatusLabel = useMemo(() => {
+    if (!assemblies.length) return "—";
+    const values = (assemblies as any[]).map(
+      (a) => normalizeAssemblyState(a.status as string | null) ?? "DRAFT"
+    );
+    const unique = new Set(values);
+    if (unique.size > 1) return "Mixed";
+    const normalized = values[0];
+    return assemblyStateConfig.states[normalized]?.label || normalized;
+  }, [assemblies]);
   const overrideTargets = primaryAssembly
     ? assemblyTargetsById[primaryAssembly.id]
     : null;
@@ -165,33 +189,18 @@ export default function JobAssemblyRoute() {
       year: "numeric",
     });
   };
-  const effectiveInternalValue = toDateInputValue(
-    overrideTargets?.internal?.value
-  );
-  const effectiveCustomerValue = toDateInputValue(
-    overrideTargets?.customer?.value
-  );
-  const effectiveDropDeadValue = toDateInputValue(
-    overrideTargets?.dropDead?.value
-  );
   const effectiveShipToAddress = overrideTargets?.shipToAddress?.value ?? null;
-  const effectiveShipToAddressId =
-    effectiveShipToAddress && Number.isFinite(Number((effectiveShipToAddress as any).id))
-      ? Number((effectiveShipToAddress as any).id)
-      : null;
-  const jobShipToAddress = overrideTargets?.shipToAddress?.jobValue ?? null;
   const jobShipToLocation = overrideTargets?.legacyShipToLocation?.value ?? null;
   const formatAddressLabel = (addr: any) => {
-    const lines = formatAddressLines(addr);
+    const resolved =
+      typeof addr === "number" ? shipToAddressById.get(addr) : addr;
+    if (!resolved) return null;
+    const lines = formatAddressLines(resolved);
     return lines.length ? lines.join(", ") : null;
   };
   const shipToHint = !effectiveShipToAddress && jobShipToLocation
     ? `Legacy ship-to location: ${jobShipToLocation.name || `Location ${jobShipToLocation.id}`}`
     : undefined;
-  const shipToDisplay =
-    formatAddressLabel(effectiveShipToAddress) ||
-    jobShipToLocation?.name ||
-    "—";
   const productForAssembly =
     primaryAssembly?.productId != null
       ? (products || []).find(
@@ -227,6 +236,17 @@ export default function JobAssemblyRoute() {
   const [shipToAddressOverrideId, setShipToAddressOverrideId] = useState<
     number | null
   >(initialShipToAddressOverride);
+  const initialAssemblyName = useMemo(
+    () => primaryAssembly?.name || "",
+    [primaryAssembly?.id, primaryAssembly?.name]
+  );
+  const initialAssemblyType = useMemo(
+    () => primaryAssembly?.assemblyType || "Prod",
+    [primaryAssembly?.id, primaryAssembly?.assemblyType]
+  );
+  const [assemblyName, setAssemblyName] = useState(initialAssemblyName);
+  const [assemblyType, setAssemblyType] = useState(initialAssemblyType);
+
   const resetOverrides = useCallback(() => {
     setInternalOverride(initialInternalOverride);
     setCustomerOverride(initialCustomerOverride);
@@ -241,6 +261,10 @@ export default function JobAssemblyRoute() {
   useEffect(() => {
     resetOverrides();
   }, [primaryAssembly?.id, resetOverrides]);
+  useEffect(() => {
+    setAssemblyName(initialAssemblyName);
+    setAssemblyType(initialAssemblyType);
+  }, [primaryAssembly?.id, initialAssemblyName, initialAssemblyType]);
   useEffect(() => {
     if (actionData?.error) {
       showToastError(actionData.error);
@@ -390,6 +414,25 @@ export default function JobAssemblyRoute() {
     submit,
     job.id,
   ]);
+  const resetAssemblyEdits = useCallback(() => {
+    setAssemblyName(initialAssemblyName);
+    setAssemblyType(initialAssemblyType);
+  }, [initialAssemblyName, initialAssemblyType]);
+  const handleAssemblySave = useCallback(() => {
+    if (!primaryAssembly) return;
+    const fd = new FormData();
+    fd.set("_intent", "assembly.update");
+    fd.set("assemblyId", String(primaryAssembly.id));
+    fd.set("name", assemblyName);
+    fd.set("assemblyType", assemblyType);
+    if (typeof window !== "undefined") {
+      fd.set("returnTo", window.location.pathname + window.location.search);
+    }
+    submit(fd, { method: "post" });
+  }, [assemblyName, assemblyType, primaryAssembly, submit]);
+  const assemblyDirty =
+    (assemblyName || "").trim() !== (initialAssemblyName || "").trim() ||
+    (assemblyType || "") !== (initialAssemblyType || "");
   const overridesDirty = useMemo(() => {
     if (!primaryAssembly) return false;
     const currentInternal = internalOverride
@@ -443,6 +486,10 @@ export default function JobAssemblyRoute() {
     overridesFormHandlers as any,
     () => handleOverridesSave(),
     () => resetOverrides()
+  );
+  const assemblyTypeOptions = useMemo(
+    () => (assemblyTypes || []).map((t: any) => t.label || String(t)),
+    [assemblyTypes]
   );
   const handleTrimReservations = useCallback(
     (lineId: number) => {
@@ -518,8 +565,6 @@ export default function JobAssemblyRoute() {
     "remaining"
   );
   const [cancelBaseline, setCancelBaseline] = useState("ORDER");
-  const [assemblyDrawerOpen, setAssemblyDrawerOpen] = useState(false);
-  const [promisesDrawerOpen, setPromisesDrawerOpen] = useState(false);
   const holdSegmentOptions = [
     { value: "OFF", label: "Off" },
     { value: "CLIENT", label: "Client hold" },
@@ -638,7 +683,7 @@ export default function JobAssemblyRoute() {
     setManualHoldDirty(false);
   };
   const renderStatusBar = ({
-    statusControls,
+    statusControls: _statusControls,
     whiteboardControl,
   }: {
     statusControls: ReactNode;
@@ -674,13 +719,13 @@ export default function JobAssemblyRoute() {
       !isGroup && primaryAssembly ? (
         <Menu withinPortal position="bottom-end" shadow="sm">
           <Menu.Target>
-            <Button
-              size="xs"
-              variant="light"
-              rightSection={<IconMenu2 size={14} />}
+            <ActionIcon
+              variant="subtle"
+              size="sm"
+              aria-label="Assembly actions"
             >
-              Actions
-            </Button>
+              <IconMenu2 size={18} />
+            </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
             {!hasProductionActivity ? (
@@ -800,15 +845,25 @@ export default function JobAssemblyRoute() {
           Canceled {canceledQty}/{cancelOrderedTotal}
         </Badge>
       ) : null;
+    const jobStatusControl = (
+      <Button variant="light" disabled>
+        {jobStateLabel}
+      </Button>
+    );
     return (
       <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
         <BreadcrumbSet breadcrumbs={breadcrumbs} />
-        <Group gap="sm" align="center">
-          {whiteboardControl}
-          {statusControls}
-          {canceledBadge}
+        <Group gap="sm" align="center" wrap="wrap">
+          <Group gap="xs" align="center" wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              Legacy: {legacyAssemblyStatusLabel}
+            </Text>
+            {jobStatusControl}
+            {canceledBadge}
+          </Group>
           {manualHoldControls}
           {groupBadge}
+          {whiteboardControl}
           {actionsMenu}
         </Group>
       </Group>
@@ -900,197 +955,47 @@ export default function JobAssemblyRoute() {
   // the loader never provided (loader only returns `assemblies` with nested `costings`).
   // This caused the costings table to render empty for single assembly while group view worked.
   // Treat single assembly as a degenerate group: rely on `assembly.costings` like group mode.
+  const topForm = useForm({ defaultValues: {} });
+  const assemblyDetailCtx = {
+    isLoudMode,
+    job,
+    primaryAssembly,
+    productForAssembly,
+    assemblyTypeOptions,
+    shipToAddressOptions: shipToAddressOptions as any,
+    shipToAddressById,
+    shipToHint,
+    overrideTargets,
+    formatDateLabel,
+    formatAddressLabel,
+    state: {
+      assemblyName,
+      setAssemblyName,
+      assemblyType,
+      setAssemblyType,
+      internalOverride,
+      setInternalOverride,
+      customerOverride,
+      setCustomerOverride,
+      dropDeadOverride,
+      setDropDeadOverride,
+      shipToAddressOverrideId,
+      setShipToAddressOverrideId,
+    },
+    dirty: {
+      assembly: assemblyDirty,
+      promises: overridesDirty,
+    },
+    actions: {
+      saveAssembly: handleAssemblySave,
+      resetAssembly: resetAssemblyEdits,
+      savePromises: handleOverridesSave,
+      resetPromises: resetOverrides,
+    },
+  };
+
   return (
     <Stack gap="lg">
-      {!isGroup && primaryAssembly ? (
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs" style={{ position: "relative" }}>
-              <Group justify="space-between" align="center">
-                <Title order={4}>Assembly</Title>
-                {!isLoudMode ? (
-                  <button
-                    type="button"
-                    className="drawerToggle"
-                    aria-label="Edit"
-                    onClick={() => setAssemblyDrawerOpen(true)}
-                  />
-                ) : null}
-              </Group>
-            </Card.Section>
-            <Stack gap="xs" mt="sm">
-              <DisplayField
-                label="Assembly"
-                value={
-                  primaryAssembly?.name ||
-                  (primaryAssembly?.id ? `Assembly ${primaryAssembly.id}` : "—")
-                }
-              />
-              <DisplayField
-                label="Type"
-                value={primaryAssembly?.assemblyType || "—"}
-              />
-              <DisplayField
-                label="Product"
-                value={
-                  primaryAssembly?.productId ? (
-                    <Link to={`/products/${primaryAssembly.productId}`}>
-                      {productForAssembly?.name ||
-                        `Product ${primaryAssembly.productId}`}
-                    </Link>
-                  ) : (
-                    "—"
-                  )
-                }
-              />
-              <DisplayField label="Job ID" value={job?.id ?? "—"} />
-              <DisplayField
-                label="Assembly ID"
-                value={
-                  primaryAssembly?.id != null ? `A${primaryAssembly.id}` : "—"
-                }
-              />
-            </Stack>
-          </Card>
-          <Card withBorder padding="md">
-            <Card.Section inheritPadding py="xs" style={{ position: "relative" }}>
-              <Group justify="space-between" align="center">
-                <Title order={4}>Promises</Title>
-                {isLoudMode ? (
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={handleOverridesSave}
-                  >
-                    Save overrides
-                  </Button>
-                ) : (
-                  <button
-                    type="button"
-                    className="drawerToggle"
-                    aria-label="Edit"
-                    onClick={() => setPromisesDrawerOpen(true)}
-                  />
-                )}
-              </Group>
-            </Card.Section>
-            {isLoudMode ? (
-              <Stack gap="md" mt="sm">
-                <OverridableField
-                  label="Internal target date"
-                  isOverridden={internalOverride != null}
-                  jobValue={formatDateLabel(overrideTargets?.internal?.jobValue)}
-                  onClear={() => setInternalOverride(null)}
-                >
-                  <DatePickerInput
-                    value={internalOverride ?? effectiveInternalValue}
-                    onChange={(value) => setInternalOverride(value ?? null)}
-                    valueFormat="YYYY-MM-DD"
-                    clearable
-                  />
-                </OverridableField>
-                <OverridableField
-                  label="Customer target date"
-                  isOverridden={customerOverride != null}
-                  jobValue={formatDateLabel(overrideTargets?.customer?.jobValue)}
-                  onClear={() => setCustomerOverride(null)}
-                >
-                  <DatePickerInput
-                    value={customerOverride ?? effectiveCustomerValue}
-                    onChange={(value) => setCustomerOverride(value ?? null)}
-                    valueFormat="YYYY-MM-DD"
-                    clearable
-                  />
-                </OverridableField>
-                <OverridableField
-                  label="Drop-dead date"
-                  isOverridden={dropDeadOverride != null}
-                  jobValue={formatDateLabel(overrideTargets?.dropDead?.jobValue)}
-                  onClear={() => setDropDeadOverride(null)}
-                >
-                  <DatePickerInput
-                    value={dropDeadOverride ?? effectiveDropDeadValue}
-                    onChange={(value) => setDropDeadOverride(value ?? null)}
-                    valueFormat="YYYY-MM-DD"
-                    clearable
-                  />
-                </OverridableField>
-                <OverridableField
-                  label="Ship-To Address"
-                  isOverridden={shipToAddressOverrideId != null}
-                  jobValue={formatAddressLabel(jobShipToAddress)}
-                  onClear={() => setShipToAddressOverrideId(null)}
-                >
-                  <AddressPickerField
-                    label="Ship-To Address"
-                    value={
-                      shipToAddressOverrideId != null
-                        ? shipToAddressOverrideId
-                        : effectiveShipToAddressId != null
-                          ? effectiveShipToAddressId
-                          : null
-                    }
-                    options={shipToAddressOptions}
-                    previewAddress={
-                      shipToAddressOverrideId != null
-                        ? shipToAddressById.get(shipToAddressOverrideId) ?? null
-                        : effectiveShipToAddress ?? null
-                    }
-                    hint={shipToHint}
-                    onChange={(nextId) => setShipToAddressOverrideId(nextId)}
-                  />
-                </OverridableField>
-              </Stack>
-            ) : (
-              <Stack gap="xs" mt="sm">
-                <DisplayField
-                  label="Internal target"
-                  value={formatDateLabel(effectiveInternalValue)}
-                />
-                <DisplayField
-                  label="Customer target"
-                  value={formatDateLabel(effectiveCustomerValue)}
-                />
-                <DisplayField
-                  label="Drop-dead"
-                  value={formatDateLabel(effectiveDropDeadValue)}
-                />
-                <DisplayField label="Ship-to" value={shipToDisplay} />
-              </Stack>
-            )}
-          </Card>
-          {!isLoudMode ? (
-            <>
-              <Drawer
-                opened={assemblyDrawerOpen}
-                onClose={() => setAssemblyDrawerOpen(false)}
-                title="Edit assembly"
-                position="right"
-                size="lg"
-              >
-                <Stack gap="sm">
-                  <Text size="sm" c="dimmed">
-                    TODO: Assembly edit drawer (stub for Chunk 1).
-                  </Text>
-                </Stack>
-              </Drawer>
-              <Drawer
-                opened={promisesDrawerOpen}
-                onClose={() => setPromisesDrawerOpen(false)}
-                title="Edit promises"
-                position="right"
-                size="lg"
-              >
-                <Stack gap="sm">
-                  <Text size="sm" c="dimmed">
-                    TODO: Promises edit drawer (stub for Chunk 1).
-                  </Text>
-                </Stack>
-              </Drawer>
-            </>
-          ) : null}
-        </SimpleGrid>
-      ) : null}
       <AssembliesEditor
         job={job as any}
         assemblies={
@@ -1131,6 +1036,17 @@ export default function JobAssemblyRoute() {
         rollupsByAssembly={data.rollupsByAssembly as any}
         vendorOptionsByStep={data.vendorOptionsByStep as any}
         legacyStatusReadOnly
+        topContent={
+          !isGroup && primaryAssembly ? (
+            <LayoutFormRenderer
+              page={assemblyDetailPage}
+              form={topForm}
+              mode="edit"
+              ctx={assemblyDetailCtx}
+            />
+          ) : null
+        }
+        showAssemblySummary={!primaryAssembly || isGroup}
       />
       <Modal
         opened={cancelOpen}

@@ -10,6 +10,7 @@ import type {
   FieldConfig,
   FieldMode,
   FormItem,
+  OverrideItem,
   DividerItem,
   LabelDividerItem,
   SpacerItem,
@@ -167,5 +168,9 @@ export const ui = {
     items: [left, right],
     weights,
     key,
+  }),
+  override: (item: Omit<OverrideItem, "kind">): OverrideItem => ({
+    kind: "override",
+    ...item,
   }),
 };

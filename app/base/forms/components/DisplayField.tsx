@@ -36,9 +36,9 @@ export function DisplayField({
         <span
           style={{
             position: "absolute",
-            left: "-4px",
+            left: "-10px",
             top: "50%",
-            transform: "translate(-100%, -50%)",
+            transform: "translateY(-50%)",
           }}
         >
           <IconInfoCircle size={14} />
@@ -51,7 +51,11 @@ export function DisplayField({
 
   return (
     <Input.Wrapper label={labelNode} mod={mod} {...shared}>
-      <Text size="sm">{displayValue}</Text>
+      {typeof displayValue === "string" || typeof displayValue === "number" ? (
+        <Text size="sm">{displayValue}</Text>
+      ) : (
+        displayValue
+      )}
     </Input.Wrapper>
   );
 }

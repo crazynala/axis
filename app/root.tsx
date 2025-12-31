@@ -279,6 +279,14 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--axis-chip-neutral-bg": "transparent",
     "--axis-chip-neutral-fg": "currentColor",
     "--axis-chip-neutral-bd": "transparent",
+    "--axis-input-bg": "transparent",
+    "--axis-input-bd": "transparent",
+    "--axis-input-bg-hover": "transparent",
+    "--axis-pseudo-bd": "transparent",
+    "--axis-pseudo-bg": "transparent",
+    "--axis-override-icon-fg": "currentColor",
+    "--axis-override-icon-fg-active": "currentColor",
+    "--axis-override-x-fg": "currentColor",
   },
   light: {
     "--aa-card-bg": t.colors.gray[0],
@@ -303,6 +311,15 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--axis-chip-neutral-bg": t.colors.blue[0],
     "--axis-chip-neutral-fg": t.colors.blue[9],
     "--axis-chip-neutral-bd": t.colors.blue[2],
+
+    "--axis-input-bg": t.white,
+    "--axis-input-bd": t.colors.gray[4],
+    "--axis-input-bg-hover": t.colors.gray[0],
+    "--axis-pseudo-bd": "var(--axis-input-bg)",
+    "--axis-pseudo-bg": "transparent",
+    "--axis-override-icon-fg": t.colors.gray[5],
+    "--axis-override-icon-fg-active": `color-mix(in oklab, ${t.colors.yellow[6]} 70%, ${t.colors.gray[5]} 30%)`,
+    "--axis-override-x-fg": t.colors.gray[6],
   },
   dark: {
     "--aa-card-bg": t.colors.dark[8],
@@ -328,6 +345,15 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--axis-chip-neutral-bg": `color-mix(in oklab, ${t.colors.blue[6]} 18%, transparent)`,
     "--axis-chip-neutral-fg": t.colors.blue[1],
     "--axis-chip-neutral-bd": `color-mix(in oklab, ${t.colors.blue[6]} 40%, transparent)`,
+
+    "--axis-input-bg": t.colors.dark[6],
+    "--axis-input-bd": t.colors.dark[4],
+    "--axis-input-bg-hover": t.colors.dark[5],
+    "--axis-pseudo-bd": "var(--axis-input-bg)",
+    "--axis-pseudo-bg": "transparent",
+    "--axis-override-icon-fg": t.colors.dark[2],
+    "--axis-override-icon-fg-active": `color-mix(in oklab, ${t.colors.yellow[5]} 60%, ${t.colors.dark[2]} 40%)`,
+    "--axis-override-x-fg": t.colors.dark[2],
   },
 });
 

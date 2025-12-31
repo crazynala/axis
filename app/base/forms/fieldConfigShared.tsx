@@ -13,13 +13,16 @@ import {
   useCombobox,
   Divider,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import { useOptions } from "../options/OptionsContext";
 import { IconEditCircle } from "@tabler/icons-react";
+import { IconCircle, IconCircleFilled } from "@tabler/icons-react";
 import { buildCommonInputProps } from "./fieldRequired";
 import { getSelectOptions } from "./fieldOptions";
 import { resolveFieldState } from "./fieldState";
 import { renderTrailingActionWrapper } from "./fieldTrailingAction";
+import { DisplayField } from "./components/DisplayField";
 
 export type FieldMode = "edit" | "find" | "create";
 
@@ -171,13 +174,47 @@ export type RowItem = {
   key?: string;
 };
 
+export type OverrideItem = {
+  kind: "override";
+  key?: string;
+  label: string;
+  getJobValue: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    ctx?: RenderContext;
+  }) => any;
+  getOverrideValue: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    ctx?: RenderContext;
+  }) => any;
+  setOverrideValue: (
+    args: { form: UseFormReturn<any>; mode: FieldMode; ctx?: RenderContext },
+    nextValue: any
+  ) => void;
+  formatDisplay?: (
+    value: any,
+    args: { form: UseFormReturn<any>; mode: FieldMode; ctx?: RenderContext }
+  ) => React.ReactNode;
+  renderInput: (args: {
+    form: UseFormReturn<any>;
+    mode: FieldMode;
+    ctx?: RenderContext;
+    value: any;
+    onChange: (nextValue: any) => void;
+    isOverridden: boolean;
+    onClear: () => void;
+  }) => React.ReactNode;
+};
+
 export type FormItem =
   | FieldConfig
   | DividerItem
   | LabelDividerItem
   | SpacerItem
   | HeaderItem
-  | RowItem;
+  | RowItem
+  | OverrideItem;
 
 export type RenderContext = {
   fieldOptions?: Record<string, { value: string; label: string }[]>;
@@ -195,6 +232,23 @@ function formatEmptyValue(value: any, ctx?: RenderContext) {
     return ctx?.emptyDisplay ?? "—";
   }
   return value;
+}
+
+function OverrideSourceIcon({ isOverridden }: { isOverridden: boolean }) {
+  return (
+    <Tooltip
+      label={isOverridden ? "Overridden on Assembly" : "From Job"}
+      withArrow
+    >
+      <span>
+        {isOverridden ? (
+          <IconCircleFilled size={12} color="var(--axis-override-icon-fg-active)" />
+        ) : (
+          <IconCircle size={12} color="var(--axis-override-icon-fg)" />
+        )}
+      </span>
+    </Tooltip>
+  );
 }
 
 export function ReadOnlyDisplayInput({
@@ -928,6 +982,19 @@ export function RenderGroup({
     sm: 12,
     md: 18,
   };
+  const renderOverrideDisplay = (
+    value: React.ReactNode,
+    isOverridden: boolean
+  ) => (
+    <Group gap="xs" wrap="nowrap" align="center">
+      {typeof value === "string" || typeof value === "number" ? (
+        <Text size="sm">{value}</Text>
+      ) : (
+        value
+      )}
+      <OverrideSourceIcon isOverridden={isOverridden} />
+    </Group>
+  );
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
     if (isFieldConfig(item)) {
@@ -1012,6 +1079,45 @@ export function RenderGroup({
         >
           {item.label}
         </Text>
+      );
+      continue;
+    }
+    if (item.kind === "override") {
+      const key = item.key ?? `override-${i}`;
+      const args = { form, mode, ctx };
+      const jobValue = item.getJobValue(args);
+      const overrideValue = item.getOverrideValue(args);
+      const effectiveValue =
+        overrideValue != null ? overrideValue : jobValue ?? null;
+      const isOverridden = overrideValue != null;
+      const displayRaw = item.formatDisplay
+        ? item.formatDisplay(effectiveValue, args)
+        : effectiveValue;
+      const displayValue = formatEmptyValue(displayRaw, ctx);
+      const readOnly =
+        mode === "find" || (ctx?.allowEditInCalm === false && mode === "edit");
+      if (readOnly) {
+        rows.push(
+          <DisplayField
+            key={key}
+            label={item.label}
+            value={renderOverrideDisplay(displayValue, isOverridden)}
+          />
+        );
+        continue;
+      }
+      const input = item.renderInput({
+        ...args,
+        value: effectiveValue,
+        onChange: (next) => item.setOverrideValue(args, next),
+        isOverridden,
+        onClear: () => item.setOverrideValue(args, null),
+      });
+      rows.push(
+        <Group key={key} gap="xs" wrap="nowrap" align="center">
+          <div style={{ flex: 1 }}>{input}</div>
+          <OverrideSourceIcon isOverridden={isOverridden} />
+        </Group>
       );
       continue;
     }
@@ -1142,6 +1248,25 @@ export function ViewGroup({
       </div>
     );
   };
+  const renderOverrideDisplay = (
+    label: string,
+    value: React.ReactNode,
+    isOverridden: boolean
+  ) => (
+    <DisplayField
+      label={label}
+      value={
+        <Group gap="xs" wrap="nowrap" align="center">
+          {typeof value === "string" || typeof value === "number" ? (
+            <Text size="sm">{value}</Text>
+          ) : (
+            value
+          )}
+          <OverrideSourceIcon isOverridden={isOverridden} />
+        </Group>
+      }
+    />
+  );
   const rows: React.ReactNode[] = [];
   for (let i = 0; i < list.length; i++) {
     const item = list[i];
@@ -1220,6 +1345,25 @@ export function ViewGroup({
         >
           {item.label}
         </Text>
+      );
+      continue;
+    }
+    if (item.kind === "override") {
+      const key = item.key ?? `override-${i}`;
+      const args = { form, mode, ctx };
+      const jobValue = item.getJobValue(args);
+      const overrideValue = item.getOverrideValue(args);
+      const effectiveValue =
+        overrideValue != null ? overrideValue : jobValue ?? null;
+      const isOverridden = overrideValue != null;
+      const displayRaw = item.formatDisplay
+        ? item.formatDisplay(effectiveValue, args)
+        : effectiveValue;
+      const displayValue = formatEmptyValue(displayRaw, ctx);
+      rows.push(
+        <React.Fragment key={key}>
+          {renderOverrideDisplay(item.label, displayValue, isOverridden)}
+        </React.Fragment>
       );
       continue;
     }

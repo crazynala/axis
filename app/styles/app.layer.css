@@ -112,6 +112,46 @@
     }
   }
 
+  .axis-stage-table-scroll {
+    overflow-x: auto;
+  }
+
+  .axis-stage-table .axis-stage-col--stage,
+  .axis-stage-table .axis-stage-col--status,
+  .axis-stage-table .axis-stage-col--act {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .axis-stage-table .axis-stage-col--stage {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--aa-card-bg);
+    font-size: 0.75rem;
+  }
+
+  .axis-stage-table thead .axis-stage-col--stage {
+    z-index: 3;
+  }
+
+  .axis-stage-table .axis-stage-col--status {
+    max-width: 10rem;
+  }
+
+  .axis-stage-table .axis-stage-col--act {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background: var(--aa-card-bg);
+    text-align: center;
+  }
+
+  .axis-stage-table thead .axis-stage-col--act {
+    z-index: 3;
+  }
+
   /* Per-field overrides */
   .mantine-InputWrapper-root[data-inline-label="true"] {
     display: grid;
