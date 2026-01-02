@@ -11,11 +11,13 @@ import {
   useSearchParams,
 } from "@remix-run/react";
 import { prisma } from "../utils/prisma.server";
-import { buildPrismaArgs, parseTableParams } from "../utils/table.server";
+import { buildPrismaArgs } from "../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { ExpenseFindManager } from "~/modules/expense/findify/ExpenseFindManager";
-import { SavedViews } from "../components/find/SavedViews";
-import { listViews, saveView } from "../utils/views.server";
+import { FindRibbonAuto } from "../components/find/FindRibbonAuto";
+import { listViews, saveView, getView } from "../utils/views.server";
+import { allExpenseFindFields } from "../modules/expense/forms/expenseDetail";
+import { deriveSemanticKeys } from "../base/index/indexController";
 import {
   decodeRequests,
   buildWhereFromRequests,
@@ -25,44 +27,57 @@ import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../base/record/useHybridWindow";
 import { useRecordContext } from "../base/record/RecordContext";
 import { useRecords } from "../base/record/RecordContext";
-import { Stack, Group, Title, Button, Tooltip } from "@mantine/core";
-import { useEffect } from "react";
-import { formatUSD } from "../utils/format";
+import { Stack, Group, Title, Button } from "@mantine/core";
+import { useEffect, useMemo } from "react";
+import { expenseColumns } from "~/modules/expense/config/expenseColumns";
+import {
+  buildTableColumns,
+  getDefaultColumnKeys,
+  getVisibleColumnKeys,
+  normalizeColumnsValue,
+} from "~/base/index/columns";
 
 export const meta: MetaFunction = () => [{ title: "Expenses" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
-  const params = parseTableParams(args.request.url);
   const views = await listViews("expenses");
   const viewName = url.searchParams.get("view");
-  let effective = params;
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName);
-    if (v) {
-      const saved = v.params as any;
-      effective = {
-        page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
-        sort: (url.searchParams.get("sort") || saved.sort || null) as any,
-        dir: (url.searchParams.get("dir") || saved.dir || null) as any,
-        q: (url.searchParams.get("q") || saved.q || null) as any,
-        filters: { ...(saved.filters || {}), ...params.filters },
-      };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs"))
-        url.searchParams.set("findReqs", saved.filters.findReqs);
-    }
-  }
-  const keys = ["category", "details", "date"];
+  const semanticKeys = deriveSemanticKeys(allExpenseFindFields());
+  const hasSemantic =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    semanticKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !hasSemantic;
+  const activeView = viewActive
+    ? (views.find((x: any) => x.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectivePage = Number(
+    url.searchParams.get("page") || viewParams?.page || 1
+  );
+  const effectivePerPage = Number(
+    url.searchParams.get("perPage") || viewParams?.perPage || 20
+  );
+  const effectiveSort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveDir = url.searchParams.get("dir") || viewParams?.dir || null;
+  const effectiveQ = viewActive ? viewParams?.q ?? null : url.searchParams.get("q");
+  const keys = semanticKeys;
   let findWhere: any = null;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const hasFindIndicators = viewActive
+    ? keys.some((k) => viewFilters[k] !== undefined && viewFilters[k] !== null) ||
+      !!viewFilters.findReqs
+    : keys.some((k) => url.searchParams.has(k)) ||
+      url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
-      const v = url.searchParams.get(k);
-      if (v) values[k] = v;
+      const v = viewActive ? viewFilters[k] : url.searchParams.get(k);
+      if (v !== null && v !== undefined && v !== "") values[k] = v;
     }
     const simple: any = {};
     if (values.category)
@@ -70,7 +85,10 @@ export async function loader(args: LoaderFunctionArgs) {
     if (values.details)
       simple.details = { contains: values.details, mode: "insensitive" };
     if (values.date) simple.date = values.date;
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         category: (v) => ({ category: { contains: v, mode: "insensitive" } }),
@@ -81,7 +99,24 @@ export async function loader(args: LoaderFunctionArgs) {
       findWhere = mergeSimpleAndMulti(simple, multiWhere);
     } else findWhere = simple;
   }
-  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+  const filtersFromSearch = (input: URLSearchParams, keysList: string[]) => {
+    const filters: Record<string, any> = {};
+    keysList.forEach((k) => {
+      const v = input.get(k);
+      if (v !== null && v !== "") filters[k] = v;
+    });
+    const findReqs = input.get("findReqs");
+    if (findReqs) filters.findReqs = findReqs;
+    return filters;
+  };
+  let baseParams = {
+    page: findWhere ? 1 : effectivePage,
+    perPage: effectivePerPage,
+    sort: effectiveSort,
+    dir: effectiveDir,
+    q: effectiveQ ?? null,
+    filters: viewActive ? viewFilters : filtersFromSearch(url.searchParams, keys),
+  };
   if (baseParams.filters) {
     const {
       findReqs: _omitFindReqs,
@@ -91,7 +126,7 @@ export async function loader(args: LoaderFunctionArgs) {
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
-    defaultSort: { field: "id", dir: "asc" },
+    defaultSort: { field: "id", dir: "desc" },
     searchableFields: ["category", "details"],
   });
   if (findWhere) prismaArgs.where = findWhere;
@@ -127,32 +162,73 @@ export async function loader(args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
+    const name =
+      intent === "view.overwriteFromUrl"
+        ? String(form.get("viewId") || form.get("name") || "").trim()
+        : String(form.get("name") || "").trim();
     if (!name) return redirect("/expenses");
     const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
-    const page = Number(params.page || 1);
-    const perPage = Number(params.perPage || 20);
-    const sort = (params.sort as any) || null;
-    const dir = (params.dir as any) || null;
-    const q = (params.q as any) || null;
+    const sp = url.searchParams;
+    const semanticKeys = deriveSemanticKeys(allExpenseFindFields());
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
-      filters[k] = v;
+    for (const k of semanticKeys) {
+      const v = sp.get(k);
+      if (v !== null && v !== "") filters[k] = v;
     }
-    if (params.findReqs) filters.findReqs = params.findReqs;
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("expenses", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+    const baseColumns = normalizeColumnsValue(baseParams?.columns);
+    const defaultColumns = getDefaultColumnKeys(expenseColumns);
+    const columns =
+      columnsFromUrl.length > 0
+        ? columnsFromUrl
+        : baseColumns.length > 0
+        ? baseColumns
+        : defaultColumns;
     await saveView({
       module: "expenses",
       name,
-      params: { page, perPage, sort, dir, q, filters },
+      params: {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      },
     });
     return redirect(`/expenses?view=${encodeURIComponent(name)}`);
   }
@@ -160,8 +236,15 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ExpensesIndexRoute() {
-  const { idList, idListComplete, initialRows, total, views, activeView } =
-    useLoaderData<typeof loader>();
+  const {
+    idList,
+    idListComplete,
+    initialRows,
+    total,
+    views,
+    activeView,
+    activeViewParams,
+  } = useLoaderData<typeof loader>();
   const { setIdList, addRows } = useRecordContext();
   const { currentId, setCurrentId } = useRecords();
   useEffect(() => {
@@ -171,6 +254,7 @@ export default function ExpensesIndexRoute() {
   }, [idList, idListComplete, initialRows, setIdList, addRows]);
   const navigate = useNavigate();
   const [sp] = useSearchParams();
+  const findConfig = useMemo(() => allExpenseFindFields(), []);
   const { records, fetching, requestMore, atEnd } = useHybridWindow({
     module: "expenses",
     rowEndpointPath: "/expenses/rows",
@@ -178,22 +262,21 @@ export default function ExpensesIndexRoute() {
     batchIncrement: 100,
     maxPlaceholders: 8,
   });
-  const columns = [
-    {
-      accessor: "id",
-      title: "ID",
-      width: 70,
-      render: (r: any) => <Link to={`/expenses/${r.id}`}>{r.id}</Link>,
-    },
-    { accessor: "date", title: "Date", sortable: true },
-    { accessor: "category", title: "Category", sortable: true },
-    { accessor: "details", title: "Details", sortable: true },
-    {
-      accessor: "priceCost",
-      title: "Cost",
-      render: (r: any) => formatUSD(r.priceCost || 0),
-    },
-  ];
+  const viewMode = !!activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: expenseColumns,
+        urlColumns: sp.get("columns"),
+        viewColumns: activeViewParams?.columns,
+        viewMode,
+      }),
+    [activeViewParams?.columns, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(expenseColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
   return (
     <Stack gap="lg">
       <ExpenseFindManager />
@@ -210,29 +293,17 @@ export default function ExpensesIndexRoute() {
           New
         </Button>
       </Group>
-      <SavedViews views={views as any} activeView={activeView as any} />
+      <FindRibbonAuto
+        views={views as any}
+        activeView={activeView as any}
+        activeViewId={activeView as any}
+        activeViewParams={activeViewParams as any}
+        findConfig={findConfig}
+        enableLastView
+        columnsConfig={expenseColumns}
+      />
       <Group justify="space-between" align="center" mb="xs">
         <Title order={4}>Expenses ({total})</Title>
-        {Array.from(sp.keys()).some(
-          (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
-        ) && (
-          <Tooltip label="Clear all filters">
-            <Button
-              variant="default"
-              onClick={() => {
-                const next = new URLSearchParams(sp);
-                for (const k of Array.from(next.keys())) {
-                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
-                    continue;
-                  next.delete(k);
-                }
-                navigate(`?${next.toString()}`);
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Tooltip>
-        )}
       </Group>
       <VirtualizedNavDataTable
         records={records as any}

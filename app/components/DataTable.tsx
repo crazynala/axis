@@ -73,6 +73,7 @@ export function DataTable<T extends Record<string, any>>({
     const next = new URLSearchParams(sp);
     if (value) next.set("q", value);
     else next.delete("q");
+    next.delete("view");
     next.set("page", "1");
     setSp(next);
   };

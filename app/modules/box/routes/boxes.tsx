@@ -10,11 +10,18 @@ import {
 } from "~/base/find/multiFind";
 import { useRecords } from "~/base/record/RecordContext";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
-import { parseTableParams, buildPrismaArgs } from "~/utils/table.server";
-import { listViews, saveView } from "~/utils/views.server";
+import { buildPrismaArgs } from "~/utils/table.server";
+import { listViews, saveView, getView } from "~/utils/views.server";
 import { prismaBase } from "~/utils/prisma.server";
 import { boxSearchSchema } from "../findify/box.search-schema";
 import { fetchBoxesByIds } from "../services/boxHydrator.server";
+import { allBoxFieldConfigs } from "../forms/boxDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
+import { boxColumns } from "../config/boxColumns";
+import {
+  getDefaultColumnKeys,
+  normalizeColumnsValue,
+} from "~/base/index/columns";
 
 const BOX_FIND_PARAM_KEYS = [
   "id",
@@ -50,47 +57,67 @@ export type BoxesLoaderData = {
   total: number;
   views: any[];
   activeView: string | null;
+  activeViewParams: any | null;
 };
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
-  const q = url.searchParams;
-  const params = parseTableParams(request.url);
   const views = await listViews("boxes");
-  const viewName = q.get("view");
-  let effective = params;
-  if (viewName) {
-    const viewDef = views.find((v: any) => v.name === viewName);
-    if (viewDef) {
-      const saved = (viewDef.params || {}) as any;
-      effective = {
-        page: Number(q.get("page") || saved.page || 1),
-        perPage: Number(q.get("perPage") || saved.perPage || 20),
-        sort: (q.get("sort") || saved.sort || null) as any,
-        dir: (q.get("dir") || saved.dir || null) as any,
-        q: (q.get("q") || saved.q || null) as any,
-        filters: { ...(saved.filters || {}), ...(params.filters || {}) },
-      };
-      if (saved.filters?.findReqs && !q.get("findReqs")) {
-        q.set("findReqs", saved.filters.findReqs);
-      }
-    }
-  }
-
-  const findKeys = BOX_FIND_PARAM_KEYS.filter(
-    (key) => !["view", "sort", "dir", "perPage", "q", "findReqs"].includes(key)
+  const viewName = url.searchParams.get("view");
+  const semanticKeys = deriveSemanticKeys(allBoxFieldConfigs);
+  const hasSemantic =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    semanticKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !hasSemantic;
+  const activeView = viewActive
+    ? (views.find((v: any) => v.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectivePage = Number(
+    url.searchParams.get("page") || viewParams?.page || 1
   );
-  const hasFindIndicators =
-    findKeys.some((key) => q.has(key)) || q.has("findReqs");
+  const effectivePerPage = Number(
+    url.searchParams.get("perPage") || viewParams?.perPage || 20
+  );
+  const effectiveSort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveDir = url.searchParams.get("dir") || viewParams?.dir || null;
+  const effectiveQ = viewActive ? viewParams?.q ?? null : url.searchParams.get("q");
+  const filtersFromSearch = (input: URLSearchParams, keys: string[]) => {
+    const filters: Record<string, any> = {};
+    keys.forEach((key) => {
+      const value = input.get(key);
+      if (value !== null && value !== "") filters[key] = value;
+    });
+    const findReqs = input.get("findReqs");
+    if (findReqs) filters.findReqs = findReqs;
+    return filters;
+  };
+
+  const findKeys = semanticKeys;
+  const hasFindIndicators = viewActive
+    ? findKeys.some(
+        (key) => viewFilters[key] !== undefined && viewFilters[key] !== null
+      ) || !!viewFilters.findReqs
+    : findKeys.some((key) => url.searchParams.has(key)) ||
+      url.searchParams.has("findReqs");
   let findWhere: Record<string, any> | null = null;
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const key of findKeys) {
-      const value = q.get(key);
-      if (value !== null && value !== "") values[key] = value;
+      const value = viewActive ? viewFilters[key] : url.searchParams.get(key);
+      if (value !== null && value !== undefined && value !== "")
+        values[key] = value;
     }
     const simple = buildWhere(values, boxSearchSchema);
-    const multi = decodeRequests(q.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (value: any) => any> = {
         code: (value) => ({
@@ -154,7 +181,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
 
-  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+  let baseParams: any = {
+    page: findWhere ? 1 : effectivePage,
+    perPage: effectivePerPage,
+    sort: effectiveSort,
+    dir: effectiveDir,
+    q: effectiveQ ?? null,
+    filters: viewActive ? viewFilters : filtersFromSearch(url.searchParams, findKeys),
+  };
   if (baseParams.filters) {
     const {
       findReqs: _omitFindReqs,
@@ -162,14 +196,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       refreshed: _refreshed,
       ...rest
     } = baseParams.filters;
-    for (const key of findKeys) delete (rest as any)[key];
     baseParams = { ...baseParams, filters: rest };
   }
 
   const { where, orderBy } = buildPrismaArgs(baseParams, {
     searchableFields: ["code", "description", "notes"],
     filterMappers: {},
-    defaultSort: { field: "id", dir: "asc" },
+    defaultSort: { field: "id", dir: "desc" },
   });
   if (findWhere) {
     const andList = Array.isArray((where as any).AND) ? (where as any).AND : [];
@@ -197,33 +230,72 @@ export async function loader({ request }: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
+    const name =
+      intent === "view.overwriteFromUrl"
+        ? String(form.get("viewId") || form.get("name") || "").trim()
+        : String(form.get("name") || "").trim();
     if (!name) return redirect("/boxes");
     const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
+    const sp = url.searchParams;
+    const semanticKeys = deriveSemanticKeys(allBoxFieldConfigs);
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
-    for (const [key, value] of Object.entries(params)) {
-      if (["view"].includes(key)) continue;
-      filters[key] = value;
+    for (const key of semanticKeys) {
+      const value = sp.get(key);
+      if (value !== null && value !== "") filters[key] = value;
     }
-    if (params.findReqs) filters.findReqs = params.findReqs;
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("boxes", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+    const baseColumns = normalizeColumnsValue(baseParams?.columns);
+    const defaultColumns = getDefaultColumnKeys(boxColumns);
+    const columns =
+      columnsFromUrl.length > 0
+        ? columnsFromUrl
+        : baseColumns.length > 0
+        ? baseColumns
+        : defaultColumns;
     await saveView({
       module: "boxes",
       name,
       params: {
         page: 1,
-        perPage: Number(params.perPage || 20),
-        sort: params.sort || null,
-        dir: params.dir || null,
-        q: params.q || null,
-        filters,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
       },
     });
     return redirect(`/boxes?view=${encodeURIComponent(name)}`);

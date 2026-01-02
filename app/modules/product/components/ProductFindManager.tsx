@@ -3,6 +3,9 @@ import { useSearchParams, useNavigate } from "@remix-run/react";
 import { useFind } from "~/base/find/FindContext";
 import { ProductFindModal } from "../components/ProductFindModal";
 import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
+import { allProductFindFields } from "../forms/productDetail";
+import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
+import { deriveSemanticKeys } from "~/base/index/indexController";
 
 // Simple Product Find Modal leveraging existing URL param filtering (products loader reads params)
 export function ProductFindManager({
@@ -18,6 +21,12 @@ export function ProductFindManager({
     () => metadataDefinitions.filter((def) => def.isFilterable),
     [metadataDefinitions]
   );
+  const semanticKeys = useMemo(() => {
+    const metaFields = buildProductMetadataFields(filterableDefs, {
+      onlyFilterable: true,
+    });
+    return new Set(deriveSemanticKeys(allProductFindFields(metaFields)));
+  }, [filterableDefs]);
 
   // Legacy auto-open removed: modal opens only via registered hotkey/callback.
 
@@ -33,8 +42,22 @@ export function ProductFindManager({
         setOpen(false);
       }}
       onSearch={(qs) => {
+        const url = new URL(window.location.href);
+        const produced = new URLSearchParams(qs);
+        const viewName = url.searchParams.get("view");
+        Array.from(url.searchParams.keys()).forEach((k) => {
+          if (k === "q" || k === "findReqs" || semanticKeys.has(k))
+            url.searchParams.delete(k);
+        });
+        for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
+        url.searchParams.delete("page");
+        url.searchParams.delete("findMode");
+        if (viewName) {
+          url.searchParams.delete("view");
+          url.searchParams.set("lastView", viewName);
+        }
         setOpen(false);
-        navigate(`/products?${qs}`);
+        navigate(url.pathname + "?" + url.searchParams.toString());
       }}
       initialValues={(() => {
         const base = Object.fromEntries(

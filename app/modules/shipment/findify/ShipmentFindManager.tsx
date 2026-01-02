@@ -4,6 +4,8 @@ import { IconSearch } from "@tabler/icons-react";
 import { ShipmentFindModal } from "../components/ShipmentFindModal";
 import React, { useEffect, useState } from "react";
 import { useFind } from "~/base/find/FindContext";
+import { allShipmentFindFields } from "../forms/shipmentDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
 
 export function ShipmentFindManager() {
   const [sp] = useSearchParams();
@@ -11,6 +13,10 @@ export function ShipmentFindManager() {
 
   const { registerFindCallback } = useFind();
   const [opened, setOpened] = useState(false);
+  const semanticKeys = React.useMemo(
+    () => new Set(deriveSemanticKeys(allShipmentFindFields())),
+    []
+  );
 
   useEffect(
     () => registerFindCallback(() => setOpened(true)),
@@ -25,15 +31,20 @@ export function ShipmentFindManager() {
     navigate(`?${next.toString()}`);
   };
   const onSearch = (qs: string) => {
-    // Merge produced query string
     const url = new URL(window.location.href);
     const produced = new URLSearchParams(qs);
-    // Drop existing find params
+    const viewName = url.searchParams.get("view");
     Array.from(url.searchParams.keys()).forEach((k) => {
-      if (k === "findReqs" || produced.has(k)) url.searchParams.delete(k);
+      if (k === "q" || k === "findReqs" || semanticKeys.has(k))
+        url.searchParams.delete(k);
     });
     for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
+    url.searchParams.delete("page");
     url.searchParams.delete("findMode");
+    if (viewName) {
+      url.searchParams.delete("view");
+      url.searchParams.set("lastView", viewName);
+    }
     setOpened(false);
     navigate(url.pathname + "?" + url.searchParams.toString());
   };

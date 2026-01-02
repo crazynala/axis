@@ -1,10 +1,5 @@
-import {
-  Link,
-  useNavigate,
-  useOutletContext,
-  useSearchParams,
-} from "@remix-run/react";
-import { Badge, Group, Stack, Text } from "@mantine/core";
+import { useNavigate, useOutletContext, useSearchParams } from "@remix-run/react";
+import { Group, Stack, Text } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { BoxFindManager } from "../components/BoxFindManager";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
@@ -17,6 +12,13 @@ import { useHybridWindow } from "~/base/record/useHybridWindow";
 import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import type { BoxesLoaderData } from "./boxes";
+import { allBoxFieldConfigs } from "../forms/boxDetail";
+import { useMemo } from "react";
+import { boxColumns } from "../config/boxColumns";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+} from "~/base/index/columns";
 
 export default function BoxesIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "boxes" });
@@ -26,6 +28,7 @@ export default function BoxesIndexRoute() {
   const [sp] = useSearchParams();
   const appendHref = useFindHrefAppender();
   const { currentId, setCurrentId } = useRecords();
+  const findConfig = useMemo(() => allBoxFieldConfigs, []);
   const { records, atEnd, loading, requestMore, total } = useHybridWindow({
     module: "boxes",
     rowEndpointPath: "/boxes/rows",
@@ -34,70 +37,21 @@ export default function BoxesIndexRoute() {
     maxPlaceholders: 8,
   });
 
-  const columns = [
-    {
-      accessor: "id",
-      title: "ID",
-      width: 80,
-      render: (row: any) => <Link to={`/boxes/${row.id}`}>{row.id}</Link>,
-    },
-    {
-      accessor: "code",
-      title: "Code",
-      render: (row: any) => row.code || `Box #${row.id}`,
-    },
-    {
-      accessor: "description",
-      title: "Description",
-    },
-    {
-      accessor: "companyName",
-      title: "Company",
-      render: (row: any) => row.companyName || "—",
-    },
-    {
-      accessor: "locationName",
-      title: "Location",
-      render: (row: any) => row.locationName || "—",
-    },
-    {
-      accessor: "state",
-      title: "State",
-      width: 110,
-      render: (row: any) => (
-        <Badge
-          color={
-            row.state === "shipped"
-              ? "green"
-              : row.state === "sealed"
-              ? "yellow"
-              : "blue"
-          }
-          variant="light"
-        >
-          {row.state}
-        </Badge>
-      ),
-    },
-    {
-      accessor: "warehouseNumber",
-      title: "Whse #",
-      width: 90,
-      render: (row: any) => row.warehouseNumber ?? "—",
-    },
-    {
-      accessor: "lineCount",
-      title: "Lines",
-      width: 80,
-    },
-    {
-      accessor: "totalQuantity",
-      title: "Qty",
-      width: 90,
-      render: (row: any) =>
-        row.totalQuantity != null ? row.totalQuantity : "—",
-    },
-  ];
+  const viewMode = !!layoutData?.activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: boxColumns,
+        urlColumns: sp.get("columns"),
+        viewColumns: layoutData?.activeViewParams?.columns,
+        viewMode,
+      }),
+    [layoutData?.activeViewParams?.columns, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(boxColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
 
   return (
     <Stack gap="lg">
@@ -115,7 +69,12 @@ export default function BoxesIndexRoute() {
       <FindRibbonAuto
         views={layoutData?.views || []}
         activeView={layoutData?.activeView || null}
+        activeViewId={layoutData?.activeView || null}
+        activeViewParams={layoutData?.activeViewParams || null}
+        findConfig={findConfig}
+        enableLastView
         labelMap={{ code: "Code", state: "State", companyId: "Company" }}
+        columnsConfig={boxColumns}
       />
       <section>
         <VirtualizedNavDataTable

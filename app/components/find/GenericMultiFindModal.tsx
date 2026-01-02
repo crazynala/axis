@@ -34,6 +34,9 @@ export interface GenericMultiFindModalProps<TValues extends FieldValues>
   extends GenericFindModalProps<TValues> {
   adapter: MultiRequestAdapter<TValues>;
   FormComponent: React.ComponentType<any>; // expects props { mode, form }
+  initialMode?: "simple" | "advanced";
+  initialMulti?: MultiFindState | null;
+  headerActions?: React.ReactNode;
 }
 
 export function GenericMultiFindModal<TValues extends FieldValues>({
@@ -43,9 +46,14 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   initialValues,
   adapter,
   FormComponent,
+  initialMode,
+  initialMulti,
+  headerActions,
 }: GenericMultiFindModalProps<TValues>) {
   const { buildDefaults, allFields, title } = adapter;
-  const [mode, setMode] = useState<"simple" | "advanced">("simple");
+  const [mode, setMode] = useState<"simple" | "advanced">(
+    initialMode || "simple"
+  );
   // Build field <-> param maps once per render
   const fields = useMemo(() => allFields(), [allFields]);
   const fieldToParam = useMemo(() => {
@@ -129,16 +137,21 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
   const [activeReqId, setActiveReqId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (opened) {
-      form.reset({
-        ...buildDefaults(),
-        ...(initialValues ? coerceInitialValues(initialValues) : {}),
-      } as any);
-      setMode("simple");
+    if (!opened) return;
+    form.reset({
+      ...buildDefaults(),
+      ...(initialValues ? coerceInitialValues(initialValues) : {}),
+    } as any);
+    const nextMode = initialMode || "simple";
+    setMode(nextMode);
+    if (initialMulti && initialMulti.requests?.length) {
+      setMulti(initialMulti);
+      setActiveReqId(initialMulti.requests[0]?.id || null);
+    } else {
       setMulti({ requests: [makeRequest()] });
       setActiveReqId(null);
     }
-  }, [opened]);
+  }, [opened, initialValues, initialMode, initialMulti]);
 
   // Focus handling: robust multi-frame retry until root + first focusable field appear (handles Mantine portal timing & StrictMode double commit)
   const DEBUG_FOCUS =
@@ -562,11 +575,20 @@ export function GenericMultiFindModal<TValues extends FieldValues>({
     else submitAdvanced();
   };
 
+  const titleNode = headerActions ? (
+    <Group justify="space-between" align="center" wrap="nowrap">
+      <Text fw={600}>{title}</Text>
+      {headerActions}
+    </Group>
+  ) : (
+    title
+  );
+
   return (
     <HotkeyAwareModal
       opened={opened}
       onClose={onClose}
-      title={title}
+      title={titleNode}
       size="xxl"
       centered
     >

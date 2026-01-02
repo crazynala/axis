@@ -4,15 +4,20 @@ import type {
   ActionFunctionArgs,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Link, useNavigate, useSearchParams } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useNavigate,
+  useSearchParams,
+} from "@remix-run/react";
 import { prismaBase } from "../../../utils/prisma.server";
-import { buildPrismaArgs, parseTableParams } from "../../../utils/table.server";
+import { buildPrismaArgs } from "../../../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
-import { Button, Group, Stack, Title, Tooltip } from "@mantine/core";
-import { useEffect } from "react";
+import { Button, Group, Stack } from "@mantine/core";
+import { useEffect, useMemo } from "react";
 import { ShipmentFindManager } from "../findify/ShipmentFindManager";
-import { SavedViews } from "../../../components/find/SavedViews";
-import { listViews, saveView } from "../../../utils/views.server";
+import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
+import { listViews, saveView, getView } from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
@@ -22,6 +27,15 @@ import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataT
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecords } from "../../../base/record/RecordContext";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
+import { allShipmentFindFields } from "../forms/shipmentDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
+import { shipmentColumns } from "../config/shipmentColumns";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+  getDefaultColumnKeys,
+  normalizeColumnsValue,
+} from "~/base/index/columns";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
@@ -32,49 +46,56 @@ export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
-  const params = parseTableParams(args.request.url);
   const views = await listViews("shipments");
   const viewName = url.searchParams.get("view");
-  let effective = params;
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName);
-    if (v) {
-      const saved = v.params as any;
-      effective = {
-        page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
-        sort: (url.searchParams.get("sort") || saved.sort || null) as any,
-        dir: (url.searchParams.get("dir") || saved.dir || null) as any,
-        q: (url.searchParams.get("q") || saved.q || null) as any,
-        filters: { ...(saved.filters || {}), ...params.filters },
-      };
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) {
-        url.searchParams.set("findReqs", saved.filters.findReqs);
-      }
-    }
-  }
+  const valuesFromSearch = (input: URLSearchParams, keys: string[]) => {
+    const filters: Record<string, any> = {};
+    keys.forEach((k) => {
+      const v = input.get(k);
+      if (v !== null && v !== "") filters[k] = v;
+    });
+    const findReqs = input.get("findReqs");
+    if (findReqs) filters.findReqs = findReqs;
+    return filters;
+  };
+  const semanticKeys = deriveSemanticKeys(allShipmentFindFields());
+  const hasSemantic =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    semanticKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !hasSemantic;
+  const activeView = viewActive
+    ? (views.find((x: any) => x.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectivePage = Number(
+    url.searchParams.get("page") || viewParams?.page || 1
+  );
+  const effectivePerPage = Number(
+    url.searchParams.get("perPage") || viewParams?.perPage || 20
+  );
+  const effectiveSort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveDir = url.searchParams.get("dir") || viewParams?.dir || null;
+  const effectiveQ = viewActive
+    ? viewParams?.q ?? null
+    : url.searchParams.get("q");
   let findWhere: any = null;
-  const findKeys = [
-    "date",
-    "dateReceived",
-    "type",
-    "shipmentType",
-    "status",
-    "trackingNo",
-    "packingSlipCode",
-    "carrierName",
-    "senderName",
-    "receiverName",
-    "locationName",
-  ];
-  const hasFindIndicators =
-    findKeys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const findKeys = semanticKeys;
+  const hasFindIndicators = viewActive
+    ? findKeys.some(
+        (k) => viewFilters[k] !== undefined && viewFilters[k] !== null
+      ) || !!viewFilters.findReqs
+    : findKeys.some((k) => url.searchParams.has(k)) ||
+      url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of findKeys) {
-      const v = url.searchParams.get(k);
-      if (v) values[k] = v;
+      const v = viewActive ? viewFilters[k] : url.searchParams.get(k);
+      if (v !== null && v !== undefined && v !== "") values[k] = v;
     }
     // simple where (basic contains/equals heuristics)
     const simple: any = {};
@@ -100,7 +121,10 @@ export async function loader(args: LoaderFunctionArgs) {
       simple.dateReceived = values.dateReceived
         ? new Date(values.dateReceived)
         : undefined;
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         status: (v) => ({ status: { contains: v, mode: "insensitive" } }),
@@ -119,7 +143,14 @@ export async function loader(args: LoaderFunctionArgs) {
       findWhere = mergeSimpleAndMulti(simple, multiWhere);
     } else findWhere = simple;
   }
-  let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+  let baseParams: any = {
+    page: findWhere ? 1 : effectivePage,
+    perPage: effectivePerPage,
+    sort: effectiveSort,
+    dir: effectiveDir,
+    q: effectiveQ ?? null,
+    filters: viewActive ? viewFilters : valuesFromSearch(url, findKeys),
+  };
   if (baseParams.filters) {
     const {
       findReqs: _omitFindReqs,
@@ -129,7 +160,7 @@ export async function loader(args: LoaderFunctionArgs) {
     baseParams = { ...baseParams, filters: rest };
   }
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
-    defaultSort: { field: "id", dir: "asc" },
+    defaultSort: { field: "id", dir: "desc" },
     searchableFields: ["trackingNo", "status", "shipmentType", "type"],
     filterMappers: {
       companyIdCarrier: (v: any) => ({
@@ -184,32 +215,73 @@ export async function loader(args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
+    const name =
+      intent === "view.overwriteFromUrl"
+        ? String(form.get("viewId") || form.get("name") || "").trim()
+        : String(form.get("name") || "").trim();
     if (!name) return redirect("/shipments");
     const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
-    const page = Number(params.page || 1);
-    const perPage = Number(params.perPage || 20);
-    const sort = (params.sort as any) || null;
-    const dir = (params.dir as any) || null;
-    const q = (params.q as any) || null;
+    const sp = url.searchParams;
+    const semanticKeys = deriveSemanticKeys(allShipmentFindFields());
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
-      filters[k] = v;
+    for (const k of semanticKeys) {
+      const v = sp.get(k);
+      if (v !== null && v !== "") filters[k] = v;
     }
-    if (params.findReqs) filters.findReqs = params.findReqs;
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("shipments", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+    const baseColumns = normalizeColumnsValue(baseParams?.columns);
+    const defaultColumns = getDefaultColumnKeys(shipmentColumns);
+    const columns =
+      columnsFromUrl.length > 0
+        ? columnsFromUrl
+        : baseColumns.length > 0
+        ? baseColumns
+        : defaultColumns;
     await saveView({
       module: "shipments",
       name,
-      params: { page, perPage, sort, dir, q, filters },
+      params: {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      },
     });
     return redirect(`/shipments?view=${encodeURIComponent(name)}`);
   }
@@ -219,6 +291,7 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function ShipmentsIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "shipments" });
   usePersistIndexSearch("/shipments");
+  const data = useLoaderData<typeof loader>();
   const { currentId, setCurrentId } = useRecords();
   const navigate = useNavigate();
   const [sp] = useSearchParams();
@@ -234,33 +307,22 @@ export default function ShipmentsIndexRoute() {
   const shipmentsHref = savedSearch
     ? `/shipments${savedSearch}`
     : appendHref("/shipments");
-  const columns = [
-    {
-      accessor: "id",
-      title: "ID",
-      width: 70,
-      render: (r: any) => <Link to={`/shipments/${r.id}`}>{r.id}</Link>,
-    },
-    {
-      accessor: "date",
-      title: "Date",
-      render: (r: any) => (r.date ? new Date(r.date).toLocaleDateString() : ""),
-    },
-    { accessor: "type", title: "Type", sortable: true },
-    { accessor: "shipmentType", title: "Ship Type", sortable: true },
-    { accessor: "status", title: "Status", sortable: true },
-    { accessor: "trackingNo", title: "Tracking", sortable: true },
-    {
-      accessor: "companySender.name",
-      title: "From",
-      render: (r: any) => r.companySender?.name || "",
-    },
-    {
-      accessor: "companyReceiver.name",
-      title: "To",
-      render: (r: any) => r.companyReceiver?.name || "",
-    },
-  ];
+  const findConfig = useMemo(() => allShipmentFindFields(), []);
+  const viewMode = !!data?.activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: shipmentColumns,
+        urlColumns: sp.get("columns"),
+        viewColumns: data?.activeViewParams?.columns,
+        viewMode,
+      }),
+    [data?.activeViewParams?.columns, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(shipmentColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
   return (
     <Stack gap="lg">
       <ShipmentFindManager />
@@ -277,30 +339,15 @@ export default function ShipmentsIndexRoute() {
           New
         </Button>
       </Group>
-      {/* Keep views UI minimal; parent loader handles filters; index mirrors products pattern */}
-      <Group justify="space-between" align="center" mb="xs">
-        {/* Total is shown in table footer; keep header lean like products */}
-        {Array.from(sp.keys()).some(
-          (k) => !["page", "perPage", "sort", "dir", "view"].includes(k)
-        ) && (
-          <Tooltip label="Clear all filters">
-            <Button
-              variant="default"
-              onClick={() => {
-                const next = new URLSearchParams(sp);
-                for (const k of Array.from(next.keys())) {
-                  if (["page", "perPage", "sort", "dir", "view"].includes(k))
-                    continue;
-                  next.delete(k);
-                }
-                navigate(`?${next.toString()}`);
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Tooltip>
-        )}
-      </Group>
+      <FindRibbonAuto
+        views={data?.views || []}
+        activeView={data?.activeView || null}
+        activeViewId={data?.activeView || null}
+        activeViewParams={data?.activeViewParams || null}
+        findConfig={findConfig}
+        enableLastView
+        columnsConfig={shipmentColumns}
+      />
       <VirtualizedNavDataTable
         records={records as any}
         currentId={currentId as any}

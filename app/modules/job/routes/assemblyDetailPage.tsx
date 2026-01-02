@@ -3,7 +3,11 @@ import { DatePickerInput } from "@mantine/dates";
 import { CloseButton, Select, TextInput } from "@mantine/core";
 import { Link } from "@remix-run/react";
 import type { PageNode } from "~/base/forms/layoutTypes";
-import type { FieldConfig, FormItem, OverrideItem } from "~/base/forms/fieldConfigShared";
+import type {
+  FieldConfig,
+  FormItem,
+  OverrideItem,
+} from "~/base/forms/fieldConfigShared";
 import { L } from "~/base/forms/layoutDsl";
 import { ui } from "~/base/forms/cfg";
 import { DisplayField } from "~/base/forms/components/DisplayField";
@@ -66,9 +70,7 @@ const assemblyTypeField: FieldConfig = {
         mod="data-autosize"
         data={(ctx as any)?.assemblyTypeOptions || []}
         value={value}
-        onChange={(next) =>
-          (ctx as any)?.state?.setAssemblyType(next || "")
-        }
+        onChange={(next) => (ctx as any)?.state?.setAssemblyType(next || "")}
         clearable={false}
       />
     );
@@ -114,12 +116,13 @@ const assemblyIdField: FieldConfig = {
 
 const promiseInternalTarget: OverrideItem = ui.override({
   label: "Internal target",
-  getJobValue: ({ ctx }) => (ctx as any)?.overrideTargets?.internal?.jobValue ?? null,
+  getJobValue: ({ ctx }) =>
+    (ctx as any)?.overrideTargets?.internal?.jobValue ?? null,
   getOverrideValue: ({ ctx }) => (ctx as any)?.state?.internalOverride,
   setOverrideValue: ({ ctx }, value) =>
     (ctx as any)?.state?.setInternalOverride(value),
   formatDisplay: (value, { ctx }) => (ctx as any)?.formatDateLabel(value),
-  renderInput: ({ value, onChange, isOverridden, onClear }) => (
+  renderInput: ({ value, onChange, isOverridden, onClear, ctx }) => (
     <DatePickerInput
       label="Internal target"
       mod="data-autosize"
@@ -135,7 +138,8 @@ const promiseInternalTarget: OverrideItem = ui.override({
 
 const promiseCustomerTarget: OverrideItem = ui.override({
   label: "Customer target",
-  getJobValue: ({ ctx }) => (ctx as any)?.overrideTargets?.customer?.jobValue ?? null,
+  getJobValue: ({ ctx }) =>
+    (ctx as any)?.overrideTargets?.customer?.jobValue ?? null,
   getOverrideValue: ({ ctx }) => (ctx as any)?.state?.customerOverride,
   setOverrideValue: ({ ctx }, value) =>
     (ctx as any)?.state?.setCustomerOverride(value),
@@ -156,12 +160,13 @@ const promiseCustomerTarget: OverrideItem = ui.override({
 
 const promiseDropDead: OverrideItem = ui.override({
   label: "Drop-dead",
-  getJobValue: ({ ctx }) => (ctx as any)?.overrideTargets?.dropDead?.jobValue ?? null,
+  getJobValue: ({ ctx }) =>
+    (ctx as any)?.overrideTargets?.dropDead?.jobValue ?? null,
   getOverrideValue: ({ ctx }) => (ctx as any)?.state?.dropDeadOverride,
   setOverrideValue: ({ ctx }, value) =>
     (ctx as any)?.state?.setDropDeadOverride(value),
   formatDisplay: (value, { ctx }) => (ctx as any)?.formatDateLabel(value),
-  renderInput: ({ value, onChange, isOverridden, onClear }) => (
+  renderInput: ({ value, onChange, isOverridden, onClear, ctx }) => (
     <DatePickerInput
       label="Drop-dead"
       mod="data-autosize"
@@ -184,7 +189,7 @@ const promiseShipTo: OverrideItem = ui.override({
     (ctx as any)?.state?.setShipToAddressOverrideId(value),
   formatDisplay: (value, { ctx }) =>
     (ctx as any)?.formatAddressLabel(value) || "—",
-  renderInput: ({ value, onChange, isOverridden, onClear }) => (
+  renderInput: ({ value, onChange, isOverridden, onClear, ctx }) => (
     <Select
       label="Ship-to"
       mod="data-autosize"
@@ -201,7 +206,9 @@ const promiseShipTo: OverrideItem = ui.override({
       clearable={false}
       styles={pseudoInputStyles(isOverridden)}
       rightSection={isOverridden ? renderClearButton(onClear) : undefined}
-      placeholder={(ctx as any)?.shipToHint ? String((ctx as any)?.shipToHint) : undefined}
+      placeholder={
+        (ctx as any)?.shipToHint ? String((ctx as any)?.shipToHint) : undefined
+      }
     />
   ),
 });

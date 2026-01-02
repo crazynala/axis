@@ -1,19 +1,29 @@
 import type { MetaFunction } from "@remix-run/node";
-import { Link, useSearchParams, useNavigate } from "@remix-run/react";
+import {
+  Link,
+  useSearchParams,
+  useNavigate,
+  useRouteLoaderData,
+} from "@remix-run/react";
 import { BreadcrumbSet } from "@aa/timber";
-import { Button, Group, Stack, Title, Text } from "@mantine/core";
+import { Button, Group, Stack, Text } from "@mantine/core";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecords } from "../../../base/record/RecordContext";
-import { useEffect } from "react";
-import { formatShortDate, formatUSD } from "../../../utils/format";
+import { useEffect, useMemo } from "react";
 import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
 } from "~/hooks/useNavLocation";
+import { allPurchaseOrderFindFields } from "../forms/purchaseOrderDetail";
+import { purchaseOrderColumns } from "../config/purchaseOrderColumns";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+} from "~/base/index/columns";
 
 export const meta: MetaFunction = () => [{ title: "Purchase Orders" }];
 
@@ -21,6 +31,11 @@ export default function PurchaseOrdersIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "purchase-orders" });
   usePersistIndexSearch("/purchase-orders");
   const { state, currentId, setCurrentId } = useRecords();
+  const data = useRouteLoaderData<{
+    views?: any[];
+    activeView?: string | null;
+    activeViewParams?: any | null;
+  }>("modules/purchaseOrder/routes/purchase-orders");
   const appendHref = useFindHrefAppender();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -69,30 +84,21 @@ export default function PurchaseOrdersIndexRoute() {
       if (currentId !== records[0].id) setCurrentId(records[0].id);
     }
   }, [records, currentId, setCurrentId]);
-  const columns = [
-    {
-      accessor: "id",
-      title: "ID",
-      width: 70,
-      render: (r: any) => <Link to={`/purchase-orders/${r.id}`}>{r.id}</Link>,
-    },
-    {
-      accessor: "date",
-      title: "Date",
-      sortable: true,
-      render: (r: any) => formatShortDate(r.date),
-    },
-    { accessor: "vendorName", title: "Vendor", sortable: true },
-    { accessor: "consigneeName", title: "Consignee", sortable: true },
-    { accessor: "locationName", title: "Location", sortable: true },
-    {
-      accessor: "totalCost",
-      title: "Total Cost",
-      render: (r: any) => formatUSD(r.totalCost || 0),
-      // Note: server cannot sort by computed totalCost; keep non-sortable to prevent Prisma errors
-      sortable: false,
-    },
-  ];
+  const viewMode = !!data?.activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: purchaseOrderColumns,
+        urlColumns: sp.get("columns"),
+        viewColumns: data?.activeViewParams?.columns,
+        viewMode,
+      }),
+    [data?.activeViewParams?.columns, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(purchaseOrderColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
   return (
     <Stack gap="lg">
       <PurchaseOrderFindManager />
@@ -111,7 +117,15 @@ export default function PurchaseOrdersIndexRoute() {
           New
         </Button>
       </Group>
-      <FindRibbonAuto views={[]} activeView={null} />
+      <FindRibbonAuto
+        views={data?.views || []}
+        activeView={data?.activeView || null}
+        activeViewId={data?.activeView || null}
+        activeViewParams={data?.activeViewParams || null}
+        findConfig={allPurchaseOrderFindFields()}
+        enableLastView
+        columnsConfig={purchaseOrderColumns}
+      />
       <VirtualizedNavDataTable
         records={records as any}
         currentId={currentId as any}

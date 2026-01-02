@@ -1,11 +1,16 @@
 import type { MetaFunction } from "@remix-run/node";
-import { Link, useNavigate, useSearchParams } from "@remix-run/react";
-import { Button, Stack, Title, Group, Tooltip } from "@mantine/core";
+import {
+  Link,
+  useNavigate,
+  useRouteLoaderData,
+  useSearchParams,
+} from "@remix-run/react";
+import { Button, Stack, Group } from "@mantine/core";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
 } from "~/hooks/useNavLocation";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { BreadcrumbSet } from "../../../../packages/timber/dist";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
@@ -13,6 +18,7 @@ import { useRecords } from "../../../base/record/RecordContext";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
 import { CompanyFindManagerNew } from "~/modules/company/findify/CompanyFindManagerNew";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
+import { allCompanyFindFields } from "../forms/companyDetail";
 
 export const meta: MetaFunction = () => [{ title: "Companies" }];
 
@@ -21,9 +27,18 @@ export default function CompaniesIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "companies" });
   usePersistIndexSearch("/companies");
   const { state, currentId } = useRecords();
+  const data = useRouteLoaderData<{
+    views?: any[];
+    activeView?: string | null;
+    activeViewParams?: any | null;
+  }>("modules/company/routes/companies");
   const navigate = useNavigate();
   const [sp] = useSearchParams();
   const appendHref = useFindHrefAppender();
+  const activeViewName = data?.activeView ?? null;
+  const activeViewParams = data?.activeViewParams ?? null;
+  const viewActive = !!activeViewName;
+  const findConfig = useMemo(() => allCompanyFindFields(), []);
   // useHybridWindow handles window sizing + hydration (records = current window)
   const {
     records,
@@ -101,7 +116,11 @@ export default function CompaniesIndexRoute() {
   ];
   return (
     <Stack gap="lg">
-      <CompanyFindManagerNew />
+      <CompanyFindManagerNew
+        activeViewName={activeViewName}
+        activeViewParams={activeViewParams}
+        viewActive={viewActive}
+      />
       <Group justify="space-between" align="center">
         <BreadcrumbSet
           breadcrumbs={[{ label: "Companies", href: appendHref("/companies") }]}
@@ -115,7 +134,19 @@ export default function CompaniesIndexRoute() {
           New Company
         </Button>
       </Group>
-      <FindRibbonAuto views={[]} activeView={null} />
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <div style={{ flex: 1 }}>
+          <FindRibbonAuto
+            views={data?.views || []}
+            activeView={activeViewName}
+            activeViewId={activeViewName}
+            activeViewParams={activeViewParams}
+            findConfig={findConfig}
+            enableLastView
+            module="companies"
+          />
+        </div>
+      </Group>
       <section>
         <VirtualizedNavDataTable
           records={records as any}

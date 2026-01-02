@@ -1,11 +1,10 @@
 import {
-  Link,
   useLocation,
   useNavigate,
   useSearchParams,
   useMatches,
 } from "@remix-run/react";
-import { Button, Group, Stack, Text, Card, Indicator } from "@mantine/core";
+import { Button, Group, Stack, Text, Card } from "@mantine/core";
 import SplitButton from "~/components/SplitButton";
 import { ProductFindManager } from "../components/ProductFindManager";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
@@ -26,16 +25,19 @@ import {
   textColumn,
   type Column,
 } from "react-datasheet-grid";
-import { formatUSD } from "~/utils/format";
-
 import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
-import { calcPrice } from "../calc/calcPrice";
 import {
   getSavedNavLocation,
   usePersistIndexSearch,
   useRegisterNavLocation,
 } from "~/hooks/useNavLocation";
-import { IconBaselineDensityMedium } from "@tabler/icons-react";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+} from "~/base/index/columns";
+import { allProductFindFields } from "../forms/productDetail";
+import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
+import { buildProductColumns } from "../config/productColumns";
 
 function usePricingPrefsFromWidget() {
   const [customerId, setCustomerId] = useState<string | null>(() => {
@@ -79,130 +81,35 @@ function usePricingPrefsFromWidget() {
   }, []);
   return { customerId, qty, priceMultiplier } as const;
 }
-
-function PriceCell({
-  row,
-  prefs,
-}: {
-  row: any;
-  prefs: { qty: number; priceMultiplier: number };
-}) {
-  const qty = Number(prefs.qty || 60) || 60;
-  const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
-  const manual = row?.manualSalePrice;
-  const baseCost = Number(row?.costPrice ?? 0) || 0;
-  const taxRate = Number(row?.purchaseTax?.value ?? 0) || 0;
-  const costRanges = Array.isArray(row?.costGroup?.costRanges)
-    ? row.costGroup.costRanges
-        .filter((t: any) => t && t.rangeFrom != null)
-        .map((t: any) => ({
-          minQty: Number(t.rangeFrom) || 0,
-          priceCost: Number(t.costPrice) || 0,
-        }))
-        .sort((a: any, b: any) => a.minQty - b.minQty)
-    : [];
-  const out = calcPrice({
-    baseCost,
-    tiers: costRanges,
-    taxRate,
-    priceMultiplier,
-    qty,
-    manualSalePrice:
-      manual != null && manual !== "" ? Number(manual) : undefined,
-  });
-  return <>{formatUSD(out.unitSellPrice)}</>;
-}
-
-function StockCell({
-  row,
-  customerId,
-}: {
-  row: any;
-  customerId: string | null;
-}) {
-  if (!row?.stockTrackingEnabled) return <></>;
-  const [extra, setExtra] = useState<any | null>(null);
-  useEffect(() => {
-    if (!row?.stockTrackingEnabled) return;
-    const hasData =
-      (Array.isArray(row?.c_byLocation) && row.c_byLocation.length > 0) ||
-      row?.c_stockQty != null;
-    if (hasData) return;
-    let abort = false;
-    (async () => {
-      try {
-        const resp = await fetch(`/api.products.by-ids?ids=${row.id}`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const item = Array.isArray(data?.items) ? data.items[0] : null;
-        if (!item || abort) return;
-        setExtra(item);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      abort = true;
-    };
-  }, [row?.id, row?.stockTrackingEnabled, row?.c_byLocation, row?.c_stockQty]);
-  const byLocSource =
-    Array.isArray(extra?.c_byLocation) && extra?.c_byLocation.length
-      ? extra.c_byLocation
-      : Array.isArray(row?.c_byLocation)
-      ? row.c_byLocation
-      : [];
-  const totalFromLoc = byLocSource.reduce(
-    (sum: number, loc: any) => sum + (Number(loc.qty) || 0),
-    0
-  );
-  const totalStock =
-    row?.c_stockQty != null && Number.isFinite(Number(row.c_stockQty))
-      ? Number(row.c_stockQty)
-      : extra?.c_stockQty != null && Number.isFinite(Number(extra.c_stockQty))
-      ? Number(extra.c_stockQty)
-      : totalFromLoc;
-  if (customerId) {
-    const locId = Number(
-      (row?.customer?.stockLocationId ??
-        extra?.customer?.stockLocationId ??
-        NaN) as any
-    );
-    const match = byLocSource.find(
-      (loc: any) =>
-        Number(
-          loc.location_id ?? loc.lid ?? loc.locationId ?? loc.locId
-        ) === locId
-    );
-    const qty = match ? Number(match.qty ?? 0) : totalStock;
-    if (process.env.NODE_ENV !== "production") {
-      console.debug("[products.index] stock customer view", {
-        id: row?.id,
-        sku: row?.sku,
-        customerId,
-        locId,
-        match,
-        qty,
-        totalStock,
-      });
-    }
-    return <>{Number.isFinite(qty) ? qty : ""}</>;
-  }
-  return <>{Number.isFinite(totalStock) ? totalStock : ""}</>;
-}
-
 export default function ProductsIndexRoute() {
   // Register product index navigation (persist search/filter state via existing logic + path)
   useRegisterNavLocation({ includeSearch: true, moduleKey: "products" });
   // Persist/restore index search so filters survive leaving and returning
   usePersistIndexSearch("/products");
   const matches = useMatches();
+  const parentData = useMemo(
+    () =>
+      matches.find((m) =>
+        String(m.id).endsWith("modules/product/routes/products")
+      )?.data as any,
+    [matches]
+  );
   const metadataDefinitions = useMemo(() => {
-    const match = matches.find((m) =>
-      String(m.id).endsWith("modules/product/routes/products")
-    );
-    const defs = (match?.data as any)?.metadataDefinitions;
+    const defs = parentData?.metadataDefinitions;
     return Array.isArray(defs) ? defs : [];
-  }, [matches]);
+  }, [parentData]);
+  const views = parentData?.views || [];
+  const activeView = parentData?.activeView || null;
+  const activeViewParams = parentData?.activeViewParams || null;
+  const metadataFields = useMemo(
+    () =>
+      buildProductMetadataFields(metadataDefinitions, { onlyFilterable: true }),
+    [metadataDefinitions]
+  );
+  const findConfig = useMemo(
+    () => allProductFindFields(metadataFields),
+    [metadataFields]
+  );
   // If user lands on /products directly and we have a saved subpath, redirect to it for testing
   const location = useLocation();
   useEffect(() => {
@@ -358,6 +265,22 @@ export default function ProductsIndexRoute() {
       return [...defaultSummarizeFilters(nonMeta), ...chips];
     };
   }, [metadataDefinitions]);
+  const columnDefs = useMemo(() => buildProductColumns(pricing), [pricing]);
+  const viewMode = !!activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: columnDefs,
+        urlColumns: sp.get("columns"),
+        viewColumns: activeViewParams?.columns,
+        viewMode,
+      }),
+    [activeViewParams?.columns, columnDefs, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(columnDefs, visibleColumnKeys),
+    [columnDefs, visibleColumnKeys]
+  );
 
   // Revalidate / refresh current product row on window focus to avoid stale manual price after edits
   useEffect(() => {
@@ -423,9 +346,14 @@ export default function ProductsIndexRoute() {
       </Group>
       <Group justify="space-between" align="center">
         <FindRibbonAuto
-          views={[]}
-          activeView={null}
+          views={views}
+          activeView={activeView}
+          activeViewId={activeView}
+          activeViewParams={activeViewParams}
+          findConfig={findConfig}
+          enableLastView
           summarizeFilters={summarizeFilters}
+          columnsConfig={columnDefs}
         />
         <Card withBorder padding={5}>
           <PricingPreviewWidget productId={Number(currentId) || undefined} />
@@ -449,64 +377,7 @@ export default function ProductsIndexRoute() {
                 navigate(`/products/boms-fullzoom?ids=${ids.join(",")}`),
             },
           ]}
-          columns={[
-            // { accessor: "", title: "", render: (r, index) => index },
-            {
-              accessor: "id",
-              title: "ID",
-              width: 70,
-              render: (r: any) => <Link to={`/products/${r.id}`}>{r.id}</Link>,
-            },
-            { accessor: "sku", title: "SKU", width: "30%", sortable: true },
-            { accessor: "name", title: "Name", width: "70%", sortable: true },
-            { accessor: "type", title: "Type", width: 90, sortable: true },
-            {
-              accessor: "costPrice",
-              title: "Cost",
-              width: 100,
-              sortable: true,
-              render: (r: any) => formatUSD(r.costPrice),
-            },
-            {
-              accessor: "sellPrice",
-              title: "Sell",
-              width: 100,
-              sortable: false,
-              render: (r: any) => (
-                <Group justify="space-between" w="70px">
-                  <Indicator
-                    color="red"
-                    position="middle-start"
-                    offset={-5}
-                    size="4"
-                    disabled={!(r.c_isSellPriceManual ?? !!r.manualSalePrice)}
-                  >
-                    <PriceCell
-                      row={r}
-                      prefs={{
-                        qty: pricing.qty,
-                        priceMultiplier: pricing.priceMultiplier,
-                      }}
-                    />
-                  </Indicator>
-                  {r.c_hasPriceTiers ? (
-                    <IconBaselineDensityMedium size={8} />
-                  ) : (
-                    ""
-                  )}
-                </Group>
-              ),
-            },
-            {
-              accessor: "stockQty",
-              title: "Stock",
-              textAlign: "center",
-              width: 80,
-              render: (r: any) => (
-                <StockCell row={r} customerId={pricing.customerId} />
-              ),
-            },
-          ]}
+          columns={columns as any}
           sortStatus={
             {
               columnAccessor: sp.get("sort") || "id",

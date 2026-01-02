@@ -13,11 +13,18 @@ import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
 import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
+import { deriveSemanticKeys } from "~/base/index/indexController";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
+import { useMemo } from "react";
+import { jobColumns } from "../config/jobColumns";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+} from "~/base/index/columns";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
@@ -140,6 +147,7 @@ export default function JobsIndexRoute() {
     total: number;
     views?: any[];
     activeView?: string | null;
+    activeViewParams?: any | null;
   }>("modules/job/routes/jobs");
   // const { idList, idListComplete, initialRows, total } =
   //   useLoaderData<typeof loader>();
@@ -157,6 +165,19 @@ export default function JobsIndexRoute() {
     ...((jobDetail as any).jobDateStatusLeft || []),
     ...((jobDetail as any).jobDateStatusRight || []),
   ];
+  const findConfig = useMemo(
+    () => [
+      ...((jobDetail as any).jobOverviewFields || []),
+      ...((jobDetail as any).jobDateStatusLeft || []),
+      ...((jobDetail as any).jobDateStatusRight || []),
+      ...((jobDetail as any).assemblyFields || []),
+    ],
+    []
+  );
+  const semanticKeys = useMemo(
+    () => new Set(deriveSemanticKeys(findConfig)),
+    [findConfig]
+  );
   const initialFind: Record<string, any> = {};
   for (const f of fields) {
     const v = sp.get(f.name);
@@ -183,10 +204,20 @@ export default function JobsIndexRoute() {
         <FindRibbonAuto
           views={data?.views || []}
           activeView={data?.activeView || null}
+          activeViewId={data?.activeView || null}
+          activeViewParams={data?.activeViewParams || null}
+          findConfig={findConfig}
+          enableLastView
+          columnsConfig={jobColumns}
         />
       </section>
       <section>
-        <JobsHybridTable initialRows={initialRows} idList={idList} />
+        <JobsHybridTable
+          initialRows={initialRows}
+          idList={idList}
+          activeView={data?.activeView || null}
+          activeViewParams={data?.activeViewParams || null}
+        />
       </section>
 
       <JobFindModal
@@ -199,7 +230,21 @@ export default function JobsIndexRoute() {
         }}
         initialValues={initialFind}
         onSearch={(qs) => {
-          navigate(`?${qs}`);
+          const url = new URL(window.location.href);
+          const produced = new URLSearchParams(qs);
+          const viewName = url.searchParams.get("view");
+          Array.from(url.searchParams.keys()).forEach((k) => {
+            if (k === "q" || k === "findReqs" || semanticKeys.has(k))
+              url.searchParams.delete(k);
+          });
+          for (const [k, v] of produced.entries())
+            url.searchParams.set(k, v);
+          url.searchParams.delete("page");
+          if (viewName) {
+            url.searchParams.delete("view");
+            url.searchParams.set("lastView", viewName);
+          }
+          navigate(`?${url.searchParams.toString()}`);
         }}
         jobSample={{}}
       />
@@ -210,9 +255,13 @@ export default function JobsIndexRoute() {
 function JobsHybridTable({
   initialRows,
   idList,
+  activeView,
+  activeViewParams,
 }: {
   initialRows: any[];
   idList: number[];
+  activeView?: string | null;
+  activeViewParams?: any | null;
 }) {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -224,36 +273,21 @@ function JobsHybridTable({
     maxPlaceholders: 8,
   });
   // Seed initial rows into context on first render (they should have been added by layout; defensive)
-  // Build columns
-  const columns = [
-    {
-      accessor: "id",
-      title: "ID",
-      width: 70,
-      render: (r: any) => <Link to={`/jobs/${r.id}`}>{r.id}</Link>,
-    },
-    {
-      accessor: "company.name",
-      title: "Customer",
-      render: (r: any) => r.company?.name || "",
-    },
-    { accessor: "projectCode", title: "Project Code", sortable: true },
-    { accessor: "name", title: "Name", sortable: true },
-    { accessor: "jobType", title: "Type", sortable: true },
-    {
-      accessor: "startDate",
-      title: "Start",
-      render: (r: any) =>
-        r.startDate ? new Date(r.startDate).toLocaleDateString() : "",
-    },
-    {
-      accessor: "endDate",
-      title: "End",
-      render: (r: any) =>
-        r.endDate ? new Date(r.endDate).toLocaleDateString() : "",
-    },
-    { accessor: "status", title: "Status", sortable: true },
-  ];
+  const viewMode = !!activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: jobColumns,
+        urlColumns: sp.get("columns"),
+        viewColumns: activeViewParams?.columns,
+        viewMode,
+      }),
+    [activeViewParams?.columns, sp, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(jobColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
   return (
     <VirtualizedNavDataTable
       records={records as any}

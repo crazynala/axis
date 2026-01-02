@@ -5,13 +5,20 @@ import { getLogger } from "@aa/timber";
 import { useEffect } from "react";
 import { useRecords } from "../../../base/record/RecordContext";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
-import { listViews, saveView } from "../../../utils/views.server";
+import { listViews, saveView, getView } from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../../../base/find/multiFind";
-import { buildPrismaArgs, parseTableParams } from "../../../utils/table.server";
+import { buildPrismaArgs } from "../../../utils/table.server";
+import { allPurchaseOrderFindFields } from "../forms/purchaseOrderDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
+import { purchaseOrderColumns } from "../config/purchaseOrderColumns";
+import {
+  getDefaultColumnKeys,
+  normalizeColumnsValue,
+} from "~/base/index/columns";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const log = getLogger("purchase-orders");
@@ -20,49 +27,44 @@ export async function loader(_args: LoaderFunctionArgs) {
   // Views: load and apply saved filters if a named view is selected
   const views = await listViews("purchase-orders");
   const viewName = url.searchParams.get("view");
-  const params = parseTableParams(_args.request.url);
-  let effective = params;
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName);
-    if (v) {
-      const saved = (v as any).params || {};
-      effective = {
-        page: Number(url.searchParams.get("page") || saved.page || 1),
-        perPage: Number(url.searchParams.get("perPage") || saved.perPage || 20),
-        sort: (url.searchParams.get("sort") || saved.sort || null) as any,
-        dir: (url.searchParams.get("dir") || saved.dir || null) as any,
-        q: (url.searchParams.get("q") || saved.q || null) as any,
-        filters: { ...(saved.filters || {}), ...params.filters },
-      } as any;
-      // carry advanced blob if present on saved view but not in URL
-      if (saved.filters?.findReqs && !url.searchParams.get("findReqs")) {
-        url.searchParams.set("findReqs", saved.filters.findReqs);
-      }
-    }
-  }
+  const semanticKeys = deriveSemanticKeys(allPurchaseOrderFindFields());
+  const hasSemantic =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    semanticKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !hasSemantic;
+  const activeView = viewActive
+    ? (views.find((x: any) => x.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectivePage = Number(
+    url.searchParams.get("page") || viewParams?.page || 1
+  );
+  const effectivePerPage = Number(
+    url.searchParams.get("perPage") || viewParams?.perPage || 20
+  );
+  const effectiveSort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveDir = url.searchParams.get("dir") || viewParams?.dir || null;
+  const effectiveQ = viewActive ? viewParams?.q ?? null : url.searchParams.get("q");
 
   // Build where from simple params + advanced multi-find
-  const keys = [
-    "id",
-    "companyId",
-    "consigneeCompanyId",
-    "locationId",
-    "status",
-    "vendorName",
-    "consigneeName",
-    "locationName",
-    "date",
-    "memo",
-  ];
+  const keys = semanticKeys;
   let findWhere: any = null;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const hasFindIndicators = viewActive
+    ? keys.some(
+        (k) => viewFilters[k] !== undefined && viewFilters[k] !== null
+      ) || !!viewFilters.findReqs
+    : keys.some((k) => url.searchParams.has(k)) ||
+      url.searchParams.has("findReqs");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
-      const v = url.searchParams.get(k);
-      if (v) values[k] = v;
+      const v = viewActive ? viewFilters[k] : url.searchParams.get(k);
+      if (v !== null && v !== undefined && v !== "") values[k] = v;
     }
     const simple: any = {};
     if (values.id) {
@@ -99,7 +101,10 @@ export async function loader(_args: LoaderFunctionArgs) {
     if (values.memo)
       simple.memo = { contains: values.memo, mode: "insensitive" };
 
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         companyId: (v) => {
@@ -132,8 +137,25 @@ export async function loader(_args: LoaderFunctionArgs) {
     } else findWhere = simple;
   }
 
+  const filtersFromSearch = (input: URLSearchParams, keysList: string[]) => {
+    const filters: Record<string, any> = {};
+    keysList.forEach((k) => {
+      const v = input.get(k);
+      if (v !== null && v !== "") filters[k] = v;
+    });
+    const findReqs = input.get("findReqs");
+    if (findReqs) filters.findReqs = findReqs;
+    return filters;
+  };
   // Strip advanced blob from filters for table arg building
-  let baseParams: any = findWhere ? { ...effective, page: 1 } : effective;
+  let baseParams: any = {
+    page: findWhere ? 1 : effectivePage,
+    perPage: effectivePerPage,
+    sort: effectiveSort,
+    dir: effectiveDir,
+    q: effectiveQ ?? null,
+    filters: viewActive ? viewFilters : filtersFromSearch(url.searchParams, keys),
+  };
   if (baseParams.filters) {
     const {
       findReqs: _omitFindReqs,
@@ -145,7 +167,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   const prismaArgs = buildPrismaArgs<any>(baseParams, {
     searchableFields: [],
     filterMappers: {},
-    defaultSort: { field: "id", dir: "asc" },
+    defaultSort: { field: "id", dir: "desc" },
   });
   if (findWhere) prismaArgs.where = findWhere;
   // Map UI sort keys to Prisma orderBy (handle relational fields)
@@ -210,7 +232,8 @@ export async function loader(_args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
   });
 }
 
@@ -222,6 +245,7 @@ export default function PurchaseOrdersLayout() {
     total: number;
     views?: any[];
     activeView?: string | null;
+    activeViewParams?: any | null;
   }>();
   const { setIdList, addRows } = useRecords();
   useEffect(() => {
@@ -256,26 +280,66 @@ export const shouldRevalidate = makeModuleShouldRevalidate("/purchase-orders", [
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
+    const name =
+      intent === "view.overwriteFromUrl"
+        ? String(form.get("viewId") || form.get("name") || "").trim()
+        : String(form.get("name") || "").trim();
     if (!name) return redirect("/purchase-orders");
     const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
-    const page = Number(params.page || 1);
-    const perPage = Number(params.perPage || 20);
-    const sort = (params.sort as any) || null;
-    const dir = (params.dir as any) || null;
-    const q = (params.q as any) || null;
+    const sp = url.searchParams;
+    const semanticKeys = deriveSemanticKeys(allPurchaseOrderFindFields());
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (["page", "perPage", "sort", "dir", "q", "view"].includes(k)) continue;
-      filters[k] = v;
+    for (const k of semanticKeys) {
+      const v = sp.get(k);
+      if (v !== null && v !== "") filters[k] = v;
     }
-    if ((params as any).findReqs) filters.findReqs = (params as any).findReqs;
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("purchase-orders", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+    const baseColumns = normalizeColumnsValue(baseParams?.columns);
+    const defaultColumns = getDefaultColumnKeys(purchaseOrderColumns);
+    const columns =
+      columnsFromUrl.length > 0
+        ? columnsFromUrl
+        : baseColumns.length > 0
+        ? baseColumns
+        : defaultColumns;
     await saveView({
       module: "purchase-orders",
       name,
-      params: { page, perPage, sort, dir, q, filters },
+      params: {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      },
     });
     return redirect(`/purchase-orders?view=${encodeURIComponent(name)}`);
   }

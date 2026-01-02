@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { productSearchSchema } from "~/modules/product/findify/product.search-schema";
 import { buildWhere } from "~/base/find/buildWhere";
 import {
@@ -12,6 +12,11 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
+import { allProductFindFields } from "../forms/productDetail";
+import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
+import { deriveSemanticKeys } from "~/base/index/indexController";
+import { getProductDefaultColumns } from "../config/productColumns";
+import { normalizeColumnsValue } from "~/base/index/columns";
 
 // Keys that influence the Products index filter/query
 const PRODUCT_FIND_PARAM_KEYS = [
@@ -46,8 +51,8 @@ const PRODUCT_FIND_PARAM_KEYS = [
 export async function loader(args: LoaderFunctionArgs) {
   const [
     { runWithDbActivity, prismaBase, prisma },
-    { buildPrismaArgs, parseTableParams },
-    { listViews },
+    { buildPrismaArgs },
+    { listViews, getView },
     { getFilterableProductAttributeDefinitions },
   ] = await Promise.all([
     import("~/utils/prisma.server"),
@@ -59,7 +64,6 @@ export async function loader(args: LoaderFunctionArgs) {
   return runWithDbActivity("products.index", async () => {
     const url = new URL(args.request.url);
     const q = url.searchParams;
-    const params = parseTableParams(args.request.url);
     const views = await listViews("products");
     const metadataDefinitions = await getFilterableProductAttributeDefinitions();
     const viewName = q.get("view");
@@ -83,24 +87,30 @@ export async function loader(args: LoaderFunctionArgs) {
       }
     };
     d("[products.index] request params", Object.fromEntries(q));
-    let effective = params;
-    if (viewName) {
-      const v = views.find((x: any) => x.name === viewName);
-      if (v) {
-        const saved = v.params as any;
-        effective = {
-          page: Number(q.get("page") || saved.page || 1),
-          perPage: Number(q.get("perPage") || saved.perPage || 20),
-          sort: (q.get("sort") || saved.sort || null) as any,
-          dir: (q.get("dir") || saved.dir || null) as any,
-          q: (q.get("q") || saved.q || null) as any,
-          filters: { ...(saved.filters || {}), ...params.filters },
-        };
-        if (saved.filters?.findReqs && !q.get("findReqs")) {
-          url.searchParams.set("findReqs", saved.filters.findReqs);
-        }
-      }
-    }
+    const metadataFields = buildProductMetadataFields(metadataDefinitions, {
+      onlyFilterable: true,
+    });
+    const semanticKeys = deriveSemanticKeys(
+      allProductFindFields(metadataFields)
+    );
+    const hasSemantic =
+      q.has("q") ||
+      q.has("findReqs") ||
+      semanticKeys.some((k) => {
+        const v = q.get(k);
+        return v !== null && v !== "";
+      });
+    const viewActive = !!viewName && !hasSemantic;
+    const activeView = viewActive
+      ? (views.find((x: any) => x.name === viewName) as any)
+      : null;
+    const viewParams: any = activeView?.params || null;
+    const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+    const effectivePage = Number(q.get("page") || viewParams?.page || 1);
+    const effectivePerPage = Number(q.get("perPage") || viewParams?.perPage || 20);
+    const effectiveSort = q.get("sort") || viewParams?.sort || null;
+    const effectiveDir = q.get("dir") || viewParams?.dir || null;
+    const effectiveQ = viewActive ? viewParams?.q ?? null : q.get("q");
     // Advanced / find filters
     const unaccent = (s: any) =>
       s == null
@@ -123,18 +133,18 @@ export async function loader(args: LoaderFunctionArgs) {
       if (tokens.length === 1) return builder(tokens[0]);
       return { AND: tokens.map((token) => builder(token)) };
     };
-    const metaKeys = Array.from(q.keys()).filter((k) => k.startsWith("meta__"));
-    const findKeys = PRODUCT_FIND_PARAM_KEYS.filter(
-      (k) => !["view", "sort", "dir", "perPage", "q", "findReqs"].includes(k)
-    ).concat(metaKeys);
-    const hasFindIndicators =
-      findKeys.some((k) => q.has(k)) || q.has("findReqs");
+    const findKeys = semanticKeys;
+    const hasFindIndicators = viewActive
+      ? findKeys.some(
+          (k) => viewFilters[k] !== undefined && viewFilters[k] !== null
+        ) || !!viewFilters.findReqs
+      : findKeys.some((k) => q.has(k)) || q.has("findReqs");
     let findWhere: any = null;
     if (hasFindIndicators) {
       const values: Record<string, any> = {};
       for (const k of findKeys) {
-        const v = q.get(k);
-        if (v !== null && v !== "") values[k] = v;
+        const v = viewActive ? viewFilters[k] : q.get(k);
+        if (v !== null && v !== undefined && v !== "") values[k] = v;
       }
       // Guard against stray params accidentally treated as filters
       delete (values as any).refreshed;
@@ -191,8 +201,20 @@ export async function loader(args: LoaderFunctionArgs) {
         await import(
           "~/modules/productMetadata/services/productMetadataFilters.server"
         );
+      const metaParams = viewActive
+        ? (() => {
+            const sp = new URLSearchParams();
+            for (const k of findKeys) {
+              if (!k.startsWith("meta__")) continue;
+              const v = viewFilters[k];
+              if (v !== undefined && v !== null && v !== "")
+                sp.set(k, String(v));
+            }
+            return sp;
+          })()
+        : q;
       const metadataWhere = buildMetadataWhereFromParams(
-        q,
+        metaParams,
         metadataDefinitions
       );
       if (metadataWhere) simpleClauses.push(metadataWhere);
@@ -202,7 +224,10 @@ export async function loader(args: LoaderFunctionArgs) {
           : simpleClauses.length === 1
           ? simpleClauses[0]
           : { AND: simpleClauses };
-      const multi = decodeRequests(q.get("findReqs"));
+      const rawFindReqs = viewActive
+        ? viewFilters.findReqs
+        : q.get("findReqs");
+      const multi = decodeRequests(rawFindReqs);
       if (multi) {
         const interpreters: Record<string, (val: any) => any> = {
           sku: (v) =>
@@ -278,7 +303,24 @@ export async function loader(args: LoaderFunctionArgs) {
         d("[products.index] findWhere (simple)", findWhere);
       }
     }
-    let baseParams = findWhere ? { ...effective, page: 1 } : effective;
+    const filtersFromSearch = (input: URLSearchParams, keysList: string[]) => {
+      const filters: Record<string, any> = {};
+      keysList.forEach((k) => {
+        const v = input.get(k);
+        if (v !== null && v !== "") filters[k] = v;
+      });
+      const findReqs = input.get("findReqs");
+      if (findReqs) filters.findReqs = findReqs;
+      return filters;
+    };
+    let baseParams: any = {
+      page: findWhere ? 1 : effectivePage,
+      perPage: effectivePerPage,
+      sort: effectiveSort,
+      dir: effectiveDir,
+      q: effectiveQ ?? null,
+      filters: viewActive ? viewFilters : filtersFromSearch(q, findKeys),
+    };
     // Remove any find-related keys from generic filters to avoid accidental exact-match filtering
     if (baseParams.filters) {
       const {
@@ -288,27 +330,7 @@ export async function loader(args: LoaderFunctionArgs) {
         ...rest
       } = baseParams.filters;
       // Also strip all explicit find keys handled above (name contains, sku contains, ids, enums, ranges, etc.)
-      for (const k of [
-        "ids", // prevent accidental where.ids from batch routes
-        "sku",
-        "name",
-        "description",
-        "type",
-        "costPriceMin",
-        "costPriceMax",
-        "manualSalePriceMin",
-        "manualSalePriceMax",
-        "purchaseTaxId",
-        "categoryId",
-        "customerId",
-        "supplierId",
-        "stockTrackingEnabled",
-        "batchTrackingEnabled",
-        "componentChildSku",
-        "componentChildName",
-        "componentChildSupplierId",
-        "componentChildType",
-      ]) {
+      for (const k of ["ids", ...findKeys]) {
         if (k in rest) delete (rest as any)[k];
       }
       for (const k of Object.keys(rest)) {
@@ -320,7 +342,7 @@ export async function loader(args: LoaderFunctionArgs) {
       // 'type' is an enum in Prisma schema; do not include in fuzzy search.
       searchableFields: ["name", "sku", "description"],
       filterMappers: {},
-      defaultSort: { field: "id", dir: "asc" },
+      defaultSort: { field: "id", dir: "desc" },
     });
     if (findWhere)
       (where as any).AND = [...((where as any).AND || []), findWhere];
@@ -361,7 +383,8 @@ export async function loader(args: LoaderFunctionArgs) {
       initialRows,
       total: idList.length,
       views,
-      activeView: viewName || null,
+      activeView: viewActive ? viewName || null : null,
+      activeViewParams: viewActive ? viewParams || null : null,
       metadataDefinitions,
     });
   });
@@ -381,8 +404,84 @@ export const shouldRevalidate = makeModuleShouldRevalidate(
 );
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { prismaBase } = await import("~/utils/prisma.server");
   const ct = request.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const form = await request.formData();
+    const intent = String(form.get("_intent") || "");
+    if (
+      intent === "saveView" ||
+      intent === "view.saveAs" ||
+      intent === "view.overwriteFromUrl"
+    ) {
+      const name =
+        intent === "view.overwriteFromUrl"
+          ? String(form.get("viewId") || form.get("name") || "").trim()
+          : String(form.get("name") || "").trim();
+      if (!name) return redirect("/products");
+      const url = new URL(request.url);
+      const sp = url.searchParams;
+      const { saveView, getView } = await import("~/utils/views.server");
+      const { getFilterableProductAttributeDefinitions } = await import(
+        "~/modules/productMetadata/services/productMetadata.server"
+      );
+      const metadataDefinitions = await getFilterableProductAttributeDefinitions();
+      const metadataFields = buildProductMetadataFields(metadataDefinitions, {
+        onlyFilterable: true,
+      });
+      const semanticKeys = deriveSemanticKeys(
+        allProductFindFields(metadataFields)
+      );
+      const q = sp.get("q");
+      const findReqs = sp.get("findReqs");
+      const filters: Record<string, any> = {};
+      for (const k of semanticKeys) {
+        const v = sp.get(k);
+        if (v !== null && v !== "") filters[k] = v;
+      }
+      if (findReqs) filters.findReqs = findReqs;
+      const hasSemantic =
+        (q != null && q !== "") ||
+        !!findReqs ||
+        Object.keys(filters).length > (findReqs ? 1 : 0);
+      const viewParam = sp.get("view");
+      let baseParams: any = null;
+      if (viewParam && !hasSemantic) {
+        const base = await getView("products", viewParam);
+        baseParams = (base?.params || {}) as any;
+      }
+      const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+      const nextFilters = hasSemantic
+        ? filters
+        : { ...(baseParams?.filters || {}) };
+      const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+      const sort = sp.get("sort") || baseParams?.sort || null;
+      const dir = sp.get("dir") || baseParams?.dir || null;
+      const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+      const baseColumns = normalizeColumnsValue(baseParams?.columns);
+      const defaultColumns = getProductDefaultColumns();
+      const columns =
+        columnsFromUrl.length > 0
+          ? columnsFromUrl
+          : baseColumns.length > 0
+          ? baseColumns
+          : defaultColumns;
+      await saveView({
+        module: "products",
+        name,
+        params: {
+          page: 1,
+          perPage,
+          sort,
+          dir,
+          q: nextQ ?? null,
+          filters: nextFilters,
+          columns,
+        },
+      });
+      return redirect(`/products?view=${encodeURIComponent(name)}`);
+    }
+  }
+  const { prismaBase } = await import("~/utils/prisma.server");
   let intent = "";
   let body: any = null;
   if (ct.includes("application/json")) {

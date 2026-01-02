@@ -9,8 +9,7 @@ import {
 import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { useRecords } from "../../../base/record/RecordContext";
-import { FindRibbon, defaultSummarizeFilters } from "~/base/find/FindRibbon";
-import { listViews, saveView } from "../../../utils/views.server";
+import { getView, listViews, saveView } from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
@@ -28,65 +27,97 @@ export async function loader(_args: LoaderFunctionArgs) {
           .replace(/[\u0300-\u036f]/g, "");
   const views = await listViews("companies");
   const viewName = url.searchParams.get("view");
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName) as any;
-    const vp: any = v?.params;
-    if (vp?.filters) {
-      const savedFilters = vp.filters as any;
-      // carry advanced find blob if present
-      if (savedFilters.findReqs && !url.searchParams.has("findReqs")) {
-        url.searchParams.set("findReqs", savedFilters.findReqs);
-      }
-      // Apply all simple filters generically (avoid brittle whitelists)
-      for (const [rawKey, rawVal] of Object.entries(savedFilters)) {
-        if (rawKey === "findReqs") continue; // handled above
-        if (rawVal === undefined || rawVal === null || rawVal === "") continue;
-        if (!url.searchParams.has(rawKey))
-          url.searchParams.set(rawKey, String(rawVal));
-      }
-    }
-  }
+  const filterKeys = [
+    "name",
+    "notes",
+    "isCarrier",
+    "isCustomer",
+    "isSupplier",
+    "isInactive",
+  ];
+  const semanticPresent =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    filterKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !semanticPresent;
+  const activeView = viewActive
+    ? (views.find((x: any) => x.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectivePage = Number(
+    url.searchParams.get("page") || viewParams?.page || 1
+  );
+  const effectivePerPage = Number(
+    url.searchParams.get("perPage") || viewParams?.perPage || 20
+  );
+  const effectiveQ = viewActive ? viewParams?.q ?? null : url.searchParams.get("q");
   const triKeys = ["isCarrier", "isCustomer", "isSupplier", "isInactive"];
   const keys = ["name", "notes", ...triKeys];
   let where: any = undefined;
-  const hasFindIndicators =
-    keys.some((k) => url.searchParams.has(k)) ||
-    url.searchParams.has("findReqs");
+  const hasFindIndicators = viewActive
+    ? keys.some(
+        (k) => viewFilters[k] !== undefined && viewFilters[k] !== null
+      ) || !!viewFilters.findReqs
+    : keys.some((k) => url.searchParams.has(k)) ||
+      url.searchParams.has("findReqs") ||
+      url.searchParams.has("q");
   if (hasFindIndicators) {
     const values: Record<string, any> = {};
     for (const k of keys) {
-      const v = url.searchParams.get(k);
-      if (v !== null && v !== "") values[k] = v;
+      const v = viewActive ? (viewFilters as any)[k] : url.searchParams.get(k);
+      if (v !== null && v !== undefined && v !== "") values[k] = v;
     }
     const simple: any = {};
     if (values.name)
       simple.nameUnaccented = {
-        contains: unaccent(values.name),
+        contains: unaccent(String(values.name)),
         mode: "insensitive",
       };
     if (values.notes)
       simple.notesUnaccented = {
-        contains: unaccent(values.notes),
+        contains: unaccent(String(values.notes)),
         mode: "insensitive",
       };
     for (const tk of triKeys) {
       const raw = values[tk];
-      if (raw === "true") simple[tk] = true;
-      else if (raw === "false") simple[tk] = false;
+      if (raw === true || raw === "true") simple[tk] = true;
+      else if (raw === false || raw === "false") {
+        if (tk === "isInactive") {
+          simple.OR = [{ isInactive: false }, { isInactive: null }];
+        } else {
+          simple[tk] = false;
+        }
+      }
     }
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         name: (v) => ({
-          nameUnaccented: { contains: unaccent(v), mode: "insensitive" },
+          nameUnaccented: {
+            contains: unaccent(String(v)),
+            mode: "insensitive",
+          },
         }),
         notes: (v) => ({
-          notesUnaccented: { contains: unaccent(v), mode: "insensitive" },
+          notesUnaccented: {
+            contains: unaccent(String(v)),
+            mode: "insensitive",
+          },
         }),
-        isCarrier: (v) => ({ isCarrier: v === "true" }),
-        isCustomer: (v) => ({ isCustomer: v === "true" }),
-        isSupplier: (v) => ({ isSupplier: v === "true" }),
-        isInactive: (v) => ({ isInactive: v === "true" }),
+        isCarrier: (v) => ({ isCarrier: v === "true" || v === true }),
+        isCustomer: (v) => ({ isCustomer: v === "true" || v === true }),
+        isSupplier: (v) => ({ isSupplier: v === "true" || v === true }),
+        isInactive: (v) =>
+          v === "true" || v === true
+            ? { isInactive: true }
+            : { OR: [{ isInactive: false }, { isInactive: null }] },
       };
       const multiWhere = buildWhereFromRequests(multi, interpreters);
       where = mergeSimpleAndMulti(simple, multiWhere);
@@ -94,10 +125,23 @@ export async function loader(_args: LoaderFunctionArgs) {
       where = simple;
     }
   }
+  if (effectiveQ != null && String(effectiveQ).trim() !== "") {
+    const q = unaccent(String(effectiveQ).trim());
+    const qWhere = {
+      OR: [
+        { nameUnaccented: { contains: q, mode: "insensitive" } },
+        { notesUnaccented: { contains: q, mode: "insensitive" } },
+      ],
+    };
+    where = where ? { AND: [where, qWhere] } : qWhere;
+  }
+  const sort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const dir = url.searchParams.get("dir") || viewParams?.dir || null;
+  const orderBy = sort ? { [sort]: dir || "asc" } : { id: "desc" };
   const ID_CAP = 50000;
   const idRows = await prisma.company.findMany({
     where,
-    orderBy: { id: "asc" },
+    orderBy,
     select: { id: true },
     take: ID_CAP,
   });
@@ -109,7 +153,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   if (initialIds.length) {
     initialRows = await prisma.company.findMany({
       where: { id: { in: initialIds } },
-      orderBy: { id: "asc" },
+      orderBy,
       select: {
         id: true,
         name: true,
@@ -127,29 +171,81 @@ export async function loader(_args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
+    page: effectivePage,
+    perPage: effectivePerPage,
+    q: effectiveQ ?? null,
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
-  if (form.get("_intent") === "saveView") {
-    const name = String(form.get("name") || "").trim();
-    if (!name) return redirect("/companies");
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "overwriteViewFromUrl" ||
+    intent === "saveViewFromUrl" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
     const url = new URL(request.url);
-    const params = Object.fromEntries(url.searchParams.entries());
+    const sp = url.searchParams;
+    const filterKeys = [
+      "name",
+      "notes",
+      "isCarrier",
+      "isCustomer",
+      "isSupplier",
+      "isInactive",
+    ];
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (["view"].includes(k)) continue;
-      filters[k] = v;
+    for (const k of filterKeys) {
+      const v = sp.get(k);
+      if (v !== null && v !== "") filters[k] = v;
     }
-    if (params.findReqs) filters.findReqs = params.findReqs;
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("companies", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columns = sp.get("columns") || baseParams?.columns || null;
+    const saveName =
+      intent === "saveView" || intent === "view.saveAs"
+        ? String(form.get("name") || "").trim()
+        : intent === "saveViewFromUrl"
+        ? String(form.get("newName") || "").trim()
+        : String(form.get("viewId") || form.get("name") || "").trim();
+    if (!saveName) return redirect("/companies");
     await saveView({
       module: "companies",
-      name,
-      params: { page: 1, perPage: 0, sort: null, dir: null, q: null, filters },
+      name: saveName,
+      params: {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      },
     });
-    return redirect(`/companies?view=${encodeURIComponent(name)}`);
+    return redirect(`/companies?view=${encodeURIComponent(saveName)}`);
   }
   return redirect("/companies");
 }

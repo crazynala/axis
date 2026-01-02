@@ -32,6 +32,7 @@ import {
   Text,
   Paper,
   Modal,
+  Tooltip,
 } from "@mantine/core";
 import {
   MantineProvider,
@@ -76,7 +77,6 @@ import {
   IconAutomation,
   IconSettings,
   IconSearch,
-  IconAdjustments,
   IconBasketDollar,
   IconFileDollar,
   IconTruck,
@@ -86,6 +86,7 @@ import {
   IconShieldCheck,
   IconListDetails,
   IconMapPin,
+  IconUser,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
 import {
@@ -94,6 +95,7 @@ import {
   getSavedIndexSearch,
   useRegisterNavLocation,
 } from "~/hooks/useNavLocation";
+import { getInitials } from "~/utils/avatar";
 // import { prisma } from "./utils/prisma.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -111,6 +113,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       options: null,
       desktopNavOpened: true,
       userLevel: null,
+      user: null,
     });
   const uid = await getUserId(request);
   if (!uid) {
@@ -129,6 +132,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     logLevels,
     options,
     userLevel: (me?.userLevel as UserLevel | null | undefined) ?? null,
+    user: me
+      ? {
+          name: me.name ?? null,
+          firstName: me.firstName ?? null,
+          lastName: me.lastName ?? null,
+        }
+      : null,
   });
 }
 // export const links: LinksFunction = () => {
@@ -372,6 +382,7 @@ export default function App() {
   const desktopNavPref = data.desktopNavOpened ?? true;
   const options: OptionsData | undefined = data.options ?? undefined;
   const isAdminUser = !data.userLevel || data.userLevel === "Admin";
+  const accountUser = data.user ?? null;
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
@@ -421,7 +432,6 @@ export default function App() {
           },
         ]
       : []),
-    { to: "/settings", icon: <IconAdjustments />, label: "Settings" },
   ];
 
   return (
@@ -470,6 +480,7 @@ export default function App() {
                               desktopNavOpenedInitial={desktopNavPref}
                               navTopItems={navTopItems}
                               navBottomItems={navBottomItems}
+                              accountUser={accountUser}
                               disabled={isAdmin}
                             />
                           )}
@@ -492,11 +503,17 @@ function AppShellLayout({
   desktopNavOpenedInitial,
   navTopItems,
   navBottomItems,
+  accountUser,
   disabled,
 }: {
   desktopNavOpenedInitial: boolean;
   navTopItems: NavMenuItem[];
   navBottomItems: NavLinkItem[];
+  accountUser: {
+    name?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+  } | null;
   disabled?: boolean;
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
@@ -573,16 +590,23 @@ function AppShellLayout({
       );
     }
     return (
-      <NavLink
-        px="xs"
-        component={RemixNavLink}
-        label={item.icon}
-        to={href}
-        key={item.to}
-        onClick={onClick}
-      />
+      <Tooltip label={item.label} position="right" withArrow>
+        <NavLink
+          px="xs"
+          component={RemixNavLink}
+          label={item.icon}
+          to={href}
+          key={item.to}
+          onClick={onClick}
+        />
+      </Tooltip>
     );
   };
+  const initials = getInitials({
+    name: accountUser?.name ?? undefined,
+    firstName: accountUser?.firstName ?? undefined,
+    lastName: accountUser?.lastName ?? undefined,
+  });
 
   return (
     <AppShell
@@ -640,21 +664,63 @@ function AppShellLayout({
           </Stack>
           <Stack gap={0}>
             {navBottomItems.map((item) => renderNavLinkItem(item))}
-            <Divider />
-            <Form method="post" action="/logout">
-              <button
-                type="submit"
-                style={{
-                  background: "none",
-                  border: 0,
-                  padding: 0,
-                  color: "#c00",
-                  cursor: "pointer",
-                }}
-              >
-                Logout
-              </button>
-            </Form>
+            <div style={{ marginTop: "var(--mantine-spacing-sm)" }}>
+              {desktopNavOpened ? (
+                <NavLink
+                  component={RemixNavLink}
+                  label="Account"
+                  to="/account"
+                  leftSection={
+                    <ActionIcon
+                      radius="xl"
+                      size={24}
+                      variant="default"
+                      aria-label="Account"
+                      style={{
+                        background: "var(--mantine-color-gray-1)",
+                        color: "var(--mantine-color-gray-7)",
+                      }}
+                    >
+                      {initials ? (
+                        <Text fw={600} size="xs">
+                          {initials}
+                        </Text>
+                      ) : (
+                        <IconUser size={14} />
+                      )}
+                    </ActionIcon>
+                  }
+                />
+              ) : (
+                <Tooltip label="Account" position="right" withArrow>
+                  <NavLink
+                    px="xs"
+                    component={RemixNavLink}
+                    to="/account"
+                    label={
+                      <ActionIcon
+                        radius="xl"
+                        size={24}
+                        variant="default"
+                        aria-label="Account"
+                        style={{
+                          background: "var(--mantine-color-gray-1)",
+                          color: "var(--mantine-color-gray-7)",
+                        }}
+                      >
+                        {initials ? (
+                          <Text fw={600} size="xs">
+                            {initials}
+                          </Text>
+                        ) : (
+                          <IconUser size={14} />
+                        )}
+                      </ActionIcon>
+                    }
+                  />
+                </Tooltip>
+              )}
+            </div>
           </Stack>
         </Stack>
       </AppShell.Navbar>

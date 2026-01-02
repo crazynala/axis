@@ -4,6 +4,8 @@ import { ActionIcon, Tooltip } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
 import { InvoiceFindModal } from "../components/InvoiceFindModal";
 import { useFind } from "../../../base/find/FindContext";
+import { allInvoiceFindFields } from "../forms/invoiceDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
 
 export function InvoiceFindManager() {
   const [sp] = useSearchParams();
@@ -11,6 +13,10 @@ export function InvoiceFindManager() {
   const { registerFindCallback } = useFind();
 
   const [opened, setOpened] = useState(false);
+  const semanticKeys = React.useMemo(
+    () => new Set(deriveSemanticKeys(allInvoiceFindFields())),
+    []
+  );
 
   useEffect(
     () => registerFindCallback(() => setOpened(true)),
@@ -29,11 +35,18 @@ export function InvoiceFindManager() {
   const onSearch = (qs: string) => {
     const url = new URL(window.location.href);
     const produced = new URLSearchParams(qs);
+    const viewName = url.searchParams.get("view");
     Array.from(url.searchParams.keys()).forEach((k) => {
-      if (k === "findReqs" || produced.has(k)) url.searchParams.delete(k);
+      if (k === "q" || k === "findReqs" || semanticKeys.has(k))
+        url.searchParams.delete(k);
     });
     for (const [k, v] of produced.entries()) url.searchParams.set(k, v);
+    url.searchParams.delete("page");
     url.searchParams.delete("findMode");
+    if (viewName) {
+      url.searchParams.delete("view");
+      url.searchParams.set("lastView", viewName);
+    }
     setOpened(false);
     navigate(url.pathname + "?" + url.searchParams.toString());
   };

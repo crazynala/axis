@@ -1,4 +1,8 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type {
+  ActionFunctionArgs,
+  LoaderFunctionArgs,
+  MetaFunction,
+} from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Form,
@@ -8,145 +12,173 @@ import {
 } from "@remix-run/react";
 import {
   Button,
-  Card,
-  NumberInput,
   Stack,
   Title,
   Text,
-  SegmentedControl,
-  Group,
-  useMantineColorScheme,
+  TextInput,
+  PasswordInput,
 } from "@mantine/core";
 import { requireUserId } from "../utils/auth.server";
 import { prisma } from "../utils/prisma.server";
+import bcrypt from "bcryptjs";
+import { useState } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const uid = await requireUserId(request);
   const user = await prisma.user.findUnique({
     where: { id: uid },
-    select: { recordsPerPage: true, colorScheme: true },
+    select: {
+      name: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
   });
+  const name =
+    user?.name ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    "";
   return json({
-    recordsPerPage: user?.recordsPerPage ?? 25,
-    colorScheme: (user?.colorScheme as "light" | "dark" | undefined) || "light",
+    name,
+    email: user?.email || "",
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const uid = await requireUserId(request);
   const form = await request.formData();
-  const intent = form.get("intent");
-  if (intent === "update-color-scheme") {
-    const scheme = form.get("colorScheme");
-    if (scheme === "light" || scheme === "dark") {
-      await prisma.user.update({
-        where: { id: uid },
-        data: { colorScheme: scheme },
-      });
-      return json({ ok: true, colorScheme: scheme });
+  const intent = String(form.get("intent") || "");
+  if (intent === "profile.save") {
+    const name = String(form.get("name") || "").trim();
+    await prisma.user.update({
+      where: { id: uid },
+      data: { name: name || null },
+    });
+    return json({ ok: true, profileSaved: true });
+  }
+  if (intent === "password.change") {
+    const currentPassword = String(form.get("currentPassword") || "");
+    const nextPassword = String(form.get("newPassword") || "");
+    const confirmPassword = String(form.get("confirmPassword") || "");
+    if (!currentPassword || !nextPassword || !confirmPassword) {
+      return json(
+        { error: "All password fields are required." },
+        { status: 400 }
+      );
     }
-    return json({ error: "Invalid color scheme" }, { status: 400 });
+    if (nextPassword !== confirmPassword) {
+      return json({ error: "New passwords do not match." }, { status: 400 });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: uid },
+      select: { passwordHash: true },
+    });
+    if (!user?.passwordHash) {
+      return json({ error: "Password update unavailable." }, { status: 400 });
+    }
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return json({ error: "Current password is incorrect." }, { status: 400 });
+    }
+    const hash = await bcrypt.hash(nextPassword, 12);
+    await prisma.user.update({
+      where: { id: uid },
+      data: { passwordHash: hash },
+    });
+    return json({ ok: true, passwordChanged: true });
   }
-  // recordsPerPage update (default path)
-  const rpp = Number(form.get("recordsPerPage"));
-  if (!Number.isFinite(rpp) || rpp <= 0) {
-    return json({ error: "Enter a positive number" }, { status: 400 });
-  }
-  await prisma.user.update({
-    where: { id: uid },
-    data: { recordsPerPage: Math.floor(rpp) },
-  });
-  return json({ ok: true });
+  return json({ error: "Unknown intent." }, { status: 400 });
 }
 
+export const meta: MetaFunction = () => [{ title: "Account" }];
+
 export default function Settings() {
-  const { recordsPerPage, colorScheme } = useLoaderData<typeof loader>();
+  const { name, email } = useLoaderData<typeof loader>();
   const data = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
-  const { setColorScheme } = useMantineColorScheme();
-
-  async function updateTheme(next: "light" | "dark") {
-    try {
-      // Optimistically update UI first
-      setColorScheme(next);
-      // Persist on server
-      const resp = await fetch("/api/color-scheme", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ colorScheme: next }),
-      });
-      if (!resp.ok) throw new Error("Failed to save theme");
-    } catch (e) {
-      // On error, we could revert or show a message; keep simple for now
-      console.error(e);
-    }
-  }
+  const [profileName, setProfileName] = useState(name);
+  const profileDirty = profileName.trim() !== name.trim();
   return (
-    <Stack align="center" mt={40}>
-      <Card withBorder maw={520} w="100%">
-        <Title order={3} mb="md">
-          Settings
-        </Title>
+    <Stack align="center" mt={40} w="100%">
+      <Stack maw={560} w="100%" gap="xl">
+        <Title order={2}>Account</Title>
         {data && (data as any).error ? (
           <Text c="red">{(data as any).error}</Text>
         ) : null}
-        {data && (data as any).ok && !(data as any).error ? (
-          <Text c="green">Saved.</Text>
+        {data && (data as any).profileSaved ? (
+          <Text c="green">Profile saved.</Text>
         ) : null}
-        <Stack gap="lg">
+        {data && (data as any).passwordChanged ? (
+          <Text c="green">Password updated.</Text>
+        ) : null}
+        <Stack gap="sm">
+          <Title order={4}>Profile</Title>
           <Form method="post">
             <Stack>
-              <NumberInput
-                name="recordsPerPage"
-                label="Records per page"
-                defaultValue={recordsPerPage}
-                min={1}
-                step={1}
+              <TextInput
+                name="name"
+                label="Name"
+                value={profileName}
+                onChange={(e) => setProfileName(e.currentTarget.value)}
+              />
+              <TextInput
+                name="email"
+                label="Email"
+                value={email}
+                readOnly
               />
               <Button
                 type="submit"
-                disabled={busy}
                 name="intent"
-                value="update-rpp"
+                value="profile.save"
+                disabled={busy || !profileDirty}
+                variant="default"
               >
                 {busy ? "Saving..." : "Save"}
               </Button>
             </Stack>
           </Form>
-          <Form
-            method="post"
-            onSubmit={(e) => {
-              // Allow server form fallback, but also flip instantly when user clicks the button
-              // Do not prevent default to keep progressive enhancement
-            }}
-          >
+        </Stack>
+        <Stack gap="sm">
+          <Title order={4}>Security</Title>
+          <Form method="post">
             <Stack>
-              <Group gap="sm">
-                <SegmentedControl
-                  name="colorScheme"
-                  defaultValue={colorScheme}
-                  data={[
-                    { label: "Light", value: "light" },
-                    { label: "Dark", value: "dark" },
-                  ]}
-                  onChange={(val) => {
-                    if (val === "light" || val === "dark") updateTheme(val);
-                  }}
-                />
-              </Group>
+              <PasswordInput
+                name="currentPassword"
+                label="Current password"
+              />
+              <PasswordInput name="newPassword" label="New password" />
+              <PasswordInput
+                name="confirmPassword"
+                label="Confirm password"
+              />
               <Button
                 type="submit"
                 name="intent"
-                value="update-color-scheme"
+                value="password.change"
                 disabled={busy}
+                variant="default"
               >
-                {busy ? "Saving..." : "Update Theme"}
+                {busy ? "Saving..." : "Update password"}
               </Button>
             </Stack>
           </Form>
         </Stack>
-      </Card>
+        <Stack gap="sm">
+          <Title order={4}>Session</Title>
+          <Form method="post" action="/logout">
+            <Button
+              type="submit"
+              variant="default"
+              color="red"
+              disabled={busy}
+            >
+              Log out
+            </Button>
+          </Form>
+        </Stack>
+      </Stack>
     </Stack>
   );
 }

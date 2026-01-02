@@ -1,12 +1,22 @@
-import { Link, useLocation, useNavigate } from "@remix-run/react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useRouteLoaderData,
+} from "@remix-run/react";
 import { VirtualizedNavDataTable } from "../components/VirtualizedNavDataTable";
-import { formatUSD } from "../utils/format";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group } from "@mantine/core";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useRecords } from "../base/record/RecordContext";
-import { SavedViews } from "../components/find/SavedViews";
+import { FindRibbonAuto } from "../components/find/FindRibbonAuto";
+import { allInvoiceFindFields } from "../modules/invoice/forms/invoiceDetail";
 import { useHybridWindow } from "../base/record/useHybridWindow";
+import { invoiceColumns } from "~/modules/invoice/config/invoiceColumns";
+import {
+  buildTableColumns,
+  getVisibleColumnKeys,
+} from "~/base/index/columns";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
@@ -17,15 +27,36 @@ import {
 export default function InvoicesIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "invoices" });
   usePersistIndexSearch("/invoices");
+  const data = useRouteLoaderData<{
+    views?: any[];
+    activeView?: string | null;
+    activeViewParams?: any | null;
+  }>("routes/invoices");
   const navigate = useNavigate();
   const location = useLocation();
   const { state, currentId } = useRecords();
+  const findConfig = useMemo(() => allInvoiceFindFields(), []);
   const { records, atEnd, loading, fetching, requestMore, total } =
     useHybridWindow({
       module: "invoices",
       initialWindow: 100,
       batchIncrement: 100,
     });
+  const viewMode = !!data?.activeView;
+  const visibleColumnKeys = useMemo(
+    () =>
+      getVisibleColumnKeys({
+        defs: invoiceColumns,
+        urlColumns: new URLSearchParams(location.search).get("columns"),
+        viewColumns: data?.activeViewParams?.columns,
+        viewMode,
+      }),
+    [data?.activeViewParams?.columns, location.search, viewMode]
+  );
+  const columns = useMemo(
+    () => buildTableColumns(invoiceColumns, visibleColumnKeys),
+    [visibleColumnKeys]
+  );
   // Table auto-sizes via VirtualizedNavDataTable; no per-route height calc needed
 
   // Auto-expand window to include currentId when landing on index from detail.
@@ -138,36 +169,19 @@ export default function InvoicesIndexRoute() {
           </Button>
         </Group>
       </Group>
-      <SavedViews views={[]} activeView={null} />
+      <FindRibbonAuto
+        views={data?.views || []}
+        activeView={data?.activeView || null}
+        activeViewId={data?.activeView || null}
+        activeViewParams={data?.activeViewParams || null}
+        findConfig={findConfig}
+        enableLastView
+        columnsConfig={invoiceColumns}
+      />
       <VirtualizedNavDataTable
         records={records}
         currentId={currentId as any}
-        columns={[
-          {
-            accessor: "id",
-            title: "ID",
-            render: (r: any) => <Link to={`/invoices/${r.id}`}>{r.id}</Link>,
-            width: 70,
-          },
-          { accessor: "invoiceCode", title: "Code" },
-          {
-            accessor: "date",
-            title: "Date",
-            render: (r: any) =>
-              r.date ? new Date(r.date).toLocaleDateString() : "",
-          },
-          {
-            accessor: "company.name",
-            title: "Company",
-            render: (r: any) => r.company?.name ?? "",
-          },
-          {
-            accessor: "amount",
-            title: "Amount",
-            render: (r: any) => formatUSD(r.amount),
-          },
-          { accessor: "status", title: "Status" },
-        ]}
+        columns={columns as any}
         onRowClick={(rec: any) => {
           if (rec?.id != null) navigate(`/invoices/${rec.id}`);
         }}

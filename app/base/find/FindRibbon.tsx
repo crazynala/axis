@@ -31,6 +31,7 @@ export type FindRibbonProps = {
   onRemoveChip?: (key: string) => void; // enable 'x' per chip
   advancedActive?: boolean; // show an Advanced chip when true
   onClearAdvanced?: () => void; // clear advanced findReqs
+  renderActions?: (helpers: { openSaveAs: () => void }) => React.ReactNode;
 };
 
 /**
@@ -51,9 +52,14 @@ export function FindRibbon({
   onRemoveChip,
   advancedActive,
   onClearAdvanced,
+  renderActions,
 }: FindRibbonProps) {
   const [opened, setOpened] = useState(false);
   const [name, setName] = useState("");
+  const openSaveAs = () => {
+    if (!onSaveAs) return;
+    setOpened(true);
+  };
 
   const normalizedViews = useMemo(
     () =>
@@ -167,7 +173,9 @@ export function FindRibbon({
           )}
         </Group>
 
-        {mode === "find" ? (
+        {renderActions ? (
+          renderActions({ openSaveAs })
+        ) : mode === "find" ? (
           <Group gap="xs" align="center">
             {onCancelFind ? (
               <Button variant="default" onClick={onCancelFind}>
@@ -175,7 +183,7 @@ export function FindRibbon({
               </Button>
             ) : null}
             {onSaveAs ? (
-              <Button onClick={() => setOpened(true)}>Save as</Button>
+              <Button onClick={openSaveAs}>Save as</Button>
             ) : null}
           </Group>
         ) : null}

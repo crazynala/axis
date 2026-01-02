@@ -1,5 +1,5 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import { prisma } from "../../../utils/prisma.server";
 import { useEffect } from "react";
@@ -12,8 +12,15 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../../../base/find/multiFind";
-import { listViews } from "../../../utils/views.server";
+import { listViews, saveView, getView } from "../../../utils/views.server";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
+import * as jobDetail from "../forms/jobDetail";
+import { deriveSemanticKeys } from "~/base/index/indexController";
+import { jobColumns } from "../config/jobColumns";
+import {
+  getDefaultColumnKeys,
+  normalizeColumnsValue,
+} from "~/base/index/columns";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const url = new URL(_args.request.url);
@@ -40,73 +47,68 @@ export async function loader(_args: LoaderFunctionArgs) {
   };
   const views = await listViews("jobs");
   const viewName = url.searchParams.get("view");
-  if (viewName) {
-    const v = views.find((x: any) => x.name === viewName) as any;
-    const vp: any = v?.params;
-    if (vp?.filters) {
-      const savedFilters = vp.filters as any;
-      // carry advanced find blob if present
-      if (savedFilters.findReqs && !url.searchParams.has("findReqs")) {
-        url.searchParams.set("findReqs", savedFilters.findReqs);
-      }
-      // Map legacy/dotted keys to canonical param names
-      const aliasMap: Record<string, string> = {
-        "job.assembly.sku": "assemblySku",
-        "job.assembly.name": "assemblyName",
-        "job.assembly.status": "assemblyStatus",
-      };
-      // Apply all simple filters generically (avoid brittle whitelists)
-      for (const [rawKey, rawVal] of Object.entries(savedFilters)) {
-        if (rawKey === "findReqs") continue; // handled above
-        if (rawVal === undefined || rawVal === null || rawVal === "") continue;
-        const key = aliasMap[rawKey] || rawKey;
-        if (!url.searchParams.has(key))
-          url.searchParams.set(key, String(rawVal));
-      }
-    }
-  }
-  // Accept dotted alias keys (back-compat): job.assembly.* => assembly*
-  const alias = (from: string, to: string) => {
-    const v = url.searchParams.get(from);
-    if (v !== null && !url.searchParams.has(to)) url.searchParams.set(to, v);
+  const allFields = [
+    ...((jobDetail as any).jobOverviewFields || []),
+    ...((jobDetail as any).jobDateStatusLeft || []),
+    ...((jobDetail as any).jobDateStatusRight || []),
+    ...((jobDetail as any).assemblyFields || []),
+  ];
+  const semanticKeys = deriveSemanticKeys(allFields);
+  const hasSemantic =
+    url.searchParams.has("q") ||
+    url.searchParams.has("findReqs") ||
+    semanticKeys.some((k) => {
+      const v = url.searchParams.get(k);
+      return v !== null && v !== "";
+    });
+  const viewActive = !!viewName && !hasSemantic;
+  const activeView = viewActive
+    ? (views.find((x: any) => x.name === viewName) as any)
+    : null;
+  const viewParams: any = activeView?.params || null;
+  const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
+  const effectiveQ = viewActive
+    ? viewParams?.q ?? null
+    : url.searchParams.get("q");
+  const effectiveSort =
+    url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveDir =
+    url.searchParams.get("dir") || viewParams?.dir || null;
+  const aliasMap: Record<string, string> = {
+    "job.assembly.sku": "assemblySku",
+    "job.assembly.name": "assemblyName",
+    "job.assembly.status": "assemblyStatus",
   };
-  alias("job.assembly.sku", "assemblySku");
-  alias("job.assembly.name", "assemblyName");
-  alias("job.assembly.status", "assemblyStatus");
-  const hasFindIndicators =
-    [
-      "id",
-      "projectCode",
-      "name",
-      "description",
-      "status",
-      "jobType",
-      "endCustomerName",
-      "companyId",
-      "assemblySku",
-      "assemblyName",
-      "assemblyStatus",
-    ].some((k) => url.searchParams.has(k)) || url.searchParams.has("findReqs");
+  const aliasReverse = Object.fromEntries(
+    Object.entries(aliasMap).map(([from, to]) => [to, from])
+  );
+  const readValue = (key: string) => {
+    if (viewActive) {
+      if (key in viewFilters) return viewFilters[key];
+      const legacy = aliasReverse[key];
+      if (legacy && legacy in viewFilters) return viewFilters[legacy];
+      return undefined;
+    }
+    const direct = url.searchParams.get(key);
+    if (direct !== null) return direct;
+    const legacy = aliasReverse[key];
+    return legacy ? url.searchParams.get(legacy) : null;
+  };
+  const hasFindIndicators = viewActive
+    ? semanticKeys.some((k) => {
+        const v = readValue(k);
+        return v !== undefined && v !== null && v !== "";
+      }) || !!viewFilters.findReqs
+    : semanticKeys.some((k) => url.searchParams.has(k)) ||
+      url.searchParams.has("findReqs");
   let where: any = undefined;
   if (hasFindIndicators) {
     const values: any = {};
     const pass = (k: string) => {
-      const v = url.searchParams.get(k);
-      if (v !== null && v !== "") values[k] = v;
+      const v = readValue(k);
+      if (v !== null && v !== undefined && v !== "") values[k] = v;
     };
-    [
-      "id",
-      "projectCode",
-      "name",
-      "description",
-      "status",
-      "jobType",
-      "endCustomerName",
-      "companyId",
-      "assemblySku",
-      "assemblyName",
-      "assemblyStatus",
-    ].forEach(pass);
+    semanticKeys.forEach(pass);
     const valuesForSchema = { ...values };
     delete valuesForSchema.name;
     delete valuesForSchema.projectCode;
@@ -140,7 +142,10 @@ export async function loader(_args: LoaderFunctionArgs) {
         : simpleClauses.length === 1
         ? simpleClauses[0]
         : { AND: simpleClauses };
-    const multi = decodeRequests(url.searchParams.get("findReqs"));
+    const rawFindReqs = viewActive
+      ? viewFilters.findReqs
+      : url.searchParams.get("findReqs");
+    const multi = decodeRequests(rawFindReqs);
     if (multi) {
       const interpreters: Record<string, (val: any) => any> = {
         id: (v) => ({ id: Number(v) }),
@@ -185,10 +190,24 @@ export async function loader(_args: LoaderFunctionArgs) {
       where = simple;
     }
   }
+  if (effectiveQ != null && String(effectiveQ).trim() !== "") {
+    const qv = unaccent(String(effectiveQ).trim());
+    const qWhere = {
+      OR: [
+        { projectCode: { contains: qv, mode: "insensitive" } },
+        { nameUnaccented: { contains: qv, mode: "insensitive" } },
+        { descriptionUnaccented: { contains: qv, mode: "insensitive" } },
+      ],
+    };
+    where = where ? { AND: [where, qWhere] } : qWhere;
+  }
+  const orderBy = effectiveSort
+    ? { [effectiveSort]: effectiveDir || "asc" }
+    : { id: "desc" };
   const ID_CAP = 50000;
   const idRows = await prisma.job.findMany({
     where,
-    orderBy: { id: "asc" },
+    orderBy,
     select: { id: true },
     take: ID_CAP,
   });
@@ -200,7 +219,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   if (initialIds.length) {
     initialRows = await prisma.job.findMany({
       where: { id: { in: initialIds } },
-      orderBy: { id: "asc" },
+      orderBy,
       select: {
         id: true,
         projectCode: true,
@@ -219,8 +238,83 @@ export async function loader(_args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewName || null,
+    activeView: viewActive ? viewName || null : null,
+    activeViewParams: viewActive ? viewParams || null : null,
   });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
+  const intent = String(form.get("_intent") || "");
+  if (
+    intent === "saveView" ||
+    intent === "view.saveAs" ||
+    intent === "view.overwriteFromUrl"
+  ) {
+    const name =
+      intent === "view.overwriteFromUrl"
+        ? String(form.get("viewId") || form.get("name") || "").trim()
+        : String(form.get("name") || "").trim();
+    if (!name) return redirect("/jobs");
+    const url = new URL(request.url);
+    const sp = url.searchParams;
+    const allFields = [
+      ...((jobDetail as any).jobOverviewFields || []),
+      ...((jobDetail as any).jobDateStatusLeft || []),
+      ...((jobDetail as any).jobDateStatusRight || []),
+      ...((jobDetail as any).assemblyFields || []),
+    ];
+    const semanticKeys = deriveSemanticKeys(allFields);
+    const q = sp.get("q");
+    const findReqs = sp.get("findReqs");
+    const filters: Record<string, any> = {};
+    for (const k of semanticKeys) {
+      const v = sp.get(k);
+      if (v !== null && v !== "") filters[k] = v;
+    }
+    if (findReqs) filters.findReqs = findReqs;
+    const hasSemantic =
+      (q != null && q !== "") ||
+      !!findReqs ||
+      Object.keys(filters).length > (findReqs ? 1 : 0);
+    const viewParam = sp.get("view");
+    let baseParams: any = null;
+    if (viewParam && !hasSemantic) {
+      const base = await getView("jobs", viewParam);
+      baseParams = (base?.params || {}) as any;
+    }
+    const nextQ = hasSemantic ? q ?? null : baseParams?.q ?? null;
+    const nextFilters = hasSemantic
+      ? filters
+      : { ...(baseParams?.filters || {}) };
+    const perPage = Number(sp.get("perPage") || baseParams?.perPage || 20);
+    const sort = sp.get("sort") || baseParams?.sort || null;
+    const dir = sp.get("dir") || baseParams?.dir || null;
+    const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
+    const baseColumns = normalizeColumnsValue(baseParams?.columns);
+    const defaultColumns = getDefaultColumnKeys(jobColumns);
+    const columns =
+      columnsFromUrl.length > 0
+        ? columnsFromUrl
+        : baseColumns.length > 0
+        ? baseColumns
+        : defaultColumns;
+    await saveView({
+      module: "jobs",
+      name,
+      params: {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      },
+    });
+    return redirect(`/jobs?view=${encodeURIComponent(name)}`);
+  }
+  return redirect("/jobs");
 }
 
 // DAN 251030 this should be handled in the index page

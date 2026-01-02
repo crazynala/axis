@@ -310,7 +310,7 @@ export const jobDetailPage: PageNode = L.page(
   L.col(
     { span: { base: 12, md: 7 } },
     L.card(
-      {
+    {yo
         key: "overview",
         drawerTitle: "Edit job setup",
         drawerItems: jobFields.overview,
