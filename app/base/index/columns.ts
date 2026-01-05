@@ -10,6 +10,13 @@ export type ColumnDef<T = Record<string, any>> = {
   sortKey?: string;
   defaultVisible?: boolean;
   hideable?: boolean;
+  layout?: {
+    width?: number | string;
+    minWidth?: number | string;
+    maxWidth?: number | string;
+    grow?: number;
+    align?: "left" | "center" | "right";
+  };
   width?: number | string;
   minWidth?: number | string;
   maxWidth?: number | string;
@@ -67,13 +74,17 @@ export const buildTableColumns = <T,>(
     const def = byKey.get(key);
     if (!def) continue;
     const accessor = def.sortKey || def.accessor || def.key;
+    const layout = def.layout;
     columns.push({
       accessor: accessor as any,
       title: def.title,
       sortable: def.sortable,
-      width: def.width as any,
+      width: (layout?.width ?? def.width) as any,
+      minWidth: (layout?.minWidth ?? def.minWidth) as any,
+      maxWidth: (layout?.maxWidth ?? def.maxWidth) as any,
+      grow: (layout?.grow ?? def.grow) as any,
       render: def.render as any,
-      textAlign: def.align as any,
+      textAlign: (layout?.align ?? def.align) as any,
     });
   }
   return columns;

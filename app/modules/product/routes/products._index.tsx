@@ -37,7 +37,7 @@ import {
 } from "~/base/index/columns";
 import { allProductFindFields } from "../forms/productDetail";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
-import { buildProductColumns } from "../config/productColumns";
+import { buildProductIndexColumns } from "../config/productIndexColumns";
 
 function usePricingPrefsFromWidget() {
   const [customerId, setCustomerId] = useState<string | null>(() => {
@@ -265,7 +265,10 @@ export default function ProductsIndexRoute() {
       return [...defaultSummarizeFilters(nonMeta), ...chips];
     };
   }, [metadataDefinitions]);
-  const columnDefs = useMemo(() => buildProductColumns(pricing), [pricing]);
+  const columnDefs = useMemo(
+    () => buildProductIndexColumns(pricing),
+    [pricing]
+  );
   const viewMode = !!activeView;
   const visibleColumnKeys = useMemo(
     () =>

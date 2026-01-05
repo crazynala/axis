@@ -51,7 +51,7 @@ import {
 import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
 import { AxisChip } from "~/components/AxisChip";
 import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
-import { rulesForType } from "~/modules/product/rules/productTypeRules";
+import { buildProductWarnings } from "~/modules/product/warnings/productWarnings";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -853,6 +853,26 @@ export default function ProductDetailRoute() {
       }),
     [watched, product]
   );
+  const warnings = useMemo(
+    () =>
+      buildProductWarnings({
+        type: watched?.type ?? product.type,
+        name: watched?.name ?? product.name,
+        categoryId: watched?.categoryId ?? product.categoryId,
+        templateId: watched?.templateId ?? product.templateId,
+        supplierId: watched?.supplierId ?? product.supplierId,
+        customerId: watched?.customerId ?? product.customerId,
+        variantSetId: watched?.variantSetId ?? product.variantSetId,
+        costPrice: watched?.costPrice ?? product.costPrice,
+        leadTimeDays: watched?.leadTimeDays ?? product.leadTimeDays,
+        externalStepType:
+          watched?.externalStepType ?? product.externalStepType ?? null,
+        stockTrackingEnabled,
+        batchTrackingEnabled,
+        hasCmtLine: hasCmtLine ?? undefined,
+      }),
+    [watched, product, stockTrackingEnabled, batchTrackingEnabled, hasCmtLine]
+  );
   const headerChips = useMemo(() => {
     const chips: Array<{
       tone: "warning" | "info" | "neutral";
@@ -860,57 +880,51 @@ export default function ProductDetailRoute() {
       tooltip: string;
       onClick?: () => void;
     }> = [];
-    if (validation.missingRequired.length) {
-      chips.push({
-        tone: "warning",
-        label: "Field Missing",
-        tooltip: `Missing required: ${validation.missingRequired.join(", ")}`,
-        onClick: focusMissingRequired || undefined,
-      });
-    }
-    const rules = rulesForType(watched?.type ?? product.type);
-    if (!stockTrackingEnabled) {
-      if (rules.defaultStockTracking) {
+    for (const warning of warnings) {
+      if (warning.code === "field_missing") {
         chips.push({
           tone: "warning",
-          label: "Enable Stock",
-          tooltip: "Stock tracking is required for this product type.",
-          onClick: focusTrackingStatus,
+          label: warning.label,
+          tooltip: `Missing required: ${validation.missingRequired.join(", ")}`,
+          onClick: focusMissingRequired || undefined,
         });
-      } else {
-        chips.push({
-          tone: "info",
-          label: "Stock Tracking Off",
-          tooltip: "Stock tracking is optional for this product type.",
-          onClick: focusTrackingStatus,
-        });
+        continue;
       }
-    }
-    if (stockTrackingEnabled && !batchTrackingEnabled) {
-      if (rules.defaultBatchTracking) {
+      if (
+        warning.code === "enable_stock" ||
+        warning.code === "stock_tracking_off"
+      ) {
         chips.push({
-          tone: "warning",
-          label: "Enable Batch",
-          tooltip: "Batch tracking is required for this product type.",
+          tone: warning.severity === "info" ? "info" : "warning",
+          label: warning.label,
+          tooltip:
+            warning.code === "enable_stock"
+              ? "Stock tracking is required for this product type."
+              : "Stock tracking is optional for this product type.",
           onClick: focusTrackingStatus,
         });
-      } else {
+        continue;
+      }
+      if (
+        warning.code === "enable_batch" ||
+        warning.code === "batch_tracking_off"
+      ) {
         chips.push({
-          tone: "info",
-          label: "Batch Tracking Off",
-          tooltip: "Batch tracking is optional for this product type.",
+          tone: warning.severity === "info" ? "info" : "warning",
+          label: warning.label,
+          tooltip:
+            warning.code === "enable_batch"
+              ? "Batch tracking is required for this product type."
+              : "Batch tracking is optional for this product type.",
           onClick: focusTrackingStatus,
         });
       }
     }
     return chips;
   }, [
+    warnings,
     validation.missingRequired,
     focusMissingRequired,
-    watched?.type,
-    product.type,
-    stockTrackingEnabled,
-    batchTrackingEnabled,
     focusTrackingStatus,
   ]);
 

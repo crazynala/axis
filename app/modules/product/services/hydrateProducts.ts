@@ -1,5 +1,6 @@
 import { prismaBase } from "~/utils/prisma.server";
 import { calcPrice } from "../calc/calcPrice";
+import { buildProductWarnings } from "../warnings/productWarnings";
 
 // Minimal shape both routes select for table hydration
 export type ProductRowBase = {
@@ -7,7 +8,15 @@ export type ProductRowBase = {
   sku: string | null;
   name: string | null;
   type: any;
+  categoryId: number | null;
+  subCategoryId: number | null;
+  templateId: number | null;
+  supplierId: number | null;
+  customerId: number | null;
+  variantSetId: number | null;
   costPrice: any;
+  leadTimeDays: number | null;
+  externalStepType: string | null;
   manualSalePrice: any;
   stockTrackingEnabled: boolean | null;
   batchTrackingEnabled: boolean | null;
@@ -23,20 +32,41 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       sku: true,
       name: true,
       type: true,
+      categoryId: true,
+      subCategoryId: true,
+      templateId: true,
+      supplierId: true,
+      customerId: true,
+      variantSetId: true,
       costPrice: true,
+      leadTimeDays: true,
+      externalStepType: true,
       manualSalePrice: true,
       stockTrackingEnabled: true,
       batchTrackingEnabled: true,
-      leadTimeDays: true,
-      customer: { select: { stockLocationId: true } },
+      category: { select: { label: true, code: true } },
+      subCategory: { select: { label: true, code: true } },
+      customer: { select: { stockLocationId: true, name: true } },
       costGroup: {
         select: {
           costRanges: { select: { rangeFrom: true, costPrice: true } },
         },
       },
-      purchaseTax: { select: { value: true } },
+      purchaseTax: { select: { value: true, label: true, code: true } },
     },
   });
+  const cmtLines = await prismaBase.productLine.findMany({
+    where: {
+      parentId: { in: ids },
+      child: { is: { type: "CMT" } },
+      OR: [{ flagAssemblyOmit: false }, { flagAssemblyOmit: null }],
+    },
+    select: { parentId: true },
+  });
+  const cmtParentIds = new Set<number>();
+  for (const line of cmtLines) {
+    if (line.parentId != null) cmtParentIds.add(line.parentId);
+  }
   const { getProductStockSnapshots } = await import("~/utils/prisma.server");
   const snapshots = (await getProductStockSnapshots(ids)) as
     | Array<{
@@ -94,6 +124,21 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       }));
     }
     enrichedRow.customer = r.customer;
+    enrichedRow.warnings = buildProductWarnings({
+      type: r.type,
+      name: r.name,
+      categoryId: r.categoryId,
+      templateId: r.templateId,
+      supplierId: r.supplierId,
+      customerId: r.customerId,
+      variantSetId: r.variantSetId,
+      costPrice: r.costPrice,
+      leadTimeDays: r.leadTimeDays,
+      externalStepType: r.externalStepType,
+      stockTrackingEnabled: r.stockTrackingEnabled,
+      batchTrackingEnabled: r.batchTrackingEnabled,
+      hasCmtLine: cmtParentIds.has(r.id),
+    });
     return enrichedRow;
   });
   // console.log("Enriched rows:", enrichedRows);

@@ -15,7 +15,7 @@ import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 import { allProductFindFields } from "../forms/productDetail";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
 import { deriveSemanticKeys } from "~/base/index/indexController";
-import { getProductDefaultColumns } from "../config/productColumns";
+import { getProductIndexDefaultColumns } from "../config/productIndexColumns";
 import { normalizeColumnsValue } from "~/base/index/columns";
 
 // Keys that influence the Products index filter/query
@@ -458,7 +458,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const dir = sp.get("dir") || baseParams?.dir || null;
       const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
       const baseColumns = normalizeColumnsValue(baseParams?.columns);
-      const defaultColumns = getProductDefaultColumns();
+      const defaultColumns = getProductIndexDefaultColumns();
       const columns =
         columnsFromUrl.length > 0
           ? columnsFromUrl

@@ -7,35 +7,15 @@ import { AddressPickerField } from "~/components/addresses/AddressPickerField";
 import { formatAddressLines } from "~/utils/addressFormat";
 import { Group, Table, Text } from "@mantine/core";
 import { Link } from "@remix-run/react";
-import {
-  ASSEMBLY_OPERATIONAL_STATUS_LABELS,
-  deriveAssemblyOperationalStatus,
-} from "~/modules/assembly/derived/assemblyOperationalStatus";
+import { ASSEMBLY_OPERATIONAL_STATUS_LABELS, deriveAssemblyOperationalStatus } from "~/modules/assembly/derived/assemblyOperationalStatus";
 import { DisplayField } from "~/base/forms/components/DisplayField";
 export { renderField } from "~/base/forms/fieldConfigShared";
 
-const isLockedOnEdit = ({
-  mode,
-  ctx,
-}: {
-  mode: "edit" | "find" | "create";
-  ctx?: any;
-}) =>
-  mode === "edit" &&
-  ctx?.jobState &&
-  ctx.jobState !== "DRAFT" &&
-  !ctx?.allowEditInCalm;
-const locked = ({
-  mode,
-  ctx,
-}: {
-  mode: "edit" | "find" | "create";
-  ctx?: any;
-}) => isLockedOnEdit({ mode, ctx });
+const isLockedOnEdit = ({ mode, ctx }: { mode: "edit" | "find" | "create"; ctx?: any }) => mode === "edit" && ctx?.jobState && ctx.jobState !== "DRAFT" && !ctx?.allowEditInCalm;
+const locked = ({ mode, ctx }: { mode: "edit" | "find" | "create"; ctx?: any }) => isLockedOnEdit({ mode, ctx });
 const lockWhenNotDraft = policy.lockWhenNotDraft(locked);
 const isDraft = ({ ctx }: { ctx?: any }) => ctx?.jobState === "DRAFT";
-const surfaceUiMode = ({ ctx }: { ctx?: any }) =>
-  ctx?.jobState === "DRAFT" ? "normal" : "quiet";
+const surfaceUiMode = ({ ctx }: { ctx?: any }) => (ctx?.jobState === "DRAFT" ? "normal" : "quiet");
 const surfaceAllowEdit = ({ ctx }: { ctx?: any }) => ctx?.jobState === "DRAFT";
 
 const formatDateLabel = (value: Date | string | null | undefined) => {
@@ -55,26 +35,16 @@ const customerField = f.select("companyId", "Customer", "customer", {
 const stockLocationField = f.text("stockLocationId", "Stock Location", {
   render: ({ ctx }) => {
     const label = (ctx as any)?.stockLocationLabel || "—";
-    return (
-      <DisplayField
-        label="Stock location"
-        value={label}
-        help="Derived from customer company depot; used for material consumption."
-      />
-    );
+    return <DisplayField label="Stock location" value={label} help="Derived from customer company depot; used for material consumption." />;
   },
   hiddenInModes: ["find"],
 });
-const endCustomerField = lockWhenNotDraft(
-  f.select("endCustomerContactId", "End Customer", "endCustomerContact")
-);
+const endCustomerField = lockWhenNotDraft(f.select("endCustomerContactId", "End Customer", "endCustomerContact"));
 const shipToField: FieldConfig = {
   name: "shipToAddressId",
   label: "Ship To",
   render: ({ form, ctx, mode }) => {
-    const addressById = (ctx as any)?.addressById as
-      | Map<number, any>
-      | undefined;
+    const addressById = (ctx as any)?.addressById as Map<number, any> | undefined;
     const options = ctx?.fieldOptions?.job_shipto_address ?? [];
     const shipToAddressId = form.watch("shipToAddressId") as number | null;
     const legacyLocation = (ctx as any)?.jobShipToLocation;
@@ -82,24 +52,13 @@ const shipToField: FieldConfig = {
     const hintLines: string[] = [];
     if (!shipToAddressId && defaultAddress) {
       const lines = formatAddressLines(defaultAddress);
-      hintLines.push(
-        `Default: ${
-          lines.length ? lines.join(", ") : `Address ${defaultAddress.id}`
-        }`
-      );
+      hintLines.push(`Default: ${lines.length ? lines.join(", ") : `Address ${defaultAddress.id}`}`);
     }
     if (!shipToAddressId && legacyLocation) {
-      hintLines.push(
-        `Legacy ship-to location: ${
-          legacyLocation.name || `Location ${legacyLocation.id}`
-        }`
-      );
+      hintLines.push(`Legacy ship-to location: ${legacyLocation.name || `Location ${legacyLocation.id}`}`);
     }
     const hint = hintLines.length ? hintLines.join(" · ") : null;
-    const previewAddress =
-      shipToAddressId != null && addressById
-        ? addressById.get(Number(shipToAddressId)) ?? null
-        : null;
+    const previewAddress = shipToAddressId != null && addressById ? addressById.get(Number(shipToAddressId)) ?? null : null;
     return (
       <AddressPickerField
         label="Ship To"
@@ -108,9 +67,7 @@ const shipToField: FieldConfig = {
         previewAddress={previewAddress}
         hint={hint || undefined}
         onChange={(nextId) => {
-          const opts = (ctx as any)?.markDirtyOnChange
-            ? { shouldDirty: true, shouldTouch: true }
-            : undefined;
+          const opts = (ctx as any)?.markDirtyOnChange ? { shouldDirty: true, shouldTouch: true } : undefined;
           form.setValue("shipToAddressId", nextId, opts as any);
         }}
         disabled={isLockedOnEdit({ mode, ctx })}
@@ -123,9 +80,7 @@ const shipToField: FieldConfig = {
     entity: "Address",
     tooltip: ({ ctx, value, label }) => {
       if (value == null || value === "") return undefined;
-      const addressById = (ctx as any)?.addressById as
-        | Map<number, any>
-        | undefined;
+      const addressById = (ctx as any)?.addressById as Map<number, any> | undefined;
       const addr = addressById?.get(Number(value)) ?? null;
       if (addr) {
         const lines = formatAddressLines(addr);
@@ -137,21 +92,12 @@ const shipToField: FieldConfig = {
   findOp: "equals",
   hiddenInModes: ["find"],
 };
-const customerOrderDateField = lockWhenNotDraft(
-  f.date("customerOrderDate", "Order Date")
-);
-const internalTargetDateField = lockWhenNotDraft(
-  f.date("internalTargetDate", "Internal")
-);
-const customerTargetDateField = lockWhenNotDraft(
-  f.date("customerTargetDate", "Customer")
-);
+const customerOrderDateField = lockWhenNotDraft(f.date("customerOrderDate", "Order Date"));
+const internalTargetDateField = lockWhenNotDraft(f.date("internalTargetDate", "Internal"));
+const customerTargetDateField = lockWhenNotDraft(f.date("customerTargetDate", "Customer"));
 const dropDeadDateField = lockWhenNotDraft(f.date("dropDeadDate", "Drop Dead"));
 const targetDateField = mod.hide("edit")(f.date("targetDate", "Target Date"));
-const statusField = mod.hide(
-  "edit",
-  "create"
-)(f.select("status", "Status", "jobStatus"));
+const statusField = mod.hide("edit", "create")(f.select("status", "Status", "jobStatus"));
 
 const jobDateStatusItems: FormItem[] = [
   ui.row(statusField, targetDateField),
@@ -173,10 +119,7 @@ export const jobOverviewFields: FormItem[] = [
   ui.row(customerField, stockLocationField),
   mod.hide("find")(endCustomerField),
   ui.spacer("xs"),
-  ui.row(
-    lockWhenNotDraft(f.text("projectCode", "Project Code")),
-    lockWhenNotDraft(f.select("jobType", "Job Type", "jobType"))
-  ),
+  ui.row(lockWhenNotDraft(f.text("projectCode", "Project Code")), lockWhenNotDraft(f.select("jobType", "Job Type", "jobType"))),
   lockWhenNotDraft(f.text("name", "Name")),
 
   mod.hide("edit", "create")(f.text("endCustomerName", "End Customer")),
@@ -234,9 +177,7 @@ const assemblyImpactField: FieldConfig = {
           </Table.Thead>
           <Table.Tbody>
             {assemblies.map((assembly) => {
-              const product = assembly.productId
-                ? productsById[assembly.productId]
-                : null;
+              const product = assembly.productId ? productsById[assembly.productId] : null;
               const targets = assemblyTargetsById?.[assembly.id];
               const internalTarget = targets?.internal;
               const derived = deriveAssemblyOperationalStatus({
@@ -250,16 +191,10 @@ const assemblyImpactField: FieldConfig = {
               return (
                 <Table.Tr key={`impact-${assembly.id}`}>
                   <Table.Td>
-                    <Link to={`assembly/${assembly.id}`}>
-                      {assembly.name ||
-                        product?.name ||
-                        `Assembly ${assembly.id}`}
-                    </Link>
+                    <Link to={`assembly/${assembly.id}`}>{assembly.name || product?.name || `Assembly ${assembly.id}`}</Link>
                   </Table.Td>
                   <Table.Td>{formatDateLabel(internalTarget?.value)}</Table.Td>
-                  <Table.Td>
-                    {ASSEMBLY_OPERATIONAL_STATUS_LABELS[derived.status]}
-                  </Table.Td>
+                  <Table.Td>{ASSEMBLY_OPERATIONAL_STATUS_LABELS[derived.status]}</Table.Td>
                 </Table.Tr>
               );
             })}
@@ -310,7 +245,7 @@ export const jobDetailPage: PageNode = L.page(
   L.col(
     { span: { base: 12, md: 7 } },
     L.card(
-    {yo
+      {
         key: "overview",
         drawerTitle: "Edit job setup",
         drawerItems: jobFields.overview,
@@ -355,15 +290,10 @@ function getFieldNames(items: FormItem[]) {
 }
 
 export function validateJobDateStatusConfig() {
-  const fields = new Set([
-    ...getFieldNames(jobDateStatusLeft),
-    ...getFieldNames(jobDateStatusRight),
-  ]);
+  const fields = new Set([...getFieldNames(jobDateStatusLeft), ...getFieldNames(jobDateStatusRight)]);
   for (const f of JOB_DATES_STATUS_FIELDS) {
     if (!fields.has(f)) {
-      console.warn(
-        `[jobDetailConfig] Missing spec field in date/status config: ${f}`
-      );
+      console.warn(`[jobDetailConfig] Missing spec field in date/status config: ${f}`);
     }
   }
 }
