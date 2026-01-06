@@ -25,6 +25,7 @@ export type OptionsData = {
   // New: sale price groups and cost groups as simple id/name option lists
   salePriceGroupOptions?: Option[];
   costGroupOptions?: Option[];
+  productAttributeOptionsByDefinitionId?: Record<string, Option[]>;
 };
 
 let GLOBAL_OPTIONS: OptionsData | null = null;

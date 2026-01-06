@@ -1,30 +1,24 @@
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { MetaFunction } from "@remix-run/node";
 import {
   Link,
   useRouteLoaderData,
   useNavigate,
-  useSearchParams,
 } from "@remix-run/react";
 import { Button, Group, Stack } from "@mantine/core";
 import { BreadcrumbSet } from "@aa/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
-import * as jobDetail from "~/modules/job/forms/jobDetail";
-import { JobFindModal } from "~/modules/job/components/JobFindModal";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
-import { deriveSemanticKeys } from "~/base/index/indexController";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
 import { useMemo } from "react";
-import { jobColumns } from "../config/jobColumns";
-import {
-  buildTableColumns,
-  getVisibleColumnKeys,
-} from "~/base/index/columns";
+import { jobSpec } from "../spec";
+import { jobColumns } from "../spec/indexList";
+import { useRecords } from "../../../base/record/RecordContext";
+import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 
 export const meta: MetaFunction = () => [{ title: "Jobs" }];
 
@@ -155,34 +149,8 @@ export default function JobsIndexRoute() {
   const idListComplete = data?.idListComplete ?? true;
   const initialRows = data?.initialRows ?? [];
   const total = data?.total ?? 0;
-  const [sp] = useSearchParams();
   const navigate = useNavigate();
-
-  const findOpen = sp.get("find") === "1";
-
-  const fields: any[] = [
-    ...((jobDetail as any).jobOverviewFields || []),
-    ...((jobDetail as any).jobDateStatusLeft || []),
-    ...((jobDetail as any).jobDateStatusRight || []),
-  ];
-  const findConfig = useMemo(
-    () => [
-      ...((jobDetail as any).jobOverviewFields || []),
-      ...((jobDetail as any).jobDateStatusLeft || []),
-      ...((jobDetail as any).jobDateStatusRight || []),
-      ...((jobDetail as any).assemblyFields || []),
-    ],
-    []
-  );
-  const semanticKeys = useMemo(
-    () => new Set(deriveSemanticKeys(findConfig)),
-    [findConfig]
-  );
-  const initialFind: Record<string, any> = {};
-  for (const f of fields) {
-    const v = sp.get(f.name);
-    if (v !== null) initialFind[f.name] = v;
-  }
+  const findConfig = useMemo(() => jobSpec.find.buildConfig(), []);
 
   return (
     <Stack gap="lg">
@@ -220,34 +188,6 @@ export default function JobsIndexRoute() {
         />
       </section>
 
-      <JobFindModal
-        opened={findOpen}
-        onClose={() => {
-          const next = new URLSearchParams(sp);
-          next.delete("find");
-          for (const f of fields) next.delete(f.name);
-          navigate(`?${next.toString()}`);
-        }}
-        initialValues={initialFind}
-        onSearch={(qs) => {
-          const url = new URL(window.location.href);
-          const produced = new URLSearchParams(qs);
-          const viewName = url.searchParams.get("view");
-          Array.from(url.searchParams.keys()).forEach((k) => {
-            if (k === "q" || k === "findReqs" || semanticKeys.has(k))
-              url.searchParams.delete(k);
-          });
-          for (const [k, v] of produced.entries())
-            url.searchParams.set(k, v);
-          url.searchParams.delete("page");
-          if (viewName) {
-            url.searchParams.delete("view");
-            url.searchParams.set("lastView", viewName);
-          }
-          navigate(`?${url.searchParams.toString()}`);
-        }}
-        jobSample={{}}
-      />
     </Stack>
   );
 }
@@ -263,55 +203,33 @@ function JobsHybridTable({
   activeView?: string | null;
   activeViewParams?: any | null;
 }) {
-  const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const { records, fetching, requestMore, atEnd } = useHybridWindow({
-    module: "jobs",
-    rowEndpointPath: "/jobs/rows",
-    initialWindow: 100,
-    batchIncrement: 100,
-    maxPlaceholders: 8,
-  });
-  // Seed initial rows into context on first render (they should have been added by layout; defensive)
+  const { currentId, setCurrentId } = useRecords();
   const viewMode = !!activeView;
-  const visibleColumnKeys = useMemo(
-    () =>
-      getVisibleColumnKeys({
-        defs: jobColumns,
-        urlColumns: sp.get("columns"),
-        viewColumns: activeViewParams?.columns,
-        viewMode,
-      }),
-    [activeViewParams?.columns, sp, viewMode]
-  );
-  const columns = useMemo(
-    () => buildTableColumns(jobColumns, visibleColumnKeys),
-    [visibleColumnKeys]
-  );
+  const { records, columns, sortStatus, onSortStatusChange, onReachEnd, atEnd, fetching } =
+    useHybridIndexTable({
+      module: "jobs",
+      rowEndpointPath: "/jobs/rows",
+      initialWindow: 100,
+      batchIncrement: 100,
+      maxPlaceholders: 8,
+      columns: jobColumns,
+      viewColumns: activeViewParams?.columns,
+      viewMode,
+    });
   return (
     <VirtualizedNavDataTable
       records={records as any}
+      currentId={currentId as any}
       columns={columns as any}
-      sortStatus={
-        {
-          columnAccessor: sp.get("sort") || "id",
-          direction: (sp.get("dir") as any) || "asc",
-        } as any
-      }
-      onSortStatusChange={(s: {
-        columnAccessor: string;
-        direction: "asc" | "desc";
-      }) => {
-        const next = new URLSearchParams(sp);
-        next.set("sort", s.columnAccessor);
-        next.set("dir", s.direction);
-        navigate(`?${next.toString()}`);
-      }}
-      onReachEnd={() => {
-        if (!atEnd) requestMore();
-      }}
+      sortStatus={sortStatus as any}
+      onSortStatusChange={onSortStatusChange as any}
+      onReachEnd={onReachEnd}
       onRowClick={(rec: any) => {
-        if (rec?.id) navigate(`/jobs/${rec.id}`);
+        if (rec?.id != null) {
+          setCurrentId(rec.id, "mouseRow");
+          navigate(`/jobs/${rec.id}`);
+        }
       }}
       onRowDoubleClick={(rec: any) => {
         if (rec?.id) navigate(`/jobs/${rec.id}`);

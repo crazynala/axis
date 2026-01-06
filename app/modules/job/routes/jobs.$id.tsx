@@ -136,7 +136,7 @@ export function JobDetailView() {
     (n) => (n || 0) > 0
   );
   useEffect(() => {
-    setCurrentId(job.id);
+    setCurrentId(job.id, "restore");
   }, [job.id, setCurrentId]);
   useEffect(() => {
     const code = sp.get("jobStateErr");

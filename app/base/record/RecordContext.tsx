@@ -59,11 +59,20 @@ export interface RecordContextValue {
     opts?: { getId?: (r: any) => any; updateRecordsArray?: boolean }
   ) => void;
   currentId: string | number | null;
-  setCurrentId: (id: string | number | null) => void;
+  currentIdSource: ActiveChangeSource;
+  setCurrentId: (id: string | number | null, source?: ActiveChangeSource) => void;
   nextId: (currentId: string | number | null) => string | number | null;
   prevId: (currentId: string | number | null) => string | number | null;
   getPathForId: (id: string | number) => string | null;
 }
+
+export type ActiveChangeSource =
+  | "kbd"
+  | "mouseRow"
+  | "mouseCheckbox"
+  | "restore"
+  | "jump"
+  | "programmatic";
 
 const RecordContext = createContext<RecordContextValue | null>(null);
 const noopRecordContextValue: RecordContextValue = {
@@ -74,6 +83,7 @@ const noopRecordContextValue: RecordContextValue = {
   setIdList: () => {},
   addRows: () => {},
   currentId: null,
+  currentIdSource: "programmatic",
   setCurrentId: () => {},
   nextId: () => null,
   prevId: () => null,
@@ -103,6 +113,15 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
 }) => {
   const [state, setState] = useState<RecordState | null>(null);
   const [currentId, setCurrentId] = useState<string | number | null>(null);
+  const [currentIdSource, setCurrentIdSource] =
+    useState<ActiveChangeSource>("programmatic");
+  const setCurrentIdWithSource = useCallback(
+    (id: string | number | null, source: ActiveChangeSource = "programmatic") => {
+      setCurrentId(id);
+      setCurrentIdSource(source);
+    },
+    []
+  );
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -127,7 +146,8 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
     if (!state) return;
     if (state.idList && state.idList.length === 1) {
       const only = state.idList[0];
-      if (only != null && currentId !== only) setCurrentId(only);
+      if (only != null && currentId !== only)
+        setCurrentIdWithSource(only, "programmatic");
     }
   }, [state?.idList, currentId]);
 
@@ -278,10 +298,10 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
             const num = Number(idPart);
             activeId = Number.isFinite(num) ? num : idPart;
           }
-          const nav = (target: string | number | null) => {
+          const nav = (target: string | number | null, source: ActiveChangeSource) => {
             if (target == null) return;
             if (isIndex) {
-              setCurrentId(target);
+              setCurrentIdWithSource(target, source);
             } else {
               const p = getPathForId(target);
               if (p) navigate(p);
@@ -291,14 +311,14 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
             const t = prevId(activeId);
             if (t != null) {
               e.preventDefault();
-              nav(t);
+              nav(t, "kbd");
               return true;
             }
           } else if (e.key === "ArrowDown" && (isIndex || isDetail)) {
             const t = nextId(activeId);
             if (t != null) {
               e.preventDefault();
-              nav(t);
+              nav(t, "kbd");
               return true;
             }
           } else if (
@@ -309,7 +329,7 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
             const t = prevId(activeId);
             if (t != null) {
               e.preventDefault();
-              nav(t);
+              nav(t, "kbd");
               return true;
             }
           } else if (
@@ -320,7 +340,7 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
             const t = nextId(activeId);
             if (t != null) {
               e.preventDefault();
-              nav(t);
+              nav(t, "kbd");
               return true;
             }
           } else if (e.key === "Escape" && isDetail) {
@@ -333,7 +353,7 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
               // Returning false lets the modal's internal listener run (and our squelch, if active).
               return false;
             }
-            if (activeId != null) setCurrentId(activeId);
+            if (activeId != null) setCurrentIdWithSource(activeId, "restore");
             e.preventDefault();
             navigate(`/${state.module}`);
             return true;
@@ -362,7 +382,8 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
         setIdList,
         addRows,
         currentId,
-        setCurrentId,
+        currentIdSource,
+        setCurrentId: setCurrentIdWithSource,
         nextId,
         prevId,
         getPathForId,
@@ -411,6 +432,7 @@ export function useRecords() {
     appendRecords,
     setCurrentId,
     currentId,
+    currentIdSource,
     state,
     setIdList,
     addRows,
@@ -430,7 +452,8 @@ export function useRecords() {
     [appendRecords]
   );
   const setCurrentRecord = useCallback(
-    (id: string | number | null) => setCurrentId(id),
+    (id: string | number | null, source?: ActiveChangeSource) =>
+      setCurrentId(id, source),
     [setCurrentId]
   );
   return {
@@ -439,6 +462,7 @@ export function useRecords() {
     appendRecords: appendRecordBatch,
     setCurrentRecord,
     currentId,
+    currentIdSource,
     setCurrentId,
     setIdList,
     addRows,
@@ -478,10 +502,10 @@ export const GlobalRecordBrowser: React.FC = () => {
       idx = state.indexById.get(String(derivedId) as any);
   }
   const isIndex = location.pathname === `/${state.module}`;
-  const doNav = (targetId: string | number | null) => {
+  const doNav = (targetId: string | number | null, source: ActiveChangeSource) => {
     if (targetId == null) return;
     if (isIndex) {
-      setCurrentId(targetId);
+      setCurrentId(targetId, source);
       return;
     }
     const path = getPathForId(targetId);
@@ -517,7 +541,7 @@ export const GlobalRecordBrowser: React.FC = () => {
           size="sm"
           aria-label="First record"
           disabled={!canFirst}
-          onClick={() => doNav(firstId())}
+          onClick={() => doNav(firstId(), "jump")}
         >
           <IconChevronsLeft size={16} />
         </ActionIcon>
@@ -528,7 +552,7 @@ export const GlobalRecordBrowser: React.FC = () => {
           size="sm"
           aria-label="Previous record"
           disabled={!canPrev}
-          onClick={() => doNav(prevId(derivedId))}
+          onClick={() => doNav(prevId(derivedId), "jump")}
         >
           <IconChevronLeft size={16} />
         </ActionIcon>
@@ -552,7 +576,7 @@ export const GlobalRecordBrowser: React.FC = () => {
           size="sm"
           aria-label="Next record"
           disabled={!canNext}
-          onClick={() => doNav(nextId(derivedId))}
+          onClick={() => doNav(nextId(derivedId), "jump")}
         >
           <IconChevronRight size={16} />
         </ActionIcon>
@@ -563,7 +587,7 @@ export const GlobalRecordBrowser: React.FC = () => {
           size="sm"
           aria-label="Last record"
           disabled={!canLast}
-          onClick={() => doNav(lastId())}
+          onClick={() => doNav(lastId(), "jump")}
         >
           <IconChevronsRight size={16} />
         </ActionIcon>

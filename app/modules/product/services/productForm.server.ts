@@ -26,6 +26,22 @@ export function buildProductData(form: FormData) {
   str("description");
   str("type");
   str("whiteboard");
+  if (data.type) {
+    const raw = String(data.type).trim();
+    const upper = raw.toUpperCase();
+    const map: Record<string, string> = {
+      FABRIC: "Fabric",
+      TRIM: "Trim",
+      PACKAGING: "Packaging",
+      FINISHED: "Finished",
+      SERVICE: "Service",
+      CMT: "CMT",
+    };
+    data.type =
+      map[upper] ||
+      map[raw] ||
+      raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  }
   // numerics
   num("costPrice");
   num("manualSalePrice");

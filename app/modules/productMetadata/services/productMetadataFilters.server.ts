@@ -46,7 +46,13 @@ function buildValueClause(
     }
     case "ENUM": {
       if (!opts.value) return null;
-      base.valueString = { equals: String(opts.value) };
+      const raw = String(opts.value);
+      const num = Number(raw);
+      if (Number.isFinite(num) && raw.trim() !== "") {
+        base.optionId = { equals: num };
+      } else {
+        base.valueString = { equals: raw };
+      }
       return base;
     }
     case "JSON": {

@@ -161,19 +161,43 @@ model ProductAttributeDefinition {
   enumOptions           Json?
   validation            Json?
   appliesToProductTypes String[]
+  appliesToCategoryIds  Int[]                    @default([])
+  appliesToSubcategoryIds Int[]                  @default([])
+  displayWidth          ProductAttributeDisplayWidth @default(full)
   sortOrder             Int                      @default(0)
   createdAt             DateTime                 @default(now())
   updatedAt             DateTime                 @updatedAt
+  options               ProductAttributeOption[]
   values                ProductAttributeValue[]
 
   @@index([isFilterable])
   @@index([sortOrder])
 }
 
+model ProductAttributeOption {
+  id             Int                         @id @default(autoincrement())
+  definitionId   Int
+  label          String
+  slug           String
+  isArchived     Boolean                     @default(false)
+  mergedIntoId   Int?
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+  definition     ProductAttributeDefinition  @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  mergedInto     ProductAttributeOption?     @relation("ProductAttributeOptionMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom     ProductAttributeOption[]    @relation("ProductAttributeOptionMerge")
+  values         ProductAttributeValue[]
+
+  @@unique([definitionId, slug])
+  @@index([definitionId])
+  @@index([mergedIntoId])
+}
+
 model ProductAttributeValue {
   id           Int                        @id @default(autoincrement())
   productId    Int
   definitionId Int
+  optionId     Int?
   valueString  String?
   valueNumber  Decimal?                   @db.Decimal(14, 4)
   valueBool    Boolean?
@@ -182,10 +206,12 @@ model ProductAttributeValue {
   updatedAt    DateTime                   @updatedAt
   product      Product                    @relation(fields: [productId], references: [id], onDelete: Cascade)
   definition   ProductAttributeDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  option       ProductAttributeOption?    @relation(fields: [optionId], references: [id], onDelete: SetNull)
 
   @@unique([productId, definitionId])
   @@index([definitionId])
   @@index([productId])
+  @@index([optionId])
   @@index([definitionId, valueString])
   @@index([definitionId, valueNumber])
   @@index([definitionId, valueBool])
@@ -685,6 +711,10 @@ model SavedView {
   module     String
   name       String
   params     Json
+  isGlobal   Boolean  @default(false)
+  isLocked   Boolean  @default(false)
+  ownerUserId Int?
+  ownerUser  User?    @relation(fields: [ownerUserId], references: [id])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   createdBy  String?
@@ -750,6 +780,7 @@ model User {
   resets           PasswordReset[]
   tagDefinitions   TagDefinition[]
   operationLogs    OperationLog[]
+  savedViews       SavedView[]
 }
 
 model PasswordReset {
@@ -1279,6 +1310,12 @@ enum ProductAttributeDataType {
   ENUM
   BOOLEAN
   JSON
+}
+
+enum ProductAttributeDisplayWidth {
+  full
+  half
+  third
 }
 
 enum JobState {

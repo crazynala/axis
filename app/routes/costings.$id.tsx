@@ -105,7 +105,7 @@ export default function CostingDetailRoute() {
   // Bind Cmd/Ctrl+ArrowLeft/Right for prev/next navigation
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(costing.id);
+    setCurrentId(costing.id, "restore");
   }, [costing.id, setCurrentId]);
 
   return (

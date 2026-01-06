@@ -13,6 +13,7 @@ export type ProductValidationSection =
 
 export type ProductValidationInput = {
   type?: string | null;
+  sku?: string | null;
   name?: string | null;
   categoryId?: number | string | null;
   templateId?: number | string | null;

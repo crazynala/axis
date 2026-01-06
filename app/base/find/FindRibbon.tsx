@@ -24,6 +24,7 @@ export type FindRibbonProps = {
   views: Array<string | { value: string; label: string }>;
   activeView: string | null;
   onSelectView: (view: string) => void;
+  viewMenu?: React.ReactNode;
   filterChips?: FilterChip[];
   onCancelFind?: () => void;
   onSaveAs?: (name: string) => void; // if provided, shows Save As button and modal
@@ -45,6 +46,7 @@ export function FindRibbon({
   views,
   activeView,
   onSelectView,
+  viewMenu,
   filterChips = [],
   onCancelFind,
   onSaveAs,
@@ -71,6 +73,8 @@ export function FindRibbon({
     [views]
   );
 
+  const activeValue = activeView || normalizedViews[0]?.value;
+
   return (
     // <Paper
     //   withBorder
@@ -87,18 +91,35 @@ export function FindRibbon({
         <Group gap="sm" wrap="nowrap" align="center">
           {title ? <Text fw={600}>{title}</Text> : null}
           {mode === "view" ? (
-            <Tabs
-              value={activeView || normalizedViews[0]?.value}
-              onChange={(v) => v && onSelectView(v)}
-            >
-              <Tabs.List>
-                {normalizedViews.map((v) => (
-                  <Tabs.Tab key={v.value} value={v.value}>
-                    {v.label}
-                  </Tabs.Tab>
-                ))}
-              </Tabs.List>
-            </Tabs>
+            <Group gap="xs" wrap="nowrap" align="center">
+              <Tabs
+                value={activeValue}
+                onChange={(v) => v && onSelectView(v)}
+              >
+                <Tabs.List>
+                  {normalizedViews.map((v) => {
+                    const isActive = v.value === activeValue;
+                    const showMenu =
+                      isActive && viewMenu && v.value !== "All";
+                    return (
+                      <Tabs.Tab key={v.value} value={v.value}>
+                        <Group gap={4} wrap="nowrap" align="center">
+                          <span>{v.label}</span>
+                          {showMenu ? (
+                            <span
+                              onClick={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                            >
+                              {viewMenu}
+                            </span>
+                          ) : null}
+                        </Group>
+                      </Tabs.Tab>
+                    );
+                  })}
+                </Tabs.List>
+              </Tabs>
+            </Group>
           ) : (
             <Group
               gap="xs"

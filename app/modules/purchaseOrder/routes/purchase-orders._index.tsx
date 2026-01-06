@@ -1,7 +1,6 @@
 import type { MetaFunction } from "@remix-run/node";
 import {
   Link,
-  useSearchParams,
   useNavigate,
   useRouteLoaderData,
 } from "@remix-run/react";
@@ -9,21 +8,17 @@ import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack, Text } from "@mantine/core";
 import { FindRibbonAuto } from "~/components/find/FindRibbonAuto";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecords } from "../../../base/record/RecordContext";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { PurchaseOrderFindManager } from "~/modules/purchaseOrder/findify/PurchaseOrderFindManager";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
 } from "~/hooks/useNavLocation";
-import { allPurchaseOrderFindFields } from "../forms/purchaseOrderDetail";
-import { purchaseOrderColumns } from "../config/purchaseOrderColumns";
-import {
-  buildTableColumns,
-  getVisibleColumnKeys,
-} from "~/base/index/columns";
+import { purchaseOrderSpec } from "../spec";
+import { purchaseOrderColumns } from "../spec/indexList";
+import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 
 export const meta: MetaFunction = () => [{ title: "Purchase Orders" }];
 
@@ -37,28 +32,28 @@ export default function PurchaseOrdersIndexRoute() {
     activeViewParams?: any | null;
   }>("modules/purchaseOrder/routes/purchase-orders");
   const appendHref = useFindHrefAppender();
-  const [sp] = useSearchParams();
   const navigate = useNavigate();
-  const sort = sp.get("sort") || "id";
-  const dir = (sp.get("dir") as any) || "asc";
-  const sortStatus = { columnAccessor: sort, direction: dir } as any;
-  const onSortStatusChange = (s: {
-    columnAccessor: string;
-    direction: "asc" | "desc";
-  }) => {
-    const next = new URLSearchParams(sp);
-    next.set("sort", s.columnAccessor);
-    next.set("dir", s.direction);
-    navigate(`?${next.toString()}`);
-  };
   // Hydration handled by parent route loader's effect
-  const { records, fetching, requestMore, atEnd, total } = useHybridWindow({
+  const viewMode = !!data?.activeView;
+  const {
+    records,
+    columns,
+    sortStatus,
+    onSortStatusChange,
+    onReachEnd,
+    requestMore,
+    atEnd,
+    fetching,
+    total,
+  } = useHybridIndexTable({
     module: "purchase-orders",
     rowEndpointPath: "/purchase-orders/rows",
     initialWindow: 100,
     batchIncrement: 100,
-    // Reduce visual blanks beyond hydrated rows
     maxPlaceholders: 8,
+    columns: purchaseOrderColumns,
+    viewColumns: data?.activeViewParams?.columns,
+    viewMode,
   });
   // Ensure currentId row present similar to products pattern
   const ensuredRef = (globalThis as any).__poEnsuredRef || { current: false };
@@ -81,27 +76,13 @@ export default function PurchaseOrdersIndexRoute() {
   // Auto-select single record when exactly one
   useEffect(() => {
     if (records.length === 1 && records[0] && records[0].id != null) {
-      if (currentId !== records[0].id) setCurrentId(records[0].id);
+      if (currentId !== records[0].id)
+        setCurrentId(records[0].id, "programmatic");
     }
   }, [records, currentId, setCurrentId]);
-  const viewMode = !!data?.activeView;
-  const visibleColumnKeys = useMemo(
-    () =>
-      getVisibleColumnKeys({
-        defs: purchaseOrderColumns,
-        urlColumns: sp.get("columns"),
-        viewColumns: data?.activeViewParams?.columns,
-        viewMode,
-      }),
-    [data?.activeViewParams?.columns, sp, viewMode]
-  );
-  const columns = useMemo(
-    () => buildTableColumns(purchaseOrderColumns, visibleColumnKeys),
-    [visibleColumnKeys]
-  );
   return (
     <Stack gap="lg">
-      <PurchaseOrderFindManager />
+      <PurchaseOrderFindManager activeViewParams={data?.activeViewParams || null} />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
           breadcrumbs={[
@@ -122,7 +103,7 @@ export default function PurchaseOrdersIndexRoute() {
         activeView={data?.activeView || null}
         activeViewId={data?.activeView || null}
         activeViewParams={data?.activeViewParams || null}
-        findConfig={allPurchaseOrderFindFields()}
+        findConfig={purchaseOrderSpec.find.buildConfig()}
         enableLastView
         columnsConfig={purchaseOrderColumns}
       />
@@ -130,17 +111,18 @@ export default function PurchaseOrdersIndexRoute() {
         records={records as any}
         currentId={currentId as any}
         columns={columns as any}
-        sortStatus={sortStatus}
-        onSortStatusChange={onSortStatusChange}
+        sortStatus={sortStatus as any}
+        onSortStatusChange={onSortStatusChange as any}
         onRowClick={(rec: any) => {
-          if (rec?.id != null) navigate(`/purchase-orders/${rec.id}`);
+          if (rec?.id != null) {
+            setCurrentId(rec.id, "mouseRow");
+            navigate(`/purchase-orders/${rec.id}`);
+          }
         }}
         onRowDoubleClick={(rec: any) => {
           if (rec?.id != null) navigate(`/purchase-orders/${rec.id}`);
         }}
-        onReachEnd={() => {
-          if (!atEnd) requestMore();
-        }}
+        onReachEnd={onReachEnd}
         footer={
           atEnd ? (
             <span style={{ fontSize: 12 }}>End of results ({total})</span>

@@ -6,8 +6,20 @@ import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { prisma } from "../utils/prisma.server";
 import { Table, Title, Stack } from "@mantine/core";
 import { FindRibbonAuto } from "../components/find/FindRibbonAuto";
-import { listViews, saveView, getView } from "../utils/views.server";
-import { contactColumns } from "~/modules/contact/config/contactColumns";
+import {
+  deleteView,
+  duplicateView,
+  findViewByParam,
+  getView,
+  getViewUser,
+  listViews,
+  publishView,
+  renameView,
+  saveView,
+  unpublishView,
+  updateViewParams,
+} from "../utils/views.server";
+import { contactColumns } from "~/modules/contact/spec/indexList";
 import {
   getDefaultColumnKeys,
   getVisibleColumnKeys,
@@ -19,14 +31,13 @@ export const meta: MetaFunction = () => [{ title: "Contacts" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
   const url = new URL(_args.request.url);
-  const views = await listViews("contacts");
+  const viewUser = await getViewUser(_args.request);
+  const views = await listViews("contacts", viewUser);
   const viewName = url.searchParams.get("view");
   const hasSemantic =
     url.searchParams.has("q") || url.searchParams.has("findReqs");
   const viewActive = !!viewName && !hasSemantic;
-  const activeView = viewActive
-    ? (views.find((x: any) => x.name === viewName) as any)
-    : null;
+  const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const effectiveSort =
     url.searchParams.get("sort") || viewParams?.sort || null;
@@ -42,7 +53,7 @@ export async function loader(_args: LoaderFunctionArgs) {
   return json({
     contacts,
     views,
-    activeView: viewActive ? viewName || null : null,
+    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
     activeViewParams: viewActive ? viewParams || null : null,
   });
 }
@@ -50,16 +61,49 @@ export async function loader(_args: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const viewUser = await getViewUser(request);
+  const viewId = String(form.get("viewId") || "").trim();
+  const name = String(form.get("name") || "").trim();
+  if (intent === "view.rename") {
+    if (!viewId || !name) return redirect("/contacts");
+    await renameView({ viewId, name, user: viewUser, module: "contacts" });
+    return redirect(`/contacts?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.delete") {
+    if (!viewId) return redirect("/contacts");
+    await deleteView({ viewId, user: viewUser, module: "contacts" });
+    return redirect("/contacts");
+  }
+  if (intent === "view.duplicate") {
+    if (!viewId) return redirect("/contacts");
+    const view = await duplicateView({
+      viewId,
+      name: name || null,
+      user: viewUser,
+      module: "contacts",
+    });
+    return redirect(`/contacts?view=${encodeURIComponent(String(view.id))}`);
+  }
+  if (intent === "view.publish") {
+    if (!viewId) return redirect("/contacts");
+    await publishView({ viewId, user: viewUser, module: "contacts" });
+    return redirect(`/contacts?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.unpublish") {
+    if (!viewId) return redirect("/contacts");
+    await unpublishView({ viewId, user: viewUser, module: "contacts" });
+    return redirect(`/contacts?view=${encodeURIComponent(viewId)}`);
+  }
   if (
     intent === "saveView" ||
     intent === "view.saveAs" ||
     intent === "view.overwriteFromUrl"
   ) {
-    const name =
-      intent === "view.overwriteFromUrl"
-        ? String(form.get("viewId") || form.get("name") || "").trim()
-        : String(form.get("name") || "").trim();
-    if (!name) return redirect("/contacts");
+    if (intent === "view.overwriteFromUrl") {
+      if (!viewId) return redirect("/contacts");
+    } else if (!name) {
+      return redirect("/contacts");
+    }
     const url = new URL(request.url);
     const sp = url.searchParams;
     const viewParam = sp.get("view");
@@ -81,12 +125,23 @@ export async function action({ request }: ActionFunctionArgs) {
         : baseColumns.length > 0
         ? baseColumns
         : defaultColumns;
-    await saveView({
+    const params = { page: 1, perPage, sort, dir, q: null, filters: {}, columns };
+    if (intent === "view.overwriteFromUrl") {
+      await updateViewParams({
+        viewId,
+        params,
+        user: viewUser,
+        module: "contacts",
+      });
+      return redirect(`/contacts?view=${encodeURIComponent(viewId)}`);
+    }
+    const view = await saveView({
       module: "contacts",
       name,
-      params: { page: 1, perPage, sort, dir, q: null, filters: {}, columns },
+      params,
+      user: viewUser,
     });
-    return redirect(`/contacts?view=${encodeURIComponent(name)}`);
+    return redirect(`/contacts?view=${encodeURIComponent(String(view.id))}`);
   }
   return redirect("/contacts");
 }

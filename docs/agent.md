@@ -284,6 +284,102 @@ Findify supports comprehensive search/filter; the resulting found set powers:
 - index results
 - detail view record navigation (X/Y, prev/next)
 
+### 6.3 Index view semantics (canonical)
+
+Index views across all modules must follow a single, URL-first, uniform model.
+
+#### 6.3.1 Query sources (single source of truth)
+
+The record set shown in an index is determined by exactly one source:
+
+- Semantic query params in the URL
+  - `q`, `findReqs`, and filter params derived from the module’s Findify config
+- Otherwise, the active saved view baseline
+  - `view=<id>` with no semantic params present
+
+There must never be multiple simultaneous sources of truth (e.g. “draft queries”).
+
+#### 6.3.2 Semantic vs presentation params
+
+Semantic params define which records appear:
+
+- `q`
+- `findReqs`
+- filter keys derived from the module’s Findify config
+
+Presentation params define how records are displayed:
+
+- `sort`, `dir`
+- `perPage`
+- `columns`
+- `page`
+
+Presentation params:
+
+- do not exit view mode
+- may drift from the view baseline
+- may enable Save/Cancel if they differ from the baseline
+
+#### 6.3.3 View and lastView behavior
+
+- `view=<id>` indicates baseline view mode only when no semantic params exist
+- When semantic params appear while a view is active:
+  - `view` must be removed
+  - `lastView=<id>` must be set as a save/return hint
+- When semantic params are cleared and `lastView` exists:
+  - restore `view=lastView`
+  - clear `lastView`
+- `lastView`:
+  - is never used as a query source
+  - is a UX affordance only (save target / return path)
+  - must not appear as filter chips
+
+#### 6.3.4 Save / Cancel (quiet power-user model)
+
+Index save controls are quiet and appear only when meaningful.
+
+View mode:
+
+- Show Save/Cancel only if current presentation differs from view baseline
+- Missing URL presentation values inherit from the view baseline
+- `page` never marks dirty
+
+Ad-hoc mode:
+
+- Show Cancel only if semantic params exist
+- Show Save▾ only if `lastView` exists and there is something to save
+- Show Save as… only if there is something to save and no overwrite target
+
+Cancel semantics:
+
+- Restore `lastView` if present
+- Otherwise revert to clean baseline (preserving presentation where possible)
+
+#### 6.3.5 Columns as first-class presentation state
+
+- Column selection and order are presentation, not semantic
+- Column config is module-owned and must live in the module spec
+- Persist columns in:
+  - URL as `columns=key1,key2,…`
+  - saved view params as `params.columns`
+- Missing URL columns inherit from view baseline
+
+### 6.4 Module “spec” convention (reference pattern)
+
+Each module should expose a canonical spec describing all user-facing levers:
+
+```
+app/modules/<module>/spec/
+  fields.ts      // field registry (labels, types, requirements)
+  forms.ts       // edit/new/detail layouts
+  find.ts        // Findify config (semantic keys source)
+  indexList.ts   // index columns, sizing intent, default sort/perPage
+  warnings.ts    // warning rules + severity mapping
+  index.ts       // exports <module>Spec
+```
+
+All index routes, Findify, views, columns, and warnings should reference this spec rather than ad-hoc config.
+
 ---
 
 ## 7) Sheet views

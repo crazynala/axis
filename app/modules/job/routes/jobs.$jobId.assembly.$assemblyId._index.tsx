@@ -304,8 +304,9 @@ export default function JobAssemblyRoute() {
     showToastError(messages[err] || "Unable to cancel assembly.");
   }, [sp]);
   useEffect(() => {
-    if (isGroup) setCurrentId(idKey);
-    else if (assemblies?.[0]?.id) setCurrentId(assemblies[0].id);
+    if (isGroup) setCurrentId(idKey, "restore");
+    else if (assemblies?.[0]?.id)
+      setCurrentId(assemblies[0].id, "restore");
   }, [isGroup, idKey, assemblies, setCurrentId]);
 
   // Prev/Next hotkeys handled globally in RecordProvider

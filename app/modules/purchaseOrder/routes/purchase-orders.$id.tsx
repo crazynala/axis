@@ -1156,7 +1156,7 @@ export function PurchaseOrderDetailView() {
 
   // Register current id in RecordContext
   useEffect(() => {
-    setCurrentId(purchaseOrder.id);
+    setCurrentId(purchaseOrder.id, "restore");
   }, [purchaseOrder.id, setCurrentId]);
   const [reservationLine, setReservationLine] = useState<any | null>(null);
   useEffect(() => {

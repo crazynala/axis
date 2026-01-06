@@ -291,7 +291,7 @@ export function CompanyDetailView() {
   const submit = useSubmit();
   const { setCurrentId, getPathForId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(company.id);
+    setCurrentId(company.id, "restore");
   }, [company.id, setCurrentId]);
   // Keyboard prev/next handled centrally in RecordProvider now; local buttons removed
 

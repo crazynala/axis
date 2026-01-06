@@ -116,6 +116,7 @@ export default function NewProductRoute() {
     () =>
       computeProductValidation({
         type: watched.type,
+        sku: watched.sku,
         name: watched.name,
         categoryId: watched.categoryId,
         templateId: watched.templateId,

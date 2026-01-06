@@ -262,6 +262,9 @@ export async function loadProductDetailVM(opts: {
       else if (dt === "BOOLEAN") metadataValuesByKey[key] = row.valueBool;
       else if (dt === "JSON")
         metadataValuesByKey[key] = row.valueJson ?? row.valueString;
+      else if (dt === "ENUM")
+        metadataValuesByKey[key] =
+          (row as any).optionId ?? row.valueString ?? null;
       else metadataValuesByKey[key] = row.valueString ?? null;
     }
     (product as any).metadataValuesByKey = metadataValuesByKey;

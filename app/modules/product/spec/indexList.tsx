@@ -6,7 +6,7 @@ import { getDefaultColumnKeys, type ColumnDef } from "~/base/index/columns";
 import { AxisChip, type AxisChipTone } from "~/components/AxisChip";
 import { formatUSD } from "~/utils/format";
 import { calcPrice } from "../calc/calcPrice";
-import type { ProductWarning } from "../warnings/productWarnings";
+import type { ProductWarning } from "./warnings";
 
 export type ProductPricingPrefs = {
   customerId: string | null;
@@ -227,7 +227,8 @@ export const canonicalProductsColumns: ColumnDef[] = [
     key: "warnings",
     title: "Warnings",
     accessor: "warnings",
-    layout: { minWidth: 160, maxWidth: 260 },
+    // layout: { minWidth: 160, maxWidth: 260 },
+    layout: { width: 200 },
     render: (row: any) => <WarningsCell row={row} />,
   },
 ];
@@ -272,3 +273,15 @@ export const buildProductIndexColumns = (
     }
     return col;
   });
+
+export const productIndexList = {
+  columns: canonicalProductsColumns,
+  buildColumns: buildProductIndexColumns,
+  defaultColumns: getProductIndexDefaultColumns,
+  defaults: {
+    perPage: 20,
+    sort: null,
+    dir: null,
+  },
+  presentationKeys: ["sort", "dir", "perPage", "page", "columns"],
+};

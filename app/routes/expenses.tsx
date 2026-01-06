@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet, useLoaderData, useMatches } from "@remix-run/react";
 import { useEffect } from "react";
 import { prismaBase } from "../utils/prisma.server";
 import { ExpenseFindManager } from "~/modules/expense/findify/ExpenseFindManager";
@@ -42,6 +42,10 @@ export default function ExpensesLayout() {
     initialRows: any[];
     total: number;
   }>();
+  const matches = useMatches();
+  const indexData = matches.find((m) =>
+    String(m.id).endsWith("routes/expenses._index")
+  )?.data as { activeViewParams?: any | null } | undefined;
   const { setIdList, addRows } = useRecords();
   useEffect(() => {
     setIdList("expenses", data.idList, data.idListComplete);
@@ -50,7 +54,9 @@ export default function ExpensesLayout() {
   }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
   return (
     <>
-      <ExpenseFindManager />
+      <ExpenseFindManager
+        activeViewParams={indexData?.activeViewParams || null}
+      />
       <Outlet />
     </>
   );

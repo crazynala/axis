@@ -11,13 +11,24 @@ import {
 import { useRecords } from "~/base/record/RecordContext";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 import { buildPrismaArgs } from "~/utils/table.server";
-import { listViews, saveView, getView } from "~/utils/views.server";
+import {
+  deleteView,
+  duplicateView,
+  findViewByParam,
+  getView,
+  getViewUser,
+  listViews,
+  publishView,
+  renameView,
+  saveView,
+  unpublishView,
+  updateViewParams,
+} from "~/utils/views.server";
 import { prismaBase } from "~/utils/prisma.server";
 import { boxSearchSchema } from "../findify/box.search-schema";
 import { fetchBoxesByIds } from "../services/boxHydrator.server";
-import { allBoxFieldConfigs } from "../forms/boxDetail";
-import { deriveSemanticKeys } from "~/base/index/indexController";
-import { boxColumns } from "../config/boxColumns";
+import { boxSpec } from "../spec";
+import { boxColumns } from "../spec/indexList";
 import {
   getDefaultColumnKeys,
   normalizeColumnsValue,
@@ -62,9 +73,10 @@ export type BoxesLoaderData = {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
-  const views = await listViews("boxes");
+  const viewUser = await getViewUser(request);
+  const views = await listViews("boxes", viewUser);
   const viewName = url.searchParams.get("view");
-  const semanticKeys = deriveSemanticKeys(allBoxFieldConfigs);
+  const semanticKeys = Array.from(boxSpec.find.deriveSemanticKeys());
   const hasSemantic =
     url.searchParams.has("q") ||
     url.searchParams.has("findReqs") ||
@@ -73,9 +85,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       return v !== null && v !== "";
     });
   const viewActive = !!viewName && !hasSemantic;
-  const activeView = viewActive
-    ? (views.find((v: any) => v.name === viewName) as any)
-    : null;
+  const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
   const effectivePage = Number(
@@ -230,7 +240,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewActive ? viewName || null : null,
+    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
     activeViewParams: viewActive ? viewParams || null : null,
   });
 }
@@ -238,19 +248,52 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const viewUser = await getViewUser(request);
+  const viewId = String(form.get("viewId") || "").trim();
+  const name = String(form.get("name") || "").trim();
+  if (intent === "view.rename") {
+    if (!viewId || !name) return redirect("/boxes");
+    await renameView({ viewId, name, user: viewUser, module: "boxes" });
+    return redirect(`/boxes?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.delete") {
+    if (!viewId) return redirect("/boxes");
+    await deleteView({ viewId, user: viewUser, module: "boxes" });
+    return redirect("/boxes");
+  }
+  if (intent === "view.duplicate") {
+    if (!viewId) return redirect("/boxes");
+    const view = await duplicateView({
+      viewId,
+      name: name || null,
+      user: viewUser,
+      module: "boxes",
+    });
+    return redirect(`/boxes?view=${encodeURIComponent(String(view.id))}`);
+  }
+  if (intent === "view.publish") {
+    if (!viewId) return redirect("/boxes");
+    await publishView({ viewId, user: viewUser, module: "boxes" });
+    return redirect(`/boxes?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.unpublish") {
+    if (!viewId) return redirect("/boxes");
+    await unpublishView({ viewId, user: viewUser, module: "boxes" });
+    return redirect(`/boxes?view=${encodeURIComponent(viewId)}`);
+  }
   if (
     intent === "saveView" ||
     intent === "view.saveAs" ||
     intent === "view.overwriteFromUrl"
   ) {
-    const name =
-      intent === "view.overwriteFromUrl"
-        ? String(form.get("viewId") || form.get("name") || "").trim()
-        : String(form.get("name") || "").trim();
-    if (!name) return redirect("/boxes");
+    if (intent === "view.overwriteFromUrl") {
+      if (!viewId) return redirect("/boxes");
+    } else if (!name) {
+      return redirect("/boxes");
+    }
     const url = new URL(request.url);
     const sp = url.searchParams;
-    const semanticKeys = deriveSemanticKeys(allBoxFieldConfigs);
+    const semanticKeys = Array.from(boxSpec.find.deriveSemanticKeys());
     const q = sp.get("q");
     const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
@@ -285,20 +328,31 @@ export async function action({ request }: ActionFunctionArgs) {
         : baseColumns.length > 0
         ? baseColumns
         : defaultColumns;
-    await saveView({
+    const params = {
+      page: 1,
+      perPage,
+      sort,
+      dir,
+      q: nextQ ?? null,
+      filters: nextFilters,
+      columns,
+    };
+    if (intent === "view.overwriteFromUrl") {
+      await updateViewParams({
+        viewId,
+        params,
+        user: viewUser,
+        module: "boxes",
+      });
+      return redirect(`/boxes?view=${encodeURIComponent(viewId)}`);
+    }
+    const view = await saveView({
       module: "boxes",
       name,
-      params: {
-        page: 1,
-        perPage,
-        sort,
-        dir,
-        q: nextQ ?? null,
-        filters: nextFilters,
-        columns,
-      },
+      params,
+      user: viewUser,
     });
-    return redirect(`/boxes?view=${encodeURIComponent(name)}`);
+    return redirect(`/boxes?view=${encodeURIComponent(String(view.id))}`);
   }
   return redirect("/boxes");
 }

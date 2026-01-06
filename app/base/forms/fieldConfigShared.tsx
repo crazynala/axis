@@ -115,6 +115,13 @@ export type FieldConfig = {
     field: FieldConfig;
     ctx?: RenderContext;
   }) => boolean;
+  // For select fields: allow creating new options from search
+  allowCreate?: boolean;
+  // For select fields: async creator for new options
+  createOption?: (
+    input: string,
+    ctx?: RenderContext
+  ) => Promise<{ value: string; label: string } | null>;
   visibleWhen?: (args: {
     form: UseFormReturn<any>;
     mode: FieldMode;
@@ -593,9 +600,19 @@ export function renderField(
               const coerceToNumber =
                 typeof cur === "number" || /Id$/.test(field.name);
               const valueStr = cur == null || cur === "" ? null : String(cur);
+              const [createdOptions, setCreatedOptions] = React.useState<
+                { value: string; label: string }[]
+              >([]);
+              const [createError, setCreateError] = React.useState<string | null>(
+                null
+              );
               const allForLookup = React.useMemo(
-                () => [...(primary || []), ...(fallback || [])],
-                [primary, fallback]
+                () => [
+                  ...(primary || []),
+                  ...(fallback || []),
+                  ...createdOptions,
+                ],
+                [primary, fallback, createdOptions]
               );
               const selectedLabel = React.useMemo(() => {
                 if (valueStr == null) return "";
@@ -630,6 +647,17 @@ export function renderField(
                   : filteredFallback.length > 0
                   ? filteredFallback
                   : filter(baseList);
+              const showCreate =
+                field.allowCreate &&
+                mode !== "find" &&
+                search.trim().length > 0 &&
+                !allForLookup.some(
+                  (opt) =>
+                    String(opt.label).toLowerCase() ===
+                      search.trim().toLowerCase() ||
+                    String(opt.value).toLowerCase() ===
+                      search.trim().toLowerCase()
+                );
 
               const setFormValue = (v: string | null) => {
                 const out = coerceToNumber
@@ -671,26 +699,73 @@ export function renderField(
                   <Combobox
                     store={combobox}
                     withinPortal
-                    onOptionSubmit={(val) => {
+                    onOptionSubmit={async (val) => {
+                      let shouldClose = true;
                       if (val === "__EMPTY__") {
                         setFormValue(mode === "find" ? "" : null);
                         setSearch("");
+                      } else if (val === "__CREATE__") {
+                        if (!field.createOption) return;
+                        try {
+                          const created = await field.createOption(
+                            search.trim(),
+                            ctx
+                          );
+                          if (!created?.value) {
+                            setCreateError("Unable to create option.");
+                            shouldClose = false;
+                            return;
+                          }
+                          setCreateError(null);
+                          form.clearErrors(field.name as any);
+                          setCreatedOptions((prev) => [...prev, created]);
+                          setFormValue(created.value);
+                          setSearch(created.label || search.trim());
+                        } catch (err) {
+                          const message =
+                            err instanceof Error ? err.message : "Create failed.";
+                          setCreateError(message);
+                          form.setError(field.name as any, {
+                            type: "manual",
+                            message,
+                          });
+                          shouldClose = false;
+                          return;
+                        }
                       } else {
+                        setCreateError(null);
+                        form.clearErrors(field.name as any);
                         setFormValue(val);
                         const picked = allForLookup.find(
                           (o) => o.value === val
                         );
                         setSearch(picked?.label || "");
                       }
-                      combobox.closeDropdown();
+                      if (shouldClose) {
+                        combobox.closeDropdown();
+                      }
                     }}
                   >
                     <Combobox.Target>
                       <TextInput
                         {...common}
-                        value={combobox.dropdownOpened ? search : selectedLabel}
-                        onMouseDown={() => {
+                        error={
+                          createError ||
+                          (form.formState.errors as any)?.[field.name]?.message ||
+                          common.error
+                        }
+                        value={
+                          combobox.dropdownOpened || createError
+                            ? search
+                            : selectedLabel
+                        }
+                        onMouseDown={(event) => {
                           clickedByMouseRef.current = true;
+                          if (wasFocusedRef.current) {
+                            combobox.openDropdown();
+                            combobox.updateSelectedOptionIndex();
+                          }
+                          event.currentTarget.select();
                         }}
                         onFocus={(event) => {
                           setSearch(selectedLabel);
@@ -702,10 +777,11 @@ export function renderField(
                             combobox.closeDropdown();
                           }
                           clickedByMouseRef.current = false;
-                          event.currentTarget.select();
                         }}
                         onChange={(event) => {
                           setSearch(event.currentTarget.value);
+                          setCreateError(null);
+                          form.clearErrors(field.name as any);
                           combobox.openDropdown();
                           combobox.updateSelectedOptionIndex();
                         }}
@@ -755,6 +831,11 @@ export function renderField(
                           {mode === "find" && (
                             <Combobox.Option value="__EMPTY__">
                               (Any)
+                            </Combobox.Option>
+                          )}
+                          {showCreate && (
+                            <Combobox.Option value="__CREATE__">
+                              Create "{search.trim()}"
                             </Combobox.Option>
                           )}
                           {visible.map((o) => (

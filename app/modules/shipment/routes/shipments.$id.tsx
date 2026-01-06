@@ -1151,7 +1151,7 @@ export function ShipmentDetailView() {
   const [addItemOpen, { open: openAddItem, close: closeAddItem }] =
     useDisclosure(false);
   useEffect(() => {
-    setCurrentId(shipment.id);
+    setCurrentId(shipment.id, "restore");
   }, [shipment.id, setCurrentId]);
   // Normalize loader data to match form field names and types used by the UI
   const toFormDefaults = (s: any) => ({

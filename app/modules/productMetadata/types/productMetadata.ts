@@ -5,6 +5,17 @@ export type ProductAttributeDataType =
   | "BOOLEAN"
   | "JSON";
 
+export type ProductAttributeDisplayWidth = "full" | "half" | "third";
+
+export type ProductAttributeOption = {
+  id: number;
+  definitionId: number;
+  label: string;
+  slug: string;
+  isArchived: boolean;
+  mergedIntoId: number | null;
+};
+
 export type ProductAttributeDefinition = {
   id: number;
   key: string;
@@ -15,7 +26,11 @@ export type ProductAttributeDefinition = {
   enumOptions: any | null;
   validation: any | null;
   appliesToProductTypes: string[];
+  appliesToCategoryIds?: number[];
+  appliesToSubcategoryIds?: number[];
+  displayWidth?: ProductAttributeDisplayWidth;
   sortOrder: number;
+  options?: ProductAttributeOption[];
 };
 
 export type ProductAttributeValueInput = {

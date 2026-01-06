@@ -1,6 +1,6 @@
 import { prismaBase } from "~/utils/prisma.server";
 import { calcPrice } from "../calc/calcPrice";
-import { buildProductWarnings } from "../warnings/productWarnings";
+import { productSpec } from "../spec";
 
 // Minimal shape both routes select for table hydration
 export type ProductRowBase = {
@@ -124,8 +124,9 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       }));
     }
     enrichedRow.customer = r.customer;
-    enrichedRow.warnings = buildProductWarnings({
+    enrichedRow.warnings = productSpec.warnings.buildProductWarnings({
       type: r.type,
+      sku: r.sku,
       name: r.name,
       categoryId: r.categoryId,
       templateId: r.templateId,

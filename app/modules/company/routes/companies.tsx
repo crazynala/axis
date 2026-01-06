@@ -9,7 +9,19 @@ import {
 import { useEffect } from "react";
 import { prisma } from "../../../utils/prisma.server";
 import { useRecords } from "../../../base/record/RecordContext";
-import { getView, listViews, saveView } from "../../../utils/views.server";
+import {
+  deleteView,
+  duplicateView,
+  findViewByParam,
+  getView,
+  getViewUser,
+  listViews,
+  publishView,
+  renameView,
+  saveView,
+  unpublishView,
+  updateViewParams,
+} from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
@@ -25,7 +37,8 @@ export async function loader(_args: LoaderFunctionArgs) {
       : String(s)
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "");
-  const views = await listViews("companies");
+  const viewUser = await getViewUser(args.request);
+  const views = await listViews("companies", viewUser);
   const viewName = url.searchParams.get("view");
   const filterKeys = [
     "name",
@@ -43,9 +56,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       return v !== null && v !== "";
     });
   const viewActive = !!viewName && !semanticPresent;
-  const activeView = viewActive
-    ? (views.find((x: any) => x.name === viewName) as any)
-    : null;
+  const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
   const effectivePage = Number(
@@ -171,7 +182,7 @@ export async function loader(_args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewActive ? viewName || null : null,
+    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
     activeViewParams: viewActive ? viewParams || null : null,
     page: effectivePage,
     perPage: effectivePerPage,
@@ -182,6 +193,40 @@ export async function loader(_args: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const viewUser = await getViewUser(request);
+  const viewId = String(form.get("viewId") || "").trim();
+  const name = String(form.get("name") || "").trim();
+  const newName = String(form.get("newName") || "").trim();
+  if (intent === "view.rename") {
+    if (!viewId || !name) return redirect("/companies");
+    await renameView({ viewId, name, user: viewUser, module: "companies" });
+    return redirect(`/companies?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.delete") {
+    if (!viewId) return redirect("/companies");
+    await deleteView({ viewId, user: viewUser, module: "companies" });
+    return redirect("/companies");
+  }
+  if (intent === "view.duplicate") {
+    if (!viewId) return redirect("/companies");
+    const view = await duplicateView({
+      viewId,
+      name: name || null,
+      user: viewUser,
+      module: "companies",
+    });
+    return redirect(`/companies?view=${encodeURIComponent(String(view.id))}`);
+  }
+  if (intent === "view.publish") {
+    if (!viewId) return redirect("/companies");
+    await publishView({ viewId, user: viewUser, module: "companies" });
+    return redirect(`/companies?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.unpublish") {
+    if (!viewId) return redirect("/companies");
+    await unpublishView({ viewId, user: viewUser, module: "companies" });
+    return redirect(`/companies?view=${encodeURIComponent(viewId)}`);
+  }
   if (
     intent === "saveView" ||
     intent === "overwriteViewFromUrl" ||
@@ -225,27 +270,44 @@ export async function action({ request }: ActionFunctionArgs) {
     const sort = sp.get("sort") || baseParams?.sort || null;
     const dir = sp.get("dir") || baseParams?.dir || null;
     const columns = sp.get("columns") || baseParams?.columns || null;
+    const isOverwrite =
+      intent === "overwriteViewFromUrl" || intent === "view.overwriteFromUrl";
     const saveName =
       intent === "saveView" || intent === "view.saveAs"
-        ? String(form.get("name") || "").trim()
+        ? name
         : intent === "saveViewFromUrl"
-        ? String(form.get("newName") || "").trim()
-        : String(form.get("viewId") || form.get("name") || "").trim();
-    if (!saveName) return redirect("/companies");
-    await saveView({
+        ? newName
+        : "";
+    if (isOverwrite) {
+      if (!viewId) return redirect("/companies");
+    } else if (!saveName) {
+      return redirect("/companies");
+    }
+    const params = {
+      page: 1,
+      perPage,
+      sort,
+      dir,
+      q: nextQ ?? null,
+      filters: nextFilters,
+      columns,
+    };
+    if (isOverwrite) {
+      await updateViewParams({
+        viewId,
+        params,
+        user: viewUser,
+        module: "companies",
+      });
+      return redirect(`/companies?view=${encodeURIComponent(viewId)}`);
+    }
+    const view = await saveView({
       module: "companies",
       name: saveName,
-      params: {
-        page: 1,
-        perPage,
-        sort,
-        dir,
-        q: nextQ ?? null,
-        filters: nextFilters,
-        columns,
-      },
+      params,
+      user: viewUser,
     });
-    return redirect(`/companies?view=${encodeURIComponent(saveName)}`);
+    return redirect(`/companies?view=${encodeURIComponent(String(view.id))}`);
   }
   return redirect("/companies");
 }

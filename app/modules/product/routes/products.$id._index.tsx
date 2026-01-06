@@ -51,7 +51,7 @@ import {
 import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
 import { AxisChip } from "~/components/AxisChip";
 import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
-import { buildProductWarnings } from "~/modules/product/warnings/productWarnings";
+import { productSpec } from "~/modules/product/spec";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -264,7 +264,7 @@ export default function ProductDetailRoute() {
   // Sync RecordContext currentId for global navigation consistency
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(product.id);
+    setCurrentId(product.id, "restore");
     // Do NOT clear on unmount; preserve selection like invoices module
   }, [product.id, setCurrentId]);
   // Prev/Next hotkeys handled globally in RecordProvider
@@ -840,6 +840,7 @@ export default function ProductDetailRoute() {
     () =>
       computeProductValidation({
         type: watched?.type ?? product.type,
+        sku: watched?.sku ?? product.sku,
         name: watched?.name ?? product.name,
         categoryId: watched?.categoryId ?? product.categoryId,
         templateId: watched?.templateId ?? product.templateId,
@@ -855,8 +856,9 @@ export default function ProductDetailRoute() {
   );
   const warnings = useMemo(
     () =>
-      buildProductWarnings({
+      productSpec.warnings.buildProductWarnings({
         type: watched?.type ?? product.type,
+        sku: watched?.sku ?? product.sku,
         name: watched?.name ?? product.name,
         categoryId: watched?.categoryId ?? product.categoryId,
         templateId: watched?.templateId ?? product.templateId,
@@ -898,9 +900,9 @@ export default function ProductDetailRoute() {
           tone: warning.severity === "info" ? "info" : "warning",
           label: warning.label,
           tooltip:
-            warning.code === "enable_stock"
-              ? "Stock tracking is required for this product type."
-              : "Stock tracking is optional for this product type.",
+            warning.severity === "info"
+              ? "Stock tracking is optional for this product type."
+              : "Stock tracking is required for this product type.",
           onClick: focusTrackingStatus,
         });
         continue;
@@ -913,10 +915,18 @@ export default function ProductDetailRoute() {
           tone: warning.severity === "info" ? "info" : "warning",
           label: warning.label,
           tooltip:
-            warning.code === "enable_batch"
-              ? "Batch tracking is required for this product type."
-              : "Batch tracking is optional for this product type.",
+            warning.severity === "info"
+              ? "Batch tracking is optional for this product type."
+              : "Batch tracking is required for this product type.",
           onClick: focusTrackingStatus,
+        });
+        continue;
+      }
+      if (warning.code === "no_cmt_on_bom") {
+        chips.push({
+          tone: warning.severity === "info" ? "info" : "warning",
+          label: warning.label,
+          tooltip: "Finished products should include a CMT line on the BOM.",
         });
       }
     }

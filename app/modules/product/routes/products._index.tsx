@@ -1,7 +1,6 @@
 import {
   useLocation,
   useNavigate,
-  useSearchParams,
   useMatches,
 } from "@remix-run/react";
 import { Button, Group, Stack, Text, Card } from "@mantine/core";
@@ -17,7 +16,7 @@ import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useRecords } from "~/base/record/RecordContext";
-import { useHybridWindow } from "~/base/record/useHybridWindow";
+import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
 import {
   DataSheetGrid,
@@ -31,13 +30,9 @@ import {
   usePersistIndexSearch,
   useRegisterNavLocation,
 } from "~/hooks/useNavLocation";
-import {
-  buildTableColumns,
-  getVisibleColumnKeys,
-} from "~/base/index/columns";
-import { allProductFindFields } from "../forms/productDetail";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
-import { buildProductIndexColumns } from "../config/productIndexColumns";
+import { getGlobalOptions } from "~/base/options/OptionsClient";
+import { productSpec } from "../spec";
 
 function usePricingPrefsFromWidget() {
   const [customerId, setCustomerId] = useState<string | null>(() => {
@@ -98,16 +93,21 @@ export default function ProductsIndexRoute() {
     const defs = parentData?.metadataDefinitions;
     return Array.isArray(defs) ? defs : [];
   }, [parentData]);
+  const globalOptions = getGlobalOptions();
   const views = parentData?.views || [];
   const activeView = parentData?.activeView || null;
   const activeViewParams = parentData?.activeViewParams || null;
   const metadataFields = useMemo(
     () =>
-      buildProductMetadataFields(metadataDefinitions, { onlyFilterable: true }),
-    [metadataDefinitions]
+      buildProductMetadataFields(metadataDefinitions, {
+        onlyFilterable: true,
+        enumOptionsByDefinitionId:
+          globalOptions?.productAttributeOptionsByDefinitionId || {},
+      }),
+    [metadataDefinitions, globalOptions?.productAttributeOptionsByDefinitionId]
   );
   const findConfig = useMemo(
-    () => allProductFindFields(metadataFields),
+    () => productSpec.find.buildConfig(metadataFields),
     [metadataFields]
   );
   // If user lands on /products directly and we have a saved subpath, redirect to it for testing
@@ -182,40 +182,8 @@ export default function ProductsIndexRoute() {
     batchTrackingEnabled: "",
   });
   const navigate = useNavigate();
-  const [sp] = useSearchParams();
   const { state, currentId, setCurrentId, addRows } = useRecords();
-  const { records, atEnd, loading, requestMore, total } = useHybridWindow({
-    module: "products",
-    initialWindow: 100,
-    batchIncrement: 100,
-    maxPlaceholders: 8,
-  });
   // Removed per-route height calculation; table now auto-sizes within viewport
-  // Ensure currentId row included when returning from detail
-  const ensuredRef = useRef(false);
-  useEffect(() => {
-    if (!currentId) return;
-    if (ensuredRef.current) return;
-    const idList = state?.idList || [];
-    const idx = idList.indexOf(currentId as any);
-    if (idx === -1) return;
-    if (idx >= records.length) {
-      let safety = 0;
-      while (records.length <= idx && safety < 20) {
-        requestMore();
-        safety++;
-      }
-    }
-    ensuredRef.current = true;
-  }, [currentId, state?.idList, records.length, requestMore]);
-
-  // Auto-select single result when exactly one record after filtering
-  useEffect(() => {
-    if (records.length === 1 && records[0] && records[0].id != null) {
-      if (currentId !== records[0].id) setCurrentId(records[0].id);
-    }
-  }, [records, currentId, setCurrentId]);
-
   // Row selection managed by table (multiselect)
   const [selectedIds, setSelectedIds] = useState<Array<number | string>>([]);
   const pricing = usePricingPrefsFromWidget();
@@ -266,24 +234,55 @@ export default function ProductsIndexRoute() {
     };
   }, [metadataDefinitions]);
   const columnDefs = useMemo(
-    () => buildProductIndexColumns(pricing),
+    () => productSpec.index.buildColumns(pricing),
     [pricing]
   );
   const viewMode = !!activeView;
-  const visibleColumnKeys = useMemo(
-    () =>
-      getVisibleColumnKeys({
-        defs: columnDefs,
-        urlColumns: sp.get("columns"),
-        viewColumns: activeViewParams?.columns,
-        viewMode,
-      }),
-    [activeViewParams?.columns, columnDefs, sp, viewMode]
-  );
-  const columns = useMemo(
-    () => buildTableColumns(columnDefs, visibleColumnKeys),
-    [columnDefs, visibleColumnKeys]
-  );
+  const {
+    records,
+    columns,
+    sortStatus,
+    onSortStatusChange,
+    onReachEnd,
+    requestMore,
+    atEnd,
+    loading,
+    total,
+  } = useHybridIndexTable({
+    module: "products",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
+    columns: columnDefs,
+    viewColumns: activeViewParams?.columns,
+    viewMode,
+  });
+
+  // Ensure currentId row included when returning from detail
+  const ensuredRef = useRef(false);
+  useEffect(() => {
+    if (!currentId) return;
+    if (ensuredRef.current) return;
+    const idList = state?.idList || [];
+    const idx = idList.indexOf(currentId as any);
+    if (idx === -1) return;
+    if (idx >= records.length) {
+      let safety = 0;
+      while (records.length <= idx && safety < 20) {
+        requestMore();
+        safety++;
+      }
+    }
+    ensuredRef.current = true;
+  }, [currentId, state?.idList, records.length, requestMore]);
+
+  // Auto-select single result when exactly one record after filtering
+  useEffect(() => {
+    if (records.length === 1 && records[0] && records[0].id != null) {
+      if (currentId !== records[0].id)
+        setCurrentId(records[0].id, "programmatic");
+    }
+  }, [records, currentId, setCurrentId]);
 
   // Revalidate / refresh current product row on window focus to avoid stale manual price after edits
   useEffect(() => {
@@ -320,7 +319,10 @@ export default function ProductsIndexRoute() {
 
   return (
     <Stack gap="lg">
-      <ProductFindManager metadataDefinitions={metadataDefinitions} />
+      <ProductFindManager
+        metadataDefinitions={metadataDefinitions}
+        activeViewParams={activeViewParams}
+      />
       <Group
         justify="space-between"
         mb="xs"
@@ -381,28 +383,15 @@ export default function ProductsIndexRoute() {
             },
           ]}
           columns={columns as any}
-          sortStatus={
-            {
-              columnAccessor: sp.get("sort") || "id",
-              direction: (sp.get("dir") as any) || "asc",
-            } as any
-          }
-          onSortStatusChange={(s: {
-            columnAccessor: string;
-            direction: "asc" | "desc";
-          }) => {
-            const next = new URLSearchParams(sp);
-            next.set("sort", s.columnAccessor);
-            next.set("dir", s.direction);
-            navigate(`?${next.toString()}`);
-          }}
+          sortStatus={sortStatus as any}
+          onSortStatusChange={onSortStatusChange as any}
           onRowDoubleClick={(rec: any) => {
             if (rec?.id != null) navigate(`/products/${rec.id}`);
           }}
           onRowClick={(rec: any) => {
-            setCurrentId(rec?.id);
+            setCurrentId(rec?.id, "mouseRow");
           }}
-          onReachEnd={() => requestMore()}
+          onReachEnd={onReachEnd}
           footer={
             atEnd ? (
               <span style={{ fontSize: 12 }}>End of results ({total})</span>

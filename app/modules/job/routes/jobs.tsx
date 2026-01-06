@@ -12,11 +12,22 @@ import {
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../../../base/find/multiFind";
-import { listViews, saveView, getView } from "../../../utils/views.server";
+import {
+  deleteView,
+  duplicateView,
+  findViewByParam,
+  getView,
+  getViewUser,
+  listViews,
+  publishView,
+  renameView,
+  saveView,
+  unpublishView,
+  updateViewParams,
+} from "../../../utils/views.server";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
-import * as jobDetail from "../forms/jobDetail";
-import { deriveSemanticKeys } from "~/base/index/indexController";
-import { jobColumns } from "../config/jobColumns";
+import { jobSpec } from "../spec";
+import { jobColumns } from "../spec/indexList";
 import {
   getDefaultColumnKeys,
   normalizeColumnsValue,
@@ -45,15 +56,11 @@ export async function loader(_args: LoaderFunctionArgs) {
     if (tokens.length === 1) return builder(tokens[0]);
     return { AND: tokens.map((token) => builder(token)) };
   };
-  const views = await listViews("jobs");
+  const viewUser = await getViewUser(_args.request);
+  const views = await listViews("jobs", viewUser);
   const viewName = url.searchParams.get("view");
-  const allFields = [
-    ...((jobDetail as any).jobOverviewFields || []),
-    ...((jobDetail as any).jobDateStatusLeft || []),
-    ...((jobDetail as any).jobDateStatusRight || []),
-    ...((jobDetail as any).assemblyFields || []),
-  ];
-  const semanticKeys = deriveSemanticKeys(allFields);
+  const allFields = jobSpec.find.buildConfig();
+  const semanticKeys = Array.from(jobSpec.find.deriveSemanticKeys());
   const hasSemantic =
     url.searchParams.has("q") ||
     url.searchParams.has("findReqs") ||
@@ -62,9 +69,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       return v !== null && v !== "";
     });
   const viewActive = !!viewName && !hasSemantic;
-  const activeView = viewActive
-    ? (views.find((x: any) => x.name === viewName) as any)
-    : null;
+  const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
   const effectiveQ = viewActive
@@ -238,7 +243,7 @@ export async function loader(_args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewActive ? viewName || null : null,
+    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
     activeViewParams: viewActive ? viewParams || null : null,
   });
 }
@@ -246,25 +251,53 @@ export async function loader(_args: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const viewUser = await getViewUser(request);
+  const viewId = String(form.get("viewId") || "").trim();
+  const name = String(form.get("name") || "").trim();
+  if (intent === "view.rename") {
+    if (!viewId || !name) return redirect("/jobs");
+    await renameView({ viewId, name, user: viewUser, module: "jobs" });
+    return redirect(`/jobs?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.delete") {
+    if (!viewId) return redirect("/jobs");
+    await deleteView({ viewId, user: viewUser, module: "jobs" });
+    return redirect("/jobs");
+  }
+  if (intent === "view.duplicate") {
+    if (!viewId) return redirect("/jobs");
+    const view = await duplicateView({
+      viewId,
+      name: name || null,
+      user: viewUser,
+      module: "jobs",
+    });
+    return redirect(`/jobs?view=${encodeURIComponent(String(view.id))}`);
+  }
+  if (intent === "view.publish") {
+    if (!viewId) return redirect("/jobs");
+    await publishView({ viewId, user: viewUser, module: "jobs" });
+    return redirect(`/jobs?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.unpublish") {
+    if (!viewId) return redirect("/jobs");
+    await unpublishView({ viewId, user: viewUser, module: "jobs" });
+    return redirect(`/jobs?view=${encodeURIComponent(viewId)}`);
+  }
   if (
     intent === "saveView" ||
     intent === "view.saveAs" ||
     intent === "view.overwriteFromUrl"
   ) {
-    const name =
-      intent === "view.overwriteFromUrl"
-        ? String(form.get("viewId") || form.get("name") || "").trim()
-        : String(form.get("name") || "").trim();
-    if (!name) return redirect("/jobs");
+    if (intent === "view.overwriteFromUrl") {
+      if (!viewId) return redirect("/jobs");
+    } else if (!name) {
+      return redirect("/jobs");
+    }
     const url = new URL(request.url);
     const sp = url.searchParams;
-    const allFields = [
-      ...((jobDetail as any).jobOverviewFields || []),
-      ...((jobDetail as any).jobDateStatusLeft || []),
-      ...((jobDetail as any).jobDateStatusRight || []),
-      ...((jobDetail as any).assemblyFields || []),
-    ];
-    const semanticKeys = deriveSemanticKeys(allFields);
+    const allFields = jobSpec.find.buildConfig();
+    const semanticKeys = Array.from(jobSpec.find.deriveSemanticKeys());
     const q = sp.get("q");
     const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
@@ -299,20 +332,31 @@ export async function action({ request }: ActionFunctionArgs) {
         : baseColumns.length > 0
         ? baseColumns
         : defaultColumns;
-    await saveView({
+    const params = {
+      page: 1,
+      perPage,
+      sort,
+      dir,
+      q: nextQ ?? null,
+      filters: nextFilters,
+      columns,
+    };
+    if (intent === "view.overwriteFromUrl") {
+      await updateViewParams({
+        viewId,
+        params,
+        user: viewUser,
+        module: "jobs",
+      });
+      return redirect(`/jobs?view=${encodeURIComponent(viewId)}`);
+    }
+    const view = await saveView({
       module: "jobs",
       name,
-      params: {
-        page: 1,
-        perPage,
-        sort,
-        dir,
-        q: nextQ ?? null,
-        filters: nextFilters,
-        columns,
-      },
+      params,
+      user: viewUser,
     });
-    return redirect(`/jobs?view=${encodeURIComponent(name)}`);
+    return redirect(`/jobs?view=${encodeURIComponent(String(view.id))}`);
   }
   return redirect("/jobs");
 }
@@ -352,6 +396,7 @@ export default function JobsLayout() {
     total: number;
     views?: any[];
     activeView?: string | null;
+    activeViewParams?: any | null;
   }>();
   const { setRecordSet, setIdList, addRows } = useRecords();
   const location = useLocation();
@@ -381,7 +426,7 @@ export default function JobsLayout() {
   ]);
   return (
     <>
-      <JobFindManager />
+      <JobFindManager activeViewParams={data?.activeViewParams || null} />
       <Outlet />
     </>
   );

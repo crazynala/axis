@@ -195,7 +195,7 @@ export function InvoiceDetailView() {
   const { setCurrentId, state } = useRecordContext();
   // Preserve currentId when navigating back to index: do not clear on unmount.
   useEffect(() => {
-    setCurrentId(invoice.id);
+    setCurrentId(invoice.id, "restore");
   }, [invoice.id, setCurrentId]);
   const submit = useSubmit();
   const form = useForm({

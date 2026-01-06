@@ -220,7 +220,7 @@ export default function ContactDetailRoute() {
   const submit = useSubmit();
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(contact.id);
+    setCurrentId(contact.id, "restore");
   }, [contact.id, setCurrentId]);
 
   const form = useForm({

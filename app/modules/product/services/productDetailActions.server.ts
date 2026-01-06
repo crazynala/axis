@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import { ValueListType } from "@prisma/client";
 import { requireUserId } from "~/utils/auth.server";
 import { buildWhereFromConfig } from "~/utils/buildWhereFromConfig.server";
 import {
@@ -9,11 +10,22 @@ import {
   productPricingFields,
 } from "~/modules/product/forms/productDetail";
 import { loadOptions } from "~/utils/options.server";
+import { invalidateAllOptions } from "~/utils/options.server";
 import { deriveExternalStepTypeFromCategoryCode } from "~/modules/product/rules/productTypeRules";
-import { normalizeEnumOptions } from "~/modules/productMetadata/utils/productMetadataFields";
 
 const PRODUCT_DELETE_PHRASE = "LET'S DO IT";
 const META_PREFIX = "meta__";
+const NEW_ENUM_PREFIX = "NEW:";
+
+function slugifyEnumLabel(raw: string) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 function parseMetadataValue(
   raw: FormDataEntryValue | null,
@@ -63,11 +75,17 @@ async function applyProductMetadataValues({
   productId,
   form,
   productType,
+  categoryId,
+  subCategoryId,
+  useTransaction = true,
 }: {
   prisma: any;
   productId: number;
   form: FormData;
   productType: string | null;
+  categoryId?: number | null;
+  subCategoryId?: number | null;
+  useTransaction?: boolean;
 }) {
   const keys = Array.from(form.keys())
     .filter(
@@ -89,29 +107,75 @@ async function applyProductMetadataValues({
           enumOptions: true,
           isRequired: true,
           appliesToProductTypes: true,
+          appliesToCategoryIds: true,
+          appliesToSubcategoryIds: true,
+          options: {
+            select: {
+              id: true,
+              label: true,
+              slug: true,
+              isArchived: true,
+              mergedIntoId: true,
+            },
+          },
         },
       })
     : [];
   const defByKey = new Map(definitions.map((def: any) => [def.key, def]));
   const ops: any[] = [];
   const errors: string[] = [];
+  let optionsTouched = false;
   const normalizedType = productType ? String(productType).toLowerCase() : "";
-  const parsedByKey = new Map<string, { hasValue: boolean; data: Record<string, any> }>();
+  const normalizedCategoryId =
+    categoryId != null && Number.isFinite(Number(categoryId))
+      ? Number(categoryId)
+      : null;
+  const normalizedSubCategoryId =
+    subCategoryId != null && Number.isFinite(Number(subCategoryId))
+      ? Number(subCategoryId)
+      : null;
+  const appliesToDef = (def: any) => {
+    const typeList = Array.isArray(def.appliesToProductTypes)
+      ? def.appliesToProductTypes
+      : [];
+    const typeMatch = !typeList.length
+      ? true
+      : normalizedType
+      ? typeList.some(
+          (entry: string) => String(entry).toLowerCase() === normalizedType
+        )
+      : false;
+    if (!typeMatch) return false;
+    const categoryList = Array.isArray(def.appliesToCategoryIds)
+      ? def.appliesToCategoryIds
+      : [];
+    if (categoryList.length) {
+      if (!normalizedCategoryId) return false;
+      if (!categoryList.includes(normalizedCategoryId)) return false;
+    }
+    const subcategoryList = Array.isArray(def.appliesToSubcategoryIds)
+      ? def.appliesToSubcategoryIds
+      : [];
+    if (subcategoryList.length) {
+      if (!normalizedSubCategoryId) return false;
+      if (!subcategoryList.includes(normalizedSubCategoryId)) return false;
+    }
+    return true;
+  };
+  const parsedByKey = new Map<
+    string,
+    { hasValue: boolean; data: Record<string, any> }
+  >();
   for (const key of keys) {
     const def = defByKey.get(key);
     if (!def) continue;
+    if (!appliesToDef(def)) continue;
     const fieldName = `${META_PREFIX}${key}`;
     if (!form.has(fieldName)) continue;
     const parsed = parseMetadataValue(form.get(fieldName), def.dataType);
     parsedByKey.set(key, parsed);
-    const appliesToType =
-      !def.appliesToProductTypes?.length ||
-      (normalizedType &&
-        def.appliesToProductTypes.some(
-          (entry: string) => String(entry).toLowerCase() === normalizedType
-        ));
     if (!parsed.hasValue) {
-      if (def.isRequired && appliesToType) {
+      if (def.isRequired) {
         errors.push(`${def.label || def.key} is required.`);
         continue;
       }
@@ -123,17 +187,63 @@ async function applyProductMetadataValues({
       continue;
     }
     if (def.dataType === "ENUM") {
-      const options = normalizeEnumOptions(def.enumOptions);
-      const values = new Set(options.map((opt) => opt.value));
-      const candidate = String(parsed.data.valueString ?? "");
-      if (values.size && !values.has(candidate)) {
-        errors.push(
-          `${def.label || def.key} must be one of: ${options
-            .map((opt) => opt.value)
-            .join(", ")}.`
-        );
+      const rawValue = String(parsed.data.valueString ?? "");
+      let optionId: number | null = null;
+      if (rawValue.startsWith(NEW_ENUM_PREFIX)) {
+        const label = rawValue.slice(NEW_ENUM_PREFIX.length).trim();
+        const slug = slugifyEnumLabel(label);
+        if (!slug) {
+          errors.push(`${def.label || def.key} value is invalid.`);
+          continue;
+        }
+        const created = await prisma.productAttributeOption.upsert({
+          where: {
+            definitionId_slug: { definitionId: def.id, slug },
+          },
+          create: { definitionId: def.id, label, slug },
+          update: { label },
+        });
+        optionsTouched = true;
+        optionId = created.mergedIntoId ?? created.id;
+      } else if (/^\d+$/.test(rawValue)) {
+        optionId = Number(rawValue);
+        const matched = Array.isArray(def.options)
+          ? def.options.find((opt: any) => opt.id === optionId)
+          : null;
+        if (matched?.mergedIntoId) {
+          optionId = matched.mergedIntoId;
+        }
+      } else {
+        const label = rawValue.trim();
+        const slug = slugifyEnumLabel(label);
+        if (!slug) {
+          errors.push(`${def.label || def.key} value is invalid.`);
+          continue;
+        }
+        const created = await prisma.productAttributeOption.upsert({
+          where: {
+            definitionId_slug: { definitionId: def.id, slug },
+          },
+          create: { definitionId: def.id, label, slug },
+          update: { label },
+        });
+        optionsTouched = true;
+        optionId = created.mergedIntoId ?? created.id;
+      }
+      if (!optionId) {
+        errors.push(`${def.label || def.key} value is invalid.`);
         continue;
       }
+      ops.push(
+        prisma.productAttributeValue.upsert({
+          where: {
+            productId_definitionId: { productId, definitionId: def.id },
+          },
+          create: { productId, definitionId: def.id, optionId },
+          update: { optionId, valueString: null },
+        })
+      );
+      continue;
     }
     ops.push(
       prisma.productAttributeValue.upsert({
@@ -149,16 +259,15 @@ async function applyProductMetadataValues({
     const requiredDefs = await prisma.productAttributeDefinition.findMany({
       where: {
         isRequired: true,
-        ...(normalizedType
-          ? {
-              OR: [
-                { appliesToProductTypes: { isEmpty: true } },
-                { appliesToProductTypes: { has: normalizedType } },
-              ],
-            }
-          : {}),
       },
-      select: { id: true, key: true, label: true },
+      select: {
+        id: true,
+        key: true,
+        label: true,
+        appliesToProductTypes: true,
+        appliesToCategoryIds: true,
+        appliesToSubcategoryIds: true,
+      },
     });
     if (requiredDefs.length) {
       const requiredIds = requiredDefs.map((def: any) => def.id);
@@ -168,6 +277,7 @@ async function applyProductMetadataValues({
       });
       const existingSet = new Set(existingValues.map((v: any) => v.definitionId));
       for (const def of requiredDefs) {
+        if (!appliesToDef(def)) continue;
         const parsed = parsedByKey.get(def.key);
         if (parsed?.hasValue) continue;
         if (!parsed && existingSet.has(def.id)) continue;
@@ -180,9 +290,15 @@ async function applyProductMetadataValues({
     return { ok: false, error: errors[0] };
   }
   if (ops.length) {
-    await prisma.$transaction(ops);
+    if (useTransaction) {
+      await prisma.$transaction(ops);
+    } else {
+      for (const op of ops) {
+        await op;
+      }
+    }
   }
-  return { ok: true };
+  return { ok: true, optionsTouched };
 }
 
 export async function handleProductDetailAction({
@@ -269,21 +385,71 @@ export async function handleProductDetailAction({
   if (isNew || intent === "create") {
     if (!form) form = await request.formData();
     const data = buildProductData(form);
-    const created = await prismaBase.product.create({ data });
-    const metaResult = await applyProductMetadataValues({
-      prisma: prismaBase,
-      productId: created.id,
-      form,
-      productType: String((data as any).type || "") || null,
-    });
-    if (metaResult && !metaResult.ok) {
-      await prismaBase.product.delete({ where: { id: created.id } });
-      return json(
-        { intent: "create", error: metaResult.error },
-        { status: 400 }
-      );
+    const typeUpper = String((data as any).type || "").toUpperCase();
+    const needsDefaultTax =
+      typeUpper === "FABRIC" || typeUpper === "TRIM" || typeUpper === "PACKAGING";
+    if (needsDefaultTax && (data as any).purchaseTaxId == null) {
+      let kdvTax = await prismaBase.valueList.findFirst({
+        where: {
+          type: ValueListType.Tax,
+          OR: [
+            { label: { equals: "KDV-10", mode: "insensitive" } },
+            { label: { equals: "KDV 10", mode: "insensitive" } },
+            { label: { contains: "KDV-10", mode: "insensitive" } },
+            { label: { contains: "KDV 10", mode: "insensitive" } },
+            { code: { equals: "KDV-10", mode: "insensitive" } },
+            { code: { equals: "KDV10", mode: "insensitive" } },
+            { code: { contains: "KDV-10", mode: "insensitive" } },
+            { code: { contains: "KDV 10", mode: "insensitive" } },
+          ],
+        },
+        select: { id: true, label: true, code: true, value: true },
+      });
+      if (!kdvTax) {
+        kdvTax = await prismaBase.valueList.findFirst({
+          where: {
+            type: ValueListType.Tax,
+            OR: [{ value: 0.1 as any }, { value: 10 as any }],
+          },
+          select: { id: true, label: true, code: true, value: true },
+        });
+      }
+      if (kdvTax?.id != null) {
+        (data as any).purchaseTaxId = kdvTax.id;
+      } else {
+        console.warn(
+          "[product create] KDV-10 tax not found; leaving purchaseTaxId empty",
+          { type: typeUpper }
+        );
+      }
     }
-    return redirect(`/products/${created.id}`);
+    let optionsTouched = false;
+    try {
+      const created = await prismaBase.$transaction(async (tx: any) => {
+        const next = await tx.product.create({ data });
+        const metaResult = await applyProductMetadataValues({
+          prisma: tx,
+          productId: next.id,
+          form,
+          productType: String((data as any).type || "") || null,
+          categoryId: (data as any).categoryId ?? null,
+          subCategoryId: (data as any).subCategoryId ?? null,
+          useTransaction: false,
+        });
+        if (metaResult && !metaResult.ok) {
+          throw new Error(metaResult.error);
+        }
+        optionsTouched = Boolean(metaResult?.optionsTouched);
+        return next;
+      });
+      if (optionsTouched) {
+        invalidateAllOptions();
+      }
+      return redirect(`/products/${created.id}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Create failed.";
+      return json({ intent: "create", error: message }, { status: 400 });
+    }
   }
 
   if (intent === "find") {
@@ -373,18 +539,30 @@ export async function handleProductDetailAction({
       categoryId: (data as any).categoryId,
       externalStepType: (data as any).externalStepType,
     });
-    await prismaBase.product.update({ where: { id }, data });
-    const metaResult = await applyProductMetadataValues({
-      prisma: prismaBase,
-      productId: id,
-      form,
-      productType: String((data as any).type || "") || null,
-    });
-    if (metaResult && !metaResult.ok) {
-      return json(
-        { intent: "update", error: metaResult.error },
-        { status: 400 }
-      );
+    let optionsTouched = false;
+    try {
+      await prismaBase.$transaction(async (tx: any) => {
+        await tx.product.update({ where: { id }, data });
+        const metaResult = await applyProductMetadataValues({
+          prisma: tx,
+          productId: id,
+          form,
+          productType: String((data as any).type || "") || null,
+          categoryId: (data as any).categoryId ?? null,
+          subCategoryId: (data as any).subCategoryId ?? null,
+          useTransaction: false,
+        });
+        if (metaResult && !metaResult.ok) {
+          throw new Error(metaResult.error);
+        }
+        optionsTouched = Boolean(metaResult?.optionsTouched);
+      });
+      if (optionsTouched) {
+        invalidateAllOptions();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Update failed.";
+      return json({ intent: "update", error: message }, { status: 400 });
     }
     try {
       const raw = form.get("tagNames") as string | null;

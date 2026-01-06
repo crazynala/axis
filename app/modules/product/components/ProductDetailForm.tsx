@@ -331,6 +331,9 @@ export function ProductDetailForm({
     () => getProductRequirements(typeValue || product?.type || null),
     [typeValue, product?.type]
   );
+  const isNewProduct = !product?.id;
+  const taxOptions =
+    optionsCtx?.taxCodeOptions || getGlobalOptions()?.taxCodeOptions || [];
   const formValues = form.watch();
   const isFieldFilled = React.useCallback(
     (fieldName: string | undefined) => {
@@ -506,6 +509,51 @@ export function ProductDetailForm({
   }, [template, requireTemplate, setValueIfChanged]);
 
   React.useEffect(() => {
+    if (!isNewProduct || mode === "find") return;
+    const effectiveType = typeValue || template?.productType || "";
+    const typeUpper = String(effectiveType || "").toUpperCase();
+    if (!["FABRIC", "TRIM", "PACKAGING"].includes(typeUpper)) return;
+    const current = form.getValues("purchaseTaxId");
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[product form] purchase tax prefill check", {
+        typeUpper,
+        current,
+        taxOptionsCount: taxOptions.length,
+        taxOptionLabels: taxOptions.map((opt) => opt.label),
+      });
+    }
+    if (current != null && String(current) !== "") return;
+    const taxRateById =
+      optionsCtx?.taxRateById || getGlobalOptions()?.taxRateById || {};
+    const match = taxOptions.find((opt) => {
+      const label = String(opt.label || "");
+      const value = String(opt.value || "");
+      if (/kdv[-\s]?10/i.test(label) || /kdv[-\s]?10/i.test(value)) return true;
+      if (/10\s*%|%\\s*10/.test(label)) return true;
+      const rateRaw = taxRateById[String(opt.value)];
+      const rate = Number(rateRaw);
+      return Number.isFinite(rate) && (rate === 0.1 || rate === 10);
+    });
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[product form] purchase tax prefill match", {
+        found: Boolean(match),
+        match,
+      });
+    }
+    if (!match) return;
+    const numericValue = Number(match.value);
+    const nextValue = Number.isFinite(numericValue) ? numericValue : match.value;
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[product form] purchase tax prefill set", { nextValue });
+    }
+    form.setValue("purchaseTaxId", nextValue, {
+      shouldDirty: false,
+      shouldTouch: false,
+      shouldValidate: false,
+    });
+  }, [isNewProduct, mode, typeValue, template?.productType, taxOptions, form]);
+
+  React.useEffect(() => {
     const isService = String(typeValue || "").toUpperCase() === "SERVICE";
     if (!isService) {
       setValueIfChanged("externalStepType", null);
@@ -544,10 +592,21 @@ export function ProductDetailForm({
     [form]
   );
 
+  const lastMissingFieldRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (!onRegisterMissingFocus) return;
+    if (!attemptedSubmit) {
+      if (lastMissingFieldRef.current !== null) {
+        lastMissingFieldRef.current = null;
+        onRegisterMissingFocus(null);
+      }
+      return;
+    }
     if (!validation || !validation.missingRequired.length) {
-      onRegisterMissingFocus(null);
+      if (lastMissingFieldRef.current !== null) {
+        lastMissingFieldRef.current = null;
+        onRegisterMissingFocus(null);
+      }
       return;
     }
     const sections = [
@@ -564,8 +623,10 @@ export function ProductDetailForm({
       (firstSection
         ? validation.bySection[firstSection]?.firstMissingField
         : null) || null;
+    if (firstField === lastMissingFieldRef.current) return;
+    lastMissingFieldRef.current = firstField;
     onRegisterMissingFocus(() => focusField(firstField));
-  }, [onRegisterMissingFocus, validation, focusField]);
+  }, [attemptedSubmit, onRegisterMissingFocus, validation, focusField]);
 
   const ctx = React.useMemo(
     () => ({
@@ -770,8 +831,12 @@ export function ProductDetailForm({
     return `Generated tiers: ${rows.length}`;
   }, [product]);
   const metadataFields = React.useMemo(
-    () => buildProductMetadataFields(metadataDefinitions),
-    [metadataDefinitions]
+    () =>
+      buildProductMetadataFields(metadataDefinitions, {
+        enumOptionsByDefinitionId:
+          globalOptions?.productAttributeOptionsByDefinitionId || {},
+      }),
+    [metadataDefinitions, globalOptions?.productAttributeOptionsByDefinitionId]
   );
 
   return (

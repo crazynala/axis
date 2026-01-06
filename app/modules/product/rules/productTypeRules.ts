@@ -41,7 +41,7 @@ export function rulesForType(typeRaw: any): ProductRules {
         categoryGroupCode: "TRIM",
         showSupplier: true,
         requireSupplier: true,
-        showCustomer: true,
+        showCustomer: false,
         requireCustomer: false,
         showExternalStepType: false,
         requireExternalStepType: false,

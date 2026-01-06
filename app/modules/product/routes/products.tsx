@@ -12,10 +12,8 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { useEffect } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
-import { allProductFindFields } from "../forms/productDetail";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
-import { deriveSemanticKeys } from "~/base/index/indexController";
-import { getProductIndexDefaultColumns } from "../config/productIndexColumns";
+import { productSpec } from "../spec";
 import { normalizeColumnsValue } from "~/base/index/columns";
 
 // Keys that influence the Products index filter/query
@@ -52,7 +50,7 @@ export async function loader(args: LoaderFunctionArgs) {
   const [
     { runWithDbActivity, prismaBase, prisma },
     { buildPrismaArgs },
-    { listViews, getView },
+    { listViews, getView, getViewUser, findViewByParam },
     { getFilterableProductAttributeDefinitions },
   ] = await Promise.all([
     import("~/utils/prisma.server"),
@@ -64,7 +62,8 @@ export async function loader(args: LoaderFunctionArgs) {
   return runWithDbActivity("products.index", async () => {
     const url = new URL(args.request.url);
     const q = url.searchParams;
-    const views = await listViews("products");
+    const viewUser = await getViewUser(args.request);
+    const views = await listViews("products", viewUser);
     const metadataDefinitions = await getFilterableProductAttributeDefinitions();
     const viewName = q.get("view");
     const __debug = process.env.NODE_ENV !== "production";
@@ -90,20 +89,16 @@ export async function loader(args: LoaderFunctionArgs) {
     const metadataFields = buildProductMetadataFields(metadataDefinitions, {
       onlyFilterable: true,
     });
-    const semanticKeys = deriveSemanticKeys(
-      allProductFindFields(metadataFields)
-    );
+    const semanticKeys = productSpec.find.deriveSemanticKeys(metadataFields);
     const hasSemantic =
       q.has("q") ||
       q.has("findReqs") ||
-      semanticKeys.some((k) => {
+      Array.from(semanticKeys).some((k) => {
         const v = q.get(k);
         return v !== null && v !== "";
       });
     const viewActive = !!viewName && !hasSemantic;
-    const activeView = viewActive
-      ? (views.find((x: any) => x.name === viewName) as any)
-      : null;
+    const activeView = viewActive ? findViewByParam(views, viewName) : null;
     const viewParams: any = activeView?.params || null;
     const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
     const effectivePage = Number(q.get("page") || viewParams?.page || 1);
@@ -133,7 +128,7 @@ export async function loader(args: LoaderFunctionArgs) {
       if (tokens.length === 1) return builder(tokens[0]);
       return { AND: tokens.map((token) => builder(token)) };
     };
-    const findKeys = semanticKeys;
+    const findKeys = Array.from(semanticKeys);
     const hasFindIndicators = viewActive
       ? findKeys.some(
           (k) => viewFilters[k] !== undefined && viewFilters[k] !== null
@@ -383,7 +378,7 @@ export async function loader(args: LoaderFunctionArgs) {
       initialRows,
       total: idList.length,
       views,
-      activeView: viewActive ? viewName || null : null,
+      activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
       activeViewParams: viewActive ? viewParams || null : null,
       metadataDefinitions,
     });
@@ -408,19 +403,62 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!ct.includes("application/json")) {
     const form = await request.formData();
     const intent = String(form.get("_intent") || "");
+    const {
+      saveView,
+      getView,
+      getViewUser,
+      renameView,
+      deleteView,
+      duplicateView,
+      publishView,
+      unpublishView,
+      updateViewParams,
+    } = await import("~/utils/views.server");
+    const viewUser = await getViewUser(request);
+    const viewId = String(form.get("viewId") || "").trim();
+    const name = String(form.get("name") || "").trim();
+    if (intent === "view.rename") {
+      if (!viewId || !name) return redirect("/products");
+      await renameView({ viewId, name, user: viewUser, module: "products" });
+      return redirect(`/products?view=${encodeURIComponent(viewId)}`);
+    }
+    if (intent === "view.delete") {
+      if (!viewId) return redirect("/products");
+      await deleteView({ viewId, user: viewUser, module: "products" });
+      return redirect("/products");
+    }
+    if (intent === "view.duplicate") {
+      if (!viewId) return redirect("/products");
+      const view = await duplicateView({
+        viewId,
+        name: name || null,
+        user: viewUser,
+        module: "products",
+      });
+      return redirect(`/products?view=${encodeURIComponent(String(view.id))}`);
+    }
+    if (intent === "view.publish") {
+      if (!viewId) return redirect("/products");
+      await publishView({ viewId, user: viewUser, module: "products" });
+      return redirect(`/products?view=${encodeURIComponent(viewId)}`);
+    }
+    if (intent === "view.unpublish") {
+      if (!viewId) return redirect("/products");
+      await unpublishView({ viewId, user: viewUser, module: "products" });
+      return redirect(`/products?view=${encodeURIComponent(viewId)}`);
+    }
     if (
       intent === "saveView" ||
       intent === "view.saveAs" ||
       intent === "view.overwriteFromUrl"
     ) {
-      const name =
-        intent === "view.overwriteFromUrl"
-          ? String(form.get("viewId") || form.get("name") || "").trim()
-          : String(form.get("name") || "").trim();
-      if (!name) return redirect("/products");
+      if (intent === "view.overwriteFromUrl") {
+        if (!viewId) return redirect("/products");
+      } else if (!name) {
+        return redirect("/products");
+      }
       const url = new URL(request.url);
       const sp = url.searchParams;
-      const { saveView, getView } = await import("~/utils/views.server");
       const { getFilterableProductAttributeDefinitions } = await import(
         "~/modules/productMetadata/services/productMetadata.server"
       );
@@ -428,9 +466,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const metadataFields = buildProductMetadataFields(metadataDefinitions, {
         onlyFilterable: true,
       });
-      const semanticKeys = deriveSemanticKeys(
-        allProductFindFields(metadataFields)
-      );
+      const semanticKeys = productSpec.find.deriveSemanticKeys(metadataFields);
       const q = sp.get("q");
       const findReqs = sp.get("findReqs");
       const filters: Record<string, any> = {};
@@ -458,27 +494,38 @@ export async function action({ request }: ActionFunctionArgs) {
       const dir = sp.get("dir") || baseParams?.dir || null;
       const columnsFromUrl = normalizeColumnsValue(sp.get("columns"));
       const baseColumns = normalizeColumnsValue(baseParams?.columns);
-      const defaultColumns = getProductIndexDefaultColumns();
+      const defaultColumns = productSpec.index.defaultColumns();
       const columns =
         columnsFromUrl.length > 0
           ? columnsFromUrl
           : baseColumns.length > 0
           ? baseColumns
           : defaultColumns;
-      await saveView({
+      const params = {
+        page: 1,
+        perPage,
+        sort,
+        dir,
+        q: nextQ ?? null,
+        filters: nextFilters,
+        columns,
+      };
+      if (intent === "view.overwriteFromUrl") {
+        await updateViewParams({
+          viewId,
+          params,
+          user: viewUser,
+          module: "products",
+        });
+        return redirect(`/products?view=${encodeURIComponent(viewId)}`);
+      }
+      const view = await saveView({
         module: "products",
         name,
-        params: {
-          page: 1,
-          perPage,
-          sort,
-          dir,
-          q: nextQ ?? null,
-          filters: nextFilters,
-          columns,
-        },
+        params,
+        user: viewUser,
       });
-      return redirect(`/products?view=${encodeURIComponent(name)}`);
+      return redirect(`/products?view=${encodeURIComponent(String(view.id))}`);
     }
   }
   const { prismaBase } = await import("~/utils/prisma.server");

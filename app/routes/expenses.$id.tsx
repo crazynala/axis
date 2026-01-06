@@ -55,7 +55,7 @@ export default function ExpenseDetailRoute() {
   const submit = useSubmit();
   // Register current id for global prev/next navigation
   useEffect(() => {
-    setCurrentId(expense.id);
+    setCurrentId(expense.id, "restore");
   }, [expense.id, setCurrentId]);
   const form = useForm({
     defaultValues: {

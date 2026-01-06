@@ -26,6 +26,23 @@ function normalizeDefs(rows: any[]): ProductAttributeDefinition[] {
     appliesToProductTypes: Array.isArray(row.appliesToProductTypes)
       ? row.appliesToProductTypes
       : [],
+    appliesToCategoryIds: Array.isArray(row.appliesToCategoryIds)
+      ? row.appliesToCategoryIds
+      : [],
+    appliesToSubcategoryIds: Array.isArray(row.appliesToSubcategoryIds)
+      ? row.appliesToSubcategoryIds
+      : [],
+    displayWidth: row.displayWidth ?? "full",
+    options: Array.isArray(row.options)
+      ? row.options.map((opt: any) => ({
+          id: opt.id,
+          definitionId: opt.definitionId,
+          label: opt.label,
+          slug: opt.slug,
+          isArchived: Boolean(opt.isArchived),
+          mergedIntoId: opt.mergedIntoId ?? null,
+        }))
+      : [],
     sortOrder: Number(row.sortOrder ?? 0) || 0,
   }));
 }
@@ -33,6 +50,12 @@ function normalizeDefs(rows: any[]): ProductAttributeDefinition[] {
 export async function getAllProductAttributeDefinitions() {
   if (isFresh(cacheAll)) return cacheAll!.value;
   const rows = await prisma.productAttributeDefinition.findMany({
+    include: {
+      options: {
+        where: { isArchived: false, mergedIntoId: null },
+        orderBy: { label: "asc" },
+      },
+    },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
   const defs = normalizeDefs(rows);
@@ -44,6 +67,12 @@ export async function getFilterableProductAttributeDefinitions() {
   if (isFresh(cacheFilterable)) return cacheFilterable!.value;
   const rows = await prisma.productAttributeDefinition.findMany({
     where: { isFilterable: true },
+    include: {
+      options: {
+        where: { isArchived: false, mergedIntoId: null },
+        orderBy: { label: "asc" },
+      },
+    },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
   const defs = normalizeDefs(rows);

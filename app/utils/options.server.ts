@@ -26,6 +26,7 @@ export type OptionsData = {
   // New: sale price groups and cost groups as id/name option lists
   salePriceGroupOptions?: Option[];
   costGroupOptions?: Option[];
+  productAttributeOptionsByDefinitionId?: Record<string, Option[]>;
 };
 
 type CacheEntry<T> = { value: T; at: number };
@@ -100,6 +101,7 @@ export async function loadOptions(): Promise<OptionsData> {
     salePriceGroups,
     costGroups,
     productTemplates,
+    productAttributeOptions,
   ] = await Promise.all([
     prisma.valueList.findMany({
       where: { type: ValueListType.Category },
@@ -201,6 +203,11 @@ export async function loadOptions(): Promise<OptionsData> {
       where: { isActive: true },
       select: { id: true, code: true, label: true, productType: true },
       orderBy: [{ productType: "asc" }, { code: "asc" }],
+    }),
+    prisma.productAttributeOption.findMany({
+      where: { isArchived: false, mergedIntoId: null },
+      select: { id: true, definitionId: true, label: true },
+      orderBy: [{ definitionId: "asc" }, { label: "asc" }],
     }),
   ]);
 
@@ -344,6 +351,16 @@ export async function loadOptions(): Promise<OptionsData> {
       value: String(t.id),
       label: t.label ?? t.code ?? String(t.id),
     })),
+    productAttributeOptionsByDefinitionId: productAttributeOptions.reduce(
+      (acc, opt) => {
+        const key = String(opt.definitionId);
+        const list = acc[key] || [];
+        list.push({ value: String(opt.id), label: opt.label ?? String(opt.id) });
+        acc[key] = list;
+        return acc;
+      },
+      {} as Record<string, Option[]>
+    ),
   };
 
   // Fallbacks: if JobType/JobStatus value lists are empty, derive distinct values from Job table

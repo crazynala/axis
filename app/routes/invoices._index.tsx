@@ -1,6 +1,5 @@
 import {
   Link,
-  useLocation,
   useNavigate,
   useRouteLoaderData,
 } from "@remix-run/react";
@@ -10,13 +9,9 @@ import { Button, Group } from "@mantine/core";
 import { useEffect, useMemo, useRef } from "react";
 import { useRecords } from "../base/record/RecordContext";
 import { FindRibbonAuto } from "../components/find/FindRibbonAuto";
-import { allInvoiceFindFields } from "../modules/invoice/forms/invoiceDetail";
-import { useHybridWindow } from "../base/record/useHybridWindow";
-import { invoiceColumns } from "~/modules/invoice/config/invoiceColumns";
-import {
-  buildTableColumns,
-  getVisibleColumnKeys,
-} from "~/base/index/columns";
+import { invoiceSpec } from "~/modules/invoice/spec";
+import { invoiceColumns } from "~/modules/invoice/spec/indexList";
+import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
@@ -33,30 +28,26 @@ export default function InvoicesIndexRoute() {
     activeViewParams?: any | null;
   }>("routes/invoices");
   const navigate = useNavigate();
-  const location = useLocation();
-  const { state, currentId } = useRecords();
-  const findConfig = useMemo(() => allInvoiceFindFields(), []);
-  const { records, atEnd, loading, fetching, requestMore, total } =
-    useHybridWindow({
-      module: "invoices",
-      initialWindow: 100,
-      batchIncrement: 100,
-    });
+  const { state, currentId, setCurrentId } = useRecords();
+  const findConfig = useMemo(() => invoiceSpec.find.buildConfig(), []);
   const viewMode = !!data?.activeView;
-  const visibleColumnKeys = useMemo(
-    () =>
-      getVisibleColumnKeys({
-        defs: invoiceColumns,
-        urlColumns: new URLSearchParams(location.search).get("columns"),
-        viewColumns: data?.activeViewParams?.columns,
-        viewMode,
-      }),
-    [data?.activeViewParams?.columns, location.search, viewMode]
-  );
-  const columns = useMemo(
-    () => buildTableColumns(invoiceColumns, visibleColumnKeys),
-    [visibleColumnKeys]
-  );
+  const {
+    records,
+    columns,
+    onReachEnd,
+    atEnd,
+    loading,
+    fetching,
+    total,
+  } = useHybridIndexTable({
+    module: "invoices",
+    initialWindow: 100,
+    batchIncrement: 100,
+    columns: invoiceColumns,
+    viewColumns: data?.activeViewParams?.columns,
+    viewMode,
+    enableSorting: false,
+  });
   // Table auto-sizes via VirtualizedNavDataTable; no per-route height calc needed
 
   // Auto-expand window to include currentId when landing on index from detail.
@@ -183,12 +174,15 @@ export default function InvoicesIndexRoute() {
         currentId={currentId as any}
         columns={columns as any}
         onRowClick={(rec: any) => {
-          if (rec?.id != null) navigate(`/invoices/${rec.id}`);
+          if (rec?.id != null) {
+            setCurrentId(rec.id, "mouseRow");
+            navigate(`/invoices/${rec.id}`);
+          }
         }}
         onRowDoubleClick={(rec: any) => {
           if (rec?.id != null) navigate(`/invoices/${rec.id}`);
         }}
-        onReachEnd={() => requestMore()}
+        onReachEnd={onReachEnd}
         footer={
           atEnd ? (
             <span style={{ fontSize: 12 }}>End of results ({total})</span>

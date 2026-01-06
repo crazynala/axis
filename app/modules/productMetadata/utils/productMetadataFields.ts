@@ -52,19 +52,46 @@ export function parseAppliesToTypesInput(raw: string | null) {
     .filter(Boolean);
 }
 
+export function parseAppliesToIdsInput(raw: string | null) {
+  if (!raw) return [] as number[];
+  return raw
+    .split(/\r?\n|,/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n)) as number[];
+}
+
+export function formatAppliesToIdsInput(raw: unknown) {
+  if (!Array.isArray(raw)) return "";
+  return raw.map((v) => String(v)).join("\n");
+}
+
 export function buildProductMetadataFields(
   defs: ProductAttributeDefinition[],
-  opts?: { onlyFilterable?: boolean }
+  opts?: {
+    onlyFilterable?: boolean;
+    enumOptionsByDefinitionId?: Record<string, { value: string; label: string }[]>;
+  }
 ): FieldConfig[] {
   const onlyFilterable = Boolean(opts?.onlyFilterable);
+  const enumOptionsByDefinitionId = opts?.enumOptionsByDefinitionId || {};
   return defs
     .filter((def) => (onlyFilterable ? def.isFilterable : true))
     .map((def) => {
       const name = metaFieldName(def.key);
       const findOp = buildFindOp(def.dataType);
+      const byDefId = enumOptionsByDefinitionId[String(def.id || "")] || [];
       const options =
         def.dataType === "ENUM"
-          ? normalizeEnumOptions(def.enumOptions)
+          ? byDefId.length
+            ? byDefId
+            : Array.isArray(def.options) && def.options.length
+            ? def.options.map((opt) => ({
+                value: String(opt.id),
+                label: opt.label,
+              }))
+            : normalizeEnumOptions(def.enumOptions)
           : def.dataType === "BOOLEAN"
           ? [
               { value: "true", label: "Yes" },
@@ -77,15 +104,53 @@ export function buildProductMetadataFields(
         label: def.label || def.key,
         widget,
         options,
+        allowCreate: def.dataType === "ENUM",
+        createOption:
+          def.dataType === "ENUM"
+            ? async (input: string) => {
+                const trimmed = String(input || "").trim();
+                if (!trimmed) return null;
+                return {
+                  value: `NEW:${trimmed}`,
+                  label: trimmed,
+                };
+              }
+            : undefined,
         findOp: def.isFilterable ? findOp : undefined,
         showIf: ({ form, mode }) => {
           if (mode === "find") return true;
-          if (!def.appliesToProductTypes?.length) return true;
           const t = String(form.getValues()?.type || "").toLowerCase();
-          if (!t) return false;
-          return def.appliesToProductTypes.some(
-            (entry) => String(entry).toLowerCase() === t
-          );
+          const typeList = Array.isArray(def.appliesToProductTypes)
+            ? def.appliesToProductTypes
+            : [];
+          const typeMatch = !typeList.length
+            ? true
+            : t
+            ? typeList.some((entry) => String(entry).toLowerCase() === t)
+            : false;
+          if (!typeMatch) return false;
+          const categoryIdRaw = form.getValues()?.categoryId;
+          const subCategoryIdRaw = form.getValues()?.subCategoryId;
+          const categoryId =
+            categoryIdRaw != null && String(categoryIdRaw) !== ""
+              ? Number(categoryIdRaw)
+              : null;
+          const subCategoryId =
+            subCategoryIdRaw != null && String(subCategoryIdRaw) !== ""
+              ? Number(subCategoryIdRaw)
+              : null;
+          if (Array.isArray(def.appliesToCategoryIds) && def.appliesToCategoryIds.length) {
+            if (!categoryId) return false;
+            if (!def.appliesToCategoryIds.includes(categoryId)) return false;
+          }
+          if (
+            Array.isArray(def.appliesToSubcategoryIds) &&
+            def.appliesToSubcategoryIds.length
+          ) {
+            if (!subCategoryId) return false;
+            if (!def.appliesToSubcategoryIds.includes(subCategoryId)) return false;
+          }
+          return true;
         },
       } as FieldConfig;
     });

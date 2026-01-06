@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { shouldWarnMissingCmtLine } from "../spec/warnings";
 
 export type CreateCmtFromBomHelperProps = {
   parentProductId: number;
@@ -39,9 +40,10 @@ export function CreateCmtFromBomHelper({
   onSuccess,
   disabledReason,
 }: CreateCmtFromBomHelperProps) {
-  const isFinished = String(parentType || "") === "Finished";
+  const isFinished = String(parentType || "").toUpperCase() === "FINISHED";
+  const showMissingCmt = shouldWarnMissingCmtLine(parentType, hasCmtLine);
   const canCreate =
-    isFinished && !hasCmtLine && Number.isFinite(parentCategoryId ?? NaN);
+    showMissingCmt && Number.isFinite(parentCategoryId ?? NaN);
   const blockedByDirty = Boolean(disabledReason);
   const createDisabled = !canCreate || blockedByDirty;
 
@@ -124,7 +126,7 @@ export function CreateCmtFromBomHelper({
     subCategoryId,
   ]);
 
-  if (!isFinished || hasCmtLine) return null;
+  if (!showMissingCmt) return null;
 
   return (
     <Stack gap="xs">

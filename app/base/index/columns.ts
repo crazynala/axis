@@ -25,6 +25,32 @@ export type ColumnDef<T = Record<string, any>> = {
   group?: string;
 };
 
+const isDev = process.env.NODE_ENV !== "production";
+
+export const assertColumnDefs = (defs: ColumnDef[], moduleKey?: string) => {
+  if (!isDev) return;
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const def of defs) {
+    const key = def?.key;
+    if (typeof key !== "string" || key.trim() === "") {
+      errors.push("key must be a non-empty string");
+      continue;
+    }
+    if (key.includes(".") || /\s/.test(key)) {
+      errors.push(`key "${key}" must not include dots or whitespace`);
+    }
+    if (seen.has(key)) {
+      errors.push(`duplicate key "${key}"`);
+    }
+    seen.add(key);
+  }
+  if (errors.length) {
+    const context = moduleKey ? ` module=${moduleKey}` : "";
+    throw new Error(`[columns] Invalid column keys.${context} ${errors.join("; ")}`);
+  }
+};
+
 export const normalizeColumnsValue = (
   value: string[] | string | null | undefined
 ) => {
@@ -39,19 +65,22 @@ export const normalizeColumnsValue = (
 export const columnsToParam = (keys: string[]) =>
   keys.map((k) => String(k).trim()).filter(Boolean).join(",");
 
-export const getDefaultColumnKeys = (defs: ColumnDef[]) =>
-  defs
+export const getDefaultColumnKeys = (defs: ColumnDef[], moduleKey?: string) => {
+  assertColumnDefs(defs, moduleKey);
+  return defs
     .filter((d) => d.defaultVisible !== false)
     .map((d) => d.key);
+};
 
 export const getVisibleColumnKeys = (options: {
   defs: ColumnDef[];
   urlColumns?: string | null;
   viewColumns?: string[] | string | null;
   viewMode?: boolean;
+  moduleKey?: string;
 }) => {
-  const { defs, urlColumns, viewColumns, viewMode } = options;
-  const defaults = getDefaultColumnKeys(defs);
+  const { defs, urlColumns, viewColumns, viewMode, moduleKey } = options;
+  const defaults = getDefaultColumnKeys(defs, moduleKey);
   const fromUrl = normalizeColumnsValue(urlColumns);
   const fromView = normalizeColumnsValue(viewColumns);
   const effective =
@@ -66,8 +95,16 @@ export const getVisibleColumnKeys = (options: {
 
 export const buildTableColumns = <T,>(
   defs: ColumnDef<T>[],
-  visibleKeys: string[]
+  visibleKeys: string[],
+  moduleKey?: string
 ) => {
+  assertColumnDefs(defs, moduleKey);
+  const defaultMinWidth = 120;
+  const narrowWidthByKey: Record<string, number> = {
+    id: 70,
+    sku: 140,
+    type: 90,
+  };
   const byKey = new Map(defs.map((d) => [d.key, d]));
   const columns: DataTableColumn<T>[] = [];
   for (const key of visibleKeys) {
@@ -75,12 +112,18 @@ export const buildTableColumns = <T,>(
     if (!def) continue;
     const accessor = def.sortKey || def.accessor || def.key;
     const layout = def.layout;
+    const width =
+      (layout?.width ?? def.width ?? narrowWidthByKey[def.key]) as any;
+    const minWidth =
+      (layout?.minWidth ??
+        def.minWidth ??
+        (typeof width === "number" ? width : defaultMinWidth)) as any;
     columns.push({
       accessor: accessor as any,
       title: def.title,
       sortable: def.sortable,
-      width: (layout?.width ?? def.width) as any,
-      minWidth: (layout?.minWidth ?? def.minWidth) as any,
+      width,
+      minWidth,
       maxWidth: (layout?.maxWidth ?? def.maxWidth) as any,
       grow: (layout?.grow ?? def.grow) as any,
       render: def.render as any,

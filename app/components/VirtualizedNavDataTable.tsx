@@ -63,7 +63,11 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
 }: VirtualizedNavDataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { currentId: ctxCurrentId, setCurrentId: ctxSetCurrentId } = useRecords();
+  const {
+    currentId: ctxCurrentId,
+    currentIdSource: ctxCurrentIdSource,
+    setCurrentId: ctxSetCurrentId,
+  } = useRecords();
 
   const count = totalCount ?? records.length;
   const virtualizer = useVirtualizer({
@@ -150,20 +154,53 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
     if (selected != null) return;
     const first = records.find((r: any) => r && r.id != null) as any;
     if (first && ctxSetCurrentId) {
-      ctxSetCurrentId(first.id);
+      ctxSetCurrentId(first.id, "programmatic");
     }
   }, [records, currentId, ctxCurrentId, ctxSetCurrentId]);
 
-  // Scroll to currentId
+  const scrollRafRef = useRef<number | null>(null);
+  const scrollToOffset = (offset: number) => {
+    if (scrollRafRef.current != null) {
+      cancelAnimationFrame(scrollRafRef.current);
+    }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      virtualizer.scrollToOffset(offset);
+      scrollRafRef.current = null;
+    });
+  };
   useEffect(() => {
     const selected = currentId ?? ctxCurrentId;
     if (selected == null) return;
+    const source = ctxCurrentIdSource;
+    if (source !== "kbd" && source !== "restore" && source !== "jump") return;
     const index = records.findIndex((r: any) => r?.id === selected);
-    if (index >= 0) {
-      log("scrollToIndex", { currentId: selected, index });
-      virtualizer.scrollToIndex(index, { align: "center" });
+    if (index < 0) return;
+    const viewport = parentRef.current;
+    if (!viewport) return;
+    const viewTop = viewport.scrollTop;
+    const viewHeight = viewport.clientHeight;
+    const bandTop = viewTop + viewHeight * 0.15;
+    const bandBottom = viewTop + viewHeight * 0.85;
+    const rowStart = index * rowHeight;
+    const rowEnd = rowStart + rowHeight;
+    const withinBand = rowStart >= bandTop && rowEnd <= bandBottom;
+    if (withinBand) return;
+    let nextOffset = viewTop;
+    if (rowStart < bandTop) {
+      nextOffset = Math.max(0, rowStart - viewHeight * 0.15);
+    } else if (rowEnd > bandBottom) {
+      nextOffset = Math.max(0, rowEnd - viewHeight * 0.85);
     }
-  }, [currentId, ctxCurrentId, records, virtualizer]);
+    log("scrollToOffset", { currentId: selected, index, nextOffset, source });
+    scrollToOffset(nextOffset);
+  }, [
+    currentId,
+    ctxCurrentId,
+    ctxCurrentIdSource,
+    records,
+    rowHeight,
+    virtualizer,
+  ]);
 
   const virtualItems = virtualizer.getVirtualItems();
   const paddingTop = virtualItems.length ? virtualItems[0].start : 0;
@@ -210,15 +247,48 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
   const clearSelection = () => setSel(() => new Set());
   const hasSelection = multiselect && selectedIds.size > 0;
   const colCount = columns.length + (multiselect ? 1 : 0);
+  const defaultMinWidth = 120;
+  const normalizedColumns = columns.map((column) => {
+    const width = column.width;
+    const minWidth =
+      column.minWidth ??
+      (typeof width === "number" ? width : defaultMinWidth);
+    return { ...column, __width: width, __minWidth: minWidth };
+  });
+  const totalMinWidth = normalizedColumns.reduce((sum, column) => {
+    const width = (column as any).__width;
+    if (typeof width === "number") return sum + width;
+    const minWidth = (column as any).__minWidth;
+    if (typeof minWidth === "number") return sum + minWidth;
+    return sum;
+  }, multiselect ? 36 : 0);
 
   return (
     <Box ref={containerRef} style={{ height: effectiveHeight }}>
-      <ScrollArea viewportRef={parentRef} style={{ height: "100%" }}>
-        <Table highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+      <ScrollArea
+        viewportRef={parentRef}
+        style={{ height: "100%" }}
+        viewportProps={{ style: { overflowX: "auto" } }}
+      >
+        <Table
+          highlightOnHover
+          style={{
+            tableLayout: "fixed",
+            width: "100%",
+            minWidth: totalMinWidth ? `${totalMinWidth}px` : "100%",
+          }}
+        >
           <colgroup>
             {multiselect && <col style={{ width: 36 }} />}
-            {columns.map((column, index) => (
-              <col style={{ width: column.width || "auto" }} key={index} />
+            {normalizedColumns.map((column, index) => (
+              <col
+                key={index}
+                style={{
+                  width: (column as any).__width || "auto",
+                  minWidth: (column as any).__minWidth || undefined,
+                  maxWidth: column.maxWidth || undefined,
+                }}
+              />
             ))}
           </colgroup>
           <Table.Thead
@@ -250,7 +320,7 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
             ) : (
               <Table.Tr>
                 {multiselect && <Table.Th style={{ width: 36 }} />}
-                {columns.map((column, index) => {
+                {normalizedColumns.map((column, index) => {
                   const align: React.CSSProperties["textAlign"] =
                     (column as any).align || ((column as any).justify === "start" ? "left" : (column as any).justify === "end" ? "right" : (column as any).justify === "center" ? "center" : undefined);
                   return (
@@ -261,6 +331,7 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
                         padding: "8px 12px",
                         borderBottom: "1px solid var(--mantine-color-gray-3)",
                         textAlign: align,
+                        minWidth: (column as any).__minWidth || undefined,
                       }}
                       onClick={() => {
                         if (column.sortable && onSortStatusChange && column.accessor) {
@@ -350,7 +421,7 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
                       )}
                     </Table.Td>
                   )}
-                  {columns.map((column, colIndex) => {
+                  {normalizedColumns.map((column, colIndex) => {
                     const content = loaded
                       ? column.render
                         ? column.render(record as T, virtualRow.index)
@@ -367,7 +438,8 @@ export function VirtualizedNavDataTable<T = Record<string, any>>({
                       <Table.Td
                         key={colIndex}
                         style={{
-                          width: column.width || "auto",
+                          width: (column as any).__width || "auto",
+                          minWidth: (column as any).__minWidth || undefined,
                           padding: "8px 12px",
                           overflow: "hidden",
                           textOverflow: "ellipsis",

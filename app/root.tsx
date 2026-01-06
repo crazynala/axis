@@ -778,6 +778,7 @@ function isFindCapablePath(pathname: string): boolean {
   if (pathname.startsWith("/invoices")) return true;
   if (pathname.startsWith("/shipments")) return true;
   if (pathname.startsWith("/expenses")) return true;
+  if (pathname.startsWith("/boxes")) return true;
   return false;
 }
 

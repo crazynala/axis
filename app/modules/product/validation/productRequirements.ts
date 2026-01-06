@@ -33,6 +33,7 @@ export function isFieldApplicable(
 
 const baseSpec: RequirementSpec = {
   type: { label: "Type", section: "identity" },
+  sku: { label: "SKU", section: "identity" },
   name: { label: "Name", section: "identity" },
   categoryId: { label: "Category", section: "classification" },
   templateId: { label: "Template", section: "classification" },
@@ -54,7 +55,8 @@ export function getProductRequirements(
   const defaults: ProductRequirements = {
     fields: {
       type: "required",
-      name: "recommended",
+      sku: "required",
+      name: "required",
       categoryId: "required",
       templateId: "notApplicable",
       supplierId: "optional",
@@ -71,8 +73,7 @@ export function getProductRequirements(
       return {
         fields: {
           ...defaults.fields,
-          name: "recommended",
-      categoryId: "required",
+          categoryId: "required",
           supplierId: "required",
           customerId: "notApplicable",
           templateId: "notApplicable",
@@ -87,7 +88,7 @@ export function getProductRequirements(
           ...defaults.fields,
           supplierId: "required",
           customerId: "optional",
-          variantSetId: "optional",
+          variantSetId: "notApplicable",
           externalStepType: "notApplicable",
         },
       };
@@ -97,7 +98,7 @@ export function getProductRequirements(
           ...defaults.fields,
           supplierId: "required",
           customerId: "notApplicable",
-          variantSetId: "optional",
+          variantSetId: "notApplicable",
           externalStepType: "notApplicable",
         },
       };
@@ -117,7 +118,7 @@ export function getProductRequirements(
           ...defaults.fields,
           supplierId: "notApplicable",
           customerId: "required",
-          variantSetId: "optional",
+          variantSetId: "notApplicable",
           externalStepType: "notApplicable",
         },
       };

@@ -80,7 +80,7 @@ export default function AssemblyActivityDetailRoute() {
   const busy = nav.state !== "idle";
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
-    setCurrentId(activity.id);
+    setCurrentId(activity.id, "restore");
   }, [activity.id, setCurrentId]);
   // Prev/Next hotkeys handled globally in RecordProvider
 

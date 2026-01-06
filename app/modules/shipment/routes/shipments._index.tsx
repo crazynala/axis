@@ -8,34 +8,42 @@ import {
   Link,
   useLoaderData,
   useNavigate,
-  useSearchParams,
 } from "@remix-run/react";
 import { prismaBase } from "../../../utils/prisma.server";
 import { buildPrismaArgs } from "../../../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack } from "@mantine/core";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { ShipmentFindManager } from "../findify/ShipmentFindManager";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
-import { listViews, saveView, getView } from "../../../utils/views.server";
+import {
+  deleteView,
+  duplicateView,
+  findViewByParam,
+  getView,
+  getViewUser,
+  listViews,
+  publishView,
+  renameView,
+  saveView,
+  unpublishView,
+  updateViewParams,
+} from "../../../utils/views.server";
 import {
   decodeRequests,
   buildWhereFromRequests,
   mergeSimpleAndMulti,
 } from "../../../base/find/multiFind";
 import { VirtualizedNavDataTable } from "../../../components/VirtualizedNavDataTable";
-import { useHybridWindow } from "../../../base/record/useHybridWindow";
 import { useRecords } from "../../../base/record/RecordContext";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
-import { allShipmentFindFields } from "../forms/shipmentDetail";
-import { deriveSemanticKeys } from "~/base/index/indexController";
-import { shipmentColumns } from "../config/shipmentColumns";
+import { shipmentSpec } from "../spec";
+import { shipmentColumns } from "../spec/indexList";
 import {
-  buildTableColumns,
-  getVisibleColumnKeys,
   getDefaultColumnKeys,
   normalizeColumnsValue,
 } from "~/base/index/columns";
+import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
@@ -46,7 +54,8 @@ export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
-  const views = await listViews("shipments");
+  const viewUser = await getViewUser(args.request);
+  const views = await listViews("shipments", viewUser);
   const viewName = url.searchParams.get("view");
   const valuesFromSearch = (input: URLSearchParams, keys: string[]) => {
     const filters: Record<string, any> = {};
@@ -58,7 +67,7 @@ export async function loader(args: LoaderFunctionArgs) {
     if (findReqs) filters.findReqs = findReqs;
     return filters;
   };
-  const semanticKeys = deriveSemanticKeys(allShipmentFindFields());
+  const semanticKeys = Array.from(shipmentSpec.find.deriveSemanticKeys());
   const hasSemantic =
     url.searchParams.has("q") ||
     url.searchParams.has("findReqs") ||
@@ -67,9 +76,7 @@ export async function loader(args: LoaderFunctionArgs) {
       return v !== null && v !== "";
     });
   const viewActive = !!viewName && !hasSemantic;
-  const activeView = viewActive
-    ? (views.find((x: any) => x.name === viewName) as any)
-    : null;
+  const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
   const effectivePage = Number(
@@ -149,7 +156,7 @@ export async function loader(args: LoaderFunctionArgs) {
     sort: effectiveSort,
     dir: effectiveDir,
     q: effectiveQ ?? null,
-    filters: viewActive ? viewFilters : valuesFromSearch(url, findKeys),
+    filters: viewActive ? viewFilters : valuesFromSearch(url.searchParams, findKeys),
   };
   if (baseParams.filters) {
     const {
@@ -215,7 +222,7 @@ export async function loader(args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewActive ? viewName || null : null,
+    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
     activeViewParams: viewActive ? viewParams || null : null,
   });
 }
@@ -223,19 +230,52 @@ export async function loader(args: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
+  const viewUser = await getViewUser(request);
+  const viewId = String(form.get("viewId") || "").trim();
+  const name = String(form.get("name") || "").trim();
+  if (intent === "view.rename") {
+    if (!viewId || !name) return redirect("/shipments");
+    await renameView({ viewId, name, user: viewUser, module: "shipments" });
+    return redirect(`/shipments?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.delete") {
+    if (!viewId) return redirect("/shipments");
+    await deleteView({ viewId, user: viewUser, module: "shipments" });
+    return redirect("/shipments");
+  }
+  if (intent === "view.duplicate") {
+    if (!viewId) return redirect("/shipments");
+    const view = await duplicateView({
+      viewId,
+      name: name || null,
+      user: viewUser,
+      module: "shipments",
+    });
+    return redirect(`/shipments?view=${encodeURIComponent(String(view.id))}`);
+  }
+  if (intent === "view.publish") {
+    if (!viewId) return redirect("/shipments");
+    await publishView({ viewId, user: viewUser, module: "shipments" });
+    return redirect(`/shipments?view=${encodeURIComponent(viewId)}`);
+  }
+  if (intent === "view.unpublish") {
+    if (!viewId) return redirect("/shipments");
+    await unpublishView({ viewId, user: viewUser, module: "shipments" });
+    return redirect(`/shipments?view=${encodeURIComponent(viewId)}`);
+  }
   if (
     intent === "saveView" ||
     intent === "view.saveAs" ||
     intent === "view.overwriteFromUrl"
   ) {
-    const name =
-      intent === "view.overwriteFromUrl"
-        ? String(form.get("viewId") || form.get("name") || "").trim()
-        : String(form.get("name") || "").trim();
-    if (!name) return redirect("/shipments");
+    if (intent === "view.overwriteFromUrl") {
+      if (!viewId) return redirect("/shipments");
+    } else if (!name) {
+      return redirect("/shipments");
+    }
     const url = new URL(request.url);
     const sp = url.searchParams;
-    const semanticKeys = deriveSemanticKeys(allShipmentFindFields());
+    const semanticKeys = Array.from(shipmentSpec.find.deriveSemanticKeys());
     const q = sp.get("q");
     const findReqs = sp.get("findReqs");
     const filters: Record<string, any> = {};
@@ -270,20 +310,31 @@ export async function action({ request }: ActionFunctionArgs) {
         : baseColumns.length > 0
         ? baseColumns
         : defaultColumns;
-    await saveView({
+    const params = {
+      page: 1,
+      perPage,
+      sort,
+      dir,
+      q: nextQ ?? null,
+      filters: nextFilters,
+      columns,
+    };
+    if (intent === "view.overwriteFromUrl") {
+      await updateViewParams({
+        viewId,
+        params,
+        user: viewUser,
+        module: "shipments",
+      });
+      return redirect(`/shipments?view=${encodeURIComponent(viewId)}`);
+    }
+    const view = await saveView({
       module: "shipments",
       name,
-      params: {
-        page: 1,
-        perPage,
-        sort,
-        dir,
-        q: nextQ ?? null,
-        filters: nextFilters,
-        columns,
-      },
+      params,
+      user: viewUser,
     });
-    return redirect(`/shipments?view=${encodeURIComponent(name)}`);
+    return redirect(`/shipments?view=${encodeURIComponent(String(view.id))}`);
   }
   return redirect("/shipments");
 }
@@ -294,38 +345,35 @@ export default function ShipmentsIndexRoute() {
   const data = useLoaderData<typeof loader>();
   const { currentId, setCurrentId } = useRecords();
   const navigate = useNavigate();
-  const [sp] = useSearchParams();
-  const { records, fetching, requestMore, atEnd, total } = useHybridWindow({
-    module: "shipments",
-    rowEndpointPath: "/shipments/rows",
-    initialWindow: 100,
-    batchIncrement: 100,
-    maxPlaceholders: 8,
-  });
   const appendHref = useFindHrefAppender();
   const savedSearch = getSavedIndexSearch("/shipments");
   const shipmentsHref = savedSearch
     ? `/shipments${savedSearch}`
     : appendHref("/shipments");
-  const findConfig = useMemo(() => allShipmentFindFields(), []);
+  const findConfig = useMemo(() => shipmentSpec.find.buildConfig(), []);
   const viewMode = !!data?.activeView;
-  const visibleColumnKeys = useMemo(
-    () =>
-      getVisibleColumnKeys({
-        defs: shipmentColumns,
-        urlColumns: sp.get("columns"),
-        viewColumns: data?.activeViewParams?.columns,
-        viewMode,
-      }),
-    [data?.activeViewParams?.columns, sp, viewMode]
-  );
-  const columns = useMemo(
-    () => buildTableColumns(shipmentColumns, visibleColumnKeys),
-    [visibleColumnKeys]
-  );
+  const {
+    records,
+    columns,
+    sortStatus,
+    onSortStatusChange,
+    onReachEnd,
+    atEnd,
+    fetching,
+    total,
+  } = useHybridIndexTable({
+    module: "shipments",
+    rowEndpointPath: "/shipments/rows",
+    initialWindow: 100,
+    batchIncrement: 100,
+    maxPlaceholders: 8,
+    columns: shipmentColumns,
+    viewColumns: data?.activeViewParams?.columns,
+    viewMode,
+  });
   return (
     <Stack gap="lg">
-      <ShipmentFindManager />
+      <ShipmentFindManager activeViewParams={data?.activeViewParams || null} />
       <Group justify="space-between" align="center" mb="sm">
         <BreadcrumbSet
           breadcrumbs={[{ label: "Shipments", href: shipmentsHref }]}
@@ -352,28 +400,13 @@ export default function ShipmentsIndexRoute() {
         records={records as any}
         currentId={currentId as any}
         columns={columns as any}
-        sortStatus={
-          {
-            columnAccessor: sp.get("sort") || "id",
-            direction: (sp.get("dir") as any) || "asc",
-          } as any
-        }
-        onSortStatusChange={(s: {
-          columnAccessor: string;
-          direction: "asc" | "desc";
-        }) => {
-          const next = new URLSearchParams(sp);
-          next.set("sort", s.columnAccessor);
-          next.set("dir", s.direction);
-          navigate(`?${next.toString()}`);
-        }}
+        sortStatus={sortStatus as any}
+        onSortStatusChange={onSortStatusChange as any}
         onRowDoubleClick={(rec: any) => {
           if (rec?.id != null) navigate(`/shipments/${rec.id}`);
         }}
-        onRowClick={(rec: any) => setCurrentId(rec?.id)}
-        onReachEnd={() => {
-          if (!atEnd) requestMore();
-        }}
+        onRowClick={(rec: any) => setCurrentId(rec?.id, "mouseRow")}
+        onReachEnd={onReachEnd}
         footer={
           atEnd ? (
             <span style={{ fontSize: 12 }}>End of results ({total})</span>

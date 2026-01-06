@@ -99,7 +99,7 @@ export default function BoxDetailRoute() {
   const { box } = useLoaderData<{ box: any }>();
   const { setCurrentId } = useRecords();
   useEffect(() => {
-    setCurrentId(box.id);
+    setCurrentId(box.id, "restore");
   }, [box.id, setCurrentId]);
   const submit = useSubmit();
   const nav = useNavigation();
