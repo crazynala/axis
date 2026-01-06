@@ -21,6 +21,9 @@ export type ProductValidationInput = {
   customerId?: number | string | null;
   variantSetId?: number | string | null;
   costPrice?: number | string | null;
+  pricingModel?: string | null;
+  pricingSpecId?: number | string | null;
+  baselinePriceAtMoq?: number | string | null;
   leadTimeDays?: number | string | null;
   externalStepType?: string | null;
 };
@@ -74,6 +77,26 @@ export function computeProductValidation(
       bySection[meta.section].missingRecommended.push(meta.label);
       if (!bySection[meta.section].firstMissingField) {
         bySection[meta.section].firstMissingField = field;
+      }
+    }
+  }
+
+  const pricingModel = String(input.pricingModel || "").toUpperCase();
+  if (pricingModel === "CURVE_SELL_AT_MOQ") {
+    const specFilled = isFilled(input.pricingSpecId);
+    if (!specFilled) {
+      missingRequired.push("Pricing Spec");
+      bySection.pricing.missingRequired.push("Pricing Spec");
+      if (!bySection.pricing.firstMissingField) {
+        bySection.pricing.firstMissingField = "pricingSpecId";
+      }
+    }
+    const baselineFilled = isFilled(input.baselinePriceAtMoq);
+    if (!baselineFilled) {
+      missingRequired.push("Price at MOQ");
+      bySection.pricing.missingRequired.push("Price at MOQ");
+      if (!bySection.pricing.firstMissingField) {
+        bySection.pricing.firstMissingField = "baselinePriceAtMoq";
       }
     }
   }

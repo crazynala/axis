@@ -26,6 +26,7 @@ export function calcPrice(i: PriceInput): PriceOutput {
 
   const multiplier = toNum(i.priceMultiplier, 1) || 1;
   const taxRate = toNum(i.taxRate, 0);
+  const pricingModel = String(i.pricingModel || "").toUpperCase();
 
   // Helper to apply discounts then VAT to a pre-tax unit price
   const finalize = (preTaxUnit: number) => {
@@ -39,6 +40,48 @@ export function calcPrice(i: PriceInput): PriceOutput {
     const unitWithTax = discounted * (1 + taxRate);
     return { discounted, unitWithTax };
   };
+
+  if (pricingModel === "CURVE_SELL_AT_MOQ") {
+    const ranges = i.pricingSpecRanges || [];
+    const base = toNum(i.baselinePriceAtMoq, 0);
+    if (ranges.length && base > 0) {
+      const matches = ranges.filter((range) => {
+        const min = range.rangeFrom ?? 1;
+        const max =
+          range.rangeTo != null ? range.rangeTo : Number.MAX_SAFE_INTEGER;
+        return qty >= min && qty <= max;
+      });
+      if (matches.length) {
+        const width = (r: typeof matches[number]) => {
+          const min = r.rangeFrom ?? 1;
+          const max =
+            r.rangeTo != null ? r.rangeTo : Number.MAX_SAFE_INTEGER;
+          return max - min;
+        };
+        const picked = matches.sort((a, b) => width(a) - width(b))[0];
+        const unitPreTax = base * toNum(picked.multiplier, 1);
+        const { unitWithTax, discounted } = finalize(unitPreTax);
+        const transferPct = toNum(i.transferPercent, null as any);
+        const extendedCost =
+          transferPct != null
+            ? round(unitWithTax * qty * transferPct)
+            : round(unitWithTax * qty);
+        return {
+          unitSellPrice: round(unitWithTax),
+          extendedSell: round(unitWithTax * qty),
+          extendedCost,
+          breakdown: {
+            baseUnit: round(unitPreTax),
+            inTarget: round(unitPreTax),
+            discounted: round(discounted),
+            withTax: round(unitWithTax),
+            taxRate,
+          },
+          meta: { mode: "curve", multiplier: 1 },
+        };
+      }
+    }
+  }
 
   // 1) Manual sale price override (display "as is" with no tax applied)
   if (i.manualSalePrice != null && Number.isFinite(toNum(i.manualSalePrice))) {

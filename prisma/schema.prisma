@@ -110,7 +110,9 @@ model Product {
   costGroupId           Int?
   salePriceGroupId      Int?
   pricingSpecId         Int?
-  pricingMode           PricingMode?
+  pricingModel          ProductPricingModel?
+  baselinePriceAtMoq    Decimal?                @db.Decimal(14, 4)
+  transferPercent       Decimal?                @db.Decimal(8, 4) @default(0.75)
   createdBy             String?
   modifiedBy            String?
   createdAt             DateTime?               @default(now())
@@ -1204,6 +1206,21 @@ model PricingSpec {
   products           Product[]
   salePriceRanges    SalePriceRange[]
   productCostRanges  ProductCostRange[]
+  ranges             PricingSpecRange[]
+}
+
+model PricingSpecRange {
+  id            Int          @id @default(autoincrement())
+  pricingSpecId Int
+  rangeFrom     Int?
+  rangeTo       Int?
+  multiplier    Decimal      @db.Decimal(14, 6)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  pricingSpec   PricingSpec  @relation(fields: [pricingSpecId], references: [id], onDelete: Cascade)
+
+  @@index([pricingSpecId])
+  @@index([pricingSpecId, rangeFrom, rangeTo])
 }
 
 model SalePriceGroup {
@@ -1290,12 +1307,12 @@ enum PricingSpecTarget {
   COST
 }
 
-enum PricingMode {
-  FIXED_PRICE
-  FIXED_MARGIN
-  TIERED_COST
-  TIERED_SELL
-  GENERATED
+enum ProductPricingModel {
+  COST_PLUS_MARGIN
+  COST_PLUS_FIXED_SELL
+  TIERED_COST_PLUS_MARGIN
+  CURVE_SELL_AT_MOQ
+  TIERED_COST_PLUS_FIXED_SELL
 }
 
 enum PricingCurveFamily {

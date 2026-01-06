@@ -333,6 +333,26 @@ export const productPricingFields: FieldConfig[] = [
     },
     format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
   },
+  {
+    name: "baselinePriceAtMoq",
+    label: "Price at MOQ",
+    widget: "numberRange",
+    hiddenInModes: ["find"],
+    showIf: ({ form }) =>
+      String(form.watch("pricingModel") || "").toUpperCase() ===
+      "CURVE_SELL_AT_MOQ",
+    format: (v) => (v != null && v !== "" ? Number(v).toFixed(2) : ""),
+  },
+  {
+    name: "transferPercent",
+    label: "Transfer %",
+    widget: "numberRange",
+    hiddenInModes: ["find"],
+    showIf: ({ form }) =>
+      String(form.watch("pricingModel") || "").toUpperCase() ===
+      "CURVE_SELL_AT_MOQ",
+    format: (v) => (v != null && v !== "" ? Number(v).toFixed(4) : ""),
+  },
   // Find-only manual sale price range
   {
     name: "manualSalePrice",

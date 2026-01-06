@@ -699,6 +699,10 @@ export async function handleProductDetailAction({
           pricingGroupId: (source as any).pricingGroupId,
           manualSalePrice: (source as any).manualSalePrice,
           manualMargin: (source as any).manualMargin,
+          pricingModel: (source as any).pricingModel,
+          pricingSpecId: (source as any).pricingSpecId,
+          baselinePriceAtMoq: (source as any).baselinePriceAtMoq,
+          transferPercent: (source as any).transferPercent,
           defaultCostQty: (source as any).defaultCostQty,
           variantSetId: (source as any).variantSetId,
           stockTrackingEnabled: (source as any).stockTrackingEnabled,
@@ -880,157 +884,6 @@ export async function handleProductDetailAction({
     const { applyBomBatch } = await import("~/modules/product/services/productBom.server");
     const result = await applyBomBatch(id, updates, creates, deletes);
     return json(result);
-  }
-
-  if (intent === "bom.createCmt") {
-    const f = form || (await request.formData());
-    const parentProductId = Number(
-      jsonBody?.parentProductId ?? f.get("parentProductId") ?? id
-    );
-    const pricingSpecId = Number(jsonBody?.pricingSpecId ?? f.get("pricingSpecId"));
-    const anchorPrice = Number(jsonBody?.anchorPrice ?? f.get("anchorPrice"));
-    const subCategoryIdRaw = jsonBody?.subCategoryId ?? f.get("subCategoryId");
-    const nameOverride = String(jsonBody?.name ?? f.get("name") ?? "").trim();
-    const subCategoryId =
-      subCategoryIdRaw == null || subCategoryIdRaw === ""
-        ? null
-        : Number(subCategoryIdRaw);
-
-    if (!Number.isFinite(parentProductId)) {
-      return json({ error: "Invalid parent product id" }, { status: 400 });
-    }
-    if (!Number.isFinite(pricingSpecId)) {
-      return json({ error: "Pricing spec is required" }, { status: 400 });
-    }
-    if (!Number.isFinite(anchorPrice) || anchorPrice <= 0) {
-      return json({ error: "Anchor price must be greater than 0" }, { status: 400 });
-    }
-
-    const userId = await requireUserId(request);
-    const { generateSalePriceRangesForProduct } = await import(
-      "~/modules/pricing/services/generateSaleTiers.server"
-    );
-
-    try {
-      const result = await prismaBase.$transaction(async (tx) => {
-        const parent = await tx.product.findUnique({
-          where: { id: parentProductId },
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            categoryId: true,
-            subCategoryId: true,
-            productLines: {
-              select: {
-                id: true,
-                flagAssemblyOmit: true,
-                child: { select: { id: true, type: true } },
-              },
-            },
-          },
-        });
-        if (!parent) throw new Error("Parent product not found");
-        if (parent.type !== "Finished")
-          throw new Error("Parent must be Finished");
-        if (!parent.categoryId) throw new Error("Parent category is required");
-
-        const hasCmt = parent.productLines.some(
-          (pl) => pl.child?.type === "CMT" && !pl.flagAssemblyOmit
-        );
-        if (hasCmt) throw new Error("BOM already has a CMT line");
-
-        const category = await tx.valueList.findUnique({
-          where: { id: parent.categoryId },
-          select: { label: true, code: true },
-        });
-        const effectiveSubCategoryId =
-          Number.isFinite(subCategoryId) && (subCategoryId as number) > 0
-            ? (subCategoryId as number)
-            : parent.subCategoryId ?? null;
-        const subCategory = effectiveSubCategoryId
-          ? await tx.valueList.findUnique({
-              where: { id: effectiveSubCategoryId },
-              select: { label: true, code: true },
-            })
-          : null;
-
-        const categoryLabel =
-          category?.label?.trim() ||
-          category?.code?.trim() ||
-          `#${parent.categoryId}`;
-        const subCategoryLabel = subCategory
-          ? subCategory.label?.trim() ||
-            subCategory.code?.trim() ||
-            `#${effectiveSubCategoryId}`
-          : null;
-
-        const resolvedName =
-          nameOverride ||
-          `CMT - ${categoryLabel}${
-            subCategoryLabel ? ` (${subCategoryLabel})` : ""
-          }`;
-
-        const newCmt = await tx.product.create({
-          data: {
-            name: resolvedName,
-            type: "CMT",
-            categoryId: parent.categoryId,
-            subCategoryId: effectiveSubCategoryId,
-            pricingSpecId,
-          },
-          select: { id: true },
-        });
-
-        const tiers = await generateSalePriceRangesForProduct({
-          productId: newCmt.id,
-          pricingSpecId,
-          paramsOverride: { anchorPrice },
-          prismaClient: tx as any,
-        });
-
-        const line = await tx.productLine.create({
-          data: {
-            parentId: parent.id,
-            childId: newCmt.id,
-            quantity: 1,
-            activityUsed: "make",
-            flagAssemblyOmit: false,
-          },
-          select: { id: true },
-        });
-
-        await tx.operationLog.create({
-          data: {
-            userId,
-            action: "CMT_CREATED_FROM_BOM",
-            entityType: "Product",
-            entityId: newCmt.id,
-            detail: {
-              parentProductId: parent.id,
-              newCmtProductId: newCmt.id,
-              pricingSpecId,
-              anchorPrice,
-              tierHash: tiers.hash,
-            },
-          },
-        });
-
-        return {
-          newCmtProductId: newCmt.id,
-          productLineId: line.id,
-          tierCount: tiers.createdCount,
-          hash: tiers.hash,
-        };
-      });
-
-      return json({ ok: true, ...result });
-    } catch (error: any) {
-      return json(
-        { error: error?.message || "Failed to create CMT" },
-        { status: 400 }
-      );
-    }
   }
 
   return redirect(`/products/${id}`);

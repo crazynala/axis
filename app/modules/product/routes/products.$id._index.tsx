@@ -69,7 +69,6 @@ import {
   useProductFindify,
 } from "~/modules/product/findify/productFindify";
 import { ProductDetailForm } from "../components/ProductDetailForm";
-import { CreateCmtFromBomHelper } from "../components/CreateCmtFromBomHelper";
 
 import { ProductFindManager } from "../components/ProductFindManager";
 import {
@@ -196,12 +195,13 @@ export default function ProductDetailRoute() {
     costingAssemblies,
     hasCmtLine,
     pricingSpecOptions,
+    pricingSpecRangesById,
     categoryLabel,
     subCategoryLabel,
     subCategoryOptions,
     shipmentLines,
-    effectivePricingMode,
-    pricingModeLabel,
+    effectivePricingModel,
+    pricingModelLabel,
     userLevel,
     canDebug,
   } = useLoaderData<typeof loader>();
@@ -847,6 +847,10 @@ export default function ProductDetailRoute() {
         supplierId: watched?.supplierId ?? product.supplierId,
         customerId: watched?.customerId ?? product.customerId,
         variantSetId: watched?.variantSetId ?? product.variantSetId,
+        pricingModel: watched?.pricingModel ?? product.pricingModel,
+        pricingSpecId: watched?.pricingSpecId ?? product.pricingSpecId,
+        baselinePriceAtMoq:
+          watched?.baselinePriceAtMoq ?? product.baselinePriceAtMoq,
         costPrice: watched?.costPrice ?? product.costPrice,
         leadTimeDays: watched?.leadTimeDays ?? product.leadTimeDays,
         externalStepType:
@@ -1251,9 +1255,10 @@ export default function ProductDetailRoute() {
           onRegisterMissingFocus={setFocusMissingRequired}
           requiredIndicatorMode={requiredIndicatorMode}
           hasMovements={hasMovements}
-          effectivePricingMode={effectivePricingMode}
-          pricingModeLabel={pricingModeLabel}
+          effectivePricingModel={effectivePricingModel}
+          pricingModelLabel={pricingModelLabel}
           pricingSpecOptions={pricingSpecOptions || []}
+          pricingSpecRangesById={pricingSpecRangesById || {}}
         />
       </Form>
       {/* Tags block removed; now handled by TagsInput in header and saved via global form */}
@@ -1278,19 +1283,6 @@ export default function ProductDetailRoute() {
               </Button>
             </Group>
           </Card.Section>
-          <CreateCmtFromBomHelper
-            parentProductId={product.id}
-            parentType={product.type}
-            parentCategoryId={product.categoryId ?? null}
-            parentSubCategoryId={product.subCategoryId ?? null}
-            categoryLabel={categoryLabel}
-            subCategoryLabel={subCategoryLabel}
-            hasCmtLine={Boolean(hasCmtLine)}
-            pricingSpecOptions={pricingSpecOptions || []}
-            subCategoryOptions={subCategoryOptions || []}
-            onSuccess={() => revalidate()}
-            disabledReason={immediateActionDisabledReason}
-          />
           {visibleBomRows.length > 0 && (
             <Table striped withTableBorder withColumnBorders highlightOnHover>
               <Table.Thead>

@@ -77,9 +77,18 @@ export type ProductDetailFormProps = {
     }
   >;
   metadataDefinitions?: ProductAttributeDefinition[];
-  effectivePricingMode?: string | null;
-  pricingModeLabel?: string | null;
+  effectivePricingModel?: string | null;
+  pricingModelLabel?: string | null;
   pricingSpecOptions?: Array<{ value: string; label: string }>;
+  pricingSpecRangesById?: Record<
+    string,
+    Array<{
+      id: number;
+      rangeFrom: number | null;
+      rangeTo: number | null;
+      multiplier: string;
+    }>
+  >;
 };
 
 export function ProductDetailForm({
@@ -99,9 +108,10 @@ export function ProductDetailForm({
   requireTemplate = false,
   hideTemplateField,
   metadataDefinitions = [],
-  effectivePricingMode,
-  pricingModeLabel,
+  effectivePricingModel,
+  pricingModelLabel,
   pricingSpecOptions = [],
+  pricingSpecRangesById = {},
 }: ProductDetailFormProps) {
   const optionsCtx = useOptions();
   const [tiersOpen, setTiersOpen] = React.useState(false);
@@ -323,8 +333,10 @@ export function ProductDetailForm({
   const costGroupId = form.watch("costGroupId");
   const manualSalePrice = form.watch("manualSalePrice");
   const manualMargin = form.watch("manualMargin");
-  const pricingModeValue = form.watch("pricingMode");
+  const pricingModelValue = form.watch("pricingModel");
   const pricingSpecId = form.watch("pricingSpecId");
+  const baselinePriceAtMoq = form.watch("baselinePriceAtMoq");
+  const transferPercent = form.watch("transferPercent");
   const categoryId = form.watch("categoryId");
   const externalStepValue = form.watch("externalStepType");
   const requirements = React.useMemo(
@@ -418,6 +430,25 @@ export function ProductDetailForm({
         map.purchaseTaxId = { state: "warn", message: "" };
       }
     }
+    const pricingModelUpper = String(
+      pricingModelValue || effectivePricingModel || ""
+    ).toUpperCase();
+    if (pricingModelUpper === "CURVE_SELL_AT_MOQ") {
+      if (!isFieldFilled("pricingSpecId")) {
+        if (attemptedSubmit) {
+          map.pricingSpecId = { state: "error", message: "" };
+        } else if (warnGate) {
+          map.pricingSpecId = { state: "warn", message: "" };
+        }
+      }
+      if (!isFieldFilled("baselinePriceAtMoq")) {
+        if (attemptedSubmit) {
+          map.baselinePriceAtMoq = { state: "error", message: "" };
+        } else if (warnGate) {
+          map.baselinePriceAtMoq = { state: "warn", message: "" };
+        }
+      }
+    }
     return map;
   }, [
     requirements.fields,
@@ -427,6 +458,8 @@ export function ProductDetailForm({
     typeValue,
     requiredIndicatorMode,
     product?.type,
+    pricingModelValue,
+    effectivePricingModel,
   ]);
   const globalOptions = getGlobalOptions();
   const categoryMetaById =
@@ -718,54 +751,60 @@ export function ProductDetailForm({
     },
     [renderFieldByName]
   );
-  const resolvedPricingMode =
-    (pricingModeValue as string | null) ?? effectivePricingMode ?? null;
-  const pricingModeLabelResolved =
-    pricingModeLabel ??
-    (resolvedPricingMode === "FIXED_PRICE"
-      ? "Fixed Price"
-      : resolvedPricingMode === "FIXED_MARGIN"
-      ? "Fixed Margin"
-      : resolvedPricingMode === "TIERED_COST"
-      ? "Tiered Cost"
-      : resolvedPricingMode === "TIERED_SELL"
-      ? "Tiered Sell"
-      : resolvedPricingMode === "GENERATED"
-      ? "Generated"
+  const resolvedPricingModel =
+    (pricingModelValue as string | null) ?? effectivePricingModel ?? null;
+  const pricingModelLabelResolved =
+    pricingModelLabel ??
+    (resolvedPricingModel === "COST_PLUS_MARGIN"
+      ? "Cost + Margin"
+      : resolvedPricingModel === "COST_PLUS_FIXED_SELL"
+      ? "Cost + Fixed Sell"
+      : resolvedPricingModel === "TIERED_COST_PLUS_MARGIN"
+      ? "Tiered Cost + Margin"
+      : resolvedPricingModel === "CURVE_SELL_AT_MOQ"
+      ? "Curve (Sell at MOQ)"
       : "Unspecified");
-  const pricingModeOptions = React.useMemo(
+  const pricingModelOptions = React.useMemo(
     () => [
-      { value: "FIXED_PRICE", label: "Fixed Price" },
-      { value: "FIXED_MARGIN", label: "Fixed Margin" },
-      { value: "TIERED_COST", label: "Tiered Cost" },
-      { value: "TIERED_SELL", label: "Tiered Sell" },
-      { value: "GENERATED", label: "Generated" },
+      { value: "COST_PLUS_MARGIN", label: "Cost + Margin" },
+      { value: "COST_PLUS_FIXED_SELL", label: "Cost + Fixed Sell" },
+      { value: "TIERED_COST_PLUS_MARGIN", label: "Tiered Cost + Margin" },
+      { value: "CURVE_SELL_AT_MOQ", label: "Curve (Sell at MOQ)" },
     ],
     []
   );
-  const confirmPricingModeChange = React.useCallback(
-    (nextMode: string) => {
+  const confirmPricingModelChange = React.useCallback(
+    (nextModel: string) => {
       const clearMap: Record<string, string[]> = {
-        FIXED_PRICE: [
-          "manualMargin",
-          "costGroupId",
+        COST_PLUS_MARGIN: [
+          "manualSalePrice",
           "salePriceGroupId",
           "pricingSpecId",
+          "baselinePriceAtMoq",
         ],
-        FIXED_MARGIN: ["manualSalePrice", "salePriceGroupId", "pricingSpecId"],
-        TIERED_COST: ["manualSalePrice", "salePriceGroupId", "pricingSpecId"],
-        TIERED_SELL: ["manualSalePrice", "manualMargin", "pricingSpecId"],
-        GENERATED: [
-          "manualSalePrice",
+        COST_PLUS_FIXED_SELL: [
           "manualMargin",
           "salePriceGroupId",
+          "pricingSpecId",
+          "baselinePriceAtMoq",
+        ],
+        TIERED_COST_PLUS_MARGIN: [
+          "manualSalePrice",
+          "salePriceGroupId",
+          "pricingSpecId",
+          "baselinePriceAtMoq",
+        ],
+        CURVE_SELL_AT_MOQ: [
+          "manualSalePrice",
+          "manualMargin",
           "costGroupId",
+          "salePriceGroupId",
         ],
       };
-      const clears = clearMap[nextMode] || [];
+      const clears = clearMap[nextModel] || [];
       const label =
-        pricingModeOptions.find((opt) => opt.value === nextMode)?.label ||
-        nextMode;
+        pricingModelOptions.find((opt) => opt.value === nextModel)?.label ||
+        nextModel;
       const body = clears.length
         ? `Changing to ${label} will clear: ${clears.join(", ")}. Continue?`
         : `Change pricing model to ${label}?`;
@@ -775,16 +814,16 @@ export function ProductDetailForm({
         labels: { confirm: "Change", cancel: "Cancel" },
         confirmProps: { color: "red" },
         onConfirm: () => {
-          form.setValue("pricingMode", nextMode, { shouldDirty: true });
+          form.setValue("pricingModel", nextModel, { shouldDirty: true });
           for (const field of clears) {
             form.setValue(field as any, null, { shouldDirty: true });
           }
         },
       });
     },
-    [form, pricingModeOptions]
+    [form, pricingModelOptions]
   );
-  const modeSelectorEnabled = allowModeChange || product?.pricingMode == null;
+  const modeSelectorEnabled = allowModeChange || product?.pricingModel == null;
   const derivedMargin = React.useMemo(() => {
     const cost = Number(costPriceValue ?? 0);
     const sell = Number(form.getValues("manualSalePrice") ?? 0);
@@ -799,13 +838,6 @@ export function ProductDetailForm({
       return null;
     return cost * (1 + margin);
   }, [costPriceValue, manualMargin, form]);
-  const tierSummary = React.useMemo(() => {
-    const productTiers = (product?.salePriceRanges || []).length;
-    const groupTiers = (product?.salePriceGroup?.saleRanges || []).length;
-    if (productTiers) return `Product sell tiers: ${productTiers}`;
-    if (groupTiers) return `Group sell tiers: ${groupTiers}`;
-    return "No sell tiers";
-  }, [product]);
   const costTierSummary = React.useMemo(() => {
     const groupTiers = (product?.costGroup?.costRanges || []).length;
     if (groupTiers) return `Group cost tiers: ${groupTiers}`;
@@ -823,13 +855,64 @@ export function ProductDetailForm({
     if (!spec) return "No pricing spec";
     return spec.name || spec.code || `Spec #${spec.id}`;
   }, [product, pricingSpecId, pricingSpecOptions]);
-  const generatedTierSummary = React.useMemo(() => {
-    const rows = (product?.salePriceRanges || []).filter(
-      (r: any) => r.generatedBySpecId != null
-    );
-    if (!rows.length) return "No generated tiers";
-    return `Generated tiers: ${rows.length}`;
-  }, [product]);
+  const curvePreviewRows = React.useMemo(() => {
+    if (resolvedPricingModel !== "CURVE_SELL_AT_MOQ") return [];
+    if (pricingSpecId == null) return [];
+    const ranges = pricingSpecRangesById[String(pricingSpecId)] || [];
+    if (!ranges.length) return [];
+    const base = Number(baselinePriceAtMoq);
+    if (!Number.isFinite(base) || base <= 0) return [];
+    const qtys = new Set<number>([1, 5, 10, 20]);
+    const moqCandidates = ranges
+      .filter((r) => Number(r.multiplier) === 1 && r.rangeFrom != null)
+      .map((r) => Number(r.rangeFrom));
+    if (moqCandidates.length) {
+      qtys.add(Math.min(...moqCandidates));
+    }
+    for (const range of ranges) {
+      if (range.rangeFrom != null) qtys.add(Number(range.rangeFrom));
+      if (range.rangeTo != null) qtys.add(Number(range.rangeTo));
+    }
+    const sortedQtys = Array.from(qtys)
+      .filter((q) => Number.isFinite(q) && q > 0)
+      .sort((a, b) => a - b)
+      .slice(0, 8);
+    const resolveRange = (qty: number) => {
+      const matches = ranges.filter((r) => {
+        const min = r.rangeFrom != null ? Number(r.rangeFrom) : 1;
+        const max =
+          r.rangeTo != null ? Number(r.rangeTo) : Number.MAX_SAFE_INTEGER;
+        return qty >= min && qty <= max;
+      });
+      if (!matches.length) return null;
+      const width = (r: typeof matches[number]) => {
+        const min = r.rangeFrom != null ? Number(r.rangeFrom) : 1;
+        const max =
+          r.rangeTo != null ? Number(r.rangeTo) : Number.MAX_SAFE_INTEGER;
+        return max - min;
+      };
+      return matches.sort((a, b) => width(a) - width(b))[0];
+    };
+    return sortedQtys.map((qty) => {
+      const match = resolveRange(qty);
+      const mult = match ? Number(match.multiplier) : null;
+      const price =
+        match && Number.isFinite(mult) ? base * mult : Number.NaN;
+      return {
+        qty,
+        multiplier: match ? match.multiplier : null,
+        unitPrice:
+          Number.isFinite(price) && price >= 0
+            ? (Math.round(price * 100) / 100).toFixed(2)
+            : "n/a",
+      };
+    });
+  }, [
+    resolvedPricingModel,
+    pricingSpecId,
+    pricingSpecRangesById,
+    baselinePriceAtMoq,
+  ]);
   const metadataFields = React.useMemo(
     () =>
       buildProductMetadataFields(metadataDefinitions, {
@@ -849,9 +932,9 @@ export function ProductDetailForm({
       />
       <input
         type="hidden"
-        name="pricingMode"
-        value={pricingModeValue ?? ""}
-        data-debug="pricingMode-hidden"
+        name="pricingModel"
+        value={pricingModelValue ?? ""}
+        data-debug="pricingModel-hidden"
       />
       <input
         type="hidden"
@@ -909,7 +992,7 @@ export function ProductDetailForm({
                 ) : null}
                 <Group justify="space-between" align="center" wrap="wrap">
                   <Text size="xs" c="dimmed">
-                    Pricing model: {pricingModeLabelResolved}
+                    Pricing model: {pricingModelLabelResolved}
                   </Text>
                   <Button
                     type="button"
@@ -921,7 +1004,7 @@ export function ProductDetailForm({
                     Pricing settings...
                   </Button>
                 </Group>
-                {resolvedPricingMode === "FIXED_PRICE" ? (
+                {resolvedPricingModel === "COST_PLUS_FIXED_SELL" ? (
                   <Stack gap="xs">
                     {renderFieldByName("costPrice")}
                     {renderFieldByName("manualSalePriceOverride")}
@@ -932,7 +1015,7 @@ export function ProductDetailForm({
                         : `${Math.round(derivedMargin * 1000) / 10}%`}
                     </Text>
                   </Stack>
-                ) : resolvedPricingMode === "FIXED_MARGIN" ? (
+                ) : resolvedPricingModel === "COST_PLUS_MARGIN" ? (
                   <Stack gap="xs">
                     {renderFieldByName("costPrice")}
                     {renderFieldByName("manualMargin")}
@@ -943,24 +1026,23 @@ export function ProductDetailForm({
                         : (Math.round(derivedSell * 100) / 100).toFixed(2)}
                     </Text>
                   </Stack>
-                ) : resolvedPricingMode === "TIERED_COST" ? (
+                ) : resolvedPricingModel === "TIERED_COST_PLUS_MARGIN" ? (
                   <Stack gap="xs">
                     {renderFieldByName("manualMargin")}
                     <Text size="xs" c="dimmed">
                       {costTierSummary}
                     </Text>
                   </Stack>
-                ) : resolvedPricingMode === "TIERED_SELL" ? (
-                  <Text size="xs" c="dimmed">
-                    {tierSummary}
-                  </Text>
-                ) : resolvedPricingMode === "GENERATED" ? (
+                ) : resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
                   <Stack gap="xs">
                     <Text size="xs" c="dimmed">
                       Spec: {specSummary}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {generatedTierSummary}
+                      Price at MOQ:{" "}
+                      {baselinePriceAtMoq != null && baselinePriceAtMoq !== ""
+                        ? Number(baselinePriceAtMoq).toFixed(2)
+                        : "—"}
                     </Text>
                   </Stack>
                 ) : (
@@ -1018,17 +1100,17 @@ export function ProductDetailForm({
           {modeSelectorEnabled ? (
             <Select
               label="Pricing model"
-              data={pricingModeOptions}
-              value={resolvedPricingMode ?? ""}
+              data={pricingModelOptions}
+              value={resolvedPricingModel ?? ""}
               onChange={(next) => {
-                if (!next || next === resolvedPricingMode) return;
-                confirmPricingModeChange(next);
+                if (!next || next === resolvedPricingModel) return;
+                confirmPricingModelChange(next);
               }}
             />
           ) : (
             <Group justify="space-between" align="center">
               <Text size="sm" c="dimmed">
-                Pricing model: {pricingModeLabelResolved}
+                Pricing model: {pricingModelLabelResolved}
               </Text>
               <Button
                 type="button"
@@ -1040,18 +1122,46 @@ export function ProductDetailForm({
               </Button>
             </Group>
           )}
-          {renderFieldByName("costGroupId")}
-          {renderFieldByName("salePriceGroupId")}
-          <Select
-            label="Pricing Spec"
-            data={pricingSpecOptions}
-            value={pricingSpecId != null ? String(pricingSpecId) : ""}
-            placeholder="Select spec"
-            onChange={(val) => {
-              const next = val ? Number(val) : null;
-              form.setValue("pricingSpecId", next, { shouldDirty: true });
-            }}
-          />
+          {resolvedPricingModel !== "CURVE_SELL_AT_MOQ"
+            ? renderFieldByName("costGroupId")
+            : null}
+          {resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
+            <>
+              <Select
+                label="Curve Spec"
+                data={pricingSpecOptions}
+                value={pricingSpecId != null ? String(pricingSpecId) : ""}
+                placeholder="Select curve spec"
+                onChange={(val) => {
+                  const next = val ? Number(val) : null;
+                  form.setValue("pricingSpecId", next, { shouldDirty: true });
+                }}
+              />
+              {renderFieldByName("baselinePriceAtMoq")}
+              {renderFieldByName("transferPercent")}
+              {curvePreviewRows.length ? (
+                <Stack gap={4}>
+                  <Text size="xs" c="dimmed">
+                    Curve preview (unit sell)
+                  </Text>
+                  {curvePreviewRows.map((row) => (
+                    <Group
+                      key={row.qty}
+                      justify="space-between"
+                      align="center"
+                      wrap="nowrap"
+                    >
+                      <Text size="xs">Qty {row.qty}</Text>
+                      <Text size="xs" c="dimmed">
+                        × {row.multiplier ?? "—"}
+                      </Text>
+                      <Text size="xs">{row.unitPrice}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              ) : null}
+            </>
+          ) : null}
         </Stack>
       </Drawer>
       {legacyEntries.length ? (

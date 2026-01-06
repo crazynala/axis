@@ -63,6 +63,20 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
               leadTimeDays: true,
               stockTrackingEnabled: true,
               batchTrackingEnabled: true,
+              pricingModel: true,
+              baselinePriceAtMoq: true,
+              transferPercent: true,
+              pricingSpec: {
+                select: {
+                  ranges: {
+                    select: {
+                      rangeFrom: true,
+                      rangeTo: true,
+                      multiplier: true,
+                    },
+                  },
+                },
+              },
               salePriceGroup: { select: { id: true, saleRanges: true } },
               salePriceRanges: true,
               supplier: {

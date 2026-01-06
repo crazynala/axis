@@ -10,6 +10,10 @@ export type PricingContext = {
   qty: number;
   product: {
     id: number;
+    pricingModel?: string | null;
+    pricingSpecId?: number | null;
+    baselinePriceAtMoq?: number | null;
+    transferPercent?: number | null;
     manualSalePrice?: number | null;
     manualMargin?: number | null;
     costCurrency?: string | null;
@@ -19,6 +23,11 @@ export type PricingContext = {
     costPriceTiers?: { minQty: number; unitCost: number }[] | null; // optional cost tiers
     costPrice?: number | null; // fallback base cost
     groupCostPrice?: number | null; // fallback group cost
+    pricingSpecRanges?: Array<{
+      rangeFrom: number | null;
+      rangeTo: number | null;
+      multiplier: number;
+    }> | null;
   };
   supplier?: { id: number } | null; // vendor
   customer?: { id: number } | null;
@@ -38,7 +47,11 @@ export type PricingResult = {
   extendedSell: number;
   extendedCost: number;
   applied: {
-    mode: "manualSalePrice" | "tierMultiplier" | "costMargin";
+    mode:
+      | "costPlusMargin"
+      | "costPlusFixedSell"
+      | "tieredCostPlusMargin"
+      | "curveSellAtMoq";
     marginUsed?: number | null;
     priceMultiplier?: number | null;
     tier?: PriceTier | null;

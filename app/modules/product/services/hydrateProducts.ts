@@ -18,6 +18,17 @@ export type ProductRowBase = {
   leadTimeDays: number | null;
   externalStepType: string | null;
   manualSalePrice: any;
+  pricingModel: string | null;
+  pricingSpecId: number | null;
+  baselinePriceAtMoq: any;
+  transferPercent: any;
+  pricingSpec?: {
+    ranges?: Array<{
+      rangeFrom: number | null;
+      rangeTo: number | null;
+      multiplier: any;
+    }>;
+  } | null;
   stockTrackingEnabled: boolean | null;
   batchTrackingEnabled: boolean | null;
 };
@@ -42,6 +53,10 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       leadTimeDays: true,
       externalStepType: true,
       manualSalePrice: true,
+      pricingModel: true,
+      pricingSpecId: true,
+      baselinePriceAtMoq: true,
+      transferPercent: true,
       stockTrackingEnabled: true,
       batchTrackingEnabled: true,
       category: { select: { label: true, code: true } },
@@ -50,6 +65,11 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       costGroup: {
         select: {
           costRanges: { select: { rangeFrom: true, costPrice: true } },
+        },
+      },
+      pricingSpec: {
+        select: {
+          ranges: { select: { rangeFrom: true, rangeTo: true, multiplier: true } },
         },
       },
       purchaseTax: { select: { value: true, label: true, code: true } },
@@ -96,7 +116,10 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
         .filter(
           (t) => Number.isFinite(t.minQty) && Number.isFinite(t.priceCost)
         ) || [];
-    if (r.manualSalePrice) {
+    if (
+      r.manualSalePrice &&
+      String(r.pricingModel || "").toUpperCase() !== "CURVE_SELL_AT_MOQ"
+    ) {
       enrichedRow = {
         ...r,
         c_sellPrice: r.manualSalePrice,
@@ -107,6 +130,16 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
         baseCost: Number(r.costPrice ?? 0) || 0,
         tiers: priceTiers,
         taxRate: Number(r.purchaseTax?.value ?? 0) || 0,
+        pricingModel: r.pricingModel ?? null,
+        baselinePriceAtMoq:
+          r.baselinePriceAtMoq != null ? Number(r.baselinePriceAtMoq) : null,
+        transferPercent:
+          r.transferPercent != null ? Number(r.transferPercent) : null,
+        pricingSpecRanges: (r.pricingSpec?.ranges || []).map((range: any) => ({
+          rangeFrom: range.rangeFrom ?? null,
+          rangeTo: range.rangeTo ?? null,
+          multiplier: Number(range.multiplier),
+        })),
       });
       enrichedRow = { ...r, c_sellPrice: sellPrice.unitSellPrice };
     }

@@ -16,6 +16,15 @@ export class ProductPricingService {
         defaultCostQty: true,
         purchaseTaxId: true,
         manualSalePrice: true,
+        pricingModel: true,
+        pricingSpecId: true,
+        baselinePriceAtMoq: true,
+        transferPercent: true,
+        pricingSpec: {
+          select: {
+            ranges: { select: { rangeFrom: true, rangeTo: true, multiplier: true } },
+          },
+        },
         costGroupId: true,
         supplierId: true,
       },
@@ -79,7 +88,22 @@ export class ProductPricingService {
 
     // Base cost fallback when no tiers
     const baseCost = toNumber(p.costPrice) ?? 0;
-    const out = calcPrice({ baseCost, qty: q, tiers, taxRate });
+    const out = calcPrice({
+      baseCost,
+      qty: q,
+      tiers,
+      taxRate,
+      pricingModel: p.pricingModel,
+      baselinePriceAtMoq:
+        p.baselinePriceAtMoq != null ? Number(p.baselinePriceAtMoq) : null,
+      transferPercent:
+        p.transferPercent != null ? Number(p.transferPercent) : null,
+      pricingSpecRanges: (p.pricingSpec?.ranges || []).map((range) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
+    });
     return out.unitSellPrice;
   }
 }

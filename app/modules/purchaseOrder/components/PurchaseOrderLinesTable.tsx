@@ -106,9 +106,11 @@ export function PurchaseOrderLinesTable({
     const qty = Number(qtyOrdered || 0) || 0;
     if (!prod) return { cost: 0, sell: 0, taxRate: 0 } as any;
     const cost = Number(prod.costPrice || 0);
+    const pricingModel = String(prod.pricingModel || "").toUpperCase();
     // Detect manual sell price at product level (and via hydrated flag)
     const hasManualSell =
-      prod.manualSalePrice != null || prod.c_isSellPriceManual === true;
+      pricingModel !== "CURVE_SELL_AT_MOQ" &&
+      (prod.manualSalePrice != null || prod.c_isSellPriceManual === true);
     if (hasManualSell) {
       const out = calcPrice({
         baseCost: cost,
@@ -116,6 +118,18 @@ export function PurchaseOrderLinesTable({
         taxRate: Number(prod.purchaseTax?.value || 0),
         qty: qty > 0 ? qty : 1,
         manualSalePrice: Number(prod.manualSalePrice || 0),
+        pricingModel: prod.pricingModel ?? null,
+        baselinePriceAtMoq:
+          prod.baselinePriceAtMoq != null
+            ? Number(prod.baselinePriceAtMoq)
+            : null,
+        transferPercent:
+          prod.transferPercent != null ? Number(prod.transferPercent) : null,
+        pricingSpecRanges: (prod.pricingSpec?.ranges || []).map((range: any) => ({
+          rangeFrom: range.rangeFrom ?? null,
+          rangeTo: range.rangeTo ?? null,
+          multiplier: Number(range.multiplier),
+        })),
       });
       return {
         cost,
@@ -155,6 +169,18 @@ export function PurchaseOrderLinesTable({
       qty: qty > 0 ? qty : 1,
       marginPct,
       priceMultiplier,
+      pricingModel: prod.pricingModel ?? null,
+      baselinePriceAtMoq:
+        prod.baselinePriceAtMoq != null
+          ? Number(prod.baselinePriceAtMoq)
+          : null,
+      transferPercent:
+        prod.transferPercent != null ? Number(prod.transferPercent) : null,
+      pricingSpecRanges: (prod.pricingSpec?.ranges || []).map((range: any) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
     });
     // console.log("Live prices", productId, qtyOrdered, out);
     const unitCost = Number((out as any)?.breakdown?.baseUnit ?? cost ?? 0);

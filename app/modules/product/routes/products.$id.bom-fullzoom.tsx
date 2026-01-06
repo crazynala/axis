@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useParams, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useParams } from "@remix-run/react";
 import ProductBomSpreadsheet from "../components/ProductBomSpreadsheet";
 import type { BOMRow } from "../components/ProductBomSpreadsheet";
 import { prismaBase } from "~/utils/prisma.server";
@@ -15,8 +15,6 @@ import {
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
 import { Stack } from "@mantine/core";
-import { ValueListType } from "@prisma/client";
-import { CreateCmtFromBomHelper } from "../components/CreateCmtFromBomHelper";
 
 export async function loader({ params }: any) {
   const id = Number(params.id);
@@ -56,54 +54,8 @@ export async function loader({ params }: any) {
     supplier: pl.child?.supplier?.name || "",
     quantity: Number(pl.quantity ?? 0) || 0,
   }));
-  const hasCmtLine = (product.productLines || []).some(
-    (pl: any) => pl.child?.type === "CMT" && !pl.flagAssemblyOmit
-  );
   const categoryId = product.categoryId ?? null;
   const subCategoryId = product.subCategoryId ?? null;
-  const [category, subCategory, subCategoryOptions, pricingSpecs] =
-    await Promise.all([
-      categoryId
-        ? prismaBase.valueList.findUnique({
-            where: { id: categoryId },
-            select: { id: true, label: true, code: true },
-          })
-        : Promise.resolve(null),
-      subCategoryId
-        ? prismaBase.valueList.findUnique({
-            where: { id: subCategoryId },
-            select: { id: true, label: true, code: true },
-          })
-        : Promise.resolve(null),
-      categoryId
-        ? prismaBase.valueList.findMany({
-            where: { type: ValueListType.Category, parentId: categoryId },
-            orderBy: { label: "asc" },
-            select: { id: true, label: true, code: true },
-          })
-        : Promise.resolve([]),
-      prismaBase.pricingSpec.findMany({
-        where: { curveFamily: { in: ["CMT_MOQ_50", "CMT_MOQ_100"] } },
-        orderBy: { id: "asc" },
-        select: { id: true, name: true, code: true, curveFamily: true },
-      }),
-    ]);
-
-  const pricingSpecOptions = pricingSpecs.map((spec) => ({
-    value: String(spec.id),
-    label:
-      spec.name ||
-      (spec.curveFamily === "CMT_MOQ_50"
-        ? "MOQ 50"
-        : spec.curveFamily === "CMT_MOQ_100"
-        ? "MOQ 100"
-        : spec.code),
-  }));
-
-  const subCategorySelect = subCategoryOptions.map((opt) => ({
-    value: String(opt.id),
-    label: opt.label || opt.code || `#${opt.id}`,
-  }));
 
   return json({
     rows,
@@ -114,11 +66,6 @@ export async function loader({ params }: any) {
       categoryId,
       subCategoryId,
     },
-    hasCmtLine,
-    pricingSpecOptions,
-    categoryLabel: category?.label || category?.code || null,
-    subCategoryLabel: subCategory?.label || subCategory?.code || null,
-    subCategoryOptions: subCategorySelect,
   });
 }
 
@@ -126,11 +73,6 @@ export default function ProductBomRoute() {
   const {
     rows,
     product,
-    hasCmtLine,
-    pricingSpecOptions,
-    categoryLabel,
-    subCategoryLabel,
-    subCategoryOptions,
   } = useLoaderData<typeof loader>();
   // const navigate = useNavigate();
   const params = useParams();
@@ -144,7 +86,6 @@ export default function ProductBomRoute() {
     ? `/products/${productId}`
     : "/products";
   const originalRef = useRef<BOMRow[]>(rows);
-  const revalidator = useRevalidator();
 
   useEffect(() => {
     if (!refreshOnNextRows) return;
@@ -311,21 +252,6 @@ export default function ProductBomRoute() {
     >
       {(gridHeight) => (
         <Stack h={gridHeight} gap="md">
-          <CreateCmtFromBomHelper
-            parentProductId={productId}
-            parentType={product?.type ?? null}
-            parentCategoryId={product?.categoryId ?? null}
-            parentSubCategoryId={product?.subCategoryId ?? null}
-            categoryLabel={categoryLabel}
-            subCategoryLabel={subCategoryLabel}
-            hasCmtLine={hasCmtLine}
-            pricingSpecOptions={pricingSpecOptions}
-            subCategoryOptions={subCategoryOptions}
-            onSuccess={() => {
-              setRefreshOnNextRows(true);
-              revalidator.revalidate();
-            }}
-          />
           <ProductBomSpreadsheet
             rows={editedRows}
             onSave={() => {}}

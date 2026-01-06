@@ -75,6 +75,14 @@ export type CostingRow = {
   priceMultiplier?: number | null; // from job.company
   manualSalePrice?: number | null; // override for calc
   marginPct?: number | null; // optional margin when falling back to cost+margin
+  pricingModel?: string | null;
+  baselinePriceAtMoq?: number | null;
+  transferPercent?: number | null;
+  pricingSpecRanges?: Array<{
+    rangeFrom: number | null;
+    rangeTo: number | null;
+    multiplier: number;
+  }>;
   flagIsDisabled?: boolean;
   flagDefinedInProduct?: boolean;
 };
@@ -159,6 +167,16 @@ export function AssemblyCostingsTable(props: {
       manualSalePrice:
         c.manualSalePrice != null ? Number(c.manualSalePrice) : undefined,
       marginPct: c.marginPct != null ? Number(c.marginPct) : undefined,
+      pricingModel: c.pricingModel ?? null,
+      baselinePriceAtMoq:
+        c.baselinePriceAtMoq != null ? Number(c.baselinePriceAtMoq) : null,
+      transferPercent:
+        c.transferPercent != null ? Number(c.transferPercent) : null,
+      pricingSpecRanges: (c.pricingSpecRanges || []).map((range) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
     });
     return out;
   };

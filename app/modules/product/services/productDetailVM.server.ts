@@ -5,10 +5,10 @@ import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
 import type { ProductDetailVM } from "~/modules/product/types/productDetailVM";
 import { ValueListType } from "@prisma/client";
 import {
-  inferPricingModeFromData,
-  PRICING_MODE_LABELS,
-  type PricingMode,
-} from "~/modules/product/services/pricingMode.server";
+  inferPricingModelFromData,
+  PRODUCT_PRICING_MODEL_LABELS,
+  type ProductPricingModel,
+} from "~/modules/product/services/pricingModel.server";
 
 export async function loadProductDetailVM(opts: {
   params: Params;
@@ -31,7 +31,9 @@ export async function loadProductDetailVM(opts: {
       include: {
         customer: { select: { id: true, priceMultiplier: true } },
         costGroup: { include: { costRanges: true } },
-        pricingSpec: { select: { id: true, name: true, code: true, curveFamily: true } },
+        pricingSpec: {
+          select: { id: true, name: true, code: true, curveFamily: true },
+        },
         salePriceGroup: { include: { saleRanges: true } },
         salePriceRanges: true,
       productLines: {
@@ -119,7 +121,10 @@ export async function loadProductDetailVM(opts: {
     });
     const metadataValuesPromise = prismaBase.productAttributeValue.findMany({
       where: { productId: id },
-      include: { definition: { select: { key: true, dataType: true } } },
+      include: {
+        definition: { select: { key: true, dataType: true } },
+        option: { select: { mergedIntoId: true, isArchived: true } },
+      },
     });
     const [
       product,
@@ -233,22 +238,48 @@ export async function loadProductDetailVM(opts: {
         prismaBase.pricingSpec.findMany({
           where: {
             target: "SELL",
-            curveFamily: { in: ["CMT_MOQ_50", "CMT_MOQ_100"] },
           },
           orderBy: { id: "asc" },
-          select: { id: true, name: true, code: true, curveFamily: true },
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            curveFamily: true,
+            ranges: {
+              orderBy: { rangeFrom: "desc" },
+              select: {
+                id: true,
+                rangeFrom: true,
+                rangeTo: true,
+                multiplier: true,
+              },
+            },
+          },
         }),
       ]);
     const pricingSpecOptions = pricingSpecs.map((spec) => ({
       value: String(spec.id),
-      label:
-        spec.name ||
-        (spec.curveFamily === "CMT_MOQ_50"
-          ? "MOQ 50"
-          : spec.curveFamily === "CMT_MOQ_100"
-          ? "MOQ 100"
-          : spec.code),
+      label: spec.name || spec.code || spec.curveFamily || `#${spec.id}`,
     }));
+    const pricingSpecRangesById = pricingSpecs.reduce<
+      Record<
+        string,
+        Array<{
+          id: number;
+          rangeFrom: number | null;
+          rangeTo: number | null;
+          multiplier: string;
+        }>
+      >
+    >((acc, spec) => {
+      acc[String(spec.id)] = (spec.ranges || []).map((range) => ({
+        id: range.id,
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: String(range.multiplier),
+      }));
+      return acc;
+    }, {});
     const subCategorySelect = subCategoryOptions.map((opt) => ({
       value: String(opt.id),
       label: opt.label || opt.code || `#${opt.id}`,
@@ -262,9 +293,18 @@ export async function loadProductDetailVM(opts: {
       else if (dt === "BOOLEAN") metadataValuesByKey[key] = row.valueBool;
       else if (dt === "JSON")
         metadataValuesByKey[key] = row.valueJson ?? row.valueString;
-      else if (dt === "ENUM")
-        metadataValuesByKey[key] =
-          (row as any).optionId ?? row.valueString ?? null;
+      else if (dt === "ENUM") {
+        const mergedIntoId = (row as any)?.option?.mergedIntoId ?? null;
+        const isArchived = Boolean((row as any)?.option?.isArchived);
+        if (mergedIntoId) {
+          metadataValuesByKey[key] = mergedIntoId;
+        } else if (isArchived) {
+          metadataValuesByKey[key] = null;
+        } else {
+          metadataValuesByKey[key] =
+            (row as any).optionId ?? row.valueString ?? null;
+        }
+      }
       else metadataValuesByKey[key] = row.valueString ?? null;
     }
     (product as any).metadataValuesByKey = metadataValuesByKey;
@@ -362,12 +402,12 @@ export async function loadProductDetailVM(opts: {
     }
     const vm: ProductDetailVM = {
       product,
-      effectivePricingMode:
-        (product as any)?.pricingMode ?? inferPricingModeFromData(product),
-      pricingModeLabel:
-        PRICING_MODE_LABELS[
-          ((product as any)?.pricingMode ??
-            inferPricingModeFromData(product)) as PricingMode
+      effectivePricingModel:
+        (product as any)?.pricingModel ?? inferPricingModelFromData(product),
+      pricingModelLabel:
+        PRODUCT_PRICING_MODEL_LABELS[
+          ((product as any)?.pricingModel ??
+            inferPricingModelFromData(product)) as ProductPricingModel
         ],
       metadataDefinitions: metadataDefinitions || [],
       metadataValuesByKey,
@@ -382,6 +422,7 @@ export async function loadProductDetailVM(opts: {
       costingAssemblies,
       hasCmtLine,
       pricingSpecOptions,
+      pricingSpecRangesById,
       categoryLabel: category?.label || category?.code || null,
       subCategoryLabel: subCategory?.label || subCategory?.code || null,
       subCategoryOptions: subCategorySelect,

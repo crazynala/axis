@@ -10,6 +10,10 @@ type MinimalCosting = {
     batchTrackingEnabled?: boolean | null;
     salePriceGroup?: { saleRanges?: any[] | null } | null;
     salePriceRanges?: any[] | null;
+    pricingModel?: string | null;
+    baselinePriceAtMoq?: any;
+    transferPercent?: any;
+    pricingSpec?: { ranges?: any[] | null } | null;
   } | null;
   productId?: number | null;
   quantityPerUnit?: any;
@@ -100,6 +104,20 @@ export function buildCostingRows(options: {
       manualSalePrice:
         c.manualSalePrice != null ? Number(c.manualSalePrice) : null,
       marginPct: c.manualMargin != null ? Number(c.manualMargin) : null,
+      pricingModel: c.product?.pricingModel ?? null,
+      baselinePriceAtMoq:
+        c.product?.baselinePriceAtMoq != null
+          ? Number(c.product.baselinePriceAtMoq)
+          : null,
+      transferPercent:
+        c.product?.transferPercent != null
+          ? Number(c.product.transferPercent)
+          : null,
+      pricingSpecRanges: (c.product?.pricingSpec?.ranges || []).map((r: any) => ({
+        rangeFrom: r.rangeFrom ?? null,
+        rangeTo: r.rangeTo ?? null,
+        multiplier: Number(r.multiplier),
+      })),
       flagIsDisabled: Boolean((c as any).flagIsDisabled),
       flagDefinedInProduct: Boolean((c as any).flagDefinedInProduct),
     };

@@ -1,5 +1,10 @@
 import { prisma } from "~/utils/prisma.server";
 import type { PricingContext, PricingResult, PriceTier } from "./pricingTypes";
+import {
+  inferPricingModelFromData,
+  type ProductPricingModel,
+} from "~/modules/product/services/pricingModel.server";
+import { getCurveSellUnitPrice } from "./curvePricing.server";
 
 function round(n: number) {
   return Math.round(n * 100) / 100;
@@ -78,17 +83,55 @@ export async function computePrice(
 ): Promise<PricingResult> {
   const qty = Math.max(1, toNum(ctx.qty, 1));
   const taxRate = toNum(ctx.product.purchaseTaxRate, 0);
-  const rate = ctx.currencyRate != null ? toNum(ctx.currencyRate, 1) : 1;
+  const pricingModel =
+    (ctx.product.pricingModel as ProductPricingModel | null) ??
+    inferPricingModelFromData(ctx.product);
 
-  // 1) Manual sale price wins
-  if (ctx.product.manualSalePrice != null) {
+  if (pricingModel === "CURVE_SELL_AT_MOQ") {
+    const specRanges = ctx.product.pricingSpecRanges || [];
+    const base = toNum(ctx.product.baselinePriceAtMoq, 0);
+    if (!Number.isFinite(base) || base <= 0) {
+      throw new Error("Price at MOQ is required for curve pricing");
+    }
+    if (!specRanges.length) {
+      throw new Error("Curve spec has no ranges");
+    }
+    const unit = getCurveSellUnitPrice({
+      qty,
+      baselinePriceAtMoq: base,
+      specRanges,
+    });
+    const withTax = unit * (1 + taxRate);
+    const transferPercent =
+      ctx.product.transferPercent != null
+        ? toNum(ctx.product.transferPercent, null as any)
+        : null;
+    const extendedCost =
+      transferPercent != null
+        ? round(withTax * qty * transferPercent)
+        : round(withTax * qty);
+    return {
+      unitSellPrice: round(withTax),
+      extendedSell: round(withTax * qty),
+      extendedCost,
+      applied: {
+        mode: "curveSellAtMoq",
+        baseUnit: round(unit),
+        inTarget: round(unit),
+        discounted: round(unit),
+        withTax: round(withTax),
+      },
+    };
+  }
+
+  if (pricingModel === "COST_PLUS_FIXED_SELL") {
     const withTax = toNum(ctx.product.manualSalePrice, 0);
     return {
       unitSellPrice: round(withTax),
       extendedSell: round(withTax * qty),
       extendedCost: round(withTax * qty),
       applied: {
-        mode: "manualSalePrice",
+        mode: "costPlusFixedSell",
         baseUnit: round(toNum(ctx.product.manualSalePrice, 0)),
         inTarget: round(toNum(ctx.product.manualSalePrice, 0)),
         discounted: round(toNum(ctx.product.manualSalePrice, 0)),
@@ -97,39 +140,7 @@ export async function computePrice(
     };
   }
 
-  // 2) Tier-based sale price groups + client multiplier
-  const tiers = ctx.product.salePriceTiers ?? [];
-  const tier = pickTierForQty(tiers, qty);
-  if (tier) {
-    // New precedence: customer-level default multiplier if present
-    let multiplier = 1;
-    if (ctx.customer?.id) {
-      const cust = await prisma.company.findUnique({
-        where: { id: ctx.customer.id },
-        select: { priceMultiplier: true },
-      });
-      if (cust?.priceMultiplier != null)
-        multiplier = toNum(cust.priceMultiplier, 1);
-    }
-    const unit = toNum(tier.unitPrice, 0) * multiplier;
-    const withTax = unit * (1 + taxRate);
-    return {
-      unitSellPrice: round(withTax),
-      extendedSell: round(withTax * qty),
-      extendedCost: round(withTax * qty),
-      applied: {
-        mode: "tierMultiplier",
-        priceMultiplier: multiplier,
-        tier,
-        baseUnit: round(toNum(tier.unitPrice, 0)),
-        inTarget: round(toNum(tier.unitPrice, 0) * multiplier),
-        discounted: round(toNum(tier.unitPrice, 0) * multiplier),
-        withTax: round(withTax),
-      },
-    };
-  }
-
-  // 3) Cost + margin flow. If manualMargin set on product, that overrides hierarchy.
+  // Cost + margin flow. If manualMargin set on product, that overrides hierarchy.
   const margin =
     ctx.product.manualMargin != null
       ? toNum(ctx.product.manualMargin, 0)
@@ -138,7 +149,7 @@ export async function computePrice(
   // Determine base cost from cost tiers or product/group cost
   const cTiers = ctx.product.costPriceTiers ?? [];
   let costBase: number | null = null;
-  if (cTiers.length) {
+  if (pricingModel === "TIERED_COST_PLUS_MARGIN" && cTiers.length) {
     const sorted = [...cTiers].sort((a, b) => a.minQty - b.minQty);
     for (const t of sorted) {
       if (qty >= (t.minQty ?? 1)) costBase = toNum(t.unitCost, costBase ?? 0);
@@ -150,7 +161,7 @@ export async function computePrice(
   }
   const cost = costBase;
   const costWithMargin = cost * (1 + margin);
-  const inTarget = costWithMargin * rate;
+  const inTarget = costWithMargin;
   const withTax = inTarget * (1 + taxRate);
 
   return {
@@ -158,7 +169,10 @@ export async function computePrice(
     extendedSell: round(withTax * qty),
     extendedCost: round(withTax * qty),
     applied: {
-      mode: "costMargin",
+      mode:
+        pricingModel === "TIERED_COST_PLUS_MARGIN"
+          ? "tieredCostPlusMargin"
+          : "costPlusMargin",
       marginUsed: margin,
       tier: null,
       baseUnit: round(cost),
@@ -182,18 +196,27 @@ export async function priceProduct(opts: {
     select: {
       id: true,
       supplierId: true,
+      pricingModel: true,
+      pricingSpecId: true,
+      baselinePriceAtMoq: true,
+      transferPercent: true,
       manualSalePrice: true,
       manualMargin: true,
-      salePriceGroup: {
+      costPrice: true,
+      pricingSpec: {
         select: {
-          saleRanges: { select: { rangeFrom: true, price: true } },
+          id: true,
+          ranges: {
+            select: { rangeFrom: true, rangeTo: true, multiplier: true },
+          },
         },
       },
-      salePriceRanges: { select: { rangeFrom: true, price: true } },
+      productCostRanges: { select: { rangeFrom: true, costPrice: true } },
       costGroup: {
         select: {
+          costPrice: true,
           costRanges: {
-            select: { rangeFrom: true, sellPriceManual: true },
+            select: { rangeFrom: true, costPrice: true },
           },
         },
       },
@@ -202,34 +225,21 @@ export async function priceProduct(opts: {
   });
   if (!product) throw new Error("Product not found");
 
-  // Prefer explicit sale price tiers: product-specific then group
-  const spProduct = (product.salePriceRanges || []).filter(
-    (r: any) => r.rangeFrom != null && r.price != null
+  const productCostTiers = (product.productCostRanges || []).filter(
+    (r: any) => r.rangeFrom != null && r.costPrice != null
   );
-  const spGroup = (product.salePriceGroup?.saleRanges || []).filter(
-    (r: any) => r.rangeFrom != null && r.price != null
+  const groupCostTiers = (product.costGroup?.costRanges || []).filter(
+    (r: any) => r.rangeFrom != null && r.costPrice != null
   );
-  let tiers: PriceTier[] = [];
-  if (spProduct.length) {
-    tiers = spProduct.map((r: any) => ({
-      minQty: Number(r.rangeFrom),
-      unitPrice: Number(r.price),
-    }));
-  } else if (spGroup.length) {
-    tiers = spGroup.map((r: any) => ({
-      minQty: Number(r.rangeFrom),
-      unitPrice: Number(r.price),
-    }));
-  } else {
-    // Fallback to legacy: costGroup.costRanges.sellPriceManual
-    const legacy = product.costGroup?.costRanges ?? [];
-    tiers = (legacy as Array<{ rangeFrom: any; sellPriceManual: any }>)
-      .filter((r) => r.rangeFrom != null && r.sellPriceManual != null)
-      .map((r) => ({
+  const costPriceTiers: PriceTier[] = productCostTiers.length
+    ? productCostTiers.map((r: any) => ({
         minQty: Number(r.rangeFrom),
-        unitPrice: Number(r.sellPriceManual),
+        unitPrice: Number(r.costPrice),
+      }))
+    : groupCostTiers.map((r: any) => ({
+        minQty: Number(r.rangeFrom),
+        unitPrice: Number(r.costPrice),
       }));
-  }
 
   const vendorId = opts.vendorId ?? (product as any).supplierId ?? null;
   const [globalDefaultMargin, vendorDefaults, mapping] = await Promise.all([
@@ -242,17 +252,40 @@ export async function priceProduct(opts: {
     qty: opts.qty,
     product: {
       id: product.id,
+      pricingModel: product.pricingModel ?? null,
+      pricingSpecId: product.pricingSpecId ?? null,
+      baselinePriceAtMoq:
+        product.baselinePriceAtMoq != null
+          ? Number(product.baselinePriceAtMoq)
+          : null,
+      transferPercent:
+        product.transferPercent != null
+          ? Number(product.transferPercent)
+          : null,
       manualSalePrice:
         product.manualSalePrice != null
           ? Number(product.manualSalePrice)
           : null,
       manualMargin:
         product.manualMargin != null ? Number(product.manualMargin) : null,
+      costPrice: product.costPrice != null ? Number(product.costPrice) : null,
+      groupCostPrice:
+        product.costGroup?.costPrice != null
+          ? Number(product.costGroup.costPrice)
+          : null,
       purchaseTaxRate:
         product.purchaseTax?.value != null
           ? Number(product.purchaseTax.value)
           : 0,
-      salePriceTiers: tiers,
+      costPriceTiers: costPriceTiers.map((t) => ({
+        minQty: t.minQty,
+        unitCost: t.unitPrice,
+      })),
+      pricingSpecRanges: (product.pricingSpec?.ranges || []).map((range) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
     },
     supplier: opts.vendorId ? { id: opts.vendorId } : null,
     customer: opts.customerId ? { id: opts.customerId } : null,

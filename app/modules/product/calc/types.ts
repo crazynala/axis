@@ -13,6 +13,14 @@ export type PriceInput = {
   priceMultiplier?: number;
   // New: manual sale price override (pre-tax) takes absolute precedence when set.
   manualSalePrice?: number;
+  pricingModel?: string | null;
+  pricingSpecRanges?: Array<{
+    rangeFrom: number | null;
+    rangeTo: number | null;
+    multiplier: number;
+  }>;
+  baselinePriceAtMoq?: number | null;
+  transferPercent?: number | null;
   currencyRate?: number; // e.g., TRY per USD
   discounts?: { code: string; pct?: number; amount?: number }[];
 };
@@ -24,7 +32,7 @@ export type PriceOutput = {
   breakdown: Record<string, number>;
   // Additional metadata about how price was derived
   meta?: {
-    mode: "manual" | "saleTier" | "cost+margin";
+    mode: "manual" | "saleTier" | "cost+margin" | "curve";
     marginUsed?: number; // decimal (0.20)
     multiplier?: number; // e.g., 1.1
     tier?: { minQty: number; unitPrice: number };

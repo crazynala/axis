@@ -94,6 +94,16 @@ function PriceCell({
     qty,
     manualSalePrice:
       manual != null && manual !== "" ? Number(manual) : undefined,
+    pricingModel: row?.pricingModel ?? null,
+    baselinePriceAtMoq:
+      row?.baselinePriceAtMoq != null ? Number(row.baselinePriceAtMoq) : null,
+    transferPercent:
+      row?.transferPercent != null ? Number(row.transferPercent) : null,
+    pricingSpecRanges: (row?.pricingSpec?.ranges || []).map((range: any) => ({
+      rangeFrom: range.rangeFrom ?? null,
+      rangeTo: range.rangeTo ?? null,
+      multiplier: Number(range.multiplier),
+    })),
   });
   return <>{formatUSD(out.unitSellPrice)}</>;
 }

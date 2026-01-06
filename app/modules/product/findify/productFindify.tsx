@@ -31,7 +31,7 @@ export type ProductFindFormValues = {
   pricingGroupId?: number | null;
   salePriceGroupId?: number | null;
   pricingSpecId?: number | null;
-  pricingMode?: string | null;
+  pricingModel?: string | null;
   // search-only ranges + component criteria
   costPriceMin?: number | null;
   costPriceMax?: number | null;
@@ -71,7 +71,7 @@ export function buildProductEditDefaults(
     costGroupId: p.costGroupId,
     salePriceGroupId: p.salePriceGroupId,
     pricingSpecId: p.pricingSpecId ?? null,
-    pricingMode: (p as any).pricingMode ?? null,
+    pricingModel: (p as any).pricingModel ?? null,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
     whiteboard: p.whiteboard || "",
@@ -121,7 +121,7 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     externalStepType: undefined,
     bomDirty: undefined,
     pricingSpecId: undefined,
-    pricingMode: undefined,
+    pricingModel: undefined,
   };
 }
 
@@ -165,7 +165,7 @@ export function useProductFindify(
     put("costGroupId", values.costGroupId);
     put("salePriceGroupId", values.salePriceGroupId);
     put("pricingSpecId", values.pricingSpecId);
-    put("pricingMode", values.pricingMode);
+    put("pricingModel", values.pricingModel);
     put("whiteboard", values.whiteboard);
     put("leadTimeDays", values.leadTimeDays);
     put("externalStepType", values.externalStepType);

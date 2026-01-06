@@ -6,6 +6,7 @@ import {
   useActionData,
   useLoaderData,
   useNavigation,
+  useSubmit,
 } from "@remix-run/react";
 import {
   Button,
@@ -23,17 +24,17 @@ import {
   Title,
   Select,
 } from "@mantine/core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { prisma } from "~/utils/prisma.server";
 import { requireAdminUser } from "~/utils/auth.server";
 import {
-  formatEnumOptionsInput,
   formatAppliesToIdsInput,
   parseAppliesToIdsInput,
   parseAppliesToTypesInput,
   parseEnumOptionsInput,
 } from "~/modules/productMetadata/utils/productMetadataFields";
 import { invalidateProductAttributeCache } from "~/modules/productMetadata/services/productMetadata.server";
+import { invalidateAllOptions } from "~/utils/options.server";
 
 const DATA_TYPE_OPTIONS = [
   { value: "STRING", label: "STRING" },
@@ -58,13 +59,26 @@ function parseJsonInput(raw: string | null) {
   }
 }
 
+function slugifyOptionLabel(raw: string) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAdminUser(request);
   const definitions = await prisma.productAttributeDefinition.findMany({
     include: {
       options: {
-        where: { isArchived: false, mergedIntoId: null },
         orderBy: { label: "asc" },
+        include: {
+          mergedInto: { select: { id: true, label: true } },
+          _count: { select: { values: true } },
+        },
       },
     },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
@@ -112,6 +126,119 @@ export async function action({ request }: ActionFunctionArgs) {
   );
   if (validationParse.error) {
     return json({ error: validationParse.error }, { status: 400 });
+  }
+
+  if (intent === "option.create") {
+    const definitionId = Number(form.get("definitionId"));
+    const label = String(form.get("label") || "").trim();
+    if (!Number.isFinite(definitionId)) {
+      return json({ error: "Invalid definition id." }, { status: 400 });
+    }
+    if (!label) {
+      return json({ error: "Option label is required." }, { status: 400 });
+    }
+    const slug = slugifyOptionLabel(label);
+    if (!slug) {
+      return json({ error: "Option label is invalid." }, { status: 400 });
+    }
+    await prisma.productAttributeOption.upsert({
+      where: { definitionId_slug: { definitionId, slug } },
+      create: { definitionId, label, slug },
+      update: { label, isArchived: false, mergedIntoId: null },
+    });
+    await invalidateProductAttributeCache();
+    invalidateAllOptions();
+    return redirect("/admin/product-attributes");
+  }
+
+  if (intent === "option.rename") {
+    const optionId = Number(form.get("optionId"));
+    const label = String(form.get("label") || "").trim();
+    if (!Number.isFinite(optionId)) {
+      return json({ error: "Invalid option id." }, { status: 400 });
+    }
+    if (!label) {
+      return json({ error: "Option label is required." }, { status: 400 });
+    }
+    const slug = slugifyOptionLabel(label);
+    if (!slug) {
+      return json({ error: "Option label is invalid." }, { status: 400 });
+    }
+    const existing = await prisma.productAttributeOption.findUnique({
+      where: { id: optionId },
+      select: { definitionId: true },
+    });
+    if (!existing) {
+      return json({ error: "Option not found." }, { status: 404 });
+    }
+    const collision = await prisma.productAttributeOption.findFirst({
+      where: { definitionId: existing.definitionId, slug },
+      select: { id: true },
+    });
+    if (collision && collision.id !== optionId) {
+      return json(
+        { error: "Another option already uses that label." },
+        { status: 400 }
+      );
+    }
+    await prisma.productAttributeOption.update({
+      where: { id: optionId },
+      data: { label, slug },
+    });
+    await invalidateProductAttributeCache();
+    invalidateAllOptions();
+    return redirect("/admin/product-attributes");
+  }
+
+  if (intent === "option.archive" || intent === "option.unarchive") {
+    const optionId = Number(form.get("optionId"));
+    if (!Number.isFinite(optionId)) {
+      return json({ error: "Invalid option id." }, { status: 400 });
+    }
+    const isArchived = intent === "option.archive";
+    await prisma.productAttributeOption.update({
+      where: { id: optionId },
+      data: { isArchived, mergedIntoId: null },
+    });
+    await invalidateProductAttributeCache();
+    invalidateAllOptions();
+    return redirect("/admin/product-attributes");
+  }
+
+  if (intent === "option.merge") {
+    const targetId = Number(form.get("targetId"));
+    const sourceRaw = String(form.get("sourceIds") || "");
+    const sourceIds = sourceRaw
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n))
+      .filter((n) => n !== targetId);
+    if (!Number.isFinite(targetId)) {
+      return json({ error: "Target option is required." }, { status: 400 });
+    }
+    if (!sourceIds.length) {
+      return json({ error: "Select options to merge." }, { status: 400 });
+    }
+    const target = await prisma.productAttributeOption.findUnique({
+      where: { id: targetId },
+      select: { id: true, definitionId: true },
+    });
+    if (!target) {
+      return json({ error: "Target option not found." }, { status: 404 });
+    }
+    await prisma.$transaction([
+      prisma.productAttributeValue.updateMany({
+        where: { optionId: { in: sourceIds } },
+        data: { optionId: targetId },
+      }),
+      prisma.productAttributeOption.updateMany({
+        where: { id: { in: sourceIds }, definitionId: target.definitionId },
+        data: { isArchived: true, mergedIntoId: targetId },
+      }),
+    ]);
+    await invalidateProductAttributeCache();
+    invalidateAllOptions();
+    return redirect("/admin/product-attributes");
   }
 
   if (intent === "create") {
@@ -184,6 +311,7 @@ export default function AdminProductAttributesPage() {
   const { definitions } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const nav = useNavigation();
+  const submit = useSubmit();
   const busy = nav.state !== "idle";
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingDefId, setEditingDefId] = useState<number | null>(null);
@@ -201,6 +329,15 @@ export default function AdminProductAttributesPage() {
     setDrawerOpen(true);
   };
   const closeDrawer = () => setDrawerOpen(false);
+  const [newOptionLabel, setNewOptionLabel] = useState("");
+  const [selectedOptionIds, setSelectedOptionIds] = useState<number[]>([]);
+  const [mergeTargetId, setMergeTargetId] = useState<string>("");
+
+  useEffect(() => {
+    setNewOptionLabel("");
+    setSelectedOptionIds([]);
+    setMergeTargetId("");
+  }, [editingDefId, drawerOpen]);
   const formatAppliesTo = (def: (typeof definitions)[number]) => {
     const types = Array.isArray(def.appliesToProductTypes)
       ? def.appliesToProductTypes
@@ -217,6 +354,15 @@ export default function AdminProductAttributesPage() {
     if (subs.length) parts.push(`Subcategories: ${subs.join(", ")}`);
     return parts.length ? parts.join(" • ") : "All";
   };
+  const activeOptions = Array.isArray(editingDef?.options)
+    ? editingDef.options.filter(
+        (opt: any) => !opt.isArchived && !opt.mergedIntoId
+      )
+    : [];
+  const mergeTargetOptions = activeOptions.map((opt: any) => ({
+    value: String(opt.id),
+    label: opt.label ?? String(opt.id),
+  }));
   return (
     <Stack>
       <Group justify="space-between" align="center">
@@ -277,17 +423,25 @@ export default function AdminProductAttributesPage() {
               </Table.Td>
               <Table.Td>{def.sortOrder ?? 0}</Table.Td>
               <Table.Td>
-                {def.dataType === "ENUM" ? (
-                  Array.isArray(def.options) && def.options.length ? (
+                {def.dataType === "ENUM" ? (() => {
+                  const active = Array.isArray(def.options)
+                    ? def.options.filter(
+                        (opt: any) => !opt.isArchived && !opt.mergedIntoId
+                      )
+                    : [];
+                  if (!active.length) {
+                    return (
+                      <Text size="xs" c="dimmed">
+                        No options
+                      </Text>
+                    );
+                  }
+                  return (
                     <Text size="xs" c="dimmed">
-                      {def.options.map((opt) => opt.label).join(", ")}
+                      {active.map((opt: any) => opt.label).join(", ")}
                     </Text>
-                  ) : (
-                    <Text size="xs" c="dimmed">
-                      No options
-                    </Text>
-                  )
-                ) : (
+                  );
+                })() : (
                   ""
                 )}
               </Table.Td>
@@ -409,32 +563,214 @@ export default function AdminProductAttributesPage() {
                     defaultChecked={editingDef?.isRequired}
                   />
                 </Group>
-                {editingDef?.dataType === "ENUM" ? (
-                  <Stack gap={4}>
-                    <Text size="sm" fw={500}>
-                      Options
-                    </Text>
-                    {Array.isArray(editingDef?.options) &&
-                    editingDef.options.length ? (
-                      <Text size="xs" c="dimmed">
-                        {editingDef.options.map((opt) => opt.label).join(", ")}
-                      </Text>
-                    ) : (
-                      <Text size="xs" c="dimmed">
-                        No options yet.
-                      </Text>
-                    )}
-                  </Stack>
-                ) : null}
-                <Textarea
-                  name="enumOptions"
-                  label="Legacy Enum Options (one per line)"
-                  autosize
-                  minRows={2}
-                  defaultValue={formatEnumOptionsInput(editingDef?.enumOptions)}
-                />
               </Stack>
             </Card>
+            {editingDef?.dataType === "ENUM" && editingDef?.id ? (
+              <Card withBorder>
+                <Stack gap="sm">
+                  <Text fw={600}>Options Manager</Text>
+                  <Form method="post">
+                    <input type="hidden" name="_intent" value="option.create" />
+                    <input
+                      type="hidden"
+                      name="definitionId"
+                      value={editingDef.id}
+                    />
+                    <Group gap="sm" align="flex-end" wrap="wrap">
+                      <TextInput
+                        label="Add option"
+                        placeholder="New option label"
+                        name="label"
+                        value={newOptionLabel}
+                        onChange={(event) =>
+                          setNewOptionLabel(event.currentTarget.value)
+                        }
+                      />
+                      <Button type="submit" size="xs" loading={busy}>
+                        Add
+                      </Button>
+                    </Group>
+                  </Form>
+                  <Table withTableBorder withColumnBorders>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>
+                          <Checkbox
+                            checked={
+                              selectedOptionIds.length > 0 &&
+                              selectedOptionIds.length ===
+                                (editingDef?.options || []).filter(
+                                  (opt: any) => !opt.mergedIntoId
+                                ).length
+                            }
+                            indeterminate={
+                              selectedOptionIds.length > 0 &&
+                              selectedOptionIds.length <
+                                (editingDef?.options || []).filter(
+                                  (opt: any) => !opt.mergedIntoId
+                                ).length
+                            }
+                            onChange={(event) => {
+                              const checked = event.currentTarget.checked;
+                              if (!checked) {
+                                setSelectedOptionIds([]);
+                                return;
+                              }
+                              const ids = (editingDef?.options || [])
+                                .filter((opt: any) => !opt.mergedIntoId)
+                                .map((opt: any) => opt.id);
+                              setSelectedOptionIds(ids);
+                            }}
+                          />
+                        </Table.Th>
+                        <Table.Th>Label</Table.Th>
+                        <Table.Th>Slug</Table.Th>
+                        <Table.Th>Usage</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                        <Table.Th>Actions</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {(editingDef?.options || []).map((opt: any) => {
+                        const isMerged = Boolean(opt.mergedIntoId);
+                        const statusLabel = isMerged
+                          ? `Merged → ${opt.mergedInto?.label ?? opt.mergedIntoId}`
+                          : opt.isArchived
+                          ? "Archived"
+                          : "Active";
+                        const usageCount = opt._count?.values ?? 0;
+                        const isChecked = selectedOptionIds.includes(opt.id);
+                        return (
+                          <Table.Tr key={opt.id}>
+                            <Table.Td>
+                              <Checkbox
+                                checked={isChecked}
+                                disabled={isMerged}
+                                onChange={(event) => {
+                                  const checked = event.currentTarget.checked;
+                                  setSelectedOptionIds((prev) =>
+                                    checked
+                                      ? [...prev, opt.id]
+                                      : prev.filter((id) => id !== opt.id)
+                                  );
+                                }}
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Form method="post">
+                                <input
+                                  type="hidden"
+                                  name="_intent"
+                                  value="option.rename"
+                                />
+                                <input
+                                  type="hidden"
+                                  name="optionId"
+                                  value={opt.id}
+                                />
+                                <Group gap="xs" align="flex-end" wrap="nowrap">
+                                  <TextInput
+                                    name="label"
+                                    size="xs"
+                                    defaultValue={opt.label}
+                                  />
+                                  <Button type="submit" size="xs" variant="subtle">
+                                    Save
+                                  </Button>
+                                </Group>
+                              </Form>
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs" c="dimmed">
+                                {opt.slug}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs">{usageCount}</Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs" c="dimmed">
+                                {statusLabel}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              {isMerged ? (
+                                <Text size="xs" c="dimmed">
+                                  —
+                                </Text>
+                              ) : (
+                                <Form method="post">
+                                  <input
+                                    type="hidden"
+                                    name="_intent"
+                                    value={
+                                      opt.isArchived
+                                        ? "option.unarchive"
+                                        : "option.archive"
+                                    }
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="optionId"
+                                    value={opt.id}
+                                  />
+                                  <Button
+                                    type="submit"
+                                    size="xs"
+                                    variant="subtle"
+                                  >
+                                    {opt.isArchived ? "Unarchive" : "Archive"}
+                                  </Button>
+                                </Form>
+                              )}
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
+                    </Table.Tbody>
+                  </Table>
+                  <Group gap="sm" align="flex-end" wrap="wrap">
+                    <Select
+                      label="Merge target"
+                      data={mergeTargetOptions}
+                      value={mergeTargetId}
+                      onChange={(value) => setMergeTargetId(value || "")}
+                      placeholder="Select target"
+                      comboboxProps={{ withinPortal: true }}
+                    />
+                    <Button
+                      size="xs"
+                      variant="light"
+                      disabled={
+                        !mergeTargetId || selectedOptionIds.length === 0
+                      }
+                      onClick={() => {
+                        const target = mergeTargetOptions.find(
+                          (opt) => opt.value === mergeTargetId
+                        );
+                        const selected = (editingDef?.options || []).filter(
+                          (opt: any) => selectedOptionIds.includes(opt.id)
+                        );
+                        const usageTotal = selected.reduce(
+                          (sum: number, opt: any) =>
+                            sum + (opt._count?.values ?? 0),
+                          0
+                        );
+                        const confirmText = `Merge ${selected.length} option(s) into "${target?.label}"? This will move ${usageTotal} value(s).`;
+                        if (!window.confirm(confirmText)) return;
+                        const data = new FormData();
+                        data.set("_intent", "option.merge");
+                        data.set("targetId", mergeTargetId);
+                        data.set("sourceIds", selectedOptionIds.join(","));
+                        submit(data, { method: "post" });
+                      }}
+                    >
+                      Merge Selected
+                    </Button>
+                  </Group>
+                </Stack>
+              </Card>
+            ) : null}
             <Card withBorder>
               <Stack gap="sm">
                 <Text fw={600}>Display</Text>

@@ -26,6 +26,25 @@ export const meta: MetaFunction = () => [{ title: "New Product" }];
 
 export async function loader(_args: LoaderFunctionArgs) {
   const metadataDefinitions = await getAllProductAttributeDefinitions();
+  const pricingSpecs = await prismaBase.pricingSpec.findMany({
+    where: { target: "SELL" },
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      curveFamily: true,
+      ranges: {
+        orderBy: { rangeFrom: "desc" },
+        select: {
+          id: true,
+          rangeFrom: true,
+          rangeTo: true,
+          multiplier: true,
+        },
+      },
+    },
+  });
   const productTemplates = await prismaBase.productTemplate.findMany({
     where: { isActive: true },
     select: {
@@ -58,6 +77,29 @@ export async function loader(_args: LoaderFunctionArgs) {
     },
     productTemplates,
     metadataDefinitions,
+    pricingSpecOptions: pricingSpecs.map((spec) => ({
+      value: String(spec.id),
+      label: spec.name || spec.code || spec.curveFamily || `#${spec.id}`,
+    })),
+    pricingSpecRangesById: pricingSpecs.reduce<
+      Record<
+        string,
+        Array<{
+          id: number;
+          rangeFrom: number | null;
+          rangeTo: number | null;
+          multiplier: string;
+        }>
+      >
+    >((acc, spec) => {
+      acc[String(spec.id)] = (spec.ranges || []).map((range) => ({
+        id: range.id,
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: String(range.multiplier),
+      }));
+      return acc;
+    }, {}),
   });
 }
 
@@ -74,7 +116,12 @@ export default function NewProductRoute() {
   const busy = nav.state !== "idle";
   const submit = useSubmit();
   const actionData = useActionData<typeof action>();
-  const { productTemplates, metadataDefinitions } =
+  const {
+    productTemplates,
+    metadataDefinitions,
+    pricingSpecOptions,
+    pricingSpecRangesById,
+  } =
     useLoaderData<typeof loader>();
   const [focusMissingRequired, setFocusMissingRequired] = useState<
     (() => void) | null
@@ -101,7 +148,7 @@ export default function NewProductRoute() {
       type: "",
       costPrice: undefined as any,
       manualSalePrice: undefined as any,
-      pricingMode: "FIXED_MARGIN",
+      pricingModel: "COST_PLUS_MARGIN",
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
       leadTimeDays: "",
@@ -123,6 +170,9 @@ export default function NewProductRoute() {
         supplierId: watched.supplierId,
         customerId: watched.customerId,
         variantSetId: watched.variantSetId,
+        pricingModel: watched.pricingModel,
+        pricingSpecId: watched.pricingSpecId,
+        baselinePriceAtMoq: watched.baselinePriceAtMoq,
         costPrice: watched.costPrice,
         leadTimeDays: watched.leadTimeDays,
         externalStepType: watched.externalStepType,
@@ -210,6 +260,8 @@ export default function NewProductRoute() {
                 productTemplates.map((t) => [String(t.id), t])
               )}
               metadataDefinitions={metadataDefinitions}
+              pricingSpecOptions={pricingSpecOptions}
+              pricingSpecRangesById={pricingSpecRangesById}
             />
             <Group mt="md">
               <Button
