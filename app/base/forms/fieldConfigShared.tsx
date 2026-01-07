@@ -908,23 +908,39 @@ export function renderField(
           );
         }
         return (
-          <TextInput
-            {...common}
-            type="number"
-            placeholder={field.placeholder}
-            readOnly={resolvedReadOnly}
-            disabled={resolvedDisabled}
-            rightSection={
-              field.rightSection
-                ? field.rightSection({ form, mode, field, ctx })
-                : undefined
-            }
-            value={
-              (form.watch(field.name as any) ??
-                (form.getValues() as any)?.[field.name] ??
-                "") as any
-            }
-            onChange={(e) => form.setValue(field.name as any, e.target.value)}
+          <Controller
+            control={form.control}
+            name={field.name as any}
+            render={({ field: f }) => {
+              const value =
+                f.value == null || f.value === "" ? "" : String(f.value);
+              return (
+                <TextInput
+                  {...common}
+                  type="number"
+                  placeholder={field.placeholder}
+                  readOnly={resolvedReadOnly}
+                  disabled={resolvedDisabled}
+                  rightSection={
+                    field.rightSection
+                      ? field.rightSection({ form, mode, field, ctx })
+                      : undefined
+                  }
+                  value={value}
+                  onChange={(e) => {
+                    const raw = e.currentTarget.value;
+                    if (raw === "") {
+                      f.onChange(null);
+                      return;
+                    }
+                    const n = Number(raw);
+                    f.onChange(Number.isFinite(n) ? n : null);
+                  }}
+                  onBlur={f.onBlur}
+                  ref={f.ref as any}
+                />
+              );
+            }}
           />
         );
       }

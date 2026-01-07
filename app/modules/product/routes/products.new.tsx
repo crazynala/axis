@@ -149,6 +149,8 @@ export default function NewProductRoute() {
       costPrice: undefined as any,
       manualSalePrice: undefined as any,
       pricingModel: "COST_PLUS_MARGIN",
+      baselinePriceAtMoq: null,
+      transferPercent: 0.75,
       stockTrackingEnabled: false,
       batchTrackingEnabled: false,
       leadTimeDays: "",
@@ -157,6 +159,7 @@ export default function NewProductRoute() {
       subCategoryId: "",
       ...(metadataDefaults as any),
     },
+    shouldUnregister: false,
   });
   const watched = form.watch();
   const validation = useMemo(

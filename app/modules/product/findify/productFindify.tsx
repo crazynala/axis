@@ -32,6 +32,8 @@ export type ProductFindFormValues = {
   salePriceGroupId?: number | null;
   pricingSpecId?: number | null;
   pricingModel?: string | null;
+  baselinePriceAtMoq?: number | null;
+  transferPercent?: number | null;
   // search-only ranges + component criteria
   costPriceMin?: number | null;
   costPriceMax?: number | null;
@@ -72,6 +74,10 @@ export function buildProductEditDefaults(
     salePriceGroupId: p.salePriceGroupId,
     pricingSpecId: p.pricingSpecId ?? null,
     pricingModel: (p as any).pricingModel ?? null,
+    baselinePriceAtMoq:
+      p.baselinePriceAtMoq != null ? Number(p.baselinePriceAtMoq) : null,
+    transferPercent:
+      p.transferPercent != null ? Number(p.transferPercent) : null,
     stockTrackingEnabled: !!p.stockTrackingEnabled,
     batchTrackingEnabled: !!p.batchTrackingEnabled,
     whiteboard: p.whiteboard || "",
@@ -122,6 +128,8 @@ export function buildProductFindDefaults(): ProductFindFormValues {
     bomDirty: undefined,
     pricingSpecId: undefined,
     pricingModel: undefined,
+    baselinePriceAtMoq: undefined,
+    transferPercent: undefined,
   };
 }
 
@@ -166,6 +174,8 @@ export function useProductFindify(
     put("salePriceGroupId", values.salePriceGroupId);
     put("pricingSpecId", values.pricingSpecId);
     put("pricingModel", values.pricingModel);
+    put("baselinePriceAtMoq", values.baselinePriceAtMoq);
+    put("transferPercent", values.transferPercent);
     put("whiteboard", values.whiteboard);
     put("leadTimeDays", values.leadTimeDays);
     put("externalStepType", values.externalStepType);

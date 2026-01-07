@@ -17,8 +17,14 @@ export function useBaseFindify<TEdit extends object, TFind extends object>(
   const { mode, setMode } = useFind();
   const editDefaults = config.buildEditDefaults(config.record);
   const findDefaults = config.buildFindDefaults();
-  const editForm = useForm<TEdit>({ defaultValues: editDefaults as any });
-  const findForm = useForm<TFind>({ defaultValues: findDefaults as any });
+  const editForm = useForm<TEdit>({
+    defaultValues: editDefaults as any,
+    shouldUnregister: false,
+  });
+  const findForm = useForm<TFind>({
+    defaultValues: findDefaults as any,
+    shouldUnregister: false,
+  });
   const wasSubmitting = useRef(false);
 
   // Reset edit form on record id change; leave find mode

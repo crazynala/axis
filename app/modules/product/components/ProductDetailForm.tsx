@@ -814,9 +814,15 @@ export function ProductDetailForm({
         labels: { confirm: "Change", cancel: "Cancel" },
         confirmProps: { color: "red" },
         onConfirm: () => {
-          form.setValue("pricingModel", nextModel, { shouldDirty: true });
+          form.setValue("pricingModel", nextModel, {
+            shouldDirty: true,
+            shouldTouch: true,
+          });
           for (const field of clears) {
-            form.setValue(field as any, null, { shouldDirty: true });
+            form.setValue(field as any, null, {
+              shouldDirty: true,
+              shouldTouch: true,
+            });
           }
         },
       });
