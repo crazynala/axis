@@ -5,6 +5,18 @@ import { asNum, pick, resetSequence } from "./utils";
 export async function importPurchaseOrderLines(
   rows: any[]
 ): Promise<ImportResult> {
+  const toDecimalString = (raw: any): string | null => {
+    if (raw == null) return null;
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      return trimmed === "" ? null : trimmed;
+    }
+    if (typeof raw === "number") {
+      return Number.isFinite(raw) ? raw.toString() : null;
+    }
+    const str = String(raw).trim();
+    return str ? str : null;
+  };
   let created = 0,
     updated = 0,
     skipped = 0;
@@ -20,6 +32,10 @@ export async function importPurchaseOrderLines(
       });
       continue;
     }
+    const costRaw = pick(r, ["Price|Cost"]);
+    const sellRaw = pick(r, ["Price|Sell"]);
+    const taxCodeRaw = (pick(r, ["TaxCode"]) ?? "").toString().trim();
+    const taxRateRaw = pick(r, ["TaxRate"]);
     const data: any = {
       id: idNum,
       assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
@@ -31,15 +47,32 @@ export async function importPurchaseOrderLines(
       productSkuCopy: (pick(r, ["ProductSKU"]) ?? "").toString().trim() || null,
       productNameCopy:
         (pick(r, ["ProductName"]) ?? "").toString().trim() || null,
-      priceCost: asNum(pick(r, ["Price|Cost"])) as number | null,
-      priceSell: asNum(pick(r, ["Price|Sell"])) as number | null,
+      priceCost: toDecimalString(costRaw),
+      priceSell: toDecimalString(sellRaw),
+      manualCost: toDecimalString(costRaw),
+      manualSell: toDecimalString(sellRaw),
       qtyShipped: asNum(pick(r, ["QtyShipped"])) as number | null,
       qtyReceived: asNum(pick(r, ["QtyReceived"])) as number | null,
       quantity: asNum(pick(r, ["Quantity"])) as number | null,
       quantityOrdered: asNum(pick(r, ["QuantityOrdered"])) as number | null,
-      taxCode: (pick(r, ["TaxCode"]) ?? "").toString().trim() || null,
-      taxRate: asNum(pick(r, ["TaxRate"])) as number | null,
+      taxCode: taxCodeRaw || null,
+      taxRate: null,
     };
+    if (taxCodeRaw) {
+      const tax = await prisma.valueList.findFirst({
+        where: { type: "Tax", code: taxCodeRaw },
+        select: { value: true },
+      });
+      if (tax?.value != null) {
+        data.taxRate = tax.value;
+      }
+    }
+    if (data.taxRate == null) {
+      const parsed = asNum(taxRateRaw) as number | null;
+      if (parsed != null) {
+        data.taxRate = parsed > 1 ? parsed / 100 : parsed;
+      }
+    }
     try {
       await prisma.purchaseOrderLine.upsert({
         where: { id: idNum },

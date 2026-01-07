@@ -64,6 +64,7 @@ export async function getProductsForAssemblies(opts: { productIds: number[] }) {
       id: true,
       sku: true,
       name: true,
+      productStage: true,
       variantSet: { select: { name: true, id: true, variants: true } },
     },
   });
@@ -101,6 +102,7 @@ export async function getProductChoices() {
       sku: true,
       name: true,
       customerId: true,
+      productStage: true,
       _count: { select: { productLines: true } },
       variantSet: { select: { id: true, variants: true } },
     },

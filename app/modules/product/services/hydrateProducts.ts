@@ -8,6 +8,7 @@ export type ProductRowBase = {
   sku: string | null;
   name: string | null;
   type: any;
+  productStage?: string | null;
   categoryId: number | null;
   subCategoryId: number | null;
   templateId: number | null;
@@ -43,6 +44,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       sku: true,
       name: true,
       type: true,
+      productStage: true,
       categoryId: true,
       subCategoryId: true,
       templateId: true,

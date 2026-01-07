@@ -344,7 +344,12 @@ export async function loadAssemblyDetailVM(opts: {
     | null
     | undefined = undefined;
   let products:
-    | Array<{ id: number; sku: string | null; name: string | null }>
+    | Array<{
+        id: number;
+        sku: string | null;
+        name: string | null;
+        productStage?: string | null;
+      }>
     | undefined = undefined;
   if (!isMulti) {
     const assembly = assemblies[0] as any;

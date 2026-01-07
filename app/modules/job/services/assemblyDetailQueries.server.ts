@@ -27,6 +27,7 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
           id: true,
           sku: true,
           name: true,
+          productStage: true,
           leadTimeDays: true,
           supplier: {
             select: { id: true, name: true, defaultLeadTimeDays: true },
@@ -59,6 +60,7 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
               id: true,
               sku: true,
               name: true,
+              productStage: true,
               type: true,
               leadTimeDays: true,
               stockTrackingEnabled: true,
@@ -254,7 +256,7 @@ export async function getShipmentLinesWithShipment(opts: { shipmentLineIds: numb
 
 export async function getActiveProductsList() {
   return prismaBase.product.findMany({
-    select: { id: true, sku: true, name: true },
+    select: { id: true, sku: true, name: true, productStage: true },
     orderBy: { id: "asc" },
     where: { flagIsDisabled: false },
   });

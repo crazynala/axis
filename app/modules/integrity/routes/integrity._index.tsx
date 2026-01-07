@@ -139,8 +139,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       const rows = await prismaBase.product.findMany({
         where: {
           type: "Finished",
-          category: { label: { equals: "Finished Product", mode: "insensitive" } } as any,
-          OR: [{ subCategory: null }, { subCategory: { equals: "" } }],
+          category: {
+            is: { label: { equals: "Finished Product", mode: "insensitive" } },
+          },
+          OR: [{ subCategoryId: null }],
         },
         select: {
           id: true,

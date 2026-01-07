@@ -24,7 +24,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
 
   const subtotal = (purchaseOrder.lines || []).reduce((acc: number, l: any) => {
     const qty = Number(l.quantityOrdered ?? l.quantity ?? 0);
-    const unit = Number(l.priceCost ?? 0);
+    const unit = Number(l.manualCost ?? l.priceCost ?? 0);
     return acc + qty * unit;
   }, 0);
 
@@ -125,7 +125,7 @@ export default function POPrintPage() {
           <tbody>
             {(po.lines || []).map((ln: any) => {
               const qty = Number(ln.quantityOrdered ?? ln.quantity ?? 0);
-              const unit = Number(ln.priceCost ?? 0);
+              const unit = Number(ln.manualCost ?? ln.priceCost ?? 0);
               const line = qty * unit;
               return (
                 <tr key={ln.id}>

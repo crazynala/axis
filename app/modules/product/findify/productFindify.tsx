@@ -6,6 +6,7 @@ import type { ProductAttributeDefinition } from "~/modules/productMetadata/types
 
 export type ProductFindFormValues = {
   id?: number | string | null;
+  productStage?: string | null;
   sku: string | null;
   name: string;
   description: string;
@@ -57,6 +58,7 @@ export function buildProductEditDefaults(
   );
   return {
     id: p.id,
+    productStage: p.productStage ?? "SETUP",
     sku: p.sku || "",
     name: p.name || "",
     description: p.description || "",
@@ -98,6 +100,7 @@ export function buildProductEditDefaults(
 export function buildProductFindDefaults(): ProductFindFormValues {
   return {
     id: undefined,
+    productStage: undefined,
     sku: "",
     name: "",
     description: "",

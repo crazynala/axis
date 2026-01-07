@@ -133,7 +133,7 @@ export function PurchaseOrderPdf({
 
           {lines.map((ln: any) => {
             const qty = Number(ln.quantityOrdered ?? ln.quantity ?? 0);
-            const unit = Number(ln.priceCost ?? 0);
+            const unit = Number(ln.manualCost ?? ln.priceCost ?? 0);
             const line = qty * unit;
             return (
               <View style={styles.tableRow} key={ln.id}>

@@ -146,6 +146,7 @@ export default function NewProductRoute() {
       sku: "",
       name: "",
       type: "",
+      productStage: "SETUP",
       costPrice: undefined as any,
       manualSalePrice: undefined as any,
       pricingModel: "COST_PLUS_MARGIN",

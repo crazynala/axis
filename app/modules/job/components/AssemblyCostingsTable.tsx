@@ -35,6 +35,7 @@ import {
 } from "@tabler/icons-react";
 import { formatUSD } from "~/utils/format";
 import { JumpLink } from "~/components/JumpLink";
+import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 
 const ACTIVITY_USAGE_OPTIONS = [
   { value: "cut", label: "Cut" },
@@ -60,6 +61,7 @@ export type CostingRow = {
   isSingle?: boolean;
   sku?: string | null;
   name?: string | null;
+  productStage?: string | null;
   /** Per-activity usage type: "cut", "sew", or "finish" */
   activityUsed?: string | null;
   quantityPerUnit?: number | null;
@@ -653,7 +655,13 @@ export function AssemblyCostingsTable(props: {
       header: "Name",
       width: nameColumnWidth,
       render: (c) => (
-        <span style={disabledStyle(c)}>{c.name || c.productId || ""}</span>
+        <Group gap={6} wrap="nowrap">
+          <span style={disabledStyle(c)}>{c.name || c.productId || ""}</span>
+          <ProductStageIndicator
+            stage={c.productStage}
+            variant="secondaryText"
+          />
+        </Group>
       ),
     },
     {

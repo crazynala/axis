@@ -92,6 +92,7 @@ export function buildCostingRows(options: {
       batchTrackingEnabled: !!(c.product?.batchTrackingEnabled || false),
       sku: c.product?.sku || null,
       name: c.product?.name || null,
+      productStage: (c.product as any)?.productStage ?? null,
       activityUsed: String((c as any).activityUsed ?? "").toLowerCase(),
       quantityPerUnit: Number(c.quantityPerUnit || 0) || null,
       unitCost: Number(c.unitCost || 0) || null,

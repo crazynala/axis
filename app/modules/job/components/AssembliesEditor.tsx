@@ -52,6 +52,7 @@ import {
 import { AssemblyActivityModal } from "~/components/AssemblyActivityModal";
 import { AxisChip } from "~/components/AxisChip";
 import { JumpLink } from "~/components/JumpLink";
+import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 import type { StageRow } from "~/modules/job/types/stageRows";
@@ -112,7 +113,12 @@ export function AssembliesEditor(props: {
   saveIntent: string; // "assembly.updateOrderedBreakdown" | "group.updateOrderedBreakdown"
   stateChangeIntent?: string; // "assembly.update" | "assembly.update.fromGroup"
   // Assembly-only extras
-  products?: Array<{ id: number; sku: string | null; name: string | null }>;
+  products?: Array<{
+    id: number;
+    sku: string | null;
+    name: string | null;
+    productStage?: string | null;
+  }>;
   activities?: any[];
   activityConsumptionMap?: Record<
     number,
@@ -1627,14 +1633,19 @@ export function AssembliesEditor(props: {
                         Product
                       </Text>
                       {((a as any).product?.id || (a as any).productId) ? (
-                        <JumpLink
-                          to={`/products/${(a as any).product?.id ?? (a as any).productId}`}
-                          label={
-                            ((a as any).product?.name as string) ||
-                            ((a as any).product?.sku as string) ||
-                            `Product ${(a as any).productId ?? ""}`
-                          }
-                        />
+                        <Group gap={6} wrap="nowrap">
+                          <JumpLink
+                            to={`/products/${(a as any).product?.id ?? (a as any).productId}`}
+                            label={
+                              ((a as any).product?.name as string) ||
+                              ((a as any).product?.sku as string) ||
+                              `Product ${(a as any).productId ?? ""}`
+                            }
+                          />
+                          <ProductStageIndicator
+                            stage={(a as any).product?.productStage}
+                          />
+                        </Group>
                       ) : (
                         <Text>
                           {((a as any).product?.name as string) || "—"}
@@ -2810,7 +2821,12 @@ function AddCostingButton({
   jobId,
   assemblyId,
 }: {
-  products: Array<{ id: number; sku: string | null; name: string | null }>;
+  products: Array<{
+    id: number;
+    sku: string | null;
+    name: string | null;
+    productStage?: string | null;
+  }>;
   jobId: number;
   assemblyId: number;
 }) {
@@ -2892,7 +2908,10 @@ function AddCostingButton({
                   >
                     <Text w={60}>{p.id}</Text>
                     <Text w={160}>{p.sku}</Text>
-                    <Text style={{ flex: 1 }}>{p.name}</Text>
+                    <Group gap={6} style={{ flex: 1 }} wrap="nowrap">
+                      <Text>{p.name}</Text>
+                      <ProductStageIndicator stage={p.productStage} />
+                    </Group>
                   </Group>
                 ))}
               </div>

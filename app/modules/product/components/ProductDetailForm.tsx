@@ -32,6 +32,7 @@ import {
   productAssocFields,
   productPricingFields,
 } from "../forms/productDetail";
+import { CardChrome } from "~/base/forms/CardChrome";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
 import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 import { ProductCostTiersModal } from "../components/ProductCostTiersModal";
@@ -46,6 +47,8 @@ export type ProductDetailFormProps = {
   mode: "edit" | "find" | "create";
   form: UseFormReturn<any>;
   product?: any; // initial product record when editing
+  fieldCtx?: Record<string, any>;
+  onSave?: (values: any) => void;
   categoryOptions?: { value: string; label: string }[];
   subcategoryOptions?: { value: string; label: string }[];
   taxCodeOptions?: { value: string; label: string }[];
@@ -95,6 +98,8 @@ export function ProductDetailForm({
   mode,
   form,
   product,
+  fieldCtx,
+  onSave,
   categoryOptions,
   subcategoryOptions,
   templateOptions,
@@ -115,6 +120,9 @@ export function ProductDetailForm({
 }: ProductDetailFormProps) {
   const optionsCtx = useOptions();
   const [tiersOpen, setTiersOpen] = React.useState(false);
+  const [detailDrawerOpen, setDetailDrawerOpen] = React.useState(false);
+  const [pricingDrawerOpen, setPricingDrawerOpen] = React.useState(false);
+  const isLoudMode = (fieldCtx as any)?.isLoudMode ?? true;
   // Live pricing prefs from the PricingPreviewWidget (qty + customer multiplier)
   function usePricingPrefsFromWidget() {
     const [qty, setQty] = React.useState<number>(() => {
@@ -665,6 +673,7 @@ export function ProductDetailForm({
     () => ({
       hasCostTiers,
       openCostTiersModal: () => setTiersOpen(true),
+      ...(fieldCtx || {}),
       product: product || {},
       customer: product?.customer || {},
       options: globalOptions
@@ -703,6 +712,7 @@ export function ProductDetailForm({
     }),
     [
       hasCostTiers,
+      fieldCtx,
       product,
       categoryOptions,
       subcategoryOptions,
@@ -719,14 +729,78 @@ export function ProductDetailForm({
       hideTemplateField,
     ]
   );
+  const metadataFields = React.useMemo(
+    () =>
+      buildProductMetadataFields(metadataDefinitions, {
+        enumOptionsByDefinitionId:
+          globalOptions?.productAttributeOptionsByDefinitionId || {},
+      }),
+    [metadataDefinitions, globalOptions?.productAttributeOptionsByDefinitionId]
+  );
+  const surfaceCtx = React.useMemo(
+    () => ({
+      ...ctx,
+      uiMode: isLoudMode ? "normal" : "quiet",
+      allowEditInCalm: isLoudMode,
+    }),
+    [ctx, isLoudMode]
+  );
+  const drawerCtx = React.useMemo(
+    () => ({
+      ...ctx,
+      uiMode: "normal",
+      allowEditInCalm: true,
+      markDirtyOnChange: true,
+    }),
+    [ctx]
+  );
+  const surfaceMetadataFields = React.useMemo(() => {
+    if (isLoudMode) return metadataFields;
+    return metadataFields.map((field) => ({
+      ...field,
+      readOnly: true,
+      editable: false,
+    }));
+  }, [isLoudMode, metadataFields]);
+  const drawerIdentityFields = React.useMemo(
+    () => filterFields(productIdentityFields),
+    [filterFields]
+  );
+  const drawerAssocFields = React.useMemo(
+    () => filterFields(productAssocFields),
+    [filterFields]
+  );
+  const drawerPricingFields = React.useMemo(
+    () => filterFields(productPricingFields),
+    [filterFields]
+  );
+  const drawerMetadataFields = React.useMemo(
+    () => filterFields(metadataFields),
+    [filterFields, metadataFields]
+  );
+  const detailDrawerItems = React.useMemo(
+    () => [...drawerIdentityFields, ...drawerAssocFields, ...drawerMetadataFields],
+    [drawerIdentityFields, drawerAssocFields, drawerMetadataFields]
+  );
   const renderFieldByName = React.useCallback(
-    (name: string) => {
+    (
+      name: string,
+      opts?: { ctx?: any; forceReadOnly?: boolean }
+    ) => {
       const field = fieldByName[name];
       if (!field) return null;
       if (hideTemplateField && name === "templateId") return null;
       if (!shouldRenderField(name)) return null;
+      const resolvedField = opts?.forceReadOnly
+        ? { ...field, readOnly: true, editable: false }
+        : field;
       return (
-        <RenderField form={form} field={field} mode={mode as any} ctx={ctx} />
+        <RenderField
+          form={form}
+          field={resolvedField}
+          mode={mode as any}
+          ctx={(opts?.ctx as any) ?? ctx}
+        />
       );
     },
     [fieldByName, form, mode, ctx, shouldRenderField, hideTemplateField]
@@ -735,9 +809,10 @@ export function ProductDetailForm({
     (
       name: string,
       colSpan: { base: number; md?: number },
-      wrapperStyle?: React.CSSProperties
+      wrapperStyle?: React.CSSProperties,
+      opts?: { ctx?: any; forceReadOnly?: boolean }
     ) => {
-      const fieldNode = renderFieldByName(name);
+      const fieldNode = renderFieldByName(name, opts);
       if (!fieldNode) return null;
       return (
         <Grid.Col span={colSpan}>
@@ -751,6 +826,31 @@ export function ProductDetailForm({
     },
     [renderFieldByName]
   );
+  const renderSurfaceFieldByName = React.useCallback(
+    (name: string) =>
+      renderFieldByName(name, {
+        ctx: surfaceCtx,
+        forceReadOnly: !isLoudMode,
+      }),
+    [renderFieldByName, surfaceCtx, isLoudMode]
+  );
+  const renderSurfaceFieldCol = React.useCallback(
+    (
+      name: string,
+      colSpan: { base: number; md?: number },
+      wrapperStyle?: React.CSSProperties
+    ) =>
+      renderFieldCol(name, colSpan, wrapperStyle, {
+        ctx: surfaceCtx,
+        forceReadOnly: !isLoudMode,
+      }),
+    [renderFieldCol, surfaceCtx, isLoudMode]
+  );
+  const drawerDirty = form.formState.isDirty;
+  const handleDrawerSave = React.useCallback(() => {
+    if (!onSave) return;
+    onSave(form.getValues());
+  }, [onSave, form]);
   const resolvedPricingModel =
     (pricingModelValue as string | null) ?? effectivePricingModel ?? null;
   const pricingModelLabelResolved =
@@ -919,15 +1019,6 @@ export function ProductDetailForm({
     pricingSpecRangesById,
     baselinePriceAtMoq,
   ]);
-  const metadataFields = React.useMemo(
-    () =>
-      buildProductMetadataFields(metadataDefinitions, {
-        enumOptionsByDefinitionId:
-          globalOptions?.productAttributeOptionsByDefinitionId || {},
-      }),
-    [metadataDefinitions, globalOptions?.productAttributeOptionsByDefinitionId]
-  );
-
   return (
     <Grid>
       <input
@@ -948,30 +1039,61 @@ export function ProductDetailForm({
         value={pricingSpecId ?? ""}
         data-debug="pricingSpecId-hidden"
       />
+      <input type="hidden" {...form.register("productStage" as any)} />
       <Grid.Col span={{ base: 12, md: 12 }}>
         <Grid>
           <Grid.Col span={7}>
-            <Card withBorder padding="md">
+            <CardChrome
+              showEdit={mode === "edit" && !isLoudMode}
+              onEdit={() => setDetailDrawerOpen(true)}
+              drawerOpened={detailDrawerOpen}
+              onDrawerClose={() => setDetailDrawerOpen(false)}
+              drawerTitle="Edit product details"
+              drawerChildren={
+                detailDrawerItems.length ? (
+                  <Stack gap="md">
+                    <RenderGroup
+                      form={form as any}
+                      fields={detailDrawerItems as any}
+                      mode={mode as any}
+                      ctx={drawerCtx as any}
+                      gap={10}
+                    />
+                    <Group justify="flex-end">
+                      <Button
+                        variant="default"
+                        onClick={() => setDetailDrawerOpen(false)}
+                      >
+                        Close
+                      </Button>
+                      <Button disabled={!drawerDirty} onClick={handleDrawerSave}>
+                        Save changes
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : null
+              }
+            >
               <Grid gutter="md">
-                {renderFieldCol("name", { base: 12, md: 6 })}
-                {renderFieldCol("sku", { base: 12, md: 6 })}
-                {renderFieldCol("categoryId", { base: 12, md: 6 })}
-                {renderFieldCol("type", { base: 12, md: 6 }, { opacity: 0.75 })}
-                {renderFieldCol("subCategoryId", { base: 12, md: 6 })}
-                {renderFieldCol("templateId", { base: 12, md: 6 })}
-                {renderFieldCol("supplierId", { base: 12, md: 6 })}
-                {renderFieldCol("customerId", { base: 12, md: 6 })}
-                {renderFieldCol("variantSetId", { base: 12, md: 6 })}
-                {renderFieldCol("externalStepType", { base: 12, md: 6 })}
-                {renderFieldCol("description", { base: 12 })}
+                {renderSurfaceFieldCol("name", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("sku", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("categoryId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("type", { base: 12, md: 6 }, { opacity: 0.75 })}
+                {renderSurfaceFieldCol("subCategoryId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("templateId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("supplierId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("customerId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("variantSetId", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("externalStepType", { base: 12, md: 6 })}
+                {renderSurfaceFieldCol("description", { base: 12 })}
                 {metadataFields.length ? (
                   <Grid.Col span={{ base: 12 }}>
                     <div style={{ opacity: 0.8 }}>
                       <RenderGroup
                         form={form as any}
-                        fields={metadataFields as any}
+                        fields={surfaceMetadataFields as any}
                         mode={mode as any}
-                        ctx={ctx as any}
+                        ctx={surfaceCtx as any}
                       />
                     </div>
                   </Grid.Col>
@@ -986,10 +1108,40 @@ export function ProductDetailForm({
                   </Grid.Col>
                 ) : null}
               </Grid>
-            </Card>
+            </CardChrome>
           </Grid.Col>
           <Grid.Col span={5}>
-            <Card withBorder padding="md">
+            <CardChrome
+              showEdit={mode === "edit" && !isLoudMode}
+              onEdit={() => setPricingDrawerOpen(true)}
+              drawerOpened={pricingDrawerOpen}
+              onDrawerClose={() => setPricingDrawerOpen(false)}
+              drawerTitle="Edit pricing"
+              drawerChildren={
+                drawerPricingFields.length ? (
+                  <Stack gap="md">
+                    <RenderGroup
+                      form={form as any}
+                      fields={drawerPricingFields as any}
+                      mode={mode as any}
+                      ctx={drawerCtx as any}
+                      gap={10}
+                    />
+                    <Group justify="flex-end">
+                      <Button
+                        variant="default"
+                        onClick={() => setPricingDrawerOpen(false)}
+                      >
+                        Close
+                      </Button>
+                      <Button disabled={!drawerDirty} onClick={handleDrawerSave}>
+                        Save changes
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : null
+              }
+            >
               <Stack gap="sm">
                 {needsTemplate ? (
                   <Text size="xs" c="dimmed">
@@ -1012,8 +1164,8 @@ export function ProductDetailForm({
                 </Group>
                 {resolvedPricingModel === "COST_PLUS_FIXED_SELL" ? (
                   <Stack gap="xs">
-                    {renderFieldByName("costPrice")}
-                    {renderFieldByName("manualSalePriceOverride")}
+                    {renderSurfaceFieldByName("costPrice")}
+                    {renderSurfaceFieldByName("manualSalePriceOverride")}
                     <Text size="xs" c="dimmed">
                       Margin (derived):{" "}
                       {derivedMargin == null
@@ -1023,8 +1175,8 @@ export function ProductDetailForm({
                   </Stack>
                 ) : resolvedPricingModel === "COST_PLUS_MARGIN" ? (
                   <Stack gap="xs">
-                    {renderFieldByName("costPrice")}
-                    {renderFieldByName("manualMargin")}
+                    {renderSurfaceFieldByName("costPrice")}
+                    {renderSurfaceFieldByName("manualMargin")}
                     <Text size="xs" c="dimmed">
                       Sell (derived):{" "}
                       {derivedSell == null
@@ -1034,7 +1186,7 @@ export function ProductDetailForm({
                   </Stack>
                 ) : resolvedPricingModel === "TIERED_COST_PLUS_MARGIN" ? (
                   <Stack gap="xs">
-                    {renderFieldByName("manualMargin")}
+                    {renderSurfaceFieldByName("manualMargin")}
                     <Text size="xs" c="dimmed">
                       {costTierSummary}
                     </Text>
@@ -1056,9 +1208,9 @@ export function ProductDetailForm({
                     Pricing mode not set.
                   </Text>
                 )}
-                {renderFieldByName("purchaseTaxId")}
+                {renderSurfaceFieldByName("purchaseTaxId")}
                 <div style={{ height: 6 }} />
-                {renderFieldByName("leadTimeDays")}
+                {renderSurfaceFieldByName("leadTimeDays")}
                 <Stack gap={4} id="product-tracking-status">
                   <Text size="xs" c="dimmed">
                     Stock tracking: {stockTracking ? "ON" : "OFF"}
@@ -1073,6 +1225,7 @@ export function ProductDetailForm({
                     variant="subtle"
                     onClick={(e) => e.preventDefault()}
                     style={{ padding: 0, alignSelf: "flex-start" }}
+                    disabled={!isLoudMode}
                   >
                     Change tracking in settings
                   </Button>
@@ -1088,7 +1241,7 @@ export function ProductDetailForm({
                   </Center>
                 </Card.Section>
               ) : null}
-            </Card>
+            </CardChrome>
           </Grid.Col>
         </Grid>
       </Grid.Col>
@@ -1129,7 +1282,7 @@ export function ProductDetailForm({
             </Group>
           )}
           {resolvedPricingModel !== "CURVE_SELL_AT_MOQ"
-            ? renderFieldByName("costGroupId")
+            ? renderFieldByName("costGroupId", { ctx: drawerCtx })
             : null}
           {resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
             <>
@@ -1143,8 +1296,8 @@ export function ProductDetailForm({
                   form.setValue("pricingSpecId", next, { shouldDirty: true });
                 }}
               />
-              {renderFieldByName("baselinePriceAtMoq")}
-              {renderFieldByName("transferPercent")}
+              {renderFieldByName("baselinePriceAtMoq", { ctx: drawerCtx })}
+              {renderFieldByName("transferPercent", { ctx: drawerCtx })}
               {curvePreviewRows.length ? (
                 <Stack gap={4}>
                   <Text size="xs" c="dimmed">

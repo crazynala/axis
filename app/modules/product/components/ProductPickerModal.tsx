@@ -1,6 +1,7 @@
 import { Checkbox, Group, Loader, Stack, Text, TextInput } from "@mantine/core";
 import type { ReactNode } from "react";
 import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
+import { ProductStageIndicator } from "./ProductStageIndicator";
 
 export type ProductPickerItem = {
   id: number;
@@ -8,6 +9,7 @@ export type ProductPickerItem = {
   name?: string | null;
   type?: string | null;
   supplierName?: string | null;
+  productStage?: string | null;
   _count?: { productLines?: number | null } | null;
 };
 
@@ -103,7 +105,10 @@ export function ProductPickerModal({
               >
                 <Text w={60}>{p.id}</Text>
                 <Text w={160}>{p.sku}</Text>
-                <Text style={{ flex: 1 }}>{p.name}</Text>
+                <Group gap={6} style={{ flex: 1 }} wrap="nowrap">
+                  <Text>{p.name}</Text>
+                  <ProductStageIndicator stage={p.productStage} />
+                </Group>
               </Group>
             ))
           ) : (

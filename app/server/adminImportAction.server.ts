@@ -37,6 +37,7 @@ import {
   applyCompanyDefaultAddresses,
   applyContactDefaultAddresses,
 } from "../importers/importAddressDefaults";
+import { importSupplierInvoices } from "../importers/importSupplierInvoices";
 
 export async function adminImportAction({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_composeUploadHandlers(
@@ -112,6 +113,7 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     "import:costings": 185,
     "import:invoices": 190,
     "import:invoice_lines": 200,
+    "import:supplier_invoices": 205,
     "import:product_batches": 210,
     "import:product_locations": 220,
     "import:product_movements": 230,
@@ -157,6 +159,8 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     if (n.includes("purchase_order") && n.includes("line"))
       return "import:purchase_order_lines";
     if (n.includes("purchase_order")) return "import:purchase_orders";
+    if (n.startsWith("purchaseinvoices") || n.includes("purchaseinvoices"))
+      return "import:supplier_invoices";
     if (n.includes("invoice") && !n.includes("line")) return "import:invoices";
     if (n.includes("invoice") && n.includes("line"))
       return "import:invoice_lines";
@@ -336,6 +340,13 @@ export async function adminImportAction({ request }: ActionFunctionArgs) {
     }
     if (finalMode === "import:invoice_lines") {
       const r = await runImporter(finalMode, () => importInvoiceLines(rows));
+      push(finalMode, r.created, r.updated, r.skipped, r.errors);
+      continue;
+    }
+    if (finalMode === "import:supplier_invoices") {
+      const r = await runImporter(finalMode, () =>
+        importSupplierInvoices(rows)
+      );
       push(finalMode, r.created, r.updated, r.skipped, r.errors);
       continue;
     }

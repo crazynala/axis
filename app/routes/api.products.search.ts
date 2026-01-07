@@ -38,7 +38,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const products = await prismaBase.product.findMany({
     where: andClauses.length ? { AND: andClauses } : undefined,
-    select: { id: true, sku: true, name: true },
+    select: { id: true, sku: true, name: true, productStage: true },
     take: limit,
     orderBy: [{ id: "desc" }],
   });

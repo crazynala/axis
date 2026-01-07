@@ -32,6 +32,7 @@ export async function getPOLinesPendingInvoicing(
       quantityOrdered: true,
       qtyReceived: true,
       priceSell: true,
+      manualSell: true,
       taxRate: true,
       product: { select: { name: true } },
       productNameCopy: true,
@@ -39,11 +40,10 @@ export async function getPOLinesPendingInvoicing(
   });
   const results: PendingPOLineItem[] = [];
   for (const line of lines) {
-    const orderedAmount =
-      (Number(line.quantityOrdered ?? 0) || 0) *
-      (Number(line.priceSell ?? 0) || 0);
-    const receivedAmount =
-      (Number(line.qtyReceived ?? 0) || 0) * (Number(line.priceSell ?? 0) || 0);
+    const unitSell =
+      Number(line.manualSell ?? line.priceSell ?? 0) || 0;
+    const orderedAmount = (Number(line.quantityOrdered ?? 0) || 0) * unitSell;
+    const receivedAmount = (Number(line.qtyReceived ?? 0) || 0) * unitSell;
     // Quantity-based invoiceability
     const orderedQty = Number(line.quantityOrdered ?? 0) || 0;
     const receivedQty = Number(line.qtyReceived ?? 0) || 0;
@@ -65,9 +65,9 @@ export async function getPOLinesPendingInvoicing(
       0
     );
     const pendingQty = Math.max(0, targetQty - alreadyInvoicedQty);
-    const pendingAmount = pendingQty * (Number(line.priceSell ?? 0) || 0);
+    const pendingAmount = pendingQty * unitSell;
     const pendingAmountRounded = roundCurrency(pendingAmount);
-    const unitPriceRounded = roundCurrency(Number(line.priceSell ?? 0) || 0);
+    const unitPriceRounded = roundCurrency(unitSell);
     if (pendingAmount > 0) {
       results.push({
         sourceType: "po",

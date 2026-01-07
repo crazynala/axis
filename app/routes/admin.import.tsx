@@ -79,6 +79,9 @@ export default function AdminImportRoute() {
               <option value="import:invoice_lines">
                 Import: Invoice Lines
               </option>
+              <option value="import:supplier_invoices">
+                Import: Supplier Invoices
+              </option>
               <option value="import:expenses">Import: Expenses</option>
               <option value="import:product_locations">
                 Import: Product Locations

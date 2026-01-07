@@ -1,49 +1,53 @@
 import type { FieldConfig } from "~/base/forms/fieldConfigShared";
+import { f, mod, policy } from "~/base/forms/cfg";
 export { renderField } from "~/base/forms/fieldConfigShared";
 
-export const purchaseOrderMainFields: FieldConfig[] = [
-  {
-    name: "companyId",
-    label: "Vendor",
-    widget: "select",
-    optionsKey: "supplier",
-    findOp: "equals",
-    inlineWithNext: true,
-    flex: 1,
-  },
-  { name: "date", label: "Date", type: "date", findOp: "equals", flex: 1 },
-  {
-    name: "consigneeCompanyId",
-    label: "Consignee",
-    widget: "select",
-    optionsKey: "consignee",
-    allOptionsKey: "consigneeAll",
-    findOp: "equals",
-    inlineWithNext: true,
-    flex: 1,
-  },
-  {
-    name: "locationId",
-    label: "Location",
-    widget: "select",
-    optionsKey: "location",
-    findOp: "equals",
-    editable: false,
-    readOnly: true,
-    hiddenInModes: ["create"],
-    flex: 1,
-  },
-  { name: "memo", label: "Memo", findOp: "contains" },
+const isLockedOnEdit = ({
+  mode,
+  ctx,
+}: {
+  mode: "edit" | "find" | "create";
+  ctx?: any;
+}) => mode === "edit" && !ctx?.isLoudMode;
+const lockWhenNotDraft = policy.lockWhenNotDraft(isLockedOnEdit);
 
+const vendorField: FieldConfig = lockWhenNotDraft(
+  mod.inline(1)(f.select("companyId", "Vendor", "supplier", { findOp: "equals" }))
+);
+const dateField: FieldConfig = lockWhenNotDraft(
+  f.date("date", "Date", { findOp: "equals", flex: 1 })
+);
+const consigneeField: FieldConfig = lockWhenNotDraft(
+  mod.inline(1)(
+    f.select("consigneeCompanyId", "Consignee", "consignee", {
+      allOptionsKey: "consigneeAll",
+      findOp: "equals",
+    })
+  )
+);
+const locationField: FieldConfig = f.select(
+  "locationId",
+  "Location",
+  "location",
   {
-    name: "id",
-    label: "ID",
-    widget: "idStatic",
     editable: false,
     readOnly: true,
-    findOp: "equals",
     hiddenInModes: ["create"],
-  },
+    flex: 1,
+  }
+);
+const memoField: FieldConfig = lockWhenNotDraft(
+  f.text("memo", "Memo", { findOp: "contains" })
+);
+const idField: FieldConfig = mod.hide("create")(f.id("id", "ID"));
+
+export const purchaseOrderMainFields: FieldConfig[] = [
+  vendorField,
+  dateField,
+  consigneeField,
+  locationField,
+  memoField,
+  idField,
 ];
 
 export function allPurchaseOrderFindFields() {

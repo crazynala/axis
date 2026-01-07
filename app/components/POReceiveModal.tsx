@@ -22,6 +22,8 @@ import {
 import { useFetcher } from "@remix-run/react";
 import EmbeddedTextInput from "./EmbeddedTextInput";
 import { flushSync } from "react-dom";
+import { AxisChip } from "~/components/AxisChip";
+import { buildProductWarnings } from "~/modules/product/warnings/productWarnings";
 
 type ReceiveForm = {
   date: string;
@@ -50,6 +52,9 @@ export function POReceiveModal(props: {
     name?: string | null;
     qtyOrdered?: number | null;
     qtyReceived?: number | null;
+    stockTrackingEnabled?: boolean | null;
+    batchTrackingEnabled?: boolean | null;
+    productType?: string | null;
   }>;
 }) {
   const { opened, onClose, poId, poLocationId, lines } = props;
@@ -112,6 +117,9 @@ export function POReceiveModal(props: {
       const label = line?.sku || line?.name || `Line ${line?.id}` || "line";
       const total = Number(it?.total || 0);
       const rows = Array.isArray(it?.batches) ? it.batches : [];
+      const stockTrackingEnabled = line?.stockTrackingEnabled !== false;
+      const batchTrackingEnabled = line?.batchTrackingEnabled === true;
+      const requiresBatches = stockTrackingEnabled && batchTrackingEnabled;
       if (rows.length === 0 && total === 0) continue; // ignore untouched lines
       const anyNonEmpty = rows.some((r: any) => {
         if (!r) return false;
@@ -123,12 +131,22 @@ export function POReceiveModal(props: {
         const hasQty = Number(r.qty || 0) > 0;
         return hasText || hasQty;
       });
-      if (!anyNonEmpty && total > 0) return `Add batch rows for ${label}`;
+      if (requiresBatches && !anyNonEmpty && total > 0)
+        return `Add batch rows for ${label}`;
       const sum = rows.reduce(
         (t: number, r: any) => t + (Number(r?.qty) || 0),
         0
       );
-      if (Math.round(sum * 100) !== Math.round(total * 100))
+      if (
+        requiresBatches &&
+        Math.round(sum * 100) !== Math.round(total * 100)
+      )
+        return `Sum of batches must equal total for ${label}`;
+      if (
+        !requiresBatches &&
+        rows.length > 0 &&
+        Math.round(sum * 100) !== Math.round(total * 100)
+      )
         return `Sum of batches must equal total for ${label}`;
       // Overages allowed: no remaining check
     }
@@ -157,10 +175,10 @@ export function POReceiveModal(props: {
     const payload = vals.items
       .map((it) => {
         const total = Number(it.total || 0);
+        if (total <= 0) return null;
         const rows = (Array.isArray(it.batches) ? it.batches : []).filter(
           (r) => Number(r?.qty || 0) > 0
         );
-        if (total <= 0 || rows.length === 0) return null;
         return {
           lineId: it.lineId,
           productId: it.productId,
@@ -265,7 +283,37 @@ export function POReceiveModal(props: {
             {lines.map((l, idx) => (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.sku || ""}</Table.Td>
-                <Table.Td>{l.name || ""}</Table.Td>
+                <Table.Td>
+                  <Stack gap={4}>
+                    <Text>{l.name || ""}</Text>
+                    {l.stockTrackingEnabled === false ? (() => {
+                      const warnings = buildProductWarnings({
+                        type: l.productType ?? null,
+                        stockTrackingEnabled: l.stockTrackingEnabled ?? null,
+                        batchTrackingEnabled: l.batchTrackingEnabled ?? null,
+                      });
+                      const stockWarning = warnings.find(
+                        (w) => w.code === "enable_stock"
+                      );
+                      const tone = stockWarning
+                        ? stockWarning.severity === "info"
+                          ? "info"
+                          : "warning"
+                        : "info";
+                      const label = stockWarning?.label || "Stock tracking off";
+                      return (
+                        <Tooltip
+                          withArrow
+                          label="Stock tracking is off; no product movements will be created."
+                        >
+                          <div>
+                            <AxisChip tone={tone}>{label}</AxisChip>
+                          </div>
+                        </Tooltip>
+                      );
+                    })() : null}
+                  </Stack>
+                </Table.Td>
                 <Table.Td>{Number(remainingByLine[l.id] || 0)}</Table.Td>
                 <Table.Td>
                   <Controller
@@ -296,11 +344,18 @@ export function POReceiveModal(props: {
         </Table>
 
         {Array.isArray(items) &&
-          items.some((it) => Number(it?.total || 0) > 0) && (
-            <Title order={6}>Batch Breakdown</Title>
-          )}
-        {lines.map((l, idx) =>
-          Number(items?.[idx]?.total || 0) > 0 ? (
+          items.some(
+            (it, idx) =>
+              Number(it?.total || 0) > 0 &&
+              (lines[idx]?.stockTrackingEnabled !== false) &&
+              (lines[idx]?.batchTrackingEnabled === true)
+          ) && <Title order={6}>Batch Breakdown</Title>}
+        {lines.map((l, idx) => {
+          const total = Number(items?.[idx]?.total || 0);
+          const requiresBatches =
+            l.stockTrackingEnabled !== false && l.batchTrackingEnabled === true;
+          if (total <= 0 || !requiresBatches) return null;
+          return (
             <LineBatchesSection
               key={`bd-${l.id}`}
               control={control}
@@ -309,13 +364,22 @@ export function POReceiveModal(props: {
               line={l}
               remaining={Number(remainingByLine[l.id] || 0)}
               attempted={attemptedSave}
+              requiresBatches={requiresBatches}
             />
-          ) : null
-        )}
-        <Text c="dimmed" size="sm">
-          All batches created here will use the PO's location ID:{" "}
-          {poLocationId ?? "(none)"}.
-        </Text>
+          );
+        })}
+        {Array.isArray(items) &&
+        items.some(
+          (it, idx) =>
+            Number(it?.total || 0) > 0 &&
+            (lines[idx]?.stockTrackingEnabled !== false) &&
+            (lines[idx]?.batchTrackingEnabled === true)
+        ) ? (
+          <Text c="dimmed" size="sm">
+            All batches created here will use the PO's location ID:{" "}
+            {poLocationId ?? "(none)"}.
+          </Text>
+        ) : null}
       </Stack>
     </Modal>
   );
@@ -328,8 +392,10 @@ function LineBatchesSection(props: {
   line: { id: number; sku?: string | null; name?: string | null };
   remaining: number;
   attempted: boolean;
+  requiresBatches: boolean;
 }) {
-  const { control, watch, idx, line, remaining, attempted } = props;
+  const { control, watch, idx, line, remaining, attempted, requiresBatches } =
+    props;
   // Hook lives inside a dedicated component to keep parent's hook order stable
   const { fields, append, remove } = useFieldArray({
     control,
@@ -377,7 +443,7 @@ function LineBatchesSection(props: {
   const anyNonEmpty = Array.isArray(batches)
     ? batches.some((r) => !isRowEmpty(r))
     : false;
-  const needsBatches = total > 0 && !anyNonEmpty;
+  const needsBatches = requiresBatches && total > 0 && !anyNonEmpty;
   const sumMismatch = Math.round(sum * 100) !== Math.round(total * 100);
   const ok = !needsBatches && !sumMismatch;
 

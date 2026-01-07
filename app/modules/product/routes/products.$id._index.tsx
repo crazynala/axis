@@ -52,6 +52,7 @@ import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
 import { AxisChip } from "~/components/AxisChip";
 import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
 import { productSpec } from "~/modules/product/spec";
+import { StateChangeButton } from "~/base/state/StateChangeButton";
 // BOM spreadsheet moved to full-page route: /products/:id/bom
 import { ProductPickerModal } from "~/modules/product/components/ProductPickerModal";
 import { useRecordContext } from "~/base/record/RecordContext";
@@ -69,6 +70,7 @@ import {
   useProductFindify,
 } from "~/modules/product/findify/productFindify";
 import { ProductDetailForm } from "../components/ProductDetailForm";
+import { productStageConfig } from "~/modules/product/configs/productStageConfig";
 
 import { ProductFindManager } from "../components/ProductFindManager";
 import {
@@ -879,6 +881,27 @@ export default function ProductDetailRoute() {
       }),
     [watched, product, stockTrackingEnabled, batchTrackingEnabled, hasCmtLine]
   );
+  const productStageValue = String(
+    watched?.productStage ?? product.productStage ?? "SETUP"
+  );
+  const isLoudMode = productStageValue === "SETUP";
+  const productFieldCtx = useMemo(
+    () => ({
+      productStage: productStageValue,
+      isLoudMode,
+    }),
+    [productStageValue, isLoudMode]
+  );
+  const handleStageChange = useCallback(
+    (nextStage: string) => {
+      editForm.setValue("productStage", nextStage, { shouldDirty: true });
+      const fd = new FormData();
+      fd.set("_intent", "product.updateStage");
+      fd.set("productStage", nextStage);
+      submit(fd, { method: "post" });
+    },
+    [editForm, submit]
+  );
   const headerChips = useMemo(() => {
     const chips: Array<{
       tone: "warning" | "info" | "neutral";
@@ -992,6 +1015,13 @@ export default function ProductDetailRoute() {
           style={{ minWidth: 200, maxWidth: 520, flex: 1 }}
           justify="flex-end"
         >
+          <StateChangeButton
+            value={productStageValue}
+            defaultValue={productStageValue}
+            onChange={handleStageChange}
+            disabled={editForm.formState.isDirty}
+            config={productStageConfig}
+          />
           <div style={{ minWidth: 180, maxWidth: 260, width: 220 }}>
             <Controller
               control={editForm.control as any}
@@ -1250,6 +1280,8 @@ export default function ProductDetailRoute() {
           mode={"edit" as any}
           form={editForm as any}
           product={product}
+          fieldCtx={productFieldCtx}
+          onSave={saveUpdate}
           metadataDefinitions={metadataDefinitions}
           validation={validation}
           onRegisterMissingFocus={setFocusMissingRequired}

@@ -90,6 +90,7 @@ import {
 import { JobDetailForm } from "~/modules/job/forms/JobDetailForm";
 import { buildEndCustomerOptions } from "~/modules/job/services/endCustomerOptions";
 import { deriveInternalTargetDate } from "~/modules/job/services/jobTargetDefaults";
+import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 
 export const meta: MetaFunction = () => [{ title: "Job" }];
 
@@ -1904,7 +1905,10 @@ export function JobDetailView() {
                 >
                   <Text w={60}>{p.id}</Text>
                   <Text w={160}>{p.sku}</Text>
-                  <Text style={{ flex: 1 }}>{p.name}</Text>
+                  <Group gap={6} style={{ flex: 1 }} wrap="nowrap">
+                    <Text>{p.name}</Text>
+                    <ProductStageIndicator stage={p.productStage} />
+                  </Group>
                 </Group>
               ))}
           </div>

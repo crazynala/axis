@@ -1,25 +1,26 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useWatch } from "react-hook-form";
 import type { UseFormReturn } from "react-hook-form";
 import {
   Group,
   Indicator,
   NumberInput,
+  SegmentedControl,
   Table,
   ActionIcon,
   Menu,
-  Button,
-  Checkbox,
   Badge,
   Text,
   Tooltip,
   Stack,
 } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
-import { IconMenu2 } from "@tabler/icons-react";
+import { IconCheck, IconClock, IconMenu2 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
-import { calcPrice } from "~/modules/product/calc/calcPrice";
-import { formatUSD } from "~/utils/format";
+import { computeLinePricing } from "~/modules/purchaseOrder/helpers/poPricing";
+import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
+import { JumpLink } from "~/components/JumpLink";
+import { formatMoney, formatUSD } from "~/utils/format";
 import { resolveLeadTimeDays } from "~/utils/leadTime";
 
 type Props = {
@@ -63,6 +64,9 @@ export function PurchaseOrderLinesTable({
 
   const isDraft = status === "DRAFT";
   const isComplete = status === "COMPLETE" || status === "CANCELED";
+  const [viewMode, setViewMode] = useState<"status" | "extended">("status");
+  const showStatus = viewMode === "status";
+  const showExtended = viewMode === "extended";
 
   const getReservedQty = useCallback((line: any) => {
     if (!line) return 0;
@@ -99,100 +103,39 @@ export function PurchaseOrderLinesTable({
     if (!Number.isFinite(num)) return "0";
     return num.toLocaleString();
   };
-
-  const getLivePrices = (productId?: number, qtyOrdered?: number) => {
-    const pid = Number(productId || 0);
-    const prod = productMap[pid];
-    const qty = Number(qtyOrdered || 0) || 0;
-    if (!prod) return { cost: 0, sell: 0, taxRate: 0 } as any;
-    const cost = Number(prod.costPrice || 0);
-    const pricingModel = String(prod.pricingModel || "").toUpperCase();
-    // Detect manual sell price at product level (and via hydrated flag)
-    const hasManualSell =
-      pricingModel !== "CURVE_SELL_AT_MOQ" &&
-      (prod.manualSalePrice != null || prod.c_isSellPriceManual === true);
-    if (hasManualSell) {
-      const out = calcPrice({
-        baseCost: cost,
-        tiers: [],
-        taxRate: Number(prod.purchaseTax?.value || 0),
-        qty: qty > 0 ? qty : 1,
-        manualSalePrice: Number(prod.manualSalePrice || 0),
-        pricingModel: prod.pricingModel ?? null,
-        baselinePriceAtMoq:
-          prod.baselinePriceAtMoq != null
-            ? Number(prod.baselinePriceAtMoq)
-            : null,
-        transferPercent:
-          prod.transferPercent != null ? Number(prod.transferPercent) : null,
-        pricingSpecRanges: (prod.pricingSpec?.ranges || []).map((range: any) => ({
-          rangeFrom: range.rangeFrom ?? null,
-          rangeTo: range.rangeTo ?? null,
-          multiplier: Number(range.multiplier),
-        })),
+  const normalizeTaxRate = (value: number | null | undefined) => {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num) || num === 0) return 0;
+    return num > 1 ? num / 100 : num;
+  };
+  const formatTaxRate = (value: number | null | undefined) => {
+    const norm = normalizeTaxRate(value);
+    if (!norm) return "—";
+    const pct = norm * 100;
+    const label = pct.toFixed(2).replace(/\.?0+$/, "");
+    return `${label}%`;
+  };
+  const formatUnitCost = (value: number | null | undefined) => {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return "";
+    if (num !== 0 && Math.abs(num) < 0.01) {
+      return formatMoney(num, {
+        currency: "USD",
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 8,
       });
-      return {
-        cost,
-        sell: Number(out.unitSellPrice || prod.manualSalePrice || 0),
-        extendedCost: cost * (qty || 0),
-        extendedSell:
-          Number(out.unitSellPrice || prod.manualSalePrice || 0) * (qty || 0),
-        taxRate: Number(prod.purchaseTax?.value || 0),
-        isManualSell: true,
-      };
     }
-    const tiers = (prod.costGroup?.costRanges || []).map((t: any) => ({
-      minQty: Number(t.rangeFrom || 0),
-      priceCost: Number(t.costPrice || 0),
-    }));
-    const taxRate = Number(prod.purchaseTax?.value || 0);
-    // Resolve margin precedence (consignee/customer aware per pricingPrefs)
-    const marginPct = (() => {
-      const m1 = pricingPrefs?.marginOverride;
-      const m2 = pricingPrefs?.vendorDefaultMargin;
-      const m3 = pricingPrefs?.globalDefaultMargin;
-      const pick =
-        m1 != null
-          ? Number(m1)
-          : m2 != null
-          ? Number(m2)
-          : m3 != null
-          ? Number(m3)
-          : null;
-      return pick != null ? Number(pick) : undefined;
-    })();
-    const priceMultiplier = pricingPrefs?.priceMultiplier ?? undefined;
-    const out = calcPrice({
-      baseCost: cost,
-      tiers,
-      taxRate,
-      qty: qty > 0 ? qty : 1,
-      marginPct,
-      priceMultiplier,
-      pricingModel: prod.pricingModel ?? null,
-      baselinePriceAtMoq:
-        prod.baselinePriceAtMoq != null
-          ? Number(prod.baselinePriceAtMoq)
-          : null,
-      transferPercent:
-        prod.transferPercent != null ? Number(prod.transferPercent) : null,
-      pricingSpecRanges: (prod.pricingSpec?.ranges || []).map((range: any) => ({
-        rangeFrom: range.rangeFrom ?? null,
-        rangeTo: range.rangeTo ?? null,
-        multiplier: Number(range.multiplier),
-      })),
+    return formatUSD(num);
+  };
+
+  const getComputedPrices = (line: any) => {
+    const pid = Number(line?.productId || line?.product?.id || 0);
+    const prod = productMap[pid] || line?.product || null;
+    return computeLinePricing({
+      product: prod,
+      qtyOrdered: line?.quantityOrdered,
+      pricingPrefs,
     });
-    // console.log("Live prices", productId, qtyOrdered, out);
-    const unitCost = Number((out as any)?.breakdown?.baseUnit ?? cost ?? 0);
-    const unitSell = Number(out.unitSellPrice || 0);
-    return {
-      cost: unitCost,
-      sell: unitSell,
-      extendedCost: unitCost * (qty || 0),
-      extendedSell: unitSell * (qty || 0),
-      taxRate,
-      isManualSell: false,
-    };
   };
 
   const qtySig = useMemo(
@@ -206,18 +149,41 @@ export function PurchaseOrderLinesTable({
   // Compute live prices in-render to avoid a one-keystroke lag
   const livePrices = useMemo(() => {
     return (lines || []).map((l: any) => {
-      if (isDraft) {
-        return getLivePrices(l.productId, l.quantityOrdered);
-      } else {
-        const taxRate = Number(
-          l.purchaseTax?.value || l.product?.purchaseTax?.value || 0
-        );
-        return {
-          cost: Number(l.priceCost || 0),
-          sell: Number(l.priceSell || 0),
-          taxRate,
-        };
-      }
+      const computed = getComputedPrices(l);
+      const manualCost =
+        l.manualCost != null ? Number(l.manualCost) : null;
+      const manualSell =
+        l.manualSell != null ? Number(l.manualSell) : null;
+      const storedCost =
+        l.priceCost != null ? Number(l.priceCost) : null;
+      const storedSell =
+        l.priceSell != null ? Number(l.priceSell) : null;
+      const effectiveCost =
+        manualCost != null
+          ? manualCost
+          : storedCost != null
+          ? storedCost
+          : computed.cost;
+      const effectiveSell =
+        manualSell != null
+          ? manualSell
+          : storedSell != null
+          ? storedSell
+          : computed.sell;
+      return {
+        computedCost: computed.cost,
+        computedSell: computed.sell,
+        extendedCost: effectiveCost * (Number(l.quantityOrdered || 0) || 0),
+        extendedSell: effectiveSell * (Number(l.quantityOrdered || 0) || 0),
+        taxRate: computed.taxRate,
+        isManualSell: computed.isManualSell,
+        effectiveCost,
+        effectiveSell,
+        storedCost,
+        storedSell,
+        priceSourceCost: manualCost != null ? "manual" : "computed",
+        priceSourceSell: manualSell != null ? "manual" : "computed",
+      };
     });
   }, [isDraft, lines, qtySig, productMap, pricingPrefs]);
 
@@ -232,8 +198,8 @@ export function PurchaseOrderLinesTable({
           taxRate: 0,
         };
         acc.qtyOrdered += q;
-        acc.cost += Number(lp.cost || 0) * q;
-        acc.sell += Number(lp.sell || 0) * q;
+        acc.cost += Number(lp.effectiveCost || 0) * q;
+        acc.sell += Number(lp.effectiveSell || 0) * q;
         return acc;
       },
       { qtyOrdered: 0, cost: 0, sell: 0 }
@@ -253,8 +219,8 @@ export function PurchaseOrderLinesTable({
         };
         acc.qtyOrdered += qOrd;
         acc.qty += qAct;
-        acc.cost += Number(lp.cost || 0) * qAct;
-        acc.sell += Number(lp.sell || 0) * qAct;
+        acc.cost += Number(lp.effectiveCost || 0) * qAct;
+        acc.sell += Number(lp.effectiveSell || 0) * qAct;
         return acc;
       },
       { qtyOrdered: 0, qty: 0, cost: 0, sell: 0 }
@@ -274,6 +240,131 @@ export function PurchaseOrderLinesTable({
       month: "short",
       day: "numeric",
     });
+  };
+
+  const isFullyReceived = (line: any) => {
+    const expected = resolveExpectedQty(line);
+    const received = Number(line?.qtyReceived ?? 0) || 0;
+    return expected > 0 && received >= expected;
+  };
+
+  const renderEtaCell = (line: any, idx: number) => {
+    const canEditEta = isDraft || (!isComplete && !isFullyReceived(line));
+    const canAutofill = getLeadTimeDaysForLine(line) != null;
+    const showConfirm = canEditEta || !!line?.etaDateConfirmed;
+    const hasEta = Boolean(line?.etaDate);
+    const confirmedBy =
+      line?.etaConfirmedByUser?.name ||
+      line?.etaConfirmedByUser?.email ||
+      (line?.etaConfirmedByUserId
+        ? `User ${line.etaConfirmedByUserId}`
+        : null);
+    const confirmedAt = line?.etaConfirmedAt
+      ? new Date(line.etaConfirmedAt as any).toLocaleDateString()
+      : null;
+    const confirmTooltip = !hasEta
+      ? "Set an ETA to confirm."
+      : line?.etaDateConfirmed && (confirmedBy || confirmedAt)
+        ? `Confirmed by ${confirmedBy ?? "user"}${
+            confirmedAt ? ` on ${confirmedAt}` : ""
+          }`
+        : line?.etaDateConfirmed
+          ? "Confirmed"
+          : "Not confirmed";
+    return (
+      <Group gap={6} wrap="nowrap">
+        {canEditEta ? (
+          <Controller
+            name={`lines.${idx}.etaDate`}
+            control={form.control}
+            defaultValue={line.etaDate ?? null}
+            render={({ field }) => (
+              <DateInput
+                value={field.value ? new Date(field.value as any) : null}
+                onChange={(value) => {
+                  field.onChange(
+                    value ? new Date(value as any).toISOString() : null
+                  );
+                  form.setValue(
+                    `lines.${idx}.etaDateConfirmed` as any,
+                    false,
+                    { shouldDirty: true }
+                  );
+                  form.setValue(
+                    `lines.${idx}.etaConfirmedAt` as any,
+                    null,
+                    { shouldDirty: true }
+                  );
+                  form.setValue(
+                    `lines.${idx}.etaConfirmedByUserId` as any,
+                    null,
+                    { shouldDirty: true }
+                  );
+                }}
+                valueFormat="MMM DD, YYYY"
+                clearable
+                popoverProps={{ withinPortal: true }}
+                disabled={!canEditEta}
+                w={130}
+              />
+            )}
+          />
+        ) : (
+          <Text size="sm">{formatEta(line.etaDate)}</Text>
+        )}
+        {showConfirm ? (
+          <Controller
+            name={`lines.${idx}.etaDateConfirmed`}
+            control={form.control}
+            defaultValue={!!line.etaDateConfirmed}
+            render={({ field }) => (
+              <Tooltip label={confirmTooltip} withArrow>
+                <span>
+                  <ActionIcon
+                    variant={field.value ? "light" : "subtle"}
+                    color={field.value ? "green" : "gray"}
+                    size="sm"
+                    onClick={() => {
+                      if (!hasEta) return;
+                      const next = !field.value;
+                      field.onChange(next);
+                      if (!next) {
+                        form.setValue(
+                          `lines.${idx}.etaConfirmedAt` as any,
+                          null,
+                          { shouldDirty: true }
+                        );
+                        form.setValue(
+                          `lines.${idx}.etaConfirmedByUserId` as any,
+                          null,
+                          { shouldDirty: true }
+                        );
+                      }
+                    }}
+                    disabled={!canEditEta || !hasEta}
+                    aria-label="Confirm ETA"
+                  >
+                    <IconCheck size={14} />
+                  </ActionIcon>
+                </span>
+              </Tooltip>
+            )}
+          />
+        ) : null}
+        {canEditEta && canAutofill ? (
+          <Tooltip label="Use lead time" withArrow>
+            <ActionIcon
+              variant="subtle"
+              size="sm"
+              onClick={() => handleFillEta(idx)}
+              aria-label="Use lead time"
+            >
+              <IconClock size={14} />
+            </ActionIcon>
+          </Tooltip>
+        ) : null}
+      </Group>
+    );
   };
 
   const getStatusInfo = (line: any, eta: Date | null) => {
@@ -334,37 +425,56 @@ export function PurchaseOrderLinesTable({
     [form, getLeadTimeDaysForLine, lines, purchaseDateValue]
   );
 
+  const autoEtaAppliedRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (!isDraft) return;
+    (lines || []).forEach((line: any, idx: number) => {
+      const lineId = Number(line?.id ?? idx);
+      if (autoEtaAppliedRef.current.has(lineId)) return;
+      if (line?.etaDate) return;
+      const leadTimeDays = getLeadTimeDaysForLine(line);
+      if (!leadTimeDays) return;
+      const baseDate = purchaseDateValue ?? new Date();
+      const eta = new Date(baseDate);
+      eta.setHours(0, 0, 0, 0);
+      eta.setDate(eta.getDate() + leadTimeDays);
+      form.setValue(`lines.${idx}.etaDate` as any, eta.toISOString(), {
+        shouldDirty: true,
+      });
+      autoEtaAppliedRef.current.add(lineId);
+    });
+  }, [form, getLeadTimeDaysForLine, isDraft, lines, purchaseDateValue]);
+
   return (
     <>
+      <Group justify="flex-end" mb="xs">
+        <SegmentedControl
+          size="xs"
+          value={viewMode}
+          onChange={(value) => setViewMode(value as "status" | "extended")}
+          data={[
+            { value: "status", label: "Status" },
+            { value: "extended", label: "Extended" },
+          ]}
+        />
+      </Group>
       {isDraft ? (
         <Table withColumnBorders>
-          <colgroup>
-            <col style={{ width: "8ch" }} />
-            <col style={{ width: "calc((100% - 104ch) * 0.28)" }} />
-            <col style={{ width: "calc((100% - 104ch) * 0.72)" }} />
-            <col style={{ width: "11ch" }} />
-            <col style={{ width: "18ch" }} />
-            <col style={{ width: "12ch" }} />
-            <col style={{ width: "11ch" }} />
-            <col style={{ width: "9ch" }} />
-            <col style={{ width: "11ch" }} />
-            <col style={{ width: "9ch" }} />
-            <col style={{ width: "11ch" }} />
-            <col style={{ width: "6ch" }} />
-          </colgroup>
           <Table.Thead>
             <Table.Tr>
               <Table.Th maw={10}>ID</Table.Th>
               <Table.Th>SKU</Table.Th>
               <Table.Th>Name</Table.Th>
               <Table.Th>Order Qty</Table.Th>
-              <Table.Th>ETA</Table.Th>
-              <Table.Th>Status</Table.Th>
+              {showStatus ? <Table.Th>Reserved</Table.Th> : null}
+              {showStatus ? <Table.Th>ETA ✓</Table.Th> : null}
+              {showStatus ? <Table.Th>Status</Table.Th> : null}
+              {showExtended ? <Table.Th>Received</Table.Th> : null}
+              {showExtended ? <Table.Th>Remaining</Table.Th> : null}
               <Table.Th>Cost</Table.Th>
               <Table.Th>Tax</Table.Th>
               <Table.Th>Ext</Table.Th>
               <Table.Th>Sell</Table.Th>
-              <Table.Th>Ext</Table.Th>
               <Table.Th></Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -375,20 +485,33 @@ export function PurchaseOrderLinesTable({
                 sell: 0,
                 taxRate: 0,
               };
-              const q = Number(r.quantityOrdered || 0) || 0;
               const pm = productMap[Number(r.productId || 0)];
-              const manualFlag =
-                (lp as any).isManualSell ||
-                pm?.manualSalePrice != null ||
-                pm?.c_isSellPriceManual === true;
+              const manualFlag = (lp as any).priceSourceSell === "manual";
               const etaDateValue = toDate(r.etaDate);
               const statusInfo = getStatusInfo(r, etaDateValue);
-              const canAutofill = getLeadTimeDaysForLine(r) != null;
+              const productId = Number(
+                r.productId ?? r.product?.id ?? r.product?.productId ?? 0
+              );
+              const idLabel = r.id ?? "";
               return (
                 <Table.Tr key={r.id ?? idx}>
-                  <Table.Td>{r.id}</Table.Td>
+                  <Table.Td>
+                    {productId ? (
+                      <JumpLink to={`/products/${productId}`} label={idLabel} />
+                    ) : (
+                      idLabel
+                    )}
+                  </Table.Td>
                   <Table.Td>{r.sku ?? r.product?.sku ?? ""}</Table.Td>
-                  <Table.Td>{r.name ?? r.product?.name ?? ""}</Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="nowrap">
+                      <Text>{r.name ?? r.product?.name ?? ""}</Text>
+                      <ProductStageIndicator
+                        stage={pm?.productStage ?? r.product?.productStage}
+                        variant="secondaryText"
+                      />
+                    </Group>
+                  </Table.Td>
                   <Table.Td>
                     <Controller
                       name={`lines.${idx}.quantityOrdered`}
@@ -398,85 +521,69 @@ export function PurchaseOrderLinesTable({
                         <NumberInput {...field} hideControls min={0} w="100%" />
                       )}
                     />
-                    <Text size="xs" c="dimmed">
-                      Reserved {formatQuantity(getReservedQty(r))} · Remaining{" "}
-                      {formatQuantity(getRemainingQty(r))}
-                    </Text>
                   </Table.Td>
+                  {showStatus ? (
+                    <Table.Td>
+                      <Tooltip
+                        label={`Reserved ${formatQuantity(
+                          getReservedQty(r)
+                        )} · Remaining ${formatQuantity(getRemainingQty(r))}`}
+                        withArrow
+                      >
+                        <Text size="sm">
+                          {formatQuantity(getReservedQty(r))}
+                        </Text>
+                      </Tooltip>
+                    </Table.Td>
+                  ) : null}
+                  {showStatus ? (
+                    <Table.Td>{renderEtaCell(r, idx)}</Table.Td>
+                  ) : null}
+                  {showStatus ? (
+                    <Table.Td>
+                      {statusInfo ? (
+                        <Badge color={statusInfo.color} variant="light">
+                          {statusInfo.label}
+                        </Badge>
+                      ) : (
+                        <Text size="sm" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                  ) : null}
+                  {showExtended ? (
+                    <Table.Td>{formatQuantity(r.qtyReceived ?? 0)}</Table.Td>
+                  ) : null}
+                  {showExtended ? (
+                    <Table.Td>{formatQuantity(getRemainingQty(r))}</Table.Td>
+                  ) : null}
                   <Table.Td>
-                    <Stack gap={4}>
-                      <Controller
-                        name={`lines.${idx}.etaDate`}
-                        control={form.control}
-                        defaultValue={r.etaDate ?? null}
-                        render={({ field }) => (
-                          <DateInput
-                            value={
-                              field.value ? new Date(field.value as any) : null
-                            }
-                            onChange={(value) =>
-                              field.onChange(
-                                value
-                                  ? new Date(value as any).toISOString()
-                                  : null
-                              )
-                            }
-                            valueFormat="MMM DD, YYYY"
-                            clearable
-                            popoverProps={{ withinPortal: true }}
-                            disabled={!isDraft}
-                          />
-                        )}
-                      />
-                      <Group gap={6} wrap="wrap">
-                        <Controller
-                          name={`lines.${idx}.etaDateConfirmed`}
-                          control={form.control}
-                          defaultValue={!!r.etaDateConfirmed}
-                          render={({ field }) => (
-                            <Checkbox
-                              label="Confirmed"
-                              checked={!!field.value}
-                              onChange={(e) =>
-                                field.onChange(e.currentTarget.checked)
-                              }
-                              disabled={!isDraft}
-                            />
-                          )}
-                        />
-                        <Tooltip
-                          label="Set a product or vendor lead time"
-                          disabled={canAutofill}
-                          withinPortal
-                        >
-                          <Button
-                            size="compact-xs"
-                            variant="default"
-                            onClick={() => handleFillEta(idx)}
-                            disabled={!isDraft || !canAutofill}
-                          >
-                            Fill from lead time
-                          </Button>
-                        </Tooltip>
-                      </Group>
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>
-                    {statusInfo ? (
-                      <Badge color={statusInfo.color} variant="light">
-                        {statusInfo.label}
-                      </Badge>
+                    {lp.priceSourceCost === "manual" ? (
+                      formatUnitCost(lp.effectiveCost)
+                    ) : lp.computedCost > 0 && lp.storedCost == null ? (
+                      <Tooltip
+                        label={`Suggested from product: ${formatUnitCost(
+                          lp.computedCost
+                        )}`}
+                        withArrow
+                      >
+                        <span>{formatUnitCost(lp.effectiveCost)}</span>
+                      </Tooltip>
                     ) : (
-                      <Text size="sm" c="dimmed">
-                        —
-                      </Text>
+                      formatUnitCost(lp.effectiveCost)
                     )}
                   </Table.Td>
-                  <Table.Td>{formatUSD(lp.cost)}</Table.Td>
                   <Table.Td>
-                    {r.product?.purchaseTax?.code ||
-                      productMap[Number(r.productId || 0)]?.purchaseTax?.code ||
-                      ""}
+                    {formatTaxRate(
+                      Number(
+                        r.taxRate ??
+                          r.product?.purchaseTax?.value ??
+                          productMap[Number(r.productId || 0)]?.purchaseTax
+                            ?.value ??
+                          0
+                      )
+                    )}
                   </Table.Td>
                   <Table.Td>{formatUSD(lp.extendedCost)}</Table.Td>
                   <Table.Td>
@@ -489,14 +596,24 @@ export function PurchaseOrderLinesTable({
                           size="4"
                           processing
                         >
-                          <span>{formatUSD(lp.sell)}</span>
+                          <span>{formatUSD(lp.effectiveSell)}</span>
                         </Indicator>
                       ) : (
-                        <span>{formatUSD(lp.sell)}</span>
+                        lp.computedSell > 0 && lp.storedSell == null ? (
+                          <Tooltip
+                            label={`Suggested from product: ${formatUSD(
+                              lp.computedSell
+                            )}`}
+                            withArrow
+                          >
+                            <span>{formatUSD(lp.effectiveSell)}</span>
+                          </Tooltip>
+                        ) : (
+                          <span>{formatUSD(lp.effectiveSell)}</span>
+                        )
                       )}
                     </Group>
                   </Table.Td>
-                  <Table.Td>{formatUSD(lp.extendedSell)}</Table.Td>
                   <Table.Td>
                     <Menu withinPortal position="bottom-end" shadow="md">
                       <Menu.Target>
@@ -539,14 +656,15 @@ export function PurchaseOrderLinesTable({
               <Table.Td>
                 <strong>{draftTotals?.qtyOrdered ?? 0}</strong>
               </Table.Td>
-              <Table.Td />
-              <Table.Td />
-              <Table.Td />
-              <Table.Td />
-              <Table.Td />
+              {showStatus ? <Table.Td /> : null}
+              {showStatus ? <Table.Td /> : null}
+              {showStatus ? <Table.Td /> : null}
+              {showExtended ? <Table.Td /> : null}
+              {showExtended ? <Table.Td /> : null}
               <Table.Td>
                 <strong>{formatUSD(draftTotals?.cost ?? 0)}</strong>
               </Table.Td>
+              <Table.Td />
               <Table.Td />
               <Table.Td>
                 <strong>{formatUSD(draftTotals?.sell ?? 0)}</strong>
@@ -557,45 +675,21 @@ export function PurchaseOrderLinesTable({
         </Table>
       ) : (
         <Table withTableBorder withColumnBorders>
-          {/* Final mode: keep numeric columns at 9ch; SKU/Name share remainder */}
-          <colgroup>
-            <col style={{ width: "9ch" }} />
-            {/* ID */}
-            <col style={{ width: "calc((100% - 63ch) * 0.33)" }} />
-            {/* SKU */}
-            <col style={{ width: "calc((100% - 63ch) * 0.67)" }} />
-            {/* Name */}
-            <col style={{ width: "9ch" }} />
-            {/* Order Qty */}
-            <col style={{ width: "9ch" }} />
-            {/* Actual Qty */}
-            <col style={{ width: "9ch" }} />
-            {/* Shipped */}
-            <col style={{ width: "9ch" }} />
-            {/* Received */}
-            <col style={{ width: "14ch" }} />
-            {/* ETA */}
-            <col style={{ width: "9ch" }} />
-            {/* Status */}
-            <col style={{ width: "9ch" }} />
-            {/* Cost */}
-            <col style={{ width: "9ch" }} />
-            {/* Sell */}
-            <col style={{ width: "6ch" }} />
-            {/* Actions */}
-          </colgroup>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
               <Table.Th>SKU</Table.Th>
               <Table.Th>Name</Table.Th>
               <Table.Th>Order Qty</Table.Th>
-              <Table.Th>Actual Qty</Table.Th>
-              <Table.Th>Shipped</Table.Th>
-              <Table.Th>Received</Table.Th>
-              <Table.Th>ETA</Table.Th>
-              <Table.Th>Status</Table.Th>
+              {showStatus ? <Table.Th>Reserved</Table.Th> : null}
+              {showExtended ? <Table.Th>Actual Qty</Table.Th> : null}
+              {showExtended ? <Table.Th>Received</Table.Th> : null}
+              {showExtended ? <Table.Th>Remaining</Table.Th> : null}
+              {showStatus ? <Table.Th>ETA ✓</Table.Th> : null}
+              {showStatus ? <Table.Th>Status</Table.Th> : null}
               <Table.Th>Cost</Table.Th>
+              <Table.Th>Tax</Table.Th>
+              <Table.Th>Ext</Table.Th>
               <Table.Th>Sell</Table.Th>
               <Table.Th></Table.Th>
             </Table.Tr>
@@ -608,72 +702,137 @@ export function PurchaseOrderLinesTable({
                 taxRate: 0,
               };
               const pm = productMap[Number(r.productId || 0)];
-              const manualFlag =
-                (lp as any).isManualSell ||
-                pm?.manualSalePrice != null ||
-                pm?.c_isSellPriceManual === true;
+              const manualFlag = (lp as any).priceSourceSell === "manual";
               const etaDateValue = toDate(r.etaDate);
               const statusInfo = getStatusInfo(r, etaDateValue);
+              const productId = Number(
+                r.productId ?? r.product?.id ?? r.product?.productId ?? 0
+              );
+              const idLabel = r.id ?? "";
               return (
                 <Table.Tr key={r.id ?? idx}>
-                  <Table.Td>{r.id}</Table.Td>
-                  <Table.Td>{r.sku ?? r.product?.sku ?? ""}</Table.Td>
-                  <Table.Td>{r.name ?? r.product?.name ?? ""}</Table.Td>
                   <Table.Td>
-                    {r.quantityOrdered ?? 0}
-                    <Text size="xs" c="dimmed">
-                      Reserved {formatQuantity(getReservedQty(r))} · Remaining{" "}
-                      {formatQuantity(getRemainingQty(r))}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Controller
-                      name={`lines.${idx}.quantity`}
-                      control={form.control}
-                      defaultValue={r.quantity ?? 0}
-                      render={({ field }) => (
-                        <NumberInput
-                          {...field}
-                          hideControls
-                          min={Number(r.qtyReceived || 0)}
-                          w={80}
-                          disabled={isComplete}
-                        />
-                      )}
-                    />
-                  </Table.Td>
-                  <Table.Td>{r.qtyShipped ?? 0}</Table.Td>
-                  <Table.Td>{r.qtyReceived ?? 0}</Table.Td>
-                  <Table.Td>
-                    <Stack gap={4}>
-                      <Text size="sm">{formatEta(r.etaDate)}</Text>
-                      {r.etaDateConfirmed && (
-                        <Badge color="blue" variant="light" size="sm">
-                          Confirmed
-                        </Badge>
-                      )}
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>
-                    {statusInfo ? (
-                      <Badge color={statusInfo.color} variant="light">
-                        {statusInfo.label}
-                      </Badge>
+                    {productId ? (
+                      <JumpLink to={`/products/${productId}`} label={idLabel} />
                     ) : (
-                      <Text size="sm" c="dimmed">
-                        —
-                      </Text>
+                      idLabel
                     )}
                   </Table.Td>
-                  <Table.Td>{formatUSD(lp.cost)}</Table.Td>
+                  <Table.Td>{r.sku ?? r.product?.sku ?? ""}</Table.Td>
+                  <Table.Td>
+                    <Group gap={6} wrap="nowrap">
+                      <Text>{r.name ?? r.product?.name ?? ""}</Text>
+                      <ProductStageIndicator
+                        stage={pm?.productStage ?? r.product?.productStage}
+                        variant="secondaryText"
+                      />
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    {r.quantityOrdered ?? 0}
+                  </Table.Td>
+                  {showStatus ? (
+                    <Table.Td>
+                      <Tooltip
+                        label={`Reserved ${formatQuantity(
+                          getReservedQty(r)
+                        )} · Remaining ${formatQuantity(getRemainingQty(r))}`}
+                        withArrow
+                      >
+                        <Text size="sm">
+                          {formatQuantity(getReservedQty(r))}
+                        </Text>
+                      </Tooltip>
+                    </Table.Td>
+                  ) : null}
+                  {showExtended ? (
+                    <Table.Td>
+                      <Controller
+                        name={`lines.${idx}.quantity`}
+                        control={form.control}
+                        defaultValue={r.quantity ?? 0}
+                        render={({ field }) => (
+                          <NumberInput
+                            {...field}
+                            hideControls
+                            min={Number(r.qtyReceived || 0)}
+                            w={80}
+                            disabled={isComplete}
+                          />
+                        )}
+                      />
+                    </Table.Td>
+                  ) : null}
+                  {showExtended ? (
+                    <Table.Td>{r.qtyReceived ?? 0}</Table.Td>
+                  ) : null}
+                  {showExtended ? (
+                    <Table.Td>{formatQuantity(getRemainingQty(r))}</Table.Td>
+                  ) : null}
+                  {showStatus ? (
+                    <Table.Td>{renderEtaCell(r, idx)}</Table.Td>
+                  ) : null}
+                  {showStatus ? (
+                    <Table.Td>
+                      {statusInfo ? (
+                        <Badge color={statusInfo.color} variant="light">
+                          {statusInfo.label}
+                        </Badge>
+                      ) : (
+                        <Text size="sm" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                  ) : null}
+                  <Table.Td>
+                    {lp.priceSourceCost === "manual" ? (
+                      formatUnitCost(lp.effectiveCost)
+                    ) : lp.computedCost > 0 && lp.storedCost == null ? (
+                      <Tooltip
+                        label={`Suggested from product: ${formatUnitCost(
+                          lp.computedCost
+                        )}`}
+                        withArrow
+                      >
+                        <span>{formatUnitCost(lp.effectiveCost)}</span>
+                      </Tooltip>
+                    ) : (
+                      formatUnitCost(lp.effectiveCost)
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {formatTaxRate(
+                      Number(
+                        r.taxRate ?? r.product?.purchaseTax?.value ?? 0
+                      )
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {formatUSD(
+                      (Number(r.quantity ?? 0) || 0) *
+                        (Number(lp.effectiveCost ?? 0) || 0)
+                    )}
+                  </Table.Td>
                   <Table.Td>
                     <Group gap={6} wrap="nowrap" align="center">
                       {manualFlag ? (
                         <Indicator inline color="red" size={8} processing>
-                          <span>{formatUSD(lp.sell)}</span>
+                          <span>{formatUSD(lp.effectiveSell)}</span>
                         </Indicator>
                       ) : (
-                        <span>{formatUSD(lp.sell)}</span>
+                        lp.computedSell > 0 && lp.storedSell == null ? (
+                          <Tooltip
+                            label={`Suggested from product: ${formatUSD(
+                              lp.computedSell
+                            )}`}
+                            withArrow
+                          >
+                            <span>{formatUSD(lp.effectiveSell)}</span>
+                          </Tooltip>
+                        ) : (
+                          <span>{formatUSD(lp.effectiveSell)}</span>
+                        )
                       )}
                     </Group>
                   </Table.Td>
@@ -719,17 +878,25 @@ export function PurchaseOrderLinesTable({
               <Table.Td>
                 <strong>{finalTotals?.qtyOrdered ?? 0}</strong>
               </Table.Td>
-              <Table.Td>
-                <strong>{finalTotals?.qty ?? 0}</strong>
-              </Table.Td>
-              <Table.Td></Table.Td>
-              <Table.Td></Table.Td>
+              {showStatus ? <Table.Td></Table.Td> : null}
+              {showExtended ? (
+                <Table.Td>
+                  <strong>{finalTotals?.qty ?? 0}</strong>
+                </Table.Td>
+              ) : null}
+              {showExtended ? <Table.Td></Table.Td> : null}
+              {showExtended ? <Table.Td></Table.Td> : null}
+              {showStatus ? <Table.Td></Table.Td> : null}
+              {showStatus ? <Table.Td></Table.Td> : null}
               <Table.Td>
                 <strong>{formatUSD(finalTotals?.cost ?? 0)}</strong>
               </Table.Td>
+              <Table.Td></Table.Td>
+              <Table.Td></Table.Td>
               <Table.Td>
                 <strong>{formatUSD(finalTotals?.sell ?? 0)}</strong>
               </Table.Td>
+              <Table.Td></Table.Td>
             </Table.Tr>
           </Table.Tbody>
         </Table>

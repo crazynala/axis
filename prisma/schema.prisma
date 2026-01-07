@@ -102,6 +102,7 @@ model Product {
   variantSetId          Int?
   stockTrackingEnabled  Boolean                 @default(false)
   batchTrackingEnabled  Boolean                 @default(false)
+  productStage          ProductStage            @default(SETUP)
   isActive              Boolean?
   notes                 String?
   nameUnaccented        String?
@@ -266,6 +267,7 @@ model Company {
   stockLocation                   Location?               @relation("Company_stockLocation", fields: [stockLocationId], references: [id])
   contacts                        Contact[]
   invoices                        Invoice[]
+  supplierInvoices                SupplierInvoice[]
   jobs                            Job[]
   productsPurchased               Product[]               @relation("Customer")
   productsSupplied                Product[]               @relation("Supplier")
@@ -783,6 +785,7 @@ model User {
   tagDefinitions   TagDefinition[]
   operationLogs    OperationLog[]
   savedViews       SavedView[]
+  etaConfirmedPurchaseOrderLines PurchaseOrderLine[] @relation("PurchaseOrderLineEtaConfirmedBy")
 }
 
 model PasswordReset {
@@ -1032,6 +1035,7 @@ model ShipmentLine {
   jobId        Int?
   locationId   Int?
   productId    Int?
+  purchaseOrderLineId Int?
   shipmentId   Int?
   variantSetId Int?
   category     String?
@@ -1049,8 +1053,11 @@ model ShipmentLine {
   job          Job?        @relation(fields: [jobId], references: [id])
   location     Location?   @relation(fields: [locationId], references: [id])
   product      Product?    @relation(fields: [productId], references: [id])
+  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id])
   shipment     Shipment?   @relation(fields: [shipmentId], references: [id])
   variantSet   VariantSet? @relation(fields: [variantSetId], references: [id])
+
+  @@index([purchaseOrderLineId])
 }
 
 model Address {
@@ -1110,6 +1117,7 @@ model PurchaseOrder {
   date               DateTime?
   memo               String?
   status             String?
+  invoiceTrackingStatus PurchaseOrderInvoiceTrackingStatus @default(UNKNOWN)
   createdBy          String?
   createdAt          DateTime?           @default(now())
   modifiedBy         String?
@@ -1119,6 +1127,27 @@ model PurchaseOrder {
   location           Location?           @relation(fields: [locationId], references: [id])
   lines              PurchaseOrderLine[]
   purchaseOrderTags  PurchaseOrderTag[]
+  supplierInvoices   SupplierInvoice[]
+}
+
+model SupplierInvoice {
+  id                Int                 @id @default(autoincrement())
+  companyId         Int?
+  purchaseOrderId   Int?
+  invoiceDate       DateTime?
+  supplierInvoiceNo String?
+  type              SupplierInvoiceType?
+  totalExTax        Decimal?            @db.Decimal(14, 4)
+  taxCode           String?
+  legacySerial      Int?                @unique
+  createdBy         String?
+  createdAt         DateTime?           @default(now())
+  modifiedBy        String?
+  updatedAt         DateTime?           @updatedAt
+  company           Company?            @relation(fields: [companyId], references: [id])
+  purchaseOrder     PurchaseOrder?      @relation(fields: [purchaseOrderId], references: [id])
+
+  @@index([purchaseOrderId])
 }
 
 model PurchaseOrderLine {
@@ -1129,8 +1158,10 @@ model PurchaseOrderLine {
   productId          Int?
   productSkuCopy     String?
   productNameCopy    String?
-  priceCost          Decimal?            @db.Decimal(14, 4)
-  priceSell          Decimal?            @db.Decimal(14, 4)
+  priceCost          Decimal?            @db.Decimal(18, 8)
+  priceSell          Decimal?            @db.Decimal(18, 8)
+  manualCost         Decimal?            @db.Decimal(18, 8)
+  manualSell         Decimal?            @db.Decimal(18, 8)
   qtyShipped         Decimal?            @db.Decimal(14, 4)
   qtyReceived        Decimal?            @db.Decimal(14, 4)
   quantity           Decimal?            @db.Decimal(14, 4)
@@ -1143,10 +1174,14 @@ model PurchaseOrderLine {
   updatedAt          DateTime?           @updatedAt
   etaDate            DateTime?
   etaDateConfirmed   Boolean?            @default(false)
+  etaConfirmedAt     DateTime?
+  etaConfirmedByUserId Int?
   assembly           Assembly?           @relation(fields: [assemblyId], references: [id])
   job                Job?                @relation(fields: [jobId], references: [id])
   product            Product?            @relation(fields: [productId], references: [id])
   purchaseOrder      PurchaseOrder?      @relation(fields: [purchaseOrderId], references: [id])
+  etaConfirmedByUser User?               @relation("PurchaseOrderLineEtaConfirmedBy", fields: [etaConfirmedByUserId], references: [id])
+  shipmentLines      ShipmentLine[]
   supplyReservations SupplyReservation[]
 }
 
@@ -1302,6 +1337,11 @@ enum ProductType {
   Packaging
 }
 
+enum ProductStage {
+  SETUP
+  LIVE
+}
+
 enum PricingSpecTarget {
   SELL
   COST
@@ -1440,6 +1480,16 @@ enum ShipmentStatus {
   DRAFT
   COMPLETE
   CANCELED
+}
+
+enum PurchaseOrderInvoiceTrackingStatus {
+  UNKNOWN
+  NO_INVOICE_EXPECTED
+}
+
+enum SupplierInvoiceType {
+  INVOICE
+  CREDIT_MEMO
 }
 
 enum TagScope {

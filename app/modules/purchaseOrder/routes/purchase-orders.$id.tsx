@@ -4,24 +4,30 @@ import type {
   MetaFunction,
 } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import { Prisma } from "@prisma/client";
 import {
   Outlet,
   useFetcher,
   useRouteLoaderData,
   useSubmit,
   useRevalidator,
+  Link,
+  useActionData,
 } from "@remix-run/react";
 import {
   prisma,
   refreshProductStockSnapshot,
 } from "../../../utils/prisma.server";
+import { requireUserId } from "~/utils/auth.server";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
 import {
   Card,
+  Grid,
   Group,
   Stack,
   Title,
   Table,
+  Tabs,
   Button,
   Badge,
   ScrollArea,
@@ -30,13 +36,16 @@ import {
   Menu,
   ActionIcon,
   Drawer,
+  Tooltip,
+  Alert,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
-import { Controller, useForm, useWatch } from "react-hook-form";
+import { Controller, useForm, useWatch, FormProvider } from "react-hook-form";
 import { NumberInput } from "@mantine/core";
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { PurchaseOrderDetailForm } from "~/modules/purchaseOrder/forms/PurchaseOrderDetailForm";
+import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 // Using an async product search in this route instead of the shared ProductSelect
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRecordContext } from "../../../base/record/RecordContext";
@@ -48,17 +57,39 @@ import { ProductPricingService } from "~/modules/product/services/ProductPricing
 import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/PurchaseOrderLinesTable";
 import { trimReservationsToExpected } from "~/modules/materials/services/reservations.server";
 import { getSavedIndexSearch } from "~/hooks/useNavLocation";
-import { IconMenu2, IconTrash, IconFileExport } from "@tabler/icons-react";
+import { computeLinePricing } from "~/modules/purchaseOrder/helpers/poPricing";
+import {
+  IconMenu2,
+  IconTrash,
+  IconFileExport,
+} from "@tabler/icons-react";
 import { VariantBreakdownSection } from "../../../components/VariantBreakdownSection";
+import { StateChangeButton } from "~/base/state/StateChangeButton";
+import { purchaseOrderStateConfig } from "~/base/state/configs";
+import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import {
+  FormStateDebugPanel,
+  buildFormStateDebugData,
+  buildFormStateDebugText,
+} from "~/base/debug/FormStateDebugPanel";
+import { AxisChip } from "~/components/AxisChip";
+import { JumpLink } from "~/components/JumpLink";
 import {
   groupVariantBreakdowns,
   resolveVariantSourceFromLine,
 } from "../../../utils/variantBreakdown";
+import { buildPurchaseOrderWarnings } from "~/modules/purchaseOrder/spec/warnings";
 
 const parseDateInput = (value: unknown): Date | null => {
   if (!value) return null;
   const date = new Date(value as any);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const normalizeTaxRate = (value: Prisma.Decimal | number | string | null | undefined) => {
+  const dec = new Prisma.Decimal(value ?? 0);
+  if (dec.greaterThan(1)) return dec.div(100);
+  return dec;
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
@@ -78,11 +109,18 @@ export async function loader({ params }: LoaderFunctionArgs) {
       lines: {
         include: {
           product: {
-            include: {
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              type: true,
+              stockTrackingEnabled: true,
+              batchTrackingEnabled: true,
               purchaseTax: true,
               variantSet: { select: { id: true, name: true, variants: true } },
             },
           },
+          etaConfirmedByUser: { select: { id: true, name: true, email: true } },
           assembly: {
             select: {
               id: true,
@@ -101,9 +139,29 @@ export async function loader({ params }: LoaderFunctionArgs) {
   });
   if (!purchaseOrder) return redirect("/purchase-orders");
 
-  // Derive shipped/received from Product Movements to make PMs the source of truth
+  // Derive received from ShipmentLines (PO receipts); movements remain secondary
   const lineIds = (purchaseOrder.lines || []).map((l: any) => l.id);
+  const productMovementCount = lineIds.length
+    ? await prisma.productMovement.count({
+        where: { purchaseOrderLineId: { in: lineIds } },
+      })
+    : 0;
   let receivedByLine = new Map<number, number>();
+  if (lineIds.length) {
+    const receiptLines = await prisma.shipmentLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: lineIds },
+        shipment: { type: "In" },
+      },
+      select: { purchaseOrderLineId: true, quantity: true },
+    });
+    for (const sl of receiptLines) {
+      const lid = sl.purchaseOrderLineId as number;
+      const qty = Number(sl.quantity || 0);
+      if (!Number.isFinite(lid)) continue;
+      receivedByLine.set(lid, (receivedByLine.get(lid) || 0) + qty);
+    }
+  }
   let shippedByLine = new Map<number, number>();
   if (lineIds.length) {
     const mls = await prisma.productMovementLine.findMany({
@@ -120,9 +178,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       const lid = ml.purchaseOrderLineId as number;
       const qty = Number(ml.quantity || 0);
       const t = (ml.movement?.movementType || "").toLowerCase();
-      if (t === "po (receive)") {
-        receivedByLine.set(lid, (receivedByLine.get(lid) || 0) + qty);
-      } else if (t === "po (ship)") {
+      if (t === "po (ship)") {
         shippedByLine.set(lid, (shippedByLine.get(lid) || 0) + qty);
       }
     }
@@ -183,8 +239,17 @@ export async function loader({ params }: LoaderFunctionArgs) {
     (acc: any, l: any) => {
       const qty = Number(l.quantity ?? 0);
       const qtyOrd = Number(l.quantityOrdered ?? 0);
-      const cost = Number(l.priceCost ?? 0);
-      const sell = Number(l.priceSell ?? 0);
+      const computed = computeLinePricing({
+        product: l.product || null,
+        qtyOrdered: l.quantityOrdered,
+        pricingPrefs: null,
+      });
+      const cost = Number(
+        l.manualCost ?? l.priceCost ?? computed.cost ?? 0
+      );
+      const sell = Number(
+        l.manualSell ?? l.priceSell ?? computed.sell ?? 0
+      );
       acc.qty += qty;
       acc.qtyOrdered += qtyOrd;
       acc.cost += cost * qty;
@@ -202,7 +267,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     name?: string | null;
   }> = [];
 
-  // Fetch related Product Movements (headers + lines) tied to this PO's lines
+  // Fetch related Product Movements (headers + lines) tied to this PO's lines (secondary data)
   let poMovements: Array<any> = [];
   if (lineIds.length) {
     poMovements = await prisma.productMovement.findMany({
@@ -238,11 +303,199 @@ export async function loader({ params }: LoaderFunctionArgs) {
     });
   }
 
+  // Receipt shipments (type IN) associated with this PO via ShipmentLine.purchaseOrderLineId
+  const receiptShipments = lineIds.length
+    ? await prisma.shipment.findMany({
+        where: {
+          type: "In",
+          lines: { some: { purchaseOrderLineId: { in: lineIds } } },
+        },
+        select: {
+          id: true,
+          date: true,
+          memo: true,
+          lines: {
+            where: { purchaseOrderLineId: { in: lineIds } },
+            select: {
+              id: true,
+              purchaseOrderLineId: true,
+              productId: true,
+              quantity: true,
+              product: { select: { sku: true, name: true } },
+            },
+          },
+        },
+        orderBy: [{ date: "desc" }, { id: "desc" }],
+      })
+    : [];
+  const receiptLineIds = receiptShipments.flatMap((s) =>
+    (s.lines || []).map((l) => l.id)
+  );
+  const receiptLineMeta: Record<
+    number,
+    {
+      batches: Array<{
+        id: number;
+        codeMill?: string | null;
+        codeSartor?: string | null;
+        name?: string | null;
+        quantity?: number | null;
+      }>;
+      movementCount: number;
+    }
+  > = {};
+  if (receiptLineIds.length) {
+    const movementLines = await prisma.productMovementLine.findMany({
+      where: {
+        movement: { shippingLineId: { in: receiptLineIds } },
+      },
+      select: {
+        quantity: true,
+        batch: {
+          select: { id: true, codeMill: true, codeSartor: true, name: true },
+        },
+        movement: { select: { id: true, shippingLineId: true } },
+      },
+    });
+    const batchesByLine = new Map<number, typeof movementLines>();
+    const movementsByLine = new Map<number, Set<number>>();
+    for (const ml of movementLines) {
+      const lineId = Number(ml.movement?.shippingLineId || 0);
+      if (!Number.isFinite(lineId) || !lineId) continue;
+      if (ml.batch) {
+        const list = batchesByLine.get(lineId) || [];
+        list.push(ml);
+        batchesByLine.set(lineId, list);
+      }
+      if (ml.movement?.id) {
+        const set = movementsByLine.get(lineId) || new Set<number>();
+        set.add(Number(ml.movement.id));
+        movementsByLine.set(lineId, set);
+      }
+    }
+    for (const lineId of receiptLineIds) {
+      const batches =
+        batchesByLine.get(lineId)?.map((ml) => ({
+          id: ml.batch?.id as number,
+          codeMill: ml.batch?.codeMill ?? null,
+          codeSartor: ml.batch?.codeSartor ?? null,
+          name: ml.batch?.name ?? null,
+          quantity: Number(ml.quantity || 0) || 0,
+        })) || [];
+      receiptLineMeta[lineId] = {
+        batches,
+        movementCount: movementsByLine.get(lineId)?.size || 0,
+      };
+    }
+  }
+
+  const supplierInvoices = await prisma.supplierInvoice.findMany({
+    where: { purchaseOrderId: id },
+    select: {
+      id: true,
+      invoiceDate: true,
+      supplierInvoiceNo: true,
+      type: true,
+      totalExTax: true,
+      taxCode: true,
+    },
+    orderBy: [{ invoiceDate: "desc" }, { id: "desc" }],
+  });
+  const toDecimal = (
+    value: Prisma.Decimal | number | string | null | undefined
+  ) => new Prisma.Decimal(value ?? 0);
+  let expectedExSum = new Prisma.Decimal(0);
+  let expectedTaxSum = new Prisma.Decimal(0);
+  for (const l of linesWithComputed || []) {
+    const qtyReceived = toDecimal(l.qtyReceived ?? 0);
+    const computed = computeLinePricing({
+      product: l.product || null,
+      qtyOrdered: l.quantityOrdered,
+      pricingPrefs: null,
+    });
+    const unitCost = toDecimal(
+      l.manualCost ?? l.priceCost ?? computed.cost ?? 0
+    );
+    const taxRate = normalizeTaxRate(
+      l.taxRate ?? l.product?.purchaseTax?.value ?? 0
+    );
+    const lineEx = qtyReceived.mul(unitCost);
+    const lineTax = lineEx.mul(taxRate);
+    expectedExSum = expectedExSum.plus(lineEx);
+    expectedTaxSum = expectedTaxSum.plus(lineTax);
+  }
+  const invoiceTaxCodes = Array.from(
+    new Set(
+      (supplierInvoices || [])
+        .map((inv: any) => (inv.taxCode || "").toString().trim())
+        .filter(Boolean)
+    )
+  );
+  const expectedIncSum = expectedExSum.plus(expectedTaxSum);
+  const effectiveRate = expectedExSum.eq(0)
+    ? new Prisma.Decimal(0)
+    : expectedTaxSum.div(expectedExSum);
+  const taxCodeRates = invoiceTaxCodes.length
+    ? await prisma.valueList.findMany({
+        where: {
+          type: "Tax",
+          code: { in: invoiceTaxCodes },
+        },
+        select: { code: true, value: true },
+      })
+    : [];
+  const taxRateByCode = new Map(
+    taxCodeRates.map((t) => [String(t.code), t.value ?? null])
+  );
+
+  let invoicedSum = new Prisma.Decimal(0);
+  let invoicedIncSum = new Prisma.Decimal(0);
+  for (const inv of supplierInvoices || []) {
+    const amt = toDecimal(inv.totalExTax ?? 0);
+    invoicedSum =
+      inv.type === "CREDIT_MEMO" ? invoicedSum.minus(amt) : invoicedSum.plus(amt);
+    const code = (inv.taxCode || "").toString().trim();
+    const rate = code ? taxRateByCode.get(code) : null;
+    const normRate = rate != null ? normalizeTaxRate(rate) : null;
+    const inc =
+      normRate != null
+        ? amt.mul(new Prisma.Decimal(1).plus(normRate))
+        : amt.mul(new Prisma.Decimal(1).plus(effectiveRate));
+    invoicedIncSum =
+      inv.type === "CREDIT_MEMO"
+        ? invoicedIncSum.minus(inc)
+        : invoicedIncSum.plus(inc);
+  }
+  // invoicedIncSum computed per invoice when taxCode is available; fallback uses effectiveRate
+  const expectedInc2 = expectedIncSum.toDecimalPlaces(2);
+  const invoicedInc2 = invoicedIncSum.toDecimalPlaces(2);
+  const deltaInc2 = invoicedInc2.minus(expectedInc2);
+  const expectedExTax = expectedExSum.toDecimalPlaces(2).toNumber();
+  const expectedTax = expectedTaxSum.toDecimalPlaces(2).toNumber();
+  const expectedIncTax = expectedInc2.toNumber();
+  const invoicedExTax = invoicedSum.toDecimalPlaces(2).toNumber();
+  const invoicedIncTax = invoicedInc2.toNumber();
+  const deltaIncTax = deltaInc2.toNumber();
+  const effectiveTaxRate = effectiveRate.toNumber();
+
   return json({
     purchaseOrder: poWithComputed,
     totals,
     productOptions,
     poMovements,
+    receiptShipments,
+    receiptLineMeta,
+    supplierInvoices,
+    invoiceSummary: {
+      expectedExTax,
+      expectedTax,
+      expectedIncTax,
+      invoicedExTax,
+      invoicedIncTax,
+      deltaIncTax,
+      effectiveTaxRate,
+    },
+    productMovementCount,
   });
 }
 
@@ -269,6 +522,109 @@ export async function action({ request, params }: ActionFunctionArgs) {
       data: { id: nextId, ...data, status: (data as any).status ?? "DRAFT" },
     } as any);
     return redirect(`/purchase-orders/${created.id}`);
+  }
+  if (intent === "po.delete") {
+    if (!Number.isFinite(id)) {
+      return json({ ok: false, error: "Invalid PO id" }, { status: 400 });
+    }
+    const confirmText = String(form.get("confirm") ?? "");
+    const deletePhrase = "THIS IS BONKERS";
+    if (confirmText !== deletePhrase) {
+      return json(
+        { ok: false, intent: "po.delete", error: "Confirmation text did not match." },
+        { status: 400 }
+      );
+    }
+    const lineIds = await prisma.purchaseOrderLine.findMany({
+      where: { purchaseOrderId: id },
+      select: { id: true },
+    });
+    const lineIdList = lineIds.map((l) => l.id);
+    const movementCount = lineIdList.length
+      ? await prisma.productMovement.count({
+          where: { purchaseOrderLineId: { in: lineIdList } },
+        })
+      : 0;
+    if (movementCount > 0) {
+      return json(
+        {
+          ok: false,
+          intent: "po.delete",
+          error:
+            "Cannot delete a purchase order that has product movements. Reverse/void the movements first.",
+        },
+        { status: 400 }
+      );
+    }
+    await prisma.$transaction(async (tx) => {
+      if (lineIdList.length) {
+        await tx.supplyReservation.deleteMany({
+          where: { purchaseOrderLineId: { in: lineIdList } },
+        });
+        await tx.productMovementLine.deleteMany({
+          where: { purchaseOrderLineId: { in: lineIdList } },
+        });
+        await tx.productMovement.deleteMany({
+          where: { purchaseOrderLineId: { in: lineIdList } },
+        });
+        await tx.purchaseOrderLine.deleteMany({
+          where: { id: { in: lineIdList } },
+        });
+      }
+      await tx.purchaseOrderTag.deleteMany({
+        where: { purchaseOrderId: id },
+      });
+      await tx.purchaseOrder.delete({ where: { id } });
+    });
+    return redirect("/purchase-orders");
+  }
+
+  if (intent === "po.updateInvoiceTracking") {
+    if (!Number.isFinite(id)) {
+      return json({ ok: false, error: "Invalid PO id" }, { status: 400 });
+    }
+    const next = String(form.get("invoiceTrackingStatus") || "UNKNOWN");
+    await prisma.purchaseOrder.update({
+      where: { id },
+      data: { invoiceTrackingStatus: next },
+    });
+    return redirect(`/purchase-orders/${id}`);
+  }
+
+  if (intent === "po.adjustCosts") {
+    if (!Number.isFinite(id)) {
+      return json({ ok: false, error: "Invalid PO id" }, { status: 400 });
+    }
+    const raw = String(form.get("lines") || "[]");
+    let payload: Array<{ id: number; manualCost: number | null }> = [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) payload = parsed as any;
+    } catch {
+      return json({ ok: false, error: "Invalid payload" }, { status: 400 });
+    }
+    const lineIds = payload
+      .map((l) => Number(l?.id))
+      .filter((n) => Number.isFinite(n)) as number[];
+    if (!lineIds.length) {
+      return json({ ok: true });
+    }
+    const existing = await prisma.purchaseOrderLine.findMany({
+      where: { id: { in: lineIds }, purchaseOrderId: id },
+      select: { id: true, manualCost: true },
+    });
+    const validIds = new Set(existing.map((l) => l.id));
+    const updates = payload.filter((l) => validIds.has(Number(l?.id)));
+    await prisma.$transaction(
+      updates.map((l) => {
+        const next = Number(l?.manualCost ?? 0);
+        return prisma.purchaseOrderLine.update({
+          where: { id: Number(l.id) },
+          data: { manualCost: Number.isFinite(next) ? next : null },
+        });
+      })
+    );
+    return redirect(`/purchase-orders/${id}`);
   }
 
   if (intent === "reservation.update") {
@@ -310,8 +666,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const qtyOrdered =
       Number(reservation.purchaseOrderLine?.quantityOrdered ?? 0) || 0;
     const qtyExpected = resolveExpectedQty(reservation.purchaseOrderLine);
-    const qtyReceived =
-      Number(reservation.purchaseOrderLine?.qtyReceived ?? 0) || 0;
+    const receiptTotals = await prisma.shipmentLine.aggregate({
+      where: {
+        purchaseOrderLineId: reservation.purchaseOrderLineId ?? undefined,
+        shipment: { type: "In" },
+      },
+      _sum: { quantity: true },
+    });
+    const qtyReceived = Number(receiptTotals._sum.quantity ?? 0) || 0;
     const otherTotals = await prisma.supplyReservation.aggregate({
       _sum: { qtyReserved: true },
       where: {
@@ -388,6 +750,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   if (intent === "po.update") {
+    const userId = await requireUserId(request);
     const raw = String(form.get("purchaseOrder") || "{}");
     let rawObj: any = {};
     try {
@@ -413,6 +776,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
           id: true,
           productId: true,
           quantityOrdered: true,
+          manualCost: true,
+          manualSell: true,
+          priceCost: true,
+          priceSell: true,
         },
       });
       for (const ln of lines) {
@@ -439,19 +806,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         const cost = Number(prod.costPrice ?? 0) || 0;
         const taxRate = Number(prod.purchaseTax?.value ?? 0) || 0;
+        const lineData: any = {
+          productSkuCopy: prod.sku ?? null,
+          productNameCopy: prod.name ?? null,
+          taxRate: taxRate,
+          quantity: ln.quantityOrdered ?? 0,
+        };
+        if (ln.manualCost == null && ln.priceCost == null)
+          lineData.priceCost = cost;
+        if (ln.manualSell == null && ln.priceSell == null)
+          lineData.priceSell = sell;
         await prisma.purchaseOrderLine.update({
           where: { id: ln.id },
-          data: {
-            productSkuCopy: prod.sku ?? null,
-            productNameCopy: prod.name ?? null,
-            priceCost: cost,
-            priceSell: sell,
-            taxRate: taxRate,
-            quantity: ln.quantityOrdered ?? 0,
-          },
+          data: lineData,
         });
       }
     } else {
+      const datesEqual = (a: Date | null, b: Date | null) => {
+        if (!a && !b) return true;
+        if (!a || !b) return false;
+        return a.getTime() === b.getTime();
+      };
       // Determine the status we should apply line rules against
       const desiredStatus = nextStatus || prevStatus;
 
@@ -484,6 +859,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             const quantityOrdered = Number(l?.quantityOrdered || 0) || 0;
             const etaDate = parseDateInput(l?.etaDate);
             const etaDateConfirmed = Boolean(l?.etaDateConfirmed);
+            const canConfirm = etaDateConfirmed && etaDate != null;
             await prisma.purchaseOrderLine.create({
               data: {
                 id: nextLineId++,
@@ -492,7 +868,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 quantityOrdered,
                 quantity: 0,
                 etaDate,
-                etaDateConfirmed,
+                etaDateConfirmed: canConfirm,
+                etaConfirmedAt: canConfirm ? new Date() : null,
+                etaConfirmedByUserId: canConfirm ? userId : null,
               },
             });
           }
@@ -504,9 +882,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const lid = Number(l?.id);
           if (Number.isFinite(lid)) incomingById.set(lid, l);
         }
+        const existingLineMeta = await prisma.purchaseOrderLine.findMany({
+          where: { id: { in: Array.from(existingIdSet) } },
+          select: {
+            id: true,
+            etaDate: true,
+            etaDateConfirmed: true,
+          },
+        });
+        const existingById = new Map(
+          existingLineMeta.map((line) => [line.id, line])
+        );
         for (const lid of existingIdSet) {
           const l = incomingById.get(lid);
           if (!l) continue;
+          const existingLine = existingById.get(lid);
           const productId = Number(l?.productId);
           const quantityOrdered = Number(l?.quantityOrdered ?? 0) || 0;
           const patch: any = {};
@@ -514,10 +904,34 @@ export async function action({ request, params }: ActionFunctionArgs) {
             patch.productId = productId;
           patch.quantityOrdered = quantityOrdered;
           if ("etaDate" in l) {
-            patch.etaDate = parseDateInput(l?.etaDate);
+            const nextEtaDate = parseDateInput(l?.etaDate);
+            const prevEtaDate = existingLine?.etaDate ?? null;
+            const etaChanged = !datesEqual(nextEtaDate, prevEtaDate);
+            patch.etaDate = nextEtaDate;
+            if (etaChanged) {
+              patch.etaDateConfirmed = false;
+              patch.etaConfirmedAt = null;
+              patch.etaConfirmedByUserId = null;
+            }
           }
           if ("etaDateConfirmed" in l) {
-            patch.etaDateConfirmed = Boolean(l?.etaDateConfirmed);
+            const etaDate =
+              patch.etaDate !== undefined
+                ? patch.etaDate
+                : existingLine?.etaDate ?? null;
+            if (!etaDate) {
+              patch.etaDateConfirmed = false;
+              patch.etaConfirmedAt = null;
+              patch.etaConfirmedByUserId = null;
+            } else if (Boolean(l?.etaDateConfirmed)) {
+              patch.etaDateConfirmed = true;
+              patch.etaConfirmedAt = new Date();
+              patch.etaConfirmedByUserId = userId;
+            } else {
+              patch.etaDateConfirmed = false;
+              patch.etaConfirmedAt = null;
+              patch.etaConfirmedByUserId = null;
+            }
           }
           await prisma.purchaseOrderLine.update({
             where: { id: lid },
@@ -559,24 +973,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 purchaseOrderId: true,
                 quantity: true,
                 quantityOrdered: true,
+                etaDate: true,
+                etaDateConfirmed: true,
               },
             });
-            const mls = await prisma.productMovementLine.findMany({
-              where: { purchaseOrderLineId: { in: lineIds } },
-              select: {
-                purchaseOrderLineId: true,
-                quantity: true,
-                movement: { select: { movementType: true } },
+            const receiptLines = await prisma.shipmentLine.findMany({
+              where: {
+                purchaseOrderLineId: { in: lineIds },
+                shipment: { type: "In" },
               },
+              select: { purchaseOrderLineId: true, quantity: true },
             });
             const receivedMap = new Map<number, number>();
-            for (const ml of mls) {
-              const t = (ml.movement?.movementType || "").toLowerCase();
-              if (t !== "po (receive)") continue;
-              const lid = Number(ml.purchaseOrderLineId);
+            for (const sl of receiptLines) {
+              const lid = Number(sl.purchaseOrderLineId);
               receivedMap.set(
                 lid,
-                (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+                (receivedMap.get(lid) || 0) + Number(sl.quantity || 0)
               );
             }
             // Apply updates respecting constraints
@@ -587,6 +1000,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               if (!exist || exist.purchaseOrderId !== id) continue;
               // Never allow changing quantityOrdered when not draft
               // Only update actual quantity when allowed
+              const patch: any = {};
               if (
                 desiredStatus === "COMPLETE" ||
                 desiredStatus === "CANCELED"
@@ -597,9 +1011,38 @@ export async function action({ request, params }: ActionFunctionArgs) {
               if (!Number.isFinite(desired)) continue;
               const minQty = receivedMap.get(lid) || 0;
               const finalQty = Math.max(desired, minQty);
+              patch.quantity = finalQty;
+              if ("etaDate" in l) {
+                const nextEtaDate = parseDateInput(l?.etaDate);
+                const prevEtaDate = exist.etaDate ?? null;
+                const etaChanged = !datesEqual(nextEtaDate, prevEtaDate);
+                patch.etaDate = nextEtaDate;
+                if (etaChanged) {
+                  patch.etaDateConfirmed = false;
+                  patch.etaConfirmedAt = null;
+                  patch.etaConfirmedByUserId = null;
+                }
+              }
+              if ("etaDateConfirmed" in l) {
+                const etaDate =
+                  patch.etaDate !== undefined ? patch.etaDate : exist.etaDate;
+                if (!etaDate) {
+                  patch.etaDateConfirmed = false;
+                  patch.etaConfirmedAt = null;
+                  patch.etaConfirmedByUserId = null;
+                } else if (Boolean(l?.etaDateConfirmed)) {
+                  patch.etaDateConfirmed = true;
+                  patch.etaConfirmedAt = new Date();
+                  patch.etaConfirmedByUserId = userId;
+                } else {
+                  patch.etaDateConfirmed = false;
+                  patch.etaConfirmedAt = null;
+                  patch.etaConfirmedByUserId = null;
+                }
+              }
               await prisma.purchaseOrderLine.update({
                 where: { id: lid },
-                data: { quantity: finalQty },
+                data: patch,
               });
             }
           }
@@ -613,22 +1056,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
         });
         const ids = lines.map((l) => l.id);
         if (ids.length) {
-          const mls = await prisma.productMovementLine.findMany({
-            where: { purchaseOrderLineId: { in: ids } },
-            select: {
-              purchaseOrderLineId: true,
-              quantity: true,
-              movement: { select: { movementType: true } },
+          const receiptLines = await prisma.shipmentLine.findMany({
+            where: {
+              purchaseOrderLineId: { in: ids },
+              shipment: { type: "In" },
             },
+            select: { purchaseOrderLineId: true, quantity: true },
           });
           const receivedMap = new Map<number, number>();
-          for (const ml of mls) {
-            const t = (ml.movement?.movementType || "").toLowerCase();
-            if (t !== "po (receive)") continue;
-            const lid = Number(ml.purchaseOrderLineId);
+          for (const sl of receiptLines) {
+            const lid = Number(sl.purchaseOrderLineId);
             receivedMap.set(
               lid,
-              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+              (receivedMap.get(lid) || 0) + Number(sl.quantity || 0)
             );
           }
           for (const lid of ids) {
@@ -716,7 +1156,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             date,
             type: "In",
             shipmentType: "PO Receive",
-            status: "RECEIVED",
+            status: "COMPLETE",
             locationId: po.locationId ?? undefined,
             memo: `Auto-created for PO ${poId} receive`,
           } as any,
@@ -734,61 +1174,83 @@ export async function action({ request, params }: ActionFunctionArgs) {
         );
         const receivedTotals = new Map<number, number>();
         if (payloadLineIds.length) {
-          const existingReceives = await tx.productMovementLine.findMany({
-            where: { purchaseOrderLineId: { in: payloadLineIds } },
-            select: {
-              purchaseOrderLineId: true,
-              quantity: true,
-              movement: { select: { movementType: true } },
+          const receiptLines = await tx.shipmentLine.findMany({
+            where: {
+              purchaseOrderLineId: { in: payloadLineIds },
+              shipment: { type: "In" },
             },
+            select: { purchaseOrderLineId: true, quantity: true },
           });
-          for (const ml of existingReceives) {
-            const t = (ml.movement?.movementType || "").toLowerCase();
-            if (t !== "po (receive)") continue;
-            const lid = Number(ml.purchaseOrderLineId);
+          for (const sl of receiptLines) {
+            const lid = Number(sl.purchaseOrderLineId);
             if (!Number.isFinite(lid)) continue;
             receivedTotals.set(
               lid,
-              (receivedTotals.get(lid) || 0) + Number(ml.quantity || 0)
+              (receivedTotals.get(lid) || 0) + Number(sl.quantity || 0)
             );
           }
         }
         const lineQuantityMap = new Map<number, number>();
         const touchedLineIds = new Set<number>();
+        const lineRows = payloadLineIds.length
+          ? await tx.purchaseOrderLine.findMany({
+              where: { id: { in: payloadLineIds } },
+              select: {
+                id: true,
+                purchaseOrderId: true,
+                productId: true,
+                quantityOrdered: true,
+                quantity: true,
+                qtyReceived: true,
+                product: {
+                  select: {
+                    stockTrackingEnabled: true,
+                    batchTrackingEnabled: true,
+                  },
+                },
+              },
+            })
+          : [];
+        const lineById = new Map<number, (typeof lineRows)[number]>();
+        for (const line of lineRows) {
+          lineById.set(line.id, line);
+          lineQuantityMap.set(line.id, Number(line.quantity || 0) || 0);
+        }
+        const currentReceivedByLine = new Map<number, number>();
+        for (const line of lineRows) {
+          currentReceivedByLine.set(line.id, receivedTotals.get(line.id) || 0);
+        }
 
         for (const row of payload) {
           // Validate line belongs to PO and product matches
-          const line = await tx.purchaseOrderLine.findUnique({
-            where: { id: row.lineId },
-            select: {
-              id: true,
-              purchaseOrderId: true,
-              productId: true,
-              quantityOrdered: true,
-              quantity: true,
-              qtyReceived: true,
-            },
-          });
+          const line = lineById.get(row.lineId);
           if (!line || line.purchaseOrderId !== poId)
             throw new Error("PO_RECEIVE: Invalid PO line");
           if (Number(line.productId) !== Number(row.productId))
             throw new Error("PO_RECEIVE: Product mismatch for PO line");
 
-          if (!lineQuantityMap.has(line.id)) {
-            lineQuantityMap.set(line.id, Number(line.quantity || 0) || 0);
-          }
+          const stockTrackingEnabled =
+            line.product?.stockTrackingEnabled !== false;
+          const batchTrackingEnabled =
+            line.product?.batchTrackingEnabled === true;
+          const requiresBatches = stockTrackingEnabled && batchTrackingEnabled;
 
           const batches = Array.isArray(row.batches) ? row.batches : [];
-          const sum = batches.reduce((t, b) => t + (Number(b.qty) || 0), 0);
+          const batchSum = batches.reduce(
+            (t, b) => t + (Number(b.qty) || 0),
+            0
+          );
+          const total = Number(row.total || 0);
+          const sum = requiresBatches ? batchSum : total;
           if (sum <= 0) continue; // nothing to do for this row
 
           const qtyOrdered = Number(line.quantityOrdered || 0);
-          const alreadyReceived = receivedTotals.get(line.id) || 0;
+          const alreadyReceived = currentReceivedByLine.get(line.id) || 0;
           const remaining = Math.max(0, qtyOrdered - alreadyReceived);
           // Allow over-receive: do not block if sum > remaining; we accept and record movement as-is.
 
           const nextTotalReceived = alreadyReceived + sum;
-          receivedTotals.set(line.id, nextTotalReceived);
+          currentReceivedByLine.set(line.id, nextTotalReceived);
           touchedLineIds.add(line.id);
 
           // Ensure shipment line for product (reuse if multiple movement rows share product)
@@ -803,6 +1265,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 id: shipLineId,
                 shipmentId: shipment.id,
                 productId: row.productId,
+                purchaseOrderLineId: row.lineId,
                 quantity: sum,
                 locationId: po.locationId ?? undefined,
                 details: `PO ${poId} receive`,
@@ -816,6 +1279,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
               where: { id: shipLineId },
               data: { quantity: { increment: sum } as any },
             });
+          }
+
+          if (!stockTrackingEnabled) {
+            // Stock tracking off: skip movements/batches
+            continue;
           }
 
           // Create product movement header per row (link to shippingLineId)
@@ -832,40 +1300,54 @@ export async function action({ request, params }: ActionFunctionArgs) {
             },
           });
 
-          for (const b of batches) {
-            const qty = Math.abs(Number(b.qty) || 0);
-            if (qty <= 0) continue;
-            const created = await tx.batch.create({
-              data: {
-                productId: row.productId,
-                name: b.name || null,
-                codeMill: b.codeMill || null,
-                codeSartor: b.codeSartor || null,
-                locationId: enforcedLocationId ?? undefined,
-                receivedAt: date,
-                source: String(poId),
-                quantity: qty, // seed fallback
-              },
-            });
+          if (requiresBatches) {
+            for (const b of batches) {
+              const qty = Math.abs(Number(b.qty) || 0);
+              if (qty <= 0) continue;
+              const created = await tx.batch.create({
+                data: {
+                  productId: row.productId,
+                  name: b.name || null,
+                  codeMill: b.codeMill || null,
+                  codeSartor: b.codeSartor || null,
+                  locationId: enforcedLocationId ?? undefined,
+                  receivedAt: date,
+                  source: String(poId),
+                  quantity: qty, // seed fallback
+                },
+              });
+              await tx.productMovementLine.create({
+                data: {
+                  movementId: hdr.id,
+                  productMovementId: hdr.id,
+                  productId: row.productId,
+                  batchId: created.id,
+                  quantity: qty,
+                  notes: null,
+                  purchaseOrderLineId: row.lineId,
+                },
+              });
+            }
+          } else {
             await tx.productMovementLine.create({
               data: {
                 movementId: hdr.id,
                 productMovementId: hdr.id,
                 productId: row.productId,
-                batchId: created.id,
-                quantity: qty,
+                batchId: null,
+                quantity: Math.abs(sum),
                 notes: null,
                 purchaseOrderLineId: row.lineId,
               },
             });
           }
 
-          // Do not update line fields; received/shipped are derived from movements
+          // Do not update line fields; received quantities are derived from shipments
         }
 
         if (touchedLineIds.size) {
           for (const lid of touchedLineIds) {
-            const totalReceived = receivedTotals.get(lid) || 0;
+            const totalReceived = currentReceivedByLine.get(lid) || 0;
             const currentQty = lineQuantityMap.get(lid) ?? 0;
             if (totalReceived > currentQty) {
               await tx.purchaseOrderLine.update({
@@ -909,22 +1391,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
         let anyReceived = false;
         let allFilled = false;
         if (ids.length) {
-          const mls = await prisma.productMovementLine.findMany({
-            where: { purchaseOrderLineId: { in: ids } },
-            select: {
-              purchaseOrderLineId: true,
-              quantity: true,
-              movement: { select: { movementType: true } },
+          const receiptLines = await prisma.shipmentLine.findMany({
+            where: {
+              purchaseOrderLineId: { in: ids },
+              shipment: { type: "In" },
             },
+            select: { purchaseOrderLineId: true, quantity: true },
           });
           const receivedMap = new Map<number, number>();
-          for (const ml of mls) {
-            const t = (ml.movement?.movementType || "").toLowerCase();
-            if (t !== "po (receive)") continue;
-            const lid = Number(ml.purchaseOrderLineId);
+          for (const sl of receiptLines) {
+            const lid = Number(sl.purchaseOrderLineId);
             receivedMap.set(
               lid,
-              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+              (receivedMap.get(lid) || 0) + Number(sl.quantity || 0)
             );
           }
           anyReceived = Array.from(receivedMap.values()).some(
@@ -956,45 +1435,60 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
   if (intent === "po.receive.delete") {
     const poId = Number(form.get("poId"));
-    const movementId = Number(form.get("movementId"));
-    if (!Number.isFinite(poId) || !Number.isFinite(movementId)) {
+    const shipmentLineId = Number(form.get("shipmentLineId"));
+    if (!Number.isFinite(poId) || !Number.isFinite(shipmentLineId)) {
       return json({ error: "Invalid ids" }, { status: 400 });
     }
-    // Validate movement exists and belongs to this PO
-    const mv = await prisma.productMovement.findUnique({
-      where: { id: movementId },
+    const shipmentLine = await prisma.shipmentLine.findUnique({
+      where: { id: shipmentLineId },
       select: {
         id: true,
-        movementType: true,
+        shipmentId: true,
         purchaseOrderLineId: true,
-        shippingLineId: true,
-        lines: { select: { id: true, batchId: true } },
+        shipment: { select: { id: true, type: true } },
       },
     });
-    if (!mv || (mv.movementType || "").toLowerCase() !== "po (receive)") {
-      return json({ error: "Not a PO receive movement" }, { status: 400 });
+    if (!shipmentLine || shipmentLine.shipment?.type !== "In") {
+      return json({ error: "Receipt line not found" }, { status: 404 });
     }
-    if (!mv.purchaseOrderLineId) {
+    if (!shipmentLine.purchaseOrderLineId) {
       return json(
-        { error: "Movement is not linked to a PO line" },
+        { error: "Receipt line is not linked to a PO line" },
         { status: 400 }
       );
     }
-    const line = await prisma.purchaseOrderLine.findUnique({
-      where: { id: mv.purchaseOrderLineId },
+    const poLine = await prisma.purchaseOrderLine.findUnique({
+      where: { id: shipmentLine.purchaseOrderLineId },
       select: { id: true, purchaseOrderId: true },
     });
-    if (!line || line.purchaseOrderId !== poId) {
+    if (!poLine || poLine.purchaseOrderId !== poId) {
       return json(
-        { error: "Movement does not belong to this PO" },
+        { error: "Receipt does not belong to this PO" },
         { status: 400 }
       );
     }
-    const batchIds = (mv.lines || [])
-      .map((l) => Number(l.batchId))
-      .filter((n) => Number.isFinite(n)) as number[];
     try {
       await prisma.$transaction(async (tx) => {
+        const movements = await tx.productMovement.findMany({
+          where: { shippingLineId: shipmentLineId },
+          select: {
+            id: true,
+            movementType: true,
+            shippingLineId: true,
+            lines: { select: { id: true, batchId: true } },
+          },
+        });
+        const movementIds = movements.map((m) => m.id);
+        for (const mv of movements) {
+          if ((mv.movementType || "").toLowerCase() !== "po (receive)") {
+            throw new Error(
+              "PO_RECEIVE_DELETE: Receipt line has non-PO movement entries"
+            );
+          }
+        }
+        const batchIds = movements
+          .flatMap((m) => (m.lines || []).map((l) => Number(l.batchId)))
+          .filter((n) => Number.isFinite(n)) as number[];
         if (batchIds.length) {
           // Server-side safety: ensure these batches have not been moved after creation
           const links = await tx.productMovementLine.findMany({
@@ -1010,53 +1504,41 @@ export async function action({ request, params }: ActionFunctionArgs) {
           }
           for (const bid of batchIds) {
             const s = byBatch.get(bid) || new Set();
-            if (s.size !== 1 || !s.has(movementId)) {
+            const onlyMovements = movementIds.length
+              ? Array.from(s).every((id) => movementIds.includes(id))
+              : false;
+            if (!onlyMovements) {
               throw new Error(
                 "PO_RECEIVE_DELETE: Batch has other movements and cannot be deleted"
               );
             }
           }
         }
-        // Delete movement lines for this movement
-        await tx.productMovementLine.deleteMany({
-          where: {
-            OR: [{ movementId: movementId }, { productMovementId: movementId }],
-          },
-        });
-        // Delete batches created by this movement (safe due to validation above)
+        if (movementIds.length) {
+          await tx.productMovementLine.deleteMany({
+            where: {
+              OR: [
+                { movementId: { in: movementIds } },
+                { productMovementId: { in: movementIds } },
+              ],
+            },
+          });
+          await tx.productMovement.deleteMany({
+            where: { id: { in: movementIds } },
+          });
+        }
         if (batchIds.length) {
           await tx.batch.deleteMany({ where: { id: { in: batchIds } } });
         }
-        // Capture shipping line info before deleting header
-        const shippingLineId = Number(mv.shippingLineId || 0) || null;
-        let shipmentId: number | null = null;
-        if (shippingLineId) {
-          const sl = await tx.shipmentLine.findUnique({
-            where: { id: shippingLineId },
-            select: { id: true, shipmentId: true },
+        await tx.shipmentLine.delete({ where: { id: shipmentLineId } });
+        if (shipmentLine.shipmentId) {
+          const remaining = await tx.shipmentLine.count({
+            where: { shipmentId: shipmentLine.shipmentId },
           });
-          shipmentId = sl?.shipmentId ?? null;
-        }
-        // Delete header
-        await tx.productMovement.delete({ where: { id: movementId } });
-        // If a shipping line was associated, delete it if no other movements reference it
-        if (mv.shippingLineId) {
-          const others = await tx.productMovement.count({
-            where: { shippingLineId: mv.shippingLineId },
-          });
-          if (others === 0) {
-            await tx.shipmentLine.delete({
-              where: { id: mv.shippingLineId as number },
+          if (remaining === 0) {
+            await tx.shipment.delete({
+              where: { id: shipmentLine.shipmentId },
             });
-            // If the shipment now has no lines, delete the shipment
-            if (shipmentId) {
-              const remaining = await tx.shipmentLine.count({
-                where: { shipmentId },
-              });
-              if (remaining === 0) {
-                await tx.shipment.delete({ where: { id: shipmentId } });
-              }
-            }
           }
         }
       });
@@ -1093,22 +1575,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
         let anyReceived = false;
         let allFilled = false;
         if (ids.length) {
-          const mls = await prisma.productMovementLine.findMany({
-            where: { purchaseOrderLineId: { in: ids } },
-            select: {
-              purchaseOrderLineId: true,
-              quantity: true,
-              movement: { select: { movementType: true } },
+          const receiptLines = await prisma.shipmentLine.findMany({
+            where: {
+              purchaseOrderLineId: { in: ids },
+              shipment: { type: "In" },
             },
+            select: { purchaseOrderLineId: true, quantity: true },
           });
           const receivedMap = new Map<number, number>();
-          for (const ml of mls) {
-            const t = (ml.movement?.movementType || "").toLowerCase();
-            if (t !== "po (receive)") continue;
-            const lid = Number(ml.purchaseOrderLineId);
+          for (const sl of receiptLines) {
+            const lid = Number(sl.purchaseOrderLineId);
             receivedMap.set(
               lid,
-              (receivedMap.get(lid) || 0) + Number(ml.quantity || 0)
+              (receivedMap.get(lid) || 0) + Number(sl.quantity || 0)
             );
           }
           anyReceived = Array.from(receivedMap.values()).some(
@@ -1143,10 +1622,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export function PurchaseOrderDetailView() {
-  const { purchaseOrder, totals, productOptions, poMovements } =
+  const {
+    purchaseOrder,
+    totals,
+    productOptions,
+    poMovements,
+    receiptShipments,
+    receiptLineMeta,
+    supplierInvoices,
+    invoiceSummary,
+  } =
     useRouteLoaderData<typeof loader>(
       "modules/purchaseOrder/routes/purchase-orders.$id"
     )!;
+  const { productMovementCount } = useRouteLoaderData<typeof loader>(
+    "modules/purchaseOrder/routes/purchase-orders.$id"
+  )!;
+  const actionData = useActionData<typeof action>() as any;
   const { setCurrentId } = useRecordContext();
   const submit = useSubmit();
   const deleteFetcher = useFetcher<{ error?: string }>();
@@ -1302,20 +1794,18 @@ export function PurchaseOrderDetailView() {
       cancelled = true;
     };
   }, [consigneeCompanyId, form]);
+  const savePurchaseOrder = (values: any) => {
+    const fd = new FormData();
+    fd.set("_intent", "po.update");
+    fd.set("purchaseOrder", JSON.stringify(values));
+    submit(fd, { method: "post" });
+  };
+
   // Wire Save/Discard with Global Form Context: Save posts form values; Discard resets to loader state
-  useInitGlobalFormContext(
-    form as any,
-    (values: any) => {
-      const fd = new FormData();
-      fd.set("_intent", "po.update");
-      fd.set("purchaseOrder", JSON.stringify(values));
-      submit(fd, { method: "post" });
-    },
-    () => {
-      // Discard resets back to last loaded data
-      form.reset(purchaseOrder as any);
-    }
-  );
+  useInitGlobalFormContext(form as any, savePurchaseOrder, () => {
+    // Discard resets back to last loaded data
+    form.reset(purchaseOrder as any);
+  });
 
   // After a successful save (loader re-runs), reset the form to clear dirty state
   useEffect(() => {
@@ -1376,6 +1866,8 @@ export function PurchaseOrderDetailView() {
       // Seed pricing: prefer manualSalePrice; else compute on server already provided as c_sellPrice
       priceCost: prod?.costPrice ?? 0,
       priceSell: prod?.manualSalePrice ?? prod?.c_sellPrice ?? 0,
+      manualCost: null,
+      manualSell: null,
       etaDate: null,
       etaDateConfirmed: false,
     };
@@ -1459,14 +1951,295 @@ export function PurchaseOrderDetailView() {
     useWatch({ control: form.control, name: "status" }) ||
     purchaseOrder.status ||
     "DRAFT";
+  const isDraft = statusValue === "DRAFT";
+  const lineCount = (purchaseOrder.lines || []).length;
+  const hasMovements = Number(productMovementCount || 0) > 0;
+  const canDelete = !hasMovements;
+  const canReceive = !isDraft && lineCount > 0;
+  const fieldCtx = { isLoudMode: isDraft };
+  const [activeTab, setActiveTab] = useState<string>("receipts");
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustCosts, setAdjustCosts] = useState<Record<number, number | null>>(
+    {}
+  );
+  const receiptLineMetaById =
+    (receiptLineMeta as Record<
+      number,
+      {
+        batches?: Array<{
+          id: number;
+          codeMill?: string | null;
+          codeSartor?: string | null;
+          name?: string | null;
+          quantity?: number | null;
+        }>;
+        movementCount?: number;
+      }
+    >) || {};
   const linesWatch: any[] =
     useWatch({ control: form.control, name: "lines" }) ||
     form.getValues("lines") ||
     [];
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deletePhrase = "THIS IS BONKERS";
+  const formatReceiptDate = (value: any) => {
+    if (!value) return "—";
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return "—";
+    return date.toLocaleDateString();
+  };
+  const formatBatchLabel = (batch: {
+    codeMill?: string | null;
+    codeSartor?: string | null;
+    name?: string | null;
+    quantity?: number | null;
+  }) => {
+    const label = [batch.codeSartor, batch.codeMill, batch.name]
+      .filter(Boolean)
+      .join(" · ");
+    const qty = Number(batch.quantity || 0) || 0;
+    return label ? `${label} (${qty})` : qty ? String(qty) : "Batch";
+  };
+  const receiptLines = useMemo(() => {
+    return (receiptShipments || []).flatMap((receipt: any) =>
+      (receipt.lines || []).map((line: any) => ({
+        ...line,
+        shipmentId: receipt.id,
+        shipmentDate: receipt.date,
+        shipmentMemo: receipt.memo,
+      }))
+    );
+  }, [receiptShipments]);
+  const linePricingDebug = useMemo(() => {
+    return (linesWatch || []).map((line: any) => {
+      const pid = Number(line?.productId || line?.product?.id || 0);
+      const prod = productMap[pid] || line?.product || null;
+      const computed = computeLinePricing({
+        product: prod,
+        qtyOrdered: line?.quantityOrdered,
+        pricingPrefs,
+      });
+      const manualCost =
+        line?.manualCost != null ? Number(line.manualCost) : null;
+      const manualSell =
+        line?.manualSell != null ? Number(line.manualSell) : null;
+      const storedCost =
+        line?.priceCost != null ? Number(line.priceCost) : null;
+      const storedSell =
+        line?.priceSell != null ? Number(line.priceSell) : null;
+      const effectiveCost =
+        manualCost != null
+          ? manualCost
+          : storedCost != null
+          ? storedCost
+          : computed.cost;
+      const effectiveSell =
+        manualSell != null
+          ? manualSell
+          : storedSell != null
+          ? storedSell
+          : computed.sell;
+      return {
+        lineId: line?.id ?? null,
+        manualCost,
+        manualSell,
+        computedCost: computed.cost,
+        computedSell: computed.sell,
+        effectiveCost,
+        effectiveSell,
+        priceSourceCost: manualCost != null ? "manual" : "computed",
+        priceSourceSell: manualSell != null ? "manual" : "computed",
+        lastRepricedAt: line?.lastRepricedAt ?? null,
+        repricedBy: line?.repricedBy ?? null,
+      };
+    });
+  }, [linesWatch, productMap, pricingPrefs, isDraft]);
+  const expectedIncTax = Number(invoiceSummary?.expectedIncTax ?? 0) || 0;
+  const invoicedIncTax = Number(invoiceSummary?.invoicedIncTax ?? 0) || 0;
+  const deltaIncTax = Number(invoiceSummary?.deltaIncTax ?? 0) || 0;
+  const invoiceTrackingStatus = String(
+    purchaseOrder?.invoiceTrackingStatus || "UNKNOWN"
+  );
+  const invoiceCount = (supplierInvoices || []).length;
+  const hasReceipts = receiptLines.length > 0;
+  const poWarnings = useMemo(
+    () =>
+      buildPurchaseOrderWarnings({
+        invoiceCount,
+        hasReceipts,
+        deltaRounded: invoiceSummary?.deltaIncTax ?? 0,
+        expectedRounded: invoiceSummary?.expectedIncTax ?? 0,
+        invoicedRounded: invoiceSummary?.invoicedIncTax ?? 0,
+        invoiceTrackingStatus,
+      }),
+    [
+      invoiceCount,
+      hasReceipts,
+      invoiceSummary?.deltaIncTax,
+      invoiceSummary?.expectedIncTax,
+      invoiceSummary?.invoicedIncTax,
+      invoiceTrackingStatus,
+    ]
+  );
+  const invoiceMismatchWarning = poWarnings.find(
+    (w) => w.code === "invoice_mismatch"
+  );
+  const recordInvoiceWarning = poWarnings.find(
+    (w) => w.code === "record_invoice"
+  );
+  const hasInvoiceMismatch = Boolean(invoiceMismatchWarning);
+  const calcExpected = (
+    costs: Record<number, number | null> = adjustCosts
+  ) => {
+    return (purchaseOrder.lines || []).reduce((sum: number, line: any) => {
+      const qtyReceived = Number(line.qtyReceived ?? 0) || 0;
+      const computed = computeLinePricing({
+        product: productMap[Number(line?.productId || 0)] || line?.product,
+        qtyOrdered: line?.quantityOrdered,
+        pricingPrefs,
+      });
+      const unitCostRaw =
+        costs[line.id] != null
+          ? costs[line.id]
+          : line.manualCost ?? line.priceCost ?? computed.cost;
+      const unitCost = Number(unitCostRaw ?? 0) || 0;
+      return sum + qtyReceived * unitCost;
+    }, 0);
+  };
+  const openAdjustCosts = () => {
+    const next: Record<number, number | null> = {};
+    (purchaseOrder.lines || []).forEach((line: any) => {
+      const cost = line.manualCost ?? line.priceCost;
+      next[line.id] =
+        cost == null || !Number.isFinite(Number(cost))
+          ? null
+          : Number(cost);
+    });
+    setAdjustCosts(next);
+    setAdjustOpen(true);
+  };
+  const adjustedExpectedExTax = calcExpected();
+  const effectiveTaxRate =
+    Number(invoiceSummary?.effectiveTaxRate ?? 0) || 0;
+  const adjustedExpectedIncTax =
+    adjustedExpectedExTax * (1 + effectiveTaxRate);
+  const adjustedDeltaIncTax = invoicedIncTax - adjustedExpectedIncTax;
+  const hasAdjustChanges = (purchaseOrder.lines || []).some((line: any) => {
+    const current = Number(line.manualCost ?? line.priceCost ?? 0) || 0;
+    const next =
+      adjustCosts[line.id] == null
+        ? current
+        : Number(adjustCosts[line.id]);
+    return Number.isFinite(next) && next !== current;
+  });
+  const submitAdjustCosts = () => {
+    const payload = (purchaseOrder.lines || [])
+      .map((line: any) => {
+        const next = adjustCosts[line.id];
+        if (next == null) return null;
+        const nextNum = Number(next);
+        if (!Number.isFinite(nextNum)) return null;
+        const current = Number(line.manualCost ?? line.priceCost ?? 0) || 0;
+        if (nextNum === current) return null;
+        return { id: line.id, manualCost: nextNum };
+      })
+      .filter(Boolean);
+    if (!payload.length) {
+      setAdjustOpen(false);
+      return;
+    }
+    const fd = new FormData();
+    fd.set("_intent", "po.adjustCosts");
+    fd.set("lines", JSON.stringify(payload));
+    submit(fd, { method: "post" });
+  };
+  const updateInvoiceTracking = (next: string) => {
+    const fd = new FormData();
+    fd.set("_intent", "po.updateInvoiceTracking");
+    fd.set("invoiceTrackingStatus", next);
+    submit(fd, { method: "post" });
+  };
+
+  useEffect(() => {
+    if (!actionData || actionData.intent !== "po.delete" || !actionData.error) {
+      return;
+    }
+    setDeleteError(String(actionData.error));
+    notifications.show({
+      color: "red",
+      title: "Delete blocked",
+      message: String(actionData.error),
+    });
+  }, [actionData]);
+
+  const handleStatusChange = (next: string) => {
+    form.setValue("status" as any, next, { shouldDirty: true });
+    const fd = new FormData();
+    fd.set("_intent", "po.update");
+    fd.set("purchaseOrder", JSON.stringify(form.getValues()));
+    submit(fd, { method: "post" });
+  };
+
+  const [debugOpen, setDebugOpen] = useState(false);
+  const debugData = buildFormStateDebugData({
+    formId: `po-${purchaseOrder.id}`,
+    formState: form.formState,
+    values: form.getValues(),
+    builderDefaults: purchaseOrder,
+    rhfDefaults: form.control?._defaultValues ?? null,
+    rhfValues: form.control?._formValues ?? null,
+    control: form.control,
+  });
+  const debugText = buildFormStateDebugText(debugData, true, {
+    dirtySources: {
+      rhf: {
+        isDirty: form.formState.isDirty,
+        dirtyFieldsCount: Object.keys(form.formState.dirtyFields || {}).length,
+        touchedFieldsCount: Object.keys(form.formState.touchedFields || {}).length,
+        submitCount: form.formState.submitCount,
+        formInstanceId: null,
+      },
+    },
+    formInstances: {},
+    assertions: {},
+  });
+
   // getLivePrices is obsolete; pricing moved into PurchaseOrderLinesTable via useMemo
 
   // Prev/Next hotkeys now handled globally in RecordProvider
+
+  const debugPayload = {
+    purchaseOrder,
+    totals,
+    poMovements,
+    receiptShipments,
+    receiptLineMeta,
+    supplierInvoices,
+    invoiceSummary,
+    linePricingDebug,
+    productMovementCount,
+    actionData,
+    fetchers: {
+      deleteFetcher: {
+        state: deleteFetcher.state,
+        data: deleteFetcher.data,
+      },
+      reservationFetcher: {
+        state: reservationFetcher.state,
+        data: reservationFetcher.data,
+      },
+    },
+    guards: {
+      isDraft,
+      hasMovements,
+      canDelete,
+      canReceive,
+      lineCount,
+    },
+  } as any;
 
   return (
     <Stack>
@@ -1489,16 +2262,25 @@ export function PurchaseOrderDetailView() {
           );
         })()}
         <Group gap="xs">
+          <StateChangeButton
+            value={statusValue}
+            defaultValue={statusValue}
+            onChange={handleStatusChange}
+            disabled={form.formState.isDirty}
+            config={purchaseOrderStateConfig}
+          />
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button
-                size="xs"
-                variant="default"
-                leftSection={<IconFileExport size={14} />}
-                disabled={isDirty}
-              >
-                Export
-              </Button>
+              <Tooltip label="Export" withArrow>
+                <ActionIcon
+                  size="lg"
+                  variant="subtle"
+                  aria-label="Export"
+                  disabled={isDirty}
+                >
+                  <IconFileExport size={16} />
+                </ActionIcon>
+              </Tooltip>
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item onClick={openPrint} disabled={isDirty}>
@@ -1512,13 +2294,45 @@ export function PurchaseOrderDetailView() {
               </Menu.Item>
             </Menu.Dropdown>
           </Menu>
-          <Button
-            size="xs"
-            onClick={() => setReceiveOpen(true)}
-            disabled={isDirty}
-          >
-            Receive…
-          </Button>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon
+                variant="subtle"
+                size="lg"
+                aria-label="Purchase order actions"
+              >
+                <IconMenu2 size={18} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item component={Link} to="/purchase-orders/new">
+                New Purchase Order
+              </Menu.Item>
+              <Tooltip
+                label="Can’t delete a PO with product movements. Reverse movements first."
+                disabled={canDelete}
+                withArrow
+                position="left"
+              >
+                <span>
+                  <Menu.Item
+                    color="red"
+                    disabled={!canDelete}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeleteConfirm("");
+                      setDeleteOpen(true);
+                    }}
+                  >
+                    Delete Purchase Order
+                  </Menu.Item>
+                </span>
+              </Tooltip>
+              <Menu.Item onClick={() => setDebugOpen(true)}>
+                Debug
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           {/* Per-page prev/next removed (global header handles navigation) */}
         </Group>
       </Group>
@@ -1526,213 +2340,613 @@ export function PurchaseOrderDetailView() {
       <PurchaseOrderDetailForm
         mode="edit"
         form={form as any}
+        onSave={savePurchaseOrder}
+        fieldCtx={fieldCtx}
         purchaseOrder={{
           ...purchaseOrder,
           vendorName: purchaseOrder.company?.name,
           consigneeName: purchaseOrder.consignee?.name,
           locationName: purchaseOrder.location?.name,
         }}
-        onStateChange={(v) => {
-          form.setValue("status" as any, v, { shouldDirty: true });
-          const fd = new FormData();
-          fd.set("_intent", "po.update");
-          fd.set("purchaseOrder", JSON.stringify(form.getValues()));
-          submit(fd, { method: "post" });
-        }}
+      >
+        <Grid.Col span={{ base: 12 }}>
+          <Card withBorder padding="md">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Title order={5}>Lines</Title>
+                <Group gap="xs">
+                  {!isDraft ? (
+                    <Tooltip
+                      label="Add at least one line to receive."
+                      disabled={lineCount > 0}
+                      withArrow
+                    >
+                      <span style={{ display: "inline-block" }}>
+                        <Button
+                          size="xs"
+                          onClick={() => setReceiveOpen(true)}
+                          disabled={isDirty || lineCount === 0}
+                        >
+                          Receive…
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  ) : null}
+                  <Tooltip
+                    label="To modify line items, switch back to Draft."
+                    disabled={isDraft}
+                    withArrow
+                  >
+                    <span>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        onClick={() => setAddOpen(true)}
+                        disabled={!isDraft}
+                      >
+                        Add Line
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </Group>
+              </Group>
+            </Card.Section>
+            <Modal
+              opened={addOpen}
+              onClose={() => setAddOpen(false)}
+              title="Add PO Line"
+              centered
+              size="xl"
+            >
+              <Stack gap="sm">
+                {/* Product select using API-backed search to avoid loading all options */}
+                <AsyncProductSearch
+                  key={productPickerKey}
+                  value={newProductId}
+                  onChange={setNewProductId}
+                  autoFocus
+                  focusKey={productSearchFocusKey}
+                  supplierId={purchaseOrder.companyId ?? null}
+                />
+                <Group justify="flex-end">
+                  <Button variant="default" onClick={() => setAddOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => doAddLine(true)}
+                    disabled={isDirty || newProductId == null}
+                  >
+                    Add + Next
+                  </Button>
+                  <Button
+                    onClick={() => doAddLine(false)}
+                    disabled={isDirty || newProductId == null}
+                  >
+                    Add
+                  </Button>
+                </Group>
+              </Stack>
+            </Modal>
+            <Card.Section>
+              <PurchaseOrderLinesTable
+                form={form as any}
+                status={statusValue}
+                productMap={productMap}
+                pricingPrefs={pricingPrefs}
+                purchaseDate={purchaseOrder.date ?? null}
+                vendorLeadTimeDays={
+                  purchaseOrder.company?.defaultLeadTimeDays ?? null
+                }
+                onOpenReservations={setReservationLine}
+              />
+            </Card.Section>
+            {variantBreakdownGroups.length > 0 && (
+              <Card.Section inheritPadding py="md">
+                <VariantBreakdownSection
+                  groups={variantBreakdownGroups}
+                  lineHeader="PO Line"
+                  renderLineLabel={(line: any) => (
+                    <Stack gap={0}>
+                      <Text size="sm">
+                        {line.product?.sku ||
+                          line.productSkuCopy ||
+                          `Line ${line.id}`}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {line.assembly?.name ||
+                          (line.assemblyId
+                            ? `Assembly ${line.assemblyId}`
+                            : "")}
+                      </Text>
+                    </Stack>
+                  )}
+                />
+              </Card.Section>
+            )}
+          </Card>
+        </Grid.Col>
+      </PurchaseOrderDetailForm>
+
+      <DebugDrawer
+        opened={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        title={`Debug – PO ${purchaseOrder.id}`}
+        payload={debugPayload}
+        loading={false}
+        formStateCopyText={debugText}
+        formStatePanel={
+          <FormProvider {...form}>
+            <FormStateDebugPanel
+              formId={`po-${purchaseOrder.id}`}
+              getDefaultValues={() => purchaseOrder}
+              collapseLong
+              dirtySources={{
+                rhf: {
+                  isDirty: form.formState.isDirty,
+                  dirtyFieldsCount: Object.keys(
+                    form.formState.dirtyFields || {}
+                  ).length,
+                  touchedFieldsCount: Object.keys(
+                    form.formState.touchedFields || {}
+                  ).length,
+                  submitCount: form.formState.submitCount,
+                  formInstanceId: null,
+                },
+              }}
+              formInstances={{}}
+              assertions={{}}
+            />
+          </FormProvider>
+        }
       />
 
-      <Card withBorder padding="md">
-        <Card.Section inheritPadding py="xs">
-          <Group justify="space-between" align="center">
-            <Title order={5}>Lines</Title>
+      <Modal
+        opened={deleteOpen}
+        onClose={() => {
+          setDeleteOpen(false);
+          setDeleteConfirm("");
+          setDeleteError(null);
+        }}
+        title="Delete purchase order?"
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            This action cannot be undone. Type the confirmation phrase to
+            proceed.
+          </Text>
+          <TextInput
+            label={`Type ${deletePhrase}`}
+            placeholder={deletePhrase}
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.currentTarget.value)}
+            autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              if (deleteConfirm !== deletePhrase || !canDelete) return;
+              const fd = new FormData();
+              fd.set("_intent", "po.delete");
+              fd.set("confirm", deleteConfirm);
+              submit(fd, { method: "post" });
+            }}
+          />
+          {deleteError ? (
+            <Text size="sm" c="red">
+              {deleteError}
+            </Text>
+          ) : null}
+          <Group justify="flex-end" gap="sm">
             <Button
-              size="xs"
-              variant="light"
-              onClick={() => setAddOpen(true)}
-              disabled={isDirty}
+              variant="default"
+              type="button"
+              onClick={() => {
+                setDeleteOpen(false);
+                setDeleteConfirm("");
+                setDeleteError(null);
+              }}
             >
-              Add Line
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              type="button"
+              disabled={deleteConfirm !== deletePhrase || !canDelete}
+              onClick={() => {
+                const fd = new FormData();
+                fd.set("_intent", "po.delete");
+                fd.set("confirm", deleteConfirm);
+                submit(fd, { method: "post" });
+              }}
+            >
+              Delete
             </Button>
           </Group>
-        </Card.Section>
-        <Modal
-          opened={addOpen}
-          onClose={() => setAddOpen(false)}
-          title="Add PO Line"
-          centered
-          size="xl"
-        >
-          <Stack gap="sm">
-            {/* Product select using API-backed search to avoid loading all options */}
-            <AsyncProductSearch
-              key={productPickerKey}
-              value={newProductId}
-              onChange={setNewProductId}
-              autoFocus
-              focusKey={productSearchFocusKey}
-              supplierId={purchaseOrder.companyId ?? null}
-            />
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => setAddOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => doAddLine(true)}
-                disabled={isDirty || newProductId == null}
-              >
-                Add + Next
-              </Button>
-              <Button
-                onClick={() => doAddLine(false)}
-                disabled={isDirty || newProductId == null}
-              >
-                Add
-              </Button>
-            </Group>
-          </Stack>
-        </Modal>
-        <Card.Section>
-          <PurchaseOrderLinesTable
-            form={form as any}
-            status={statusValue}
-            productMap={productMap}
-            pricingPrefs={pricingPrefs}
-            purchaseDate={purchaseOrder.date ?? null}
-            vendorLeadTimeDays={
-              purchaseOrder.company?.defaultLeadTimeDays ?? null
-            }
-            onOpenReservations={setReservationLine}
-          />
-        </Card.Section>
-        {variantBreakdownGroups.length > 0 && (
-          <Card.Section inheritPadding py="md">
-            <VariantBreakdownSection
-              groups={variantBreakdownGroups}
-              lineHeader="PO Line"
-              renderLineLabel={(line: any) => (
-                <Stack gap={0}>
-                  <Text size="sm">
-                    {line.product?.sku ||
-                      line.productSkuCopy ||
-                      `Line ${line.id}`}
-                  </Text>
+        </Stack>
+      </Modal>
+      <Tabs
+        value={activeTab}
+        onChange={(value) => setActiveTab(value || "receipts")}
+        mt="xl"
+      >
+        <Tabs.List>
+          <Tabs.Tab value="receipts">
+            Receipts ({receiptLines.length})
+          </Tabs.Tab>
+          <Tabs.Tab value="supplier-invoices">
+            Supplier Invoices ({(supplierInvoices || []).length})
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="receipts" pt="md">
+          {/* Receipts tied to this PO */}
+          <Card withBorder padding="md" bg="transparent">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Title order={5}>Receipts</Title>
+              </Group>
+            </Card.Section>
+            <Card.Section>
+              <Table withColumnBorders>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Receipt ID</Table.Th>
+                    <Table.Th>PO Line</Table.Th>
+                    <Table.Th>Product</Table.Th>
+                    <Table.Th>Qty</Table.Th>
+                    <Table.Th>Batches</Table.Th>
+                    <Table.Th></Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {receiptLines.map((line: any) => {
+                    const meta = receiptLineMetaById[line.id] || {
+                      batches: [],
+                      movementCount: 0,
+                    };
+                    const batches = meta.batches || [];
+                    const batchPreview = batches.slice(0, 2);
+                    const remaining = batches.length - batchPreview.length;
+                    return (
+                      <Table.Tr key={`receipt-line-${line.id}`}>
+                        <Table.Td>
+                          {formatReceiptDate(line.shipmentDate)}
+                        </Table.Td>
+                        <Table.Td>{line.shipmentId ?? "—"}</Table.Td>
+                        <Table.Td>{line.purchaseOrderLineId ?? "—"}</Table.Td>
+                        <Table.Td>
+                          {line.productId ? (
+                            <JumpLink
+                              to={`/products/${line.productId}`}
+                              label={
+                                [line.product?.sku, line.product?.name]
+                                  .filter(Boolean)
+                                  .join(" · ") || line.productId
+                              }
+                            />
+                          ) : (
+                            "—"
+                          )}
+                        </Table.Td>
+                        <Table.Td>{Number(line.quantity || 0) || 0}</Table.Td>
+                        <Table.Td>
+                          {batches.length ? (
+                            <Tooltip
+                              withArrow
+                              label={batches.map(formatBatchLabel).join(" · ")}
+                            >
+                              <Group gap={4} wrap="nowrap">
+                                {batchPreview.map((b: any) => (
+                                  <AxisChip
+                                    key={`${line.id}-${b.id}`}
+                                    tone="neutral"
+                                  >
+                                    {formatBatchLabel(b)}
+                                  </AxisChip>
+                                ))}
+                                {remaining > 0 ? (
+                                  <AxisChip tone="neutral">
+                                    +{remaining}
+                                  </AxisChip>
+                                ) : null}
+                              </Group>
+                            </Tooltip>
+                          ) : (
+                            "—"
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <ReceiptLineDeleteMenu
+                            receiptLineId={line.id}
+                            onDelete={(lid) => {
+                              const fd = new FormData();
+                              fd.set("_intent", "po.receive.delete");
+                              fd.set("shipmentLineId", String(lid));
+                              fd.set("poId", String(purchaseOrder.id));
+                              deleteFetcher.submit(fd, { method: "post" });
+                            }}
+                          />
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                  {receiptLines.length === 0 && (
+                    <Table.Tr>
+                      <Table.Td colSpan={7}>
+                        <em>No receipts yet.</em>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Card.Section>
+          </Card>
+        </Tabs.Panel>
+        <Tabs.Panel value="supplier-invoices" pt="md">
+          <Card withBorder padding="md" bg="transparent">
+            <Card.Section inheritPadding py="xs">
+              <Group justify="space-between" align="center">
+                <Group gap="xs" align="center" wrap="wrap">
+                  <Title order={5}>Supplier Invoices</Title>
+                  {invoiceMismatchWarning ? (
+                    <Tooltip
+                      withArrow
+                      label={
+                        <Stack gap={2}>
+                          <Text size="xs">
+                            Expected (inc tax):{" "}
+                            {formatUSD(
+                              Number(invoiceMismatchWarning.meta?.expected ?? 0)
+                            )}
+                          </Text>
+                          <Text size="xs">
+                            Invoiced (inc tax):{" "}
+                            {formatUSD(
+                              Number(invoiceMismatchWarning.meta?.invoiced ?? 0)
+                            )}
+                          </Text>
+                          <Text size="xs">
+                            Delta (inc tax):{" "}
+                            {formatUSD(
+                              Number(invoiceMismatchWarning.meta?.delta ?? 0)
+                            )}
+                          </Text>
+                        </Stack>
+                      }
+                    >
+                      <AxisChip
+                        tone="warning"
+                        onClick={openAdjustCosts}
+                        style={{ cursor: "pointer" }}
+                        title="Adjust costs to reconcile invoice delta"
+                      >
+                        {invoiceMismatchWarning.label}
+                      </AxisChip>
+                    </Tooltip>
+                  ) : null}
+                  {recordInvoiceWarning ? (
+                    <AxisChip
+                      tone="info"
+                      onClick={() => {
+                        setActiveTab("supplier-invoices");
+                      }}
+                      style={{ cursor: "pointer" }}
+                      title="Record supplier invoices for this PO"
+                    >
+                      {recordInvoiceWarning.label}
+                    </AxisChip>
+                  ) : null}
+                  {invoiceTrackingStatus === "NO_INVOICE_EXPECTED" ? (
+                    <AxisChip
+                      tone="neutral"
+                      onClick={() => updateInvoiceTracking("UNKNOWN")}
+                      style={{ cursor: "pointer" }}
+                      title="Undo invoice waiver"
+                    >
+                      Invoices waived
+                    </AxisChip>
+                  ) : null}
+                </Group>
+                <Group gap="xs">
+                  {invoiceTrackingStatus !== "NO_INVOICE_EXPECTED" ? (
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() =>
+                        updateInvoiceTracking("NO_INVOICE_EXPECTED")
+                      }
+                    >
+                      Mark no invoices
+                    </Button>
+                  ) : null}
+                  {hasInvoiceMismatch ? (
+                    <Button size="xs" variant="light" onClick={openAdjustCosts}>
+                      Adjust costs…
+                    </Button>
+                  ) : null}
+                </Group>
+              </Group>
+            </Card.Section>
+            <Card.Section inheritPadding py="xs">
+              <Group gap="xl" align="center">
+                <Stack gap={2}>
                   <Text size="xs" c="dimmed">
-                    {line.assembly?.name ||
-                      (line.assemblyId ? `Assembly ${line.assemblyId}` : "")}
+                    Expected (inc tax)
                   </Text>
+                  <Text size="sm">{formatUSD(expectedIncTax)}</Text>
                 </Stack>
-              )}
-            />
-          </Card.Section>
-        )}
-      </Card>
-      {/* Related movements tied to this PO */}
-      <Card withBorder padding="md" bg="transparent" mt="xl">
-        <Card.Section inheritPadding py="xs">
-          <Group justify="space-between" align="center">
-            <Title order={5}>PO Receive Movements</Title>
-          </Group>
-        </Card.Section>
-        <Card.Section>
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    Invoiced (inc tax)
+                  </Text>
+                  <Text size="sm">{formatUSD(invoicedIncTax)}</Text>
+                </Stack>
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    Delta (inc tax)
+                  </Text>
+                  <Text size="sm">{formatUSD(deltaIncTax)}</Text>
+                </Stack>
+              </Group>
+            </Card.Section>
+            {hasInvoiceMismatch ? (
+              <Card.Section inheritPadding py="xs">
+                <Alert color="yellow" title="Invoice delta (inc tax)">
+                  Invoiced totals do not match expected PO costs (including
+                  tax). Consider adjusting line costs to reconcile the delta.
+                </Alert>
+              </Card.Section>
+            ) : null}
+            <Card.Section>
+              <Table withColumnBorders>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Invoice #</Table.Th>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Amount (ex tax)</Table.Th>
+                    <Table.Th>Tax Code</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {(supplierInvoices || []).map((inv: any) => {
+                    const sign = inv.type === "CREDIT_MEMO" ? -1 : 1;
+                    const amount =
+                      (Number(inv.totalExTax ?? 0) || 0) * sign;
+                    const invType =
+                      inv.type === "CREDIT_MEMO"
+                        ? "Credit Memo"
+                        : inv.type === "INVOICE"
+                        ? "Invoice"
+                        : "—";
+                    const dateLabel = inv.invoiceDate
+                      ? new Date(inv.invoiceDate).toLocaleDateString()
+                      : "—";
+                    return (
+                      <Table.Tr key={`supplier-invoice-${inv.id}`}>
+                        <Table.Td>{dateLabel}</Table.Td>
+                        <Table.Td>{inv.supplierInvoiceNo || "—"}</Table.Td>
+                        <Table.Td>{invType}</Table.Td>
+                        <Table.Td>{formatUSD(amount)}</Table.Td>
+                        <Table.Td>{inv.taxCode || "—"}</Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                  {(supplierInvoices || []).length === 0 && (
+                    <Table.Tr>
+                      <Table.Td colSpan={5}>
+                        <em>No supplier invoices yet.</em>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Card.Section>
+          </Card>
+        </Tabs.Panel>
+      </Tabs>
+      <Drawer
+        opened={adjustOpen}
+        onClose={() => setAdjustOpen(false)}
+        position="right"
+        size="lg"
+        title={`Adjust line costs – PO ${purchaseOrder.id}`}
+      >
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            Update unit costs for received quantities. Expected totals update as
+            you edit costs.
+          </Text>
           <Table withColumnBorders>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Date</Table.Th>
-                <Table.Th>Move ID</Table.Th>
                 <Table.Th>PO Line</Table.Th>
-                <Table.Th>Type</Table.Th>
                 <Table.Th>Product</Table.Th>
-                <Table.Th>Batch</Table.Th>
-                <Table.Th>Qty</Table.Th>
-                <Table.Th>Notes</Table.Th>
-                <Table.Th></Table.Th>
+                <Table.Th>Qty Received</Table.Th>
+                <Table.Th>Current Unit Cost</Table.Th>
+                <Table.Th>Expected</Table.Th>
+                <Table.Th>New Unit Cost</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {(poMovements || []).flatMap((m: any) => {
-                const dateStr = m.date
-                  ? new Date(m.date as any).toLocaleDateString()
-                  : "";
-                if (!m.lines?.length) {
-                  return [
-                    <Table.Tr key={`m-${m.id}`}>
-                      <Table.Td>{dateStr}</Table.Td>
-                      <Table.Td>{m.id}</Table.Td>
-                      <Table.Td>{m.purchaseOrderLineId ?? ""}</Table.Td>
-                      <Table.Td>{m.movementType}</Table.Td>
-                      <Table.Td></Table.Td>
-                      <Table.Td></Table.Td>
-                      <Table.Td>{m.quantity ?? ""}</Table.Td>
-                      <Table.Td>{m.notes ?? ""}</Table.Td>
-                      <Table.Td>
-                        <MovementDeleteMenu
-                          movementId={m.id}
-                          poId={purchaseOrder.id}
-                          onDelete={(mid) => {
-                            const fd = new FormData();
-                            fd.set("_intent", "po.receive.delete");
-                            fd.set("movementId", String(mid));
-                            fd.set("poId", String(purchaseOrder.id));
-                            deleteFetcher.submit(fd, { method: "post" });
-                          }}
-                        />
-                      </Table.Td>
-                    </Table.Tr>,
-                  ];
-                }
-                return m.lines.map((ln: any) => (
-                  <Table.Tr key={`m-${m.id}-l-${ln.id}`}>
-                    <Table.Td>{dateStr}</Table.Td>
-                    <Table.Td>{m.id}</Table.Td>
+              {(purchaseOrder.lines || []).map((line: any) => {
+                const qtyReceived = Number(line.qtyReceived ?? 0) || 0;
+                const currentCost =
+                  Number(line.manualCost ?? line.priceCost ?? 0) || 0;
+                const newCost =
+                  adjustCosts[line.id] == null
+                    ? currentCost
+                    : Number(adjustCosts[line.id] ?? 0);
+                const expectedLine = qtyReceived * newCost;
+                return (
+                  <Table.Tr key={`adjust-line-${line.id}`}>
+                    <Table.Td>{line.id}</Table.Td>
                     <Table.Td>
-                      {ln.purchaseOrderLineId ?? m.purchaseOrderLineId ?? ""}
-                    </Table.Td>
-                    <Table.Td>{m.movementType}</Table.Td>
-                    <Table.Td>
-                      {[ln.product?.sku, ln.product?.name]
+                      {[line.product?.sku, line.product?.name]
                         .filter(Boolean)
-                        .join(" · ")}
+                        .join(" · ") || "—"}
                     </Table.Td>
+                    <Table.Td>{qtyReceived}</Table.Td>
+                    <Table.Td>{formatUSD(currentCost)}</Table.Td>
+                    <Table.Td>{formatUSD(expectedLine)}</Table.Td>
                     <Table.Td>
-                      {ln.batch
-                        ? [
-                            ln.batch.codeSartor,
-                            ln.batch.codeMill,
-                            ln.batch.name,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")
-                        : ""}
-                    </Table.Td>
-                    <Table.Td>{ln.quantity ?? ""}</Table.Td>
-                    <Table.Td>{m.notes ?? ""}</Table.Td>
-                    <Table.Td>
-                      <MovementDeleteMenu
-                        movementId={m.id}
-                        poId={purchaseOrder.id}
-                        onDelete={(mid) => {
-                          const fd = new FormData();
-                          fd.set("_intent", "po.receive.delete");
-                          fd.set("movementId", String(mid));
-                          fd.set("poId", String(purchaseOrder.id));
-                          deleteFetcher.submit(fd, { method: "post" });
+                      <NumberInput
+                        value={
+                          adjustCosts[line.id] == null
+                            ? currentCost
+                            : adjustCosts[line.id]
+                        }
+                        onChange={(value) => {
+                          const next =
+                            value == null || value === ""
+                              ? null
+                              : Number(value);
+                          setAdjustCosts((prev) => ({
+                            ...prev,
+                            [line.id]: next,
+                          }));
                         }}
+                        min={0}
+                        step={0.01}
+                        decimalScale={8}
+                        w={140}
                       />
                     </Table.Td>
                   </Table.Tr>
-                ));
+                );
               })}
-              {(!poMovements || poMovements.length === 0) && (
+              {(purchaseOrder.lines || []).length === 0 && (
                 <Table.Tr>
-                  <Table.Td colSpan={9}>
-                    <em>No related movements yet.</em>
+                  <Table.Td colSpan={6}>
+                    <em>No lines to adjust.</em>
                   </Table.Td>
                 </Table.Tr>
               )}
             </Table.Tbody>
           </Table>
-        </Card.Section>
-      </Card>
+          <Group justify="space-between" align="center">
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                Expected (updated)
+              </Text>
+              <Text size="sm">{formatUSD(adjustedExpectedIncTax)}</Text>
+            </Stack>
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                Delta (updated)
+              </Text>
+              <Text size="sm">{formatUSD(adjustedDeltaIncTax)}</Text>
+            </Stack>
+          </Group>
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" onClick={() => setAdjustOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={submitAdjustCosts} disabled={!hasAdjustChanges}>
+              Save adjustments
+            </Button>
+          </Group>
+        </Stack>
+      </Drawer>
       <POReceiveModal
         opened={receiveOpen}
         onClose={() => setReceiveOpen(false)}
@@ -1745,6 +2959,9 @@ export function PurchaseOrderDetailView() {
           name: l.product?.name,
           qtyOrdered: l.quantityOrdered,
           qtyReceived: l.qtyReceived,
+          stockTrackingEnabled: l.product?.stockTrackingEnabled ?? null,
+          batchTrackingEnabled: l.product?.batchTrackingEnabled ?? null,
+          productType: l.product?.type ?? null,
         }))}
       />
       <Drawer
@@ -2065,44 +3282,41 @@ function LineReservationsPanel({
   );
 }
 
-function MovementDeleteMenu({
-  movementId,
-  poId,
+function ReceiptLineDeleteMenu({
+  receiptLineId,
   onDelete,
 }: {
-  movementId: number;
-  poId: number;
-  onDelete: (movementId: number) => void;
+  receiptLineId: number;
+  onDelete: (receiptLineId: number) => void;
 }) {
   return (
     <Menu withinPortal position="bottom-end" shadow="md">
       <Menu.Target>
-        <ActionIcon variant="subtle" size="sm" aria-label="Movement actions">
+        <ActionIcon variant="subtle" size="sm" aria-label="Receipt actions">
           <IconMenu2 size={16} />
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>Receive Movement</Menu.Label>
+        <Menu.Label>Receipt Line</Menu.Label>
         <Menu.Item
           leftSection={<IconTrash size={14} />}
           color="red"
           onClick={() => {
             modals.openConfirmModal({
-              title: "Delete receive movement?",
+              title: "Delete receipt line?",
               children: (
                 <Text size="sm">
-                  This will delete the movement header, lines, and any batches
-                  that were created solely by this movement. It cannot be
-                  undone.
+                  This will delete the receipt line and any derived movements or
+                  batches created from it. It cannot be undone.
                 </Text>
               ),
               labels: { confirm: "Delete", cancel: "Cancel" },
               confirmProps: { color: "red" },
-              onConfirm: () => onDelete(movementId),
+              onConfirm: () => onDelete(receiptLineId),
             });
           }}
         >
-          Delete Movement
+          Delete Receipt Line
         </Menu.Item>
       </Menu.Dropdown>
     </Menu>
@@ -2175,6 +3389,7 @@ function AsyncProductSearch({
           value: String(p.id),
           sku: p.sku ?? "",
           name: p.name ?? "",
+          productStage: p.productStage ?? null,
         }));
         if (!cancelled) setData(opts);
       } catch (err) {
@@ -2246,7 +3461,12 @@ function AsyncProductSearch({
                     }}
                   >
                     <Table.Td style={{ width: 160 }}>{opt.sku}</Table.Td>
-                    <Table.Td>{opt.name}</Table.Td>
+                    <Table.Td>
+                      <Group gap={6} wrap="nowrap">
+                        <Text>{opt.name}</Text>
+                        <ProductStageIndicator stage={opt.productStage} />
+                      </Group>
+                    </Table.Td>
                   </Table.Tr>
                 );
               })}

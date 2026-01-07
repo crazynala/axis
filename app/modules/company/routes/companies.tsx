@@ -37,7 +37,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       : String(s)
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "");
-  const viewUser = await getViewUser(args.request);
+  const viewUser = await getViewUser(_args.request);
   const views = await listViews("companies", viewUser);
   const viewName = url.searchParams.get("view");
   const filterKeys = [

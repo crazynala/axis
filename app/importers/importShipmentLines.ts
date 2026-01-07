@@ -29,6 +29,22 @@ export async function importShipmentLines(rows: any[]): Promise<ImportResult> {
       });
       continue;
     }
+    const poLineRaw = asNum(pick(r, ["a_PurchaseOrderLineID|Creator"])) as
+      | number
+      | null;
+    let purchaseOrderLineId = poLineRaw;
+    if (purchaseOrderLineId != null) {
+      const exists = await prisma.purchaseOrderLine.findUnique({
+        where: { id: purchaseOrderLineId },
+        select: { id: true },
+      });
+      if (!exists) {
+        console.warn(
+          `[import] shipment_lines missing PurchaseOrderLine ${purchaseOrderLineId} for line ${idNum}`
+        );
+        purchaseOrderLineId = null;
+      }
+    }
     const data: any = {
       id: idNum,
       assemblyId: asNum(pick(r, ["a_AssemblyID"])) as number | null,
@@ -37,6 +53,7 @@ export async function importShipmentLines(rows: any[]): Promise<ImportResult> {
       productId: asNum(
         pick(r, ["a__ProductCode", "a_ProductCode", "ProductCode"])
       ) as number | null,
+      purchaseOrderLineId,
       shipmentId: asNum(pick(r, ["a_ShippingID"])) as number | null,
       variantSetId: asNum(pick(r, ["a_VariantSetID"])) as number | null,
       category: (pick(r, ["Category"]) ?? "").toString().trim() || null,

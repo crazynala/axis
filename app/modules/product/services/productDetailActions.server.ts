@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { ValueListType } from "@prisma/client";
+import { ProductStage, ValueListType } from "@prisma/client";
 import { requireUserId } from "~/utils/auth.server";
 import { buildWhereFromConfig } from "~/utils/buildWhereFromConfig.server";
 import {
@@ -378,6 +378,28 @@ export async function handleProductDetailAction({
     });
     const isFetcher = !!request.headers.get("x-remix-fetch");
     if (isFetcher) return json({ ok: true, intent: "movement.delete" });
+    return redirect(`/products/${id}`);
+  }
+
+  if (intent === "product.updateStage") {
+    if (!Number.isFinite(id)) {
+      return json({ error: "Invalid product id" }, { status: 400 });
+    }
+    if (!form) form = await request.formData();
+    const rawStage = String(form.get("productStage") ?? "")
+      .trim()
+      .toUpperCase();
+    if (!Object.values(ProductStage).includes(rawStage as ProductStage)) {
+      return json({ error: "Invalid product stage" }, { status: 400 });
+    }
+    const userId = await requireUserId(request);
+    await prismaBase.product.update({
+      where: { id },
+      data: {
+        productStage: rawStage as ProductStage,
+        modifiedBy: String(userId),
+      },
+    });
     return redirect(`/products/${id}`);
   }
 
