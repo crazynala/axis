@@ -23,7 +23,7 @@ import { loadMaterialCoverage } from "~/modules/production/services/materialCove
 import { loadSupplierOptionsByExternalStepTypes } from "~/modules/company/services/companyOptions.server";
 import type { AssemblyDetailVM } from "~/modules/job/types/assemblyDetailVM";
 import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
-import { getProductStockSnapshots } from "~/utils/prisma.server";
+import { getProductStockSnapshots, prisma } from "~/utils/prisma.server";
 import {
   getActivitiesForAssemblies,
   getActiveProductsList,
