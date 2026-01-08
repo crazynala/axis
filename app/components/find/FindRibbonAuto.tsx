@@ -355,10 +355,12 @@ export function FindRibbonAuto({
   const isGlobal = !!activeViewObj?.isGlobal;
   const canRenameDelete = canEditView && (!isLocked || isAdmin);
   const canAdminActions = isAdmin;
+  const isBuiltin = !!activeViewObj?.isBuiltin;
   const showViewMenu =
     resolvedActiveViewId &&
     resolvedActiveViewId !== "All" &&
-    !!activeViewObj;
+    !!activeViewObj &&
+    !isBuiltin;
 
   useEffect(() => {
     if (!activeViewObj) return;
@@ -823,7 +825,7 @@ export function FindRibbonAuto({
             : undefined
         }
       />
-      {activeViewObj ? (
+      {activeViewObj && !isBuiltin ? (
         <>
           <Modal
             opened={renameOpen}

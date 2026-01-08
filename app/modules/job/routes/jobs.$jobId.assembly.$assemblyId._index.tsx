@@ -75,8 +75,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return handleAssemblyDetailAction({ request, params } as any);
 }
 
-export default function JobAssemblyRoute() {
-  useRegisterNavLocation({ includeSearch: true, moduleKey: "jobs" });
+type AssemblyBreadcrumb = { label: string; href: string };
+type AssemblyBreadcrumbBuilder = (args: {
+  isGroup: boolean;
+  assemblies: any[];
+  job: { id: number; name: string | null };
+  primaryAssembly: any;
+}) => AssemblyBreadcrumb[];
+
+export function AssemblyDetailView({
+  moduleKey = "jobs",
+  buildBreadcrumbs,
+}: {
+  moduleKey?: string;
+  buildBreadcrumbs?: AssemblyBreadcrumbBuilder;
+}) {
+  useRegisterNavLocation({ includeSearch: true, moduleKey });
   const data = useLoaderData<typeof loader>() as any;
   const actionData = useActionData<typeof action>() as any;
   const assemblies = (data.assemblies || []) as any[];
@@ -690,7 +704,9 @@ export default function JobAssemblyRoute() {
     statusControls: ReactNode;
     whiteboardControl: ReactNode | null;
   }) => {
-    const breadcrumbs = isGroup
+    const breadcrumbs = buildBreadcrumbs
+      ? buildBreadcrumbs({ isGroup, assemblies, job, primaryAssembly })
+      : isGroup
       ? [
           { label: "Jobs", href: "/jobs" },
           { label: `Job ${job.id}`, href: `/jobs/${job.id}` },
@@ -1235,4 +1251,8 @@ export default function JobAssemblyRoute() {
       </Drawer>
     </Stack>
   );
+}
+
+export default function JobAssemblyRoute() {
+  return <AssemblyDetailView />;
 }

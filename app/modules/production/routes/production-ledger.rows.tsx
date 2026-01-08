@@ -1,0 +1,27 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { fetchProductionLedgerRows } from "~/modules/production/services/productionLedger.server";
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const rawIds = url.searchParams.getAll("ids");
+  if (!rawIds.length) return json({ rows: [] });
+  const flattened: string[] = [];
+  for (const part of rawIds) {
+    if (!part) continue;
+    for (const piece of part.split(",")) {
+      const trimmed = piece.trim();
+      if (trimmed) flattened.push(trimmed);
+    }
+  }
+  const ids = Array.from(new Set(flattened))
+    .slice(0, 500)
+    .map((v) => (v.match(/^\d+$/) ? Number(v) : v))
+    .filter((v) => typeof v === "number") as number[];
+  if (!ids.length) return json({ rows: [] });
+
+  const rows = await fetchProductionLedgerRows(ids);
+  const map = new Map(rows.map((r) => [r.id, r] as const));
+  const ordered = ids.map((id) => map.get(id)).filter(Boolean);
+  return json({ rows: ordered });
+}
