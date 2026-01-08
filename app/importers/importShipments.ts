@@ -3,7 +3,9 @@ import type { ImportResult } from "./utils";
 import { asDate, asNum, pick, resetSequence } from "./utils";
 
 function mapShipmentStatus(raw: unknown): "DRAFT" | "COMPLETE" | "CANCELED" {
-  const value = String(raw ?? "").trim().toLowerCase();
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (!value) return "DRAFT";
   if (value.includes("cancel")) return "CANCELED";
   if (
@@ -51,6 +53,7 @@ export async function importShipments(rows: any[]): Promise<ImportResult> {
         (pick(r, ["PackingSlipCode"]) ?? "").toString().trim() || null,
       type: (pick(r, ["Type"]) ?? "").toString().trim() || null,
       status: mapShipmentStatus(pick(r, ["Status"])),
+      shipmentType: (pick(r, ["ShipmentType"]) ?? "").toString().trim() || null,
       // New address detail fields (Ship)
       addressName:
         (pick(r, ["Address_Name|Ship"]) ?? "").toString().trim() || null,

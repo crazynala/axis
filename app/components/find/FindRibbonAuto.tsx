@@ -61,6 +61,9 @@ export function FindRibbonAuto({
   activeViewParams,
   enableLastView,
   enableSaveAs = true,
+  viewTabs,
+  onSelectView,
+  ignoreFilterKeys,
 }: {
   views: any[];
   activeView: string | null;
@@ -85,6 +88,13 @@ export function FindRibbonAuto({
   activeViewParams?: any | null;
   enableLastView?: boolean;
   enableSaveAs?: boolean;
+  viewTabs?: Array<{ value: string; label: string }>;
+  onSelectView?: (value: string, helpers: {
+    searchParams: URLSearchParams;
+    pathname: string;
+    navigate: ReturnType<typeof useNavigate>;
+  }) => void;
+  ignoreFilterKeys?: string[];
 }) {
   const rootData = useRouteLoaderData<any>("root");
   const isAdmin = rootData?.userLevel === "Admin";
@@ -99,6 +109,10 @@ export function FindRibbonAuto({
     if (semanticKeys?.length) return semanticKeys;
     return deriveSemanticKeys(findConfig);
   }, [findConfig, semanticKeys]);
+  const ignoreFilterKeysSet = useMemo(
+    () => new Set(ignoreFilterKeys ?? []),
+    [ignoreFilterKeys]
+  );
   const presentationKeysResolved = useMemo(
     () => presentationKeys ?? ["sort", "dir", "perPage", "page", "columns"],
     [presentationKeys]
@@ -122,13 +136,14 @@ export function FindRibbonAuto({
         key === "q" ||
         key === "view" ||
         key === "findReqs" ||
-        key === "lastView"
+        key === "lastView" ||
+        ignoreFilterKeysSet.has(key)
       )
         return;
       if (value !== "") obj[key] = value;
     });
     return obj;
-  }, [sp]);
+  }, [ignoreFilterKeysSet, sp]);
   const inFindMode = sp.has("findReqs") || Object.keys(simpleParams).length > 0;
   const chips = summarizeFilters
     ? summarizeFilters(simpleParams, { labelMap })
@@ -284,21 +299,24 @@ export function FindRibbonAuto({
 
   // Normalize view list
   const viewOptions = useMemo(() => {
-    const list = [
-      { value: "All", label: "All" },
-      ...(views || [])
-        .map((v: any) =>
-          typeof v === "string"
-            ? { value: v, label: v }
-            : { value: String(v.id), label: v.name }
-        )
-        .filter((v: any) => v?.label && v.label !== "All"),
-    ];
+    const list =
+      viewTabs && viewTabs.length
+        ? viewTabs
+        : [
+            { value: "All", label: "All" },
+            ...(views || [])
+              .map((v: any) =>
+                typeof v === "string"
+                  ? { value: v, label: v }
+                  : { value: String(v.id), label: v.name }
+              )
+              .filter((v: any) => v?.label && v.label !== "All"),
+          ];
     const seen = new Set<string>();
     return list.filter((v) =>
       seen.has(v.value) ? false : (seen.add(v.value), true)
     );
-  }, [views]);
+  }, [viewTabs, views]);
   const columnsByGroup = useMemo(() => {
     const map = new Map<string, ColumnDef[]>();
     (columnsConfig || []).forEach((col) => {
@@ -385,6 +403,10 @@ export function FindRibbonAuto({
         views={viewOptions}
         activeView={resolvedActiveViewId || "All"}
         onSelectView={(val) => {
+          if (onSelectView) {
+            onSelectView(val, { searchParams: sp, pathname, navigate });
+            return;
+          }
           const next = new URLSearchParams();
           if (val && val !== "All") next.set("view", val);
           const qs = next.toString();

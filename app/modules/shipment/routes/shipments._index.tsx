@@ -8,12 +8,14 @@ import {
   Link,
   useLoaderData,
   useNavigate,
+  useSearchParams,
+  useLocation,
 } from "@remix-run/react";
 import { prismaBase } from "../../../utils/prisma.server";
 import { buildPrismaArgs } from "../../../utils/table.server";
 import { BreadcrumbSet } from "@aa/timber";
 import { Button, Group, Stack } from "@mantine/core";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { ShipmentFindManager } from "../findify/ShipmentFindManager";
 import { FindRibbonAuto } from "../../../components/find/FindRibbonAuto";
 import {
@@ -44,19 +46,39 @@ import {
   normalizeColumnsValue,
 } from "~/base/index/columns";
 import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
+import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 import {
   useRegisterNavLocation,
   usePersistIndexSearch,
   getSavedIndexSearch,
 } from "~/hooks/useNavLocation";
 
+const SHIPMENT_FIND_PARAM_KEYS = [
+  "status",
+  "type",
+  "shipmentType",
+  "trackingNo",
+  "packingSlipCode",
+  "date",
+  "dateReceived",
+  "findReqs",
+  "view",
+  "preset",
+  "sort",
+  "dir",
+  "perPage",
+  "q",
+];
+
 export const meta: MetaFunction = () => [{ title: "Shipments" }];
 
 export async function loader(args: LoaderFunctionArgs) {
   const url = new URL(args.request.url);
+  console.debug("[shipments.index] url", url.toString());
   const viewUser = await getViewUser(args.request);
   const views = await listViews("shipments", viewUser);
   const viewName = url.searchParams.get("view");
+  const presetParam = url.searchParams.get("preset");
   const valuesFromSearch = (input: URLSearchParams, keys: string[]) => {
     const filters: Record<string, any> = {};
     keys.forEach((k) => {
@@ -76,6 +98,12 @@ export async function loader(args: LoaderFunctionArgs) {
       return v !== null && v !== "";
     });
   const viewActive = !!viewName && !hasSemantic;
+  console.debug("[shipments.index] view", {
+    viewName,
+    viewActive,
+    hasSemantic,
+    presetParam,
+  });
   const activeView = viewActive ? findViewByParam(views, viewName) : null;
   const viewParams: any = activeView?.params || null;
   const viewFilters: Record<string, any> = (viewParams?.filters || {}) as any;
@@ -85,7 +113,8 @@ export async function loader(args: LoaderFunctionArgs) {
   const effectivePerPage = Number(
     url.searchParams.get("perPage") || viewParams?.perPage || 20
   );
-  const effectiveSort = url.searchParams.get("sort") || viewParams?.sort || null;
+  const effectiveSort =
+    url.searchParams.get("sort") || viewParams?.sort || null;
   const effectiveDir = url.searchParams.get("dir") || viewParams?.dir || null;
   const effectiveQ = viewActive
     ? viewParams?.q ?? null
@@ -150,13 +179,17 @@ export async function loader(args: LoaderFunctionArgs) {
       findWhere = mergeSimpleAndMulti(simple, multiWhere);
     } else findWhere = simple;
   }
+  const effectivePreset = viewActive ? null : presetParam ? presetParam : "out";
+  console.debug("[shipments.index] effectivePreset", effectivePreset);
   let baseParams: any = {
     page: findWhere ? 1 : effectivePage,
     perPage: effectivePerPage,
     sort: effectiveSort,
     dir: effectiveDir,
     q: effectiveQ ?? null,
-    filters: viewActive ? viewFilters : valuesFromSearch(url.searchParams, findKeys),
+    filters: viewActive
+      ? viewFilters
+      : valuesFromSearch(url.searchParams, findKeys),
   };
   if (baseParams.filters) {
     const {
@@ -186,6 +219,37 @@ export async function loader(args: LoaderFunctionArgs) {
       }),
     },
   });
+  if (effectivePreset === "out") {
+    const hasExplicitType =
+      findWhere &&
+      ("type" in findWhere ||
+        (Array.isArray((findWhere as any).AND) &&
+          (findWhere as any).AND.some((c: any) => "type" in (c || {}))) ||
+        (Array.isArray((findWhere as any).OR) &&
+          (findWhere as any).OR.some((c: any) => "type" in (c || {}))));
+    const hasExplicitShipmentType =
+      findWhere &&
+      ("shipmentType" in findWhere ||
+        (Array.isArray((findWhere as any).AND) &&
+          (findWhere as any).AND.some(
+            (c: any) => "shipmentType" in (c || {})
+          )) ||
+        (Array.isArray((findWhere as any).OR) &&
+          (findWhere as any).OR.some((c: any) => "shipmentType" in (c || {}))));
+    const presetFilters: any[] = [];
+    if (!hasExplicitType) presetFilters.push({ type: "Out" });
+    if (!hasExplicitShipmentType) {
+      presetFilters.push({ shipmentType: { not: "Keep Sample" } });
+    }
+    if (presetFilters.length) {
+      findWhere = findWhere
+        ? { AND: [findWhere, ...presetFilters] }
+        : presetFilters.length === 1
+        ? presetFilters[0]
+        : { AND: presetFilters };
+    }
+  }
+  console.debug("[shipments.index] findWhere", findWhere);
   if (findWhere) prismaArgs.where = findWhere;
   // Hybrid roster subset
   const ID_CAP = 50000;
@@ -222,7 +286,9 @@ export async function loader(args: LoaderFunctionArgs) {
     initialRows,
     total: idList.length,
     views,
-    activeView: viewActive ? String(activeView?.id ?? viewName ?? "") || null : null,
+    activeView: viewActive
+      ? String(activeView?.id ?? viewName ?? "") || null
+      : null,
     activeViewParams: viewActive ? viewParams || null : null,
   });
 }
@@ -343,8 +409,10 @@ export default function ShipmentsIndexRoute() {
   useRegisterNavLocation({ includeSearch: true, moduleKey: "shipments" });
   usePersistIndexSearch("/shipments");
   const data = useLoaderData<typeof loader>();
-  const { currentId, setCurrentId } = useRecords();
+  const { currentId, setCurrentId, setIdList, addRows } = useRecords();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [sp] = useSearchParams();
   const appendHref = useFindHrefAppender();
   const savedSearch = getSavedIndexSearch("/shipments");
   const shipmentsHref = savedSearch
@@ -352,6 +420,22 @@ export default function ShipmentsIndexRoute() {
     : appendHref("/shipments");
   const findConfig = useMemo(() => shipmentSpec.find.buildConfig(), []);
   const viewMode = !!data?.activeView;
+  const presetParam = sp.get("preset");
+  const viewTabs = [
+    { value: "preset:out", label: "Out" },
+    { value: "All", label: "All" },
+    ...(data?.views || [])
+      .map((v: any) => ({
+        value: String(v.id),
+        label: v.name,
+      }))
+      .filter((v: any) => v.label && v.label !== "All"),
+  ];
+  const activeTabValue = viewMode
+    ? String(data?.activeView ?? "All")
+    : presetParam === "all"
+    ? "All"
+    : "preset:out";
   const {
     records,
     columns,
@@ -371,6 +455,20 @@ export default function ShipmentsIndexRoute() {
     viewColumns: data?.activeViewParams?.columns,
     viewMode,
   });
+  useEffect(() => {
+    console.debug("[shipments.index] setIdList", {
+      count: data.idList?.length ?? 0,
+      first: data.idList?.[0],
+      last: data.idList?.[data.idList?.length - 1],
+    });
+    setIdList("shipments", data.idList, data.idListComplete);
+    if (data.initialRows?.length) {
+      console.debug("[shipments.index] addRows", {
+        count: data.initialRows.length,
+      });
+      addRows("shipments", data.initialRows, { updateRecordsArray: true });
+    }
+  }, [addRows, data.idList, data.idListComplete, data.initialRows, setIdList]);
   return (
     <Stack gap="lg">
       <ShipmentFindManager activeViewParams={data?.activeViewParams || null} />
@@ -389,12 +487,43 @@ export default function ShipmentsIndexRoute() {
       </Group>
       <FindRibbonAuto
         views={data?.views || []}
-        activeView={data?.activeView || null}
+        viewTabs={viewTabs}
+        activeView={activeTabValue}
         activeViewId={data?.activeView || null}
         activeViewParams={data?.activeViewParams || null}
         findConfig={findConfig}
         enableLastView
         columnsConfig={shipmentColumns}
+        ignoreFilterKeys={["preset"]}
+        onSelectView={(val, helpers) => {
+          if (val === "preset:out") {
+            const next = new URLSearchParams(helpers.searchParams);
+            next.delete("view");
+            next.set("preset", "out");
+            next.delete("page");
+            const qs = next.toString();
+            helpers.navigate(
+              qs ? `${helpers.pathname}?${qs}` : helpers.pathname
+            );
+            return;
+          } else if (val === "All") {
+            const next = new URLSearchParams(helpers.searchParams);
+            next.delete("view");
+            next.set("preset", "all");
+            next.delete("page");
+            const qs = next.toString();
+            helpers.navigate(
+              qs ? `${helpers.pathname}?${qs}` : helpers.pathname
+            );
+            return;
+          } else {
+            const next = new URLSearchParams();
+            next.set("view", val);
+            const qs = next.toString();
+            helpers.navigate(`${helpers.pathname}?${qs}`);
+            return;
+          }
+        }}
       />
       <VirtualizedNavDataTable
         records={records as any}
@@ -420,3 +549,8 @@ export default function ShipmentsIndexRoute() {
     </Stack>
   );
 }
+
+export const shouldRevalidate = makeModuleShouldRevalidate(
+  "/shipments",
+  SHIPMENT_FIND_PARAM_KEYS
+);

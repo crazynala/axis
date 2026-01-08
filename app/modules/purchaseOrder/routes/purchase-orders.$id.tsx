@@ -38,6 +38,7 @@ import {
   Drawer,
   Tooltip,
   Alert,
+  SegmentedControl,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
@@ -58,11 +59,7 @@ import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/Purc
 import { trimReservationsToExpected } from "~/modules/materials/services/reservations.server";
 import { getSavedIndexSearch } from "~/hooks/useNavLocation";
 import { computeLinePricing } from "~/modules/purchaseOrder/helpers/poPricing";
-import {
-  IconMenu2,
-  IconTrash,
-  IconFileExport,
-} from "@tabler/icons-react";
+import { IconMenu2, IconTrash, IconFileExport } from "@tabler/icons-react";
 import { VariantBreakdownSection } from "../../../components/VariantBreakdownSection";
 import { StateChangeButton } from "~/base/state/StateChangeButton";
 import { purchaseOrderStateConfig } from "~/base/state/configs";
@@ -86,7 +83,9 @@ const parseDateInput = (value: unknown): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const normalizeTaxRate = (value: Prisma.Decimal | number | string | null | undefined) => {
+const normalizeTaxRate = (
+  value: Prisma.Decimal | number | string | null | undefined
+) => {
   const dec = new Prisma.Decimal(value ?? 0);
   if (dec.greaterThan(1)) return dec.div(100);
   return dec;
@@ -244,12 +243,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
         qtyOrdered: l.quantityOrdered,
         pricingPrefs: null,
       });
-      const cost = Number(
-        l.manualCost ?? l.priceCost ?? computed.cost ?? 0
-      );
-      const sell = Number(
-        l.manualSell ?? l.priceSell ?? computed.sell ?? 0
-      );
+      const cost = Number(l.manualCost ?? l.priceCost ?? computed.cost ?? 0);
+      const sell = Number(l.manualSell ?? l.priceSell ?? computed.sell ?? 0);
       acc.qty += qty;
       acc.qtyOrdered += qtyOrd;
       acc.cost += cost * qty;
@@ -420,9 +415,11 @@ export async function loader({ params }: LoaderFunctionArgs) {
       l.taxRate ?? l.product?.purchaseTax?.value ?? 0
     );
     const lineEx = qtyReceived.mul(unitCost);
-    const lineTax = lineEx.mul(taxRate);
-    expectedExSum = expectedExSum.plus(lineEx);
-    expectedTaxSum = expectedTaxSum.plus(lineTax);
+    const lineEx2 = lineEx.toDecimalPlaces(2);
+    const lineTax = lineEx2.mul(taxRate);
+    const lineTax2 = lineTax.toDecimalPlaces(2);
+    expectedExSum = expectedExSum.plus(lineEx2);
+    expectedTaxSum = expectedTaxSum.plus(lineTax2);
   }
   const invoiceTaxCodes = Array.from(
     new Set(
@@ -451,16 +448,19 @@ export async function loader({ params }: LoaderFunctionArgs) {
   let invoicedSum = new Prisma.Decimal(0);
   let invoicedIncSum = new Prisma.Decimal(0);
   for (const inv of supplierInvoices || []) {
-    const amt = toDecimal(inv.totalExTax ?? 0);
+    const amt = toDecimal(inv.totalExTax ?? 0).toDecimalPlaces(2);
     invoicedSum =
-      inv.type === "CREDIT_MEMO" ? invoicedSum.minus(amt) : invoicedSum.plus(amt);
+      inv.type === "CREDIT_MEMO"
+        ? invoicedSum.minus(amt)
+        : invoicedSum.plus(amt);
     const code = (inv.taxCode || "").toString().trim();
     const rate = code ? taxRateByCode.get(code) : null;
     const normRate = rate != null ? normalizeTaxRate(rate) : null;
-    const inc =
+    const incRaw =
       normRate != null
         ? amt.mul(new Prisma.Decimal(1).plus(normRate))
         : amt.mul(new Prisma.Decimal(1).plus(effectiveRate));
+    const inc = incRaw.toDecimalPlaces(2);
     invoicedIncSum =
       inv.type === "CREDIT_MEMO"
         ? invoicedIncSum.minus(inc)
@@ -478,6 +478,57 @@ export async function loader({ params }: LoaderFunctionArgs) {
   const deltaIncTax = deltaInc2.toNumber();
   const effectiveTaxRate = effectiveRate.toNumber();
 
+  let accountingExtCost = new Prisma.Decimal(0);
+  let accountingExtSell = new Prisma.Decimal(0);
+  let accountingRealCost = new Prisma.Decimal(0);
+  let accountingRealSell = new Prisma.Decimal(0);
+  for (const l of linesWithComputed || []) {
+    const qtyOrdered = toDecimal(l.quantityOrdered ?? 0);
+    const qtyReceived = toDecimal(l.qtyReceived ?? 0);
+    const computed = computeLinePricing({
+      product: l.product || null,
+      qtyOrdered: l.quantityOrdered,
+      pricingPrefs: null,
+    });
+    const unitCost = toDecimal(
+      l.manualCost ?? l.priceCost ?? computed.cost ?? 0
+    );
+    const unitSell = toDecimal(
+      l.manualSell ?? l.priceSell ?? computed.sell ?? 0
+    );
+    const taxRate = normalizeTaxRate(
+      l.taxRate ?? l.product?.purchaseTax?.value ?? 0
+    );
+    const unitCostInc = unitCost.mul(new Prisma.Decimal(1).plus(taxRate));
+    const unitSellInc = unitSell.mul(new Prisma.Decimal(1).plus(taxRate));
+    const lineExtCost = qtyOrdered.mul(unitCostInc).toDecimalPlaces(2);
+    const lineExtSell = qtyOrdered.mul(unitSellInc).toDecimalPlaces(2);
+    const lineRealCost = qtyReceived.mul(unitCostInc).toDecimalPlaces(2);
+    const lineRealSell = qtyReceived.mul(unitSellInc).toDecimalPlaces(2);
+    accountingExtCost = accountingExtCost.plus(lineExtCost);
+    accountingExtSell = accountingExtSell.plus(lineExtSell);
+    accountingRealCost = accountingRealCost.plus(lineRealCost);
+    accountingRealSell = accountingRealSell.plus(lineRealSell);
+  }
+  let accountingInvoicedInc = new Prisma.Decimal(0);
+  for (const inv of supplierInvoices || []) {
+    const amt = toDecimal(inv.totalExTax ?? 0).toDecimalPlaces(2);
+    const code = (inv.taxCode || "").toString().trim();
+    const rate = code ? taxRateByCode.get(code) : null;
+    const normRate = rate != null ? normalizeTaxRate(rate) : null;
+    const inc = (normRate != null
+      ? amt.mul(new Prisma.Decimal(1).plus(normRate))
+      : amt.mul(new Prisma.Decimal(1).plus(effectiveRate))
+    ).toDecimalPlaces(2);
+    accountingInvoicedInc =
+      inv.type === "CREDIT_MEMO"
+        ? accountingInvoicedInc.minus(inc)
+        : accountingInvoicedInc.plus(inc);
+  }
+  const accountingDeltaInc = accountingInvoicedInc
+    .minus(accountingRealCost)
+    .toDecimalPlaces(2);
+
   return json({
     purchaseOrder: poWithComputed,
     totals,
@@ -494,6 +545,14 @@ export async function loader({ params }: LoaderFunctionArgs) {
       invoicedIncTax,
       deltaIncTax,
       effectiveTaxRate,
+    },
+    accountingSummary: {
+      extCost: accountingExtCost.toNumber(),
+      extSell: accountingExtSell.toNumber(),
+      realCost: accountingRealCost.toNumber(),
+      realSell: accountingRealSell.toNumber(),
+      invoicedInc: accountingInvoicedInc.toNumber(),
+      deltaInc: accountingDeltaInc.toNumber(),
     },
     productMovementCount,
   });
@@ -531,7 +590,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const deletePhrase = "THIS IS BONKERS";
     if (confirmText !== deletePhrase) {
       return json(
-        { ok: false, intent: "po.delete", error: "Confirmation text did not match." },
+        {
+          ok: false,
+          intent: "po.delete",
+          error: "Confirmation text did not match.",
+        },
         { status: 400 }
       );
     }
@@ -635,9 +698,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return json({ ok: false, error: "invalid" }, { status: 400 });
     }
     const qty =
-      qtyRaw == null || String(qtyRaw).trim() === ""
-        ? 0
-        : Number(qtyRaw);
+      qtyRaw == null || String(qtyRaw).trim() === "" ? 0 : Number(qtyRaw);
     if (!Number.isFinite(qty) || qty < 0) {
       return json({ ok: false, error: "invalid_qty" }, { status: 400 });
     }
@@ -657,10 +718,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         },
       },
     });
-    if (
-      !reservation ||
-      reservation.purchaseOrderLine?.purchaseOrderId !== id
-    ) {
+    if (!reservation || reservation.purchaseOrderLine?.purchaseOrderId !== id) {
       return json({ ok: false, error: "missing" }, { status: 404 });
     }
     const qtyOrdered =
@@ -695,9 +753,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       data: {
         qtyReserved: qty,
         note:
-          typeof noteRaw === "string" && noteRaw.trim()
-            ? noteRaw.trim()
-            : null,
+          typeof noteRaw === "string" && noteRaw.trim() ? noteRaw.trim() : null,
       },
     });
     return json({ ok: true });
@@ -715,10 +771,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         purchaseOrderLine: { select: { purchaseOrderId: true } },
       },
     });
-    if (
-      !reservation ||
-      reservation.purchaseOrderLine?.purchaseOrderId !== id
-    ) {
+    if (!reservation || reservation.purchaseOrderLine?.purchaseOrderId !== id) {
       return json({ ok: false, error: "missing" }, { status: 404 });
     }
     await prisma.supplyReservation.delete({ where: { id: reservationId } });
@@ -1631,10 +1684,10 @@ export function PurchaseOrderDetailView() {
     receiptLineMeta,
     supplierInvoices,
     invoiceSummary,
-  } =
-    useRouteLoaderData<typeof loader>(
-      "modules/purchaseOrder/routes/purchase-orders.$id"
-    )!;
+    accountingSummary,
+  } = useRouteLoaderData<typeof loader>(
+    "modules/purchaseOrder/routes/purchase-orders.$id"
+  )!;
   const { productMovementCount } = useRouteLoaderData<typeof loader>(
     "modules/purchaseOrder/routes/purchase-orders.$id"
   )!;
@@ -1660,11 +1713,7 @@ export function PurchaseOrderDetailView() {
       revalidator.revalidate();
       setReservationLine(null);
     }
-  }, [
-    reservationFetcher.state,
-    reservationFetcher.data,
-    revalidator,
-  ]);
+  }, [reservationFetcher.state, reservationFetcher.data, revalidator]);
 
   const form = useForm({ defaultValues: purchaseOrder });
   const { isDirty } = form.formState;
@@ -1956,8 +2005,11 @@ export function PurchaseOrderDetailView() {
   const hasMovements = Number(productMovementCount || 0) > 0;
   const canDelete = !hasMovements;
   const canReceive = !isDraft && lineCount > 0;
-  const fieldCtx = { isLoudMode: isDraft };
+  const fieldCtx = { isLoudMode: isDraft, accountingSummary };
   const [activeTab, setActiveTab] = useState<string>("receipts");
+  const [linesViewMode, setLinesViewMode] = useState<"status" | "extended">(
+    "status"
+  );
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustCosts, setAdjustCosts] = useState<Record<number, number | null>>(
     {}
@@ -2064,12 +2116,14 @@ export function PurchaseOrderDetailView() {
     purchaseOrder?.invoiceTrackingStatus || "UNKNOWN"
   );
   const invoiceCount = (supplierInvoices || []).length;
-  const hasReceipts = receiptLines.length > 0;
+  const receiptShipmentLineCount = receiptLines.length;
+  const hasReceipts = receiptShipmentLineCount > 0;
   const poWarnings = useMemo(
     () =>
       buildPurchaseOrderWarnings({
         invoiceCount,
         hasReceipts,
+        receiptShipmentLineCount,
         deltaRounded: invoiceSummary?.deltaIncTax ?? 0,
         expectedRounded: invoiceSummary?.expectedIncTax ?? 0,
         invoicedRounded: invoiceSummary?.invoicedIncTax ?? 0,
@@ -2078,11 +2132,15 @@ export function PurchaseOrderDetailView() {
     [
       invoiceCount,
       hasReceipts,
+      receiptShipmentLineCount,
       invoiceSummary?.deltaIncTax,
       invoiceSummary?.expectedIncTax,
       invoiceSummary?.invoicedIncTax,
       invoiceTrackingStatus,
     ]
+  );
+  const receiptMissingWarning = poWarnings.find(
+    (w) => w.code === "receipt_missing"
   );
   const invoiceMismatchWarning = poWarnings.find(
     (w) => w.code === "invoice_mismatch"
@@ -2091,9 +2149,7 @@ export function PurchaseOrderDetailView() {
     (w) => w.code === "record_invoice"
   );
   const hasInvoiceMismatch = Boolean(invoiceMismatchWarning);
-  const calcExpected = (
-    costs: Record<number, number | null> = adjustCosts
-  ) => {
+  const calcExpected = (costs: Record<number, number | null> = adjustCosts) => {
     return (purchaseOrder.lines || []).reduce((sum: number, line: any) => {
       const qtyReceived = Number(line.qtyReceived ?? 0) || 0;
       const computed = computeLinePricing({
@@ -2114,25 +2170,19 @@ export function PurchaseOrderDetailView() {
     (purchaseOrder.lines || []).forEach((line: any) => {
       const cost = line.manualCost ?? line.priceCost;
       next[line.id] =
-        cost == null || !Number.isFinite(Number(cost))
-          ? null
-          : Number(cost);
+        cost == null || !Number.isFinite(Number(cost)) ? null : Number(cost);
     });
     setAdjustCosts(next);
     setAdjustOpen(true);
   };
   const adjustedExpectedExTax = calcExpected();
-  const effectiveTaxRate =
-    Number(invoiceSummary?.effectiveTaxRate ?? 0) || 0;
-  const adjustedExpectedIncTax =
-    adjustedExpectedExTax * (1 + effectiveTaxRate);
+  const effectiveTaxRate = Number(invoiceSummary?.effectiveTaxRate ?? 0) || 0;
+  const adjustedExpectedIncTax = adjustedExpectedExTax * (1 + effectiveTaxRate);
   const adjustedDeltaIncTax = invoicedIncTax - adjustedExpectedIncTax;
   const hasAdjustChanges = (purchaseOrder.lines || []).some((line: any) => {
     const current = Number(line.manualCost ?? line.priceCost ?? 0) || 0;
     const next =
-      adjustCosts[line.id] == null
-        ? current
-        : Number(adjustCosts[line.id]);
+      adjustCosts[line.id] == null ? current : Number(adjustCosts[line.id]);
     return Number.isFinite(next) && next !== current;
   });
   const submitAdjustCosts = () => {
@@ -2198,7 +2248,8 @@ export function PurchaseOrderDetailView() {
       rhf: {
         isDirty: form.formState.isDirty,
         dirtyFieldsCount: Object.keys(form.formState.dirtyFields || {}).length,
-        touchedFieldsCount: Object.keys(form.formState.touchedFields || {}).length,
+        touchedFieldsCount: Object.keys(form.formState.touchedFields || {})
+          .length,
         submitCount: form.formState.submitCount,
         formInstanceId: null,
       },
@@ -2328,9 +2379,7 @@ export function PurchaseOrderDetailView() {
                   </Menu.Item>
                 </span>
               </Tooltip>
-              <Menu.Item onClick={() => setDebugOpen(true)}>
-                Debug
-              </Menu.Item>
+              <Menu.Item onClick={() => setDebugOpen(true)}>Debug</Menu.Item>
             </Menu.Dropdown>
           </Menu>
           {/* Per-page prev/next removed (global header handles navigation) */}
@@ -2353,7 +2402,21 @@ export function PurchaseOrderDetailView() {
           <Card withBorder padding="md">
             <Card.Section inheritPadding py="xs">
               <Group justify="space-between" align="center">
-                <Title order={5}>Lines</Title>
+                <Group gap="sm" align="center" wrap="nowrap">
+                  <Title order={5}>Lines</Title>
+                  <SegmentedControl
+                    size="xs"
+                    ml="lg"
+                    value={linesViewMode}
+                    onChange={(value) =>
+                      setLinesViewMode(value as "status" | "extended")
+                    }
+                    data={[
+                      { value: "status", label: "Status" },
+                      { value: "extended", label: "Extended" },
+                    ]}
+                  />
+                </Group>
                 <Group gap="xs">
                   {!isDraft ? (
                     <Tooltip
@@ -2438,6 +2501,7 @@ export function PurchaseOrderDetailView() {
                   purchaseOrder.company?.defaultLeadTimeDays ?? null
                 }
                 onOpenReservations={setReservationLine}
+                viewMode={linesViewMode}
               />
             </Card.Section>
             {variantBreakdownGroups.length > 0 && (
@@ -2569,9 +2633,7 @@ export function PurchaseOrderDetailView() {
         mt="xl"
       >
         <Tabs.List>
-          <Tabs.Tab value="receipts">
-            Receipts ({receiptLines.length})
-          </Tabs.Tab>
+          <Tabs.Tab value="receipts">Receipts ({receiptLines.length})</Tabs.Tab>
           <Tabs.Tab value="supplier-invoices">
             Supplier Invoices ({(supplierInvoices || []).length})
           </Tabs.Tab>
@@ -2687,6 +2749,21 @@ export function PurchaseOrderDetailView() {
               <Group justify="space-between" align="center">
                 <Group gap="xs" align="center" wrap="wrap">
                   <Title order={5}>Supplier Invoices</Title>
+                  {receiptMissingWarning ? (
+                    <Tooltip
+                      withArrow
+                      label="Invoices have been recorded, but no receipts exist for this PO."
+                    >
+                      <AxisChip
+                        tone="warning"
+                        onClick={() => setActiveTab("receipts")}
+                        style={{ cursor: "pointer" }}
+                        title="Record receipt"
+                      >
+                        {receiptMissingWarning.label}
+                      </AxisChip>
+                    </Tooltip>
+                  ) : null}
                   {invoiceMismatchWarning ? (
                     <Tooltip
                       withArrow
@@ -2810,8 +2887,7 @@ export function PurchaseOrderDetailView() {
                 <Table.Tbody>
                   {(supplierInvoices || []).map((inv: any) => {
                     const sign = inv.type === "CREDIT_MEMO" ? -1 : 1;
-                    const amount =
-                      (Number(inv.totalExTax ?? 0) || 0) * sign;
+                    const amount = (Number(inv.totalExTax ?? 0) || 0) * sign;
                     const invType =
                       inv.type === "CREDIT_MEMO"
                         ? "Credit Memo"
@@ -3034,16 +3110,10 @@ function LineReservationsPanel({
     line.availableQty != null
       ? Number(line.availableQty) || 0
       : Math.max(
-          expectedQty -
-            (Number(line.qtyReceived || 0) || 0) -
-            reservedQty,
+          expectedQty - (Number(line.qtyReceived || 0) || 0) - reservedQty,
           0
         );
-  const updateValue = (
-    id: number,
-    field: "qty" | "note",
-    value: string
-  ) => {
+  const updateValue = (id: number, field: "qty" | "note", value: string) => {
     setLocalValues((prev) => ({
       ...prev,
       [id]: {
@@ -3323,10 +3393,15 @@ function ReceiptLineDeleteMenu({
   );
 }
 
-function resolveExpectedQty(line: {
-  quantity?: number | string | null;
-  quantityOrdered?: number | string | null;
-} | null | undefined) {
+function resolveExpectedQty(
+  line:
+    | {
+        quantity?: number | string | null;
+        quantityOrdered?: number | string | null;
+      }
+    | null
+    | undefined
+) {
   if (!line) return 0;
   const qty = Number(line.quantity ?? 0) || 0;
   const ordered = Number(line.quantityOrdered ?? 0) || 0;

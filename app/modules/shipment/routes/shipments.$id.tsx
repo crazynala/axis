@@ -34,7 +34,7 @@ import {
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm, useWatch } from "react-hook-form";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { Fragment, useEffect, useMemo, useState, useRef } from "react";
 import { ShipmentDetailForm } from "../forms/ShipmentDetailForm";
 import { AttachBoxesModal } from "../components/AttachBoxesModal";
 import { resolveVariantSourceFromLine } from "../../../utils/variantBreakdown";
@@ -1312,17 +1312,24 @@ export function ShipmentDetailView() {
   }, [shipment, form]);
   const lineCount = shipment.lines?.length ?? 0;
   const boxSummaries = useMemo(() => {
-    return stagedAndSavedBoxes.map(({ box, isPending }) => {
+    const staged = Array.isArray(stagedAndSavedBoxes)
+      ? stagedAndSavedBoxes
+      : [];
+    return staged.map(({ box, isPending }) => {
+      if (!box) {
+        return null;
+      }
       const isLegacy = Boolean(
         (box as any)?.importKey &&
           String((box as any).importKey).startsWith("FM_SHIPMENT:")
       );
-      const commercialLines = (box.lines || []).filter(
+      const boxLines = Array.isArray((box as any).lines)
+        ? (box as any).lines
+        : [];
+      const commercialLines = boxLines.filter(
         (line: any) => !line.packingOnly
       );
-      const extraLines = (box.lines || []).filter(
-        (line: any) => !!line.packingOnly
-      );
+      const extraLines = boxLines.filter((line: any) => !!line.packingOnly);
       const totalQuantity = commercialLines.reduce(
         (sum: number, line: any) =>
           sum +
@@ -1411,6 +1418,19 @@ export function ShipmentDetailView() {
       };
     });
   }, [stagedAndSavedBoxes]);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.debug("[shipments.detail] boxes trace", {
+      stagedType: Array.isArray(stagedAndSavedBoxes)
+        ? "array"
+        : typeof stagedAndSavedBoxes,
+      stagedCount: Array.isArray(stagedAndSavedBoxes)
+        ? stagedAndSavedBoxes.length
+        : null,
+      summariesType: Array.isArray(boxSummaries) ? "array" : typeof boxSummaries,
+      summariesCount: Array.isArray(boxSummaries) ? boxSummaries.length : null,
+    });
+  }, [stagedAndSavedBoxes, boxSummaries]);
   const handleAttachConfirm = (boxIds: number[]) => {
     if (isLocked) return;
     if (!boxIds.length) return;
@@ -1577,21 +1597,22 @@ export function ShipmentDetailView() {
                   commit or remove to discard.
                 </Text>
               )}
-              {boxSummaries.length ? (
+              {Array.isArray(boxSummaries) && boxSummaries.length ? (
                 <Stack gap="md">
-                  {boxSummaries.map(
-                    ({
+                  {boxSummaries.map((summary) => {
+                    if (!summary?.box) return null;
+                    const {
                       box,
                       totalQuantity,
                       isPending,
                       isLegacy,
-                      commercialLines,
-                      extraLines,
-                      groups,
-                      maxVariantColumns,
-                    }) => {
-                      return (
-                        <Card key={box.id} withBorder padding="sm">
+                      commercialLines = [],
+                      extraLines = [],
+                      groups = [],
+                      maxVariantColumns = 0,
+                    } = summary;
+                    return (
+                      <Card key={box.id} withBorder padding="sm">
                           <Group justify="space-between" align="flex-start">
                             <Stack gap={2}>
                               <Text fw={600}>
@@ -1651,7 +1672,7 @@ export function ShipmentDetailView() {
                               )}
                             </Group>
                           </Group>
-                          {commercialLines?.length ? (
+                          {commercialLines.length ? (
                             <Table withColumnBorders mt="sm">
                               <Table.Thead>
                                 <Table.Tr>
@@ -1670,23 +1691,45 @@ export function ShipmentDetailView() {
                                 </Table.Tr>
                               </Table.Thead>
                               <Table.Tbody>
-                                {groups.map((group) => (
-                                  <React.Fragment key={group.key}>
+                                {(groups || []).map((group) => {
+                                  const groupLabels = Array.isArray(group.labels)
+                                    ? group.labels
+                                    : [];
+                                  if (
+                                    process.env.NODE_ENV !== "production" &&
+                                    (!Array.isArray(group.labels) ||
+                                      !Array.isArray(group.lines))
+                                  ) {
+                                    console.debug(
+                                      "[shipments.detail] box group shape",
+                                      {
+                                        key: group.key,
+                                        labelsType: Array.isArray(group.labels)
+                                          ? "array"
+                                          : typeof group.labels,
+                                        linesType: Array.isArray(group.lines)
+                                          ? "array"
+                                          : typeof group.lines,
+                                      }
+                                    );
+                                  }
+                                  return (
+                                    <Fragment key={group.key}>
                                     <Table.Tr>
                                       <Table.Td colSpan={2} fw={600}>
                                         {group.title}
                                       </Table.Td>
-                                      {group.labels.map((label, idx) => (
+                                      {groupLabels.map((label, idx) => (
                                         <Table.Td key={idx} fw={600}>
                                           {label}
                                         </Table.Td>
                                       ))}
-                                      {maxVariantColumns > group.labels.length
+                                      {maxVariantColumns > groupLabels.length
                                         ? Array.from(
                                             {
                                               length:
                                                 maxVariantColumns -
-                                                group.labels.length,
+                                                groupLabels.length,
                                             },
                                             (_, idx) => (
                                               <Table.Td key={`pad-${idx}`} />
@@ -1696,7 +1739,7 @@ export function ShipmentDetailView() {
                                       <Table.Td></Table.Td>
                                       <Table.Td></Table.Td>
                                     </Table.Tr>
-                                    {group.lines.map((line: any) => {
+                                    {(group.lines || []).map((line: any) => {
                                       const breakdown = Array.isArray(
                                         line.qtyBreakdown
                                       )
@@ -1770,8 +1813,9 @@ export function ShipmentDetailView() {
                                         </Table.Tr>
                                       );
                                     })}
-                                  </React.Fragment>
-                                ))}
+                                  </Fragment>
+                                );
+                                })}
                               </Table.Tbody>
                             </Table>
                           ) : (

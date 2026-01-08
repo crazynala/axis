@@ -27,6 +27,7 @@ import {
 } from "../../../utils/views.server";
 import { makeModuleShouldRevalidate } from "~/base/route/shouldRevalidate";
 import { jobSpec } from "../spec";
+import { hydrateJobRows } from "../services/hydrateJobs";
 import { jobColumns } from "../spec/indexList";
 import {
   getDefaultColumnKeys,
@@ -233,9 +234,12 @@ export async function loader(_args: LoaderFunctionArgs) {
         startDate: true,
         endDate: true,
         status: true,
+        companyId: true,
         company: { select: { name: true } },
+        _count: { select: { assemblies: true } },
       },
     });
+    initialRows = hydrateJobRows(initialRows);
   }
   return json({
     idList,

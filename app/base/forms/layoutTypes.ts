@@ -42,6 +42,7 @@ export type CardNode = {
   kind: "card";
   key: string;
   title?: string;
+  cardProps?: Record<string, any>;
   items: FormItem[];
   drawerTitle?: string;
   drawerItems?: FormItem[];

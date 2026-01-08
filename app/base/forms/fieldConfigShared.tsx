@@ -589,6 +589,22 @@ export function renderField(
       }
       case "select": {
         const { primary, fallback } = getSelectOptions(field, ctx) as any;
+        if (resolvedReadOnly && ctx?.uiMode === "quiet" && !common.error) {
+          const value =
+            form.watch(field.name as any) ??
+            (form.getValues() as any)?.[field.name];
+          const allOptions = [
+            ...(primary || []),
+            ...(fallback || []),
+            ...(field.options || []),
+          ];
+          const label =
+            value == null || value === ""
+              ? "—"
+              : allOptions.find((opt) => String(opt.value) === String(value))
+                  ?.label ?? String(value);
+          return <ReadOnlyDisplayInput common={common} value={label} ctx={ctx} />;
+        }
         return (
           <Controller
             control={form.control}
@@ -794,8 +810,9 @@ export function renderField(
                           wasFocusedRef.current = false;
                         }}
                         rightSection={
-                          valueStr != null ||
-                          (mode === "find" && (f.value ?? "") !== "") ? (
+                          (resolvedDisabled || resolvedReadOnly) ||
+                          !(valueStr != null ||
+                            (mode === "find" && (f.value ?? "") !== "")) ? undefined : (
                             <CloseButton
                               size="sm"
                               onMouseDown={(e) => e.preventDefault()}
@@ -804,7 +821,7 @@ export function renderField(
                                 setSearch("");
                               }}
                             />
-                          ) : undefined
+                          )
                         }
                         placeholder={
                           mode === "find"

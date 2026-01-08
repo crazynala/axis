@@ -107,7 +107,6 @@ export function useBoxFindify(record: any, nav?: { state: string }) {
     };
     put("code", values.code);
     put("description", values.description);
-    put("state", values.state || "open");
     put("notes", values.notes);
     put("companyId", values.companyId);
     put("locationId", values.locationId);

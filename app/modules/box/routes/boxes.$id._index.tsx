@@ -5,24 +5,50 @@ import {
   useLoaderData,
   useNavigation,
   useSubmit,
+  useActionData,
 } from "@remix-run/react";
-import { Badge, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Card, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { BreadcrumbSet, useInitGlobalFormContext } from "@aa/timber";
-import { FindToggle } from "~/base/find/FindToggle";
 import { useEffect, useMemo } from "react";
 import { loadBoxDetail } from "../services/boxDetail.server";
 import { useRecords } from "~/base/record/RecordContext";
 import { buildBoxEditDefaults, useBoxFindify } from "../findify/boxFindify";
 import { BoxDetailForm } from "../components/BoxDetailForm";
-import { boxSearchSchema } from "../findify/box.search-schema";
-import { buildWhere } from "~/base/find/buildWhere";
 import { prismaBase } from "~/utils/prisma.server";
-import { useFind } from "~/base/find/FindContext";
-import { VariantBreakdownSection } from "~/components/VariantBreakdownSection";
+import { StateChangeButton } from "~/base/state/StateChangeButton";
 import {
-  groupVariantBreakdowns,
+  normalizeBreakdownToLabels,
   resolveVariantSourceFromLine,
 } from "~/utils/variantBreakdown";
+import { EntityAuditFooter } from "~/base/detail/EntityAuditFooter";
+
+const boxStateConfig = {
+  states: {
+    open: { label: "Open", color: "blue" },
+    sealed: { label: "Sealed", color: "grape" },
+    shipped: { label: "Shipped", color: "green" },
+  },
+  transitions: {
+    open: ["sealed"],
+    sealed: ["open"],
+    shipped: [],
+  },
+  transitionMeta: {
+    "open->sealed": {
+      title: "Seal this box?",
+      text: "This marks the box as sealed and ready to ship.",
+      confirmLabel: "Seal box",
+      cancelLabel: "Cancel",
+    },
+    "sealed->open": {
+      title: "Reopen this box?",
+      text: "This will mark the box as open for further changes.",
+      confirmLabel: "Reopen box",
+      cancelLabel: "Cancel",
+    },
+  },
+};
 
 export async function loader({ params }: LoaderFunctionArgs) {
   const idStr = params.id;
@@ -61,7 +87,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const data: any = {
       code: emptyToNull(form.get("code")),
       description: emptyToNull(form.get("description")),
-      state: emptyToNull(form.get("state")) || "open",
       notes: emptyToNull(form.get("notes")),
       companyId: toInt(form.get("companyId")) || null,
       locationId: toInt(form.get("locationId")) || null,
@@ -72,25 +97,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
     await prismaBase.box.update({ where: { id }, data });
     return redirect(`/boxes/${id}`);
   }
-  if (intent === "find") {
-    const rawEntries = Array.from(form.entries()).filter(
-      ([key]) => !key.startsWith("_")
-    );
-    const values: Record<string, any> = {};
-    for (const [key, value] of rawEntries) {
-      if (value == null || value === "") continue;
-      values[key] = value;
+  if (intent === "box.setState") {
+    const state = emptyToNull(form.get("state")) || "open";
+    if (state === "shipped") {
+      return json(
+        {
+          error:
+            "Boxes are marked shipped via Shipments. Update the shipment instead.",
+        },
+        { status: 400 }
+      );
     }
-    const where = buildWhere(values, boxSearchSchema);
-    const hasFilters = Array.isArray(where.AND) && where.AND.length > 0;
-    if (!hasFilters) return redirect("/boxes");
-    const first = await prismaBase.box.findFirst({
-      where,
-      select: { id: true },
-      orderBy: { id: "asc" },
-    });
-    if (first?.id) return redirect(`/boxes/${first.id}?find=1`);
-    return redirect(`/boxes`);
+    if (state !== "open" && state !== "sealed") {
+      return json(
+        { error: "Invalid box state." },
+        { status: 400 }
+      );
+    }
+    await prismaBase.box.update({ where: { id }, data: { state } });
+    return redirect(`/boxes/${id}`);
   }
   return json({ ok: false, error: "Unknown intent" }, { status: 400 });
 }
@@ -102,21 +127,12 @@ export default function BoxDetailRoute() {
     setCurrentId(box.id, "restore");
   }, [box.id, setCurrentId]);
   const submit = useSubmit();
+  const actionData = useActionData<typeof action>() as any;
   const nav = useNavigation();
   const {
     editForm,
-    findForm,
-    mode,
-    enterFind,
     buildUpdatePayload,
-    buildFindPayload,
   } = useBoxFindify(box, nav);
-  const { registerFindCallback } = useFind();
-
-  useEffect(
-    () => registerFindCallback(() => enterFind()),
-    [registerFindCallback, enterFind]
-  );
 
   useEffect(() => {
     editForm.reset(buildBoxEditDefaults(box));
@@ -131,7 +147,19 @@ export default function BoxDetailRoute() {
     () => editForm.reset(buildBoxEditDefaults(box))
   );
 
-  const activeForm = mode === "find" ? findForm : editForm;
+  const activeForm = editForm;
+  const stateValue = String(box.state || "open");
+  const fieldCtx = { isShipped: stateValue === "shipped" };
+
+  useEffect(() => {
+    if (actionData?.error) {
+      notifications.show({
+        color: "red",
+        title: "Unable to change state",
+        message: actionData.error,
+      });
+    }
+  }, [actionData?.error]);
 
   const totalQuantity = useMemo(() => {
     return (box.lines || []).reduce((sum: number, line: any) => {
@@ -139,20 +167,39 @@ export default function BoxDetailRoute() {
       return sum + (Number.isFinite(value) ? value : 0);
     }, 0);
   }, [box.lines]);
-  const lineBreakdownGroups = useMemo(
-    () =>
-      groupVariantBreakdowns(box.lines || [], {
-        getBreakdown: (line: any) =>
-          Array.isArray(line.qtyBreakdown) ? line.qtyBreakdown : [],
-        getVariant: (line: any) => resolveVariantSourceFromLine(line),
-        getItemKey: (line: any) => line.id,
-      }),
-    [box.lines]
-  );
-
-  const handleSearch = () => {
-    const payload = buildFindPayload(findForm.getValues() as any);
-    submit(payload, { method: "post" });
+  const renderLineBreakdown = (line: any) => {
+    const variantSource = resolveVariantSourceFromLine(line);
+    const labels = (variantSource?.variants || [])
+      .map((label) => (label ?? "").trim())
+      .filter((label) => label.length > 0);
+    if (!labels.length) return "—";
+    const values = normalizeBreakdownToLabels(
+      labels,
+      Array.isArray(line.qtyBreakdown) ? line.qtyBreakdown : [],
+      true
+    );
+    if (!values.some((v) => v !== 0)) return "—";
+    return (
+      <Group gap={6} wrap="wrap">
+        {labels.map((label, idx) => {
+          const value = values[idx];
+          if (!value) return null;
+          return (
+            <Group key={`${line.id}-${label}`} gap={4} wrap="nowrap">
+              <Text size="xs" c="dimmed">
+                {label}
+              </Text>
+              <Text
+                size="xs"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {value}
+              </Text>
+            </Group>
+          );
+        })}
+      </Group>
+    );
   };
 
   return (
@@ -164,18 +211,23 @@ export default function BoxDetailRoute() {
         ]}
       />
       <Group justify="space-between" align="center">
+        <Title order={2}>{box.code || `Box #${box.id}`}</Title>
         <Group gap="md" align="center">
-          <Title order={2}>{box.code || `Box #${box.id}`}</Title>
-          <Badge size="lg" color={box.state === "shipped" ? "green" : "blue"}>
-            {box.state}
-          </Badge>
+          <StateChangeButton
+            value={stateValue}
+            defaultValue={stateValue}
+            onChange={(next) => {
+              const fd = new FormData();
+              fd.set("_intent", "box.setState");
+              fd.set("state", next);
+              submit(fd, { method: "post" });
+            }}
+            disabled={editForm.formState.isDirty || stateValue === "shipped"}
+            config={boxStateConfig}
+          />
         </Group>
-        <FindToggle
-          beforeEnterFind={() => enterFind()}
-          onSearch={handleSearch}
-        />
       </Group>
-      <BoxDetailForm mode={mode as any} form={activeForm} />
+      <BoxDetailForm mode={"edit"} form={activeForm} fieldCtx={fieldCtx} />
       <Card withBorder padding="md" radius="md">
         <Group justify="space-between" align="center" mb="md">
           <Text fw={600}>Lines ({box.lines?.length || 0})</Text>
@@ -241,33 +293,20 @@ export default function BoxDetailRoute() {
                   <Table.Td>
                     {line.quantity ? Number(line.quantity) : "—"}
                   </Table.Td>
-                  <Table.Td>
-                    {(line.qtyBreakdown || []).length
-                      ? (line.qtyBreakdown as number[]).join(", ")
-                      : "—"}
-                  </Table.Td>
+                  <Table.Td>{renderLineBreakdown(line)}</Table.Td>
                   <Table.Td>{line.notes || ""}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
-          {lineBreakdownGroups.length > 0 && (
-            <VariantBreakdownSection
-              groups={lineBreakdownGroups}
-              renderLineLabel={(line: any) => (
-                <Stack gap={0}>
-                  <Text size="sm">
-                    {line.product?.sku ?? line.productId ?? `Line ${line.id}`}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {line.job?.name || (line.jobId ? `Job ${line.jobId}` : "")}
-                  </Text>
-                </Stack>
-              )}
-            />
-          )}
         </Stack>
       </Card>
+      <EntityAuditFooter
+        createdAt={box.createdAt ?? null}
+        createdBy={box.createdBy ?? null}
+        updatedAt={box.updatedAt ?? null}
+        updatedBy={box.modifiedBy ?? null}
+      />
     </Stack>
   );
 }

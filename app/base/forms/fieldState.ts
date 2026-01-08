@@ -17,10 +17,12 @@ export function resolveFieldState(args: {
   const dynamicDisabled = field.disabledWhen
     ? field.disabledWhen({ form, mode, field, ctx })
     : false;
+  const calmLocked = mode === "edit" && ctx?.allowEditInCalm === false;
   const resolvedReadOnly =
     dynamicReadOnly ||
     dynamicReadonlyWhen ||
+    calmLocked ||
     (mode === "edit" && (field.editable === false || field.readOnly));
-  const resolvedDisabled = Boolean(dynamicDisabled);
+  const resolvedDisabled = Boolean(dynamicDisabled || calmLocked);
   return { resolvedReadOnly, resolvedDisabled };
 }

@@ -1,9 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet } from "@remix-run/react";
 import { prismaBase } from "../../../utils/prisma.server";
-import { useRecords } from "../../../base/record/RecordContext";
-import { useEffect } from "react";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const ID_CAP = 50000;
@@ -37,17 +35,5 @@ export async function loader(_args: LoaderFunctionArgs) {
 }
 
 export default function ShipmentsLayout() {
-  const data = useLoaderData<{
-    idList: number[];
-    idListComplete: boolean;
-    initialRows: any[];
-    total: number;
-  }>();
-  const { setIdList, addRows } = useRecords();
-  useEffect(() => {
-    setIdList("shipments", data.idList, data.idListComplete);
-    if (data.initialRows?.length)
-      addRows("shipments", data.initialRows, { updateRecordsArray: true });
-  }, [data.idList, data.idListComplete, data.initialRows, setIdList, addRows]);
   return <Outlet />; // Find manager now lives in index route per updated pattern
 }

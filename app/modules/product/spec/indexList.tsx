@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "@remix-run/react";
-import { Group, Indicator, Popover, Stack } from "@mantine/core";
+import { Group, Indicator } from "@mantine/core";
 import { IconBaselineDensityMedium } from "@tabler/icons-react";
 import { getDefaultColumnKeys, type ColumnDef } from "~/base/index/columns";
-import { AxisChip, type AxisChipTone } from "~/components/AxisChip";
+import { WarningsCell } from "~/components/WarningsCell";
 import { formatUSD } from "~/utils/format";
 import { calcPrice } from "../calc/calcPrice";
-import type { ProductWarning } from "./warnings";
 
 export type ProductPricingPrefs = {
   customerId: string | null;
@@ -14,56 +13,6 @@ export type ProductPricingPrefs = {
   priceMultiplier: number;
 };
 
-const warningTone = (warning: ProductWarning): AxisChipTone => {
-  if (warning.severity === "info") return "info";
-  return "warning";
-};
-
-function WarningsCell({ row }: { row: any }) {
-  const warnings = Array.isArray(row?.warnings)
-    ? (row.warnings as ProductWarning[])
-    : [];
-  if (!warnings.length) return null;
-  const preview = warnings.slice(0, 2);
-  const remaining = warnings.length - preview.length;
-  const content = (
-    <Group gap={4} wrap="nowrap">
-      {preview.map((warning) => (
-        <AxisChip
-          key={`${warning.code}-${warning.label}`}
-          tone={warningTone(warning)}
-        >
-          {warning.label}
-        </AxisChip>
-      ))}
-      {remaining > 0 ? <AxisChip tone="neutral">+{remaining}</AxisChip> : null}
-    </Group>
-  );
-  return (
-    <Popover
-      withinPortal
-      position="bottom-start"
-      shadow="md"
-      trigger="hover"
-      openDelay={150}
-      closeDelay={200}
-    >
-      <Popover.Target>{content}</Popover.Target>
-      <Popover.Dropdown>
-        <Stack gap={6}>
-          {warnings.map((warning) => (
-            <AxisChip
-              key={`${warning.code}-${warning.label}-full`}
-              tone={warningTone(warning)}
-            >
-              {warning.label}
-            </AxisChip>
-          ))}
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
-  );
-}
 
 function PriceCell({
   row,
@@ -239,7 +188,7 @@ export const canonicalProductsColumns: ColumnDef[] = [
     accessor: "warnings",
     // layout: { minWidth: 160, maxWidth: 260 },
     layout: { width: 200 },
-    render: (row: any) => <WarningsCell row={row} />,
+    render: (row: any) => <WarningsCell warnings={row?.warnings} />,
   },
 ];
 

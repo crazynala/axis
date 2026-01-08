@@ -109,6 +109,48 @@ export async function loader({ request }: LoaderFunctionArgs) {
     bufferDays: data.bufferDays,
     escalationBufferDays: data.escalationBufferDays,
   });
+  if (process.env.NODE_ENV !== "production") {
+    const debugAssemblyId = 3500;
+    const assembly = data.assemblies.find((a) => a.id === debugAssemblyId);
+    const attentionRow = attentionRows.find(
+      (row) => row.assemblyId === debugAssemblyId
+    );
+    if (assembly) {
+      const materials = assembly.materialCoverage?.materials || [];
+      const materialsShort = materials.filter(
+        (m) => (m.qtyUncovered ?? 0) > 0
+      );
+      const hasVendorOut = (assembly.externalSteps || []).some(
+        (step) => step.status === "IN_PROGRESS"
+      );
+      const needsAction = (assembly.risk?.nextActions || []).length > 0;
+      console.debug("[production.dashboard] debug assembly", {
+        assemblyId: debugAssemblyId,
+        eligibleForAtRisk: Boolean(attentionRow),
+        eligibleForNeedsAction: needsAction,
+        eligibleForMaterialsShort: materialsShort.length > 0,
+        eligibleForOutAtVendor: hasVendorOut,
+        attentionSignals: attentionRow?.attentionSignals ?? [],
+        materialCoverageHeld: assembly.materialCoverage?.held ?? false,
+        materialStatuses: materials.map((m) => ({
+          productId: m.productId,
+          productName: m.productName ?? null,
+          status: m.status,
+          qtyRequired: m.qtyRequired ?? 0,
+          qtyUncovered: m.qtyUncovered ?? 0,
+          qtyUncoveredAfterTolerance: m.qtyUncoveredAfterTolerance ?? 0,
+          locStock: m.locStock ?? 0,
+          qtyReservedToPo: m.qtyReservedToPo ?? 0,
+          qtyReservedToBatch: m.qtyReservedToBatch ?? 0,
+        })),
+        nextActions: assembly.risk?.nextActions ?? [],
+      });
+    } else {
+      console.debug("[production.dashboard] debug assembly missing", {
+        assemblyId: debugAssemblyId,
+      });
+    }
+  }
   const stepTypes = new Set<ExternalStepType>();
   (data.assemblies || []).forEach((assembly) => {
     (assembly.externalSteps || []).forEach((step) => {

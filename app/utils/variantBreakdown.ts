@@ -28,15 +28,21 @@ export function groupVariantBreakdowns<T>(
     getBreakdown: (item: T) => Array<number | string | null | undefined> | null | undefined;
     getVariant: (item: T) => VariantSource | null | undefined;
     getItemKey?: (item: T, index: number) => string | number;
+    strictVariantSet?: boolean;
   }
 ): VariantGroup<T>[] {
   if (!items || !items.length) return [];
+  const strict = Boolean(options.strictVariantSet);
   const groups = new Map<string, VariantGroup<T>>();
   items.forEach((item, index) => {
     const rawBreakdown = normalizeBreakdown(options.getBreakdown(item));
     if (!rawBreakdown.length) return;
     const variant = options.getVariant(item);
-    const baseLabels = normalizeLabels(variant?.variants, rawBreakdown.length);
+    const baseLabels = normalizeLabels(
+      variant?.variants,
+      rawBreakdown.length,
+      strict
+    );
     const groupKey = buildVariantGroupKey(variant);
     const title = buildVariantGroupTitle(variant);
     let group = groups.get(groupKey);
@@ -50,10 +56,14 @@ export function groupVariantBreakdowns<T>(
         totalSum: 0,
       };
       groups.set(groupKey, group);
-    } else {
+    } else if (!strict) {
       ensureLabelCapacity(group, rawBreakdown.length);
     }
-    const padded = padBreakdown(rawBreakdown, group.labels.length);
+    const padded = normalizeBreakdownToLabels(
+      group.labels,
+      rawBreakdown,
+      strict
+    );
     const total = sumArray(padded);
     const lineKeyValue = options.getItemKey
       ? options.getItemKey(item, index)
@@ -66,6 +76,23 @@ export function groupVariantBreakdowns<T>(
     group.totalSum += total;
   });
   return Array.from(groups.values());
+}
+
+export function normalizeBreakdownToLabels(
+  labels: string[],
+  breakdown: Array<number | string | null | undefined> | null | undefined,
+  strict = false
+): number[] {
+  const raw = normalizeBreakdown(breakdown);
+  if (strict && labels.length > 0 && raw.length > labels.length) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[variantBreakdown] ignoring extra breakdown values beyond variantSet labels"
+      );
+    }
+  }
+  return padBreakdown(raw, labels.length);
 }
 
 export type VariantBreakdownRenderOpts<T> = {
@@ -85,10 +112,15 @@ function normalizeBreakdown(values?: Array<number | string | null | undefined> |
   return arr;
 }
 
-function normalizeLabels(values?: Array<string | null> | null, fallbackLength = 1) {
+function normalizeLabels(
+  values?: Array<string | null> | null,
+  fallbackLength = 1,
+  strict = false
+) {
   const labels = (values || [])
     .map((label) => (label ?? "").trim())
     .filter((label) => label.length > 0);
+  if (strict) return labels;
   while (labels.length < fallbackLength) {
     labels.push(`Slot ${labels.length + 1}`);
   }

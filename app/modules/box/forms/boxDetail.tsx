@@ -7,7 +7,7 @@ export const BOX_STATE_OPTIONS = [
   { value: "shipped", label: "Shipped" },
 ];
 
-export const boxIdentityFields: FieldConfig[] = [
+export const boxDetailIdentityFields: FieldConfig[] = [
   {
     name: "id",
     label: "ID",
@@ -21,12 +21,27 @@ export const boxIdentityFields: FieldConfig[] = [
     label: "Code / Label",
     findOp: "contains",
     placeholder: "e.g., BX00042",
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
   {
     name: "description",
     label: "Description",
     findOp: "contains",
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
+  {
+    name: "notes",
+    label: "Notes",
+    findOp: "contains",
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+  },
+];
+
+export const boxFindIdentityFields: FieldConfig[] = [
+  ...boxDetailIdentityFields,
   {
     name: "state",
     label: "State",
@@ -34,20 +49,17 @@ export const boxIdentityFields: FieldConfig[] = [
     options: BOX_STATE_OPTIONS,
     findOp: "equals",
   },
-  {
-    name: "notes",
-    label: "Notes",
-    findOp: "contains",
-  },
 ];
 
-export const boxContextFields: FieldConfig[] = [
+export const boxDetailContextFields: FieldConfig[] = [
   {
     name: "companyId",
     label: "Company",
     widget: "select",
     optionsKey: "companyAll",
     findOp: "equals",
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
   {
     name: "locationId",
@@ -55,11 +67,15 @@ export const boxContextFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "location",
     findOp: "equals",
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
   {
     name: "shipmentId",
     label: "Shipment",
     findOp: "equals",
+    editable: false,
+    readOnly: true,
   },
   {
     name: "warehouseNumber",
@@ -67,6 +83,8 @@ export const boxContextFields: FieldConfig[] = [
     widget: "numberRange",
     findOp: "range",
     rangeFields: { min: "warehouseNumberMin", max: "warehouseNumberMax" },
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
   {
     name: "shipmentNumber",
@@ -74,10 +92,12 @@ export const boxContextFields: FieldConfig[] = [
     widget: "numberRange",
     findOp: "range",
     rangeFields: { min: "shipmentNumberMin", max: "shipmentNumberMax" },
+    readOnlyIf: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
+    disabledWhen: ({ ctx, mode }) => mode === "edit" && Boolean(ctx?.isShipped),
   },
 ];
 
-export const boxTimelineFields: FieldConfig[] = [
+export const boxAuditFields: FieldConfig[] = [
   {
     name: "createdAt",
     label: "Created",
@@ -137,9 +157,9 @@ export const boxLineCriteriaFields: FieldConfig[] = [
 
 export function allBoxFieldConfigs(): FieldConfig[] {
   return [
-    ...boxIdentityFields,
-    ...boxContextFields,
-    ...boxTimelineFields,
+    ...boxFindIdentityFields,
+    ...boxDetailContextFields,
+    ...boxAuditFields,
     ...boxLineCriteriaFields,
   ];
 }

@@ -9,9 +9,13 @@ import {
   useActionData,
   useLoaderData,
   useNavigation,
+  useRouteLoaderData,
+  useRevalidator,
 } from "@remix-run/react";
 import {
   Button,
+  Group,
+  SegmentedControl,
   Stack,
   Title,
   Text,
@@ -22,6 +26,7 @@ import { requireUserId } from "../utils/auth.server";
 import { prisma } from "../utils/prisma.server";
 import bcrypt from "bcryptjs";
 import { useState } from "react";
+import type { loader as rootLoader } from "~/root";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const uid = await requireUserId(request);
@@ -94,11 +99,47 @@ export const meta: MetaFunction = () => [{ title: "Account" }];
 
 export default function Settings() {
   const { name, email } = useLoaderData<typeof loader>();
+  const rootData = useRouteLoaderData<typeof rootLoader>("root");
+  const revalidator = useRevalidator();
   const data = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
   const [profileName, setProfileName] = useState(name);
   const profileDirty = profileName.trim() !== name.trim();
+  const [colorScheme, setColorScheme] = useState<"light" | "dark">(
+    (rootData?.colorScheme as "light" | "dark" | undefined) || "light"
+  );
+  const [schemeError, setSchemeError] = useState<string | null>(null);
+  const [schemeSaving, setSchemeSaving] = useState(false);
+
+  const handleSchemeChange = async (next: "light" | "dark") => {
+    setColorScheme(next);
+    setSchemeSaving(true);
+    setSchemeError(null);
+    try {
+      const res = await fetch("/api.color-scheme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ colorScheme: next }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error || "Unable to update theme.");
+      }
+      revalidator.revalidate();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Unable to update theme.";
+      setSchemeError(message);
+      setColorScheme(
+        (rootData?.colorScheme as "light" | "dark" | undefined) || "light"
+      );
+    } finally {
+      setSchemeSaving(false);
+    }
+  };
   return (
     <Stack align="center" mt={40} w="100%">
       <Stack maw={560} w="100%" gap="xl">
@@ -139,6 +180,26 @@ export default function Settings() {
               </Button>
             </Stack>
           </Form>
+        </Stack>
+        <Stack gap="sm">
+          <Title order={4}>Appearance</Title>
+          <Stack gap="xs">
+            <Group justify="space-between" align="center">
+              <Text>Theme</Text>
+              <SegmentedControl
+                value={colorScheme}
+                onChange={(value) =>
+                  handleSchemeChange(value as "light" | "dark")
+                }
+                data={[
+                  { label: "Light", value: "light" },
+                  { label: "Dark", value: "dark" },
+                ]}
+                disabled={schemeSaving}
+              />
+            </Group>
+            {schemeError ? <Text c="red">{schemeError}</Text> : null}
+          </Stack>
         </Stack>
         <Stack gap="sm">
           <Title order={4}>Security</Title>

@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { prisma } from "../../../utils/prisma.server";
+import { hydrateJobRows } from "../services/hydrateJobs";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -35,11 +36,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       startDate: true,
       endDate: true,
       status: true,
+      companyId: true,
       company: { select: { name: true } },
+      _count: { select: { assemblies: true } },
     },
     orderBy: { id: "asc" },
   });
-  const map = new Map(rows.map((r) => [r.id, r] as const));
+  const enrichedRows = hydrateJobRows(rows);
+  const map = new Map(enrichedRows.map((r) => [r.id, r] as const));
   const ordered = ids.map((id) => map.get(id)).filter(Boolean);
   if (__debug) {
     // eslint-disable-next-line no-console

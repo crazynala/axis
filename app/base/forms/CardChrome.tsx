@@ -6,6 +6,7 @@ type CardChromeProps = {
   showEdit?: boolean;
   onEdit?: () => void;
   children: React.ReactNode;
+  cardProps?: Record<string, any>;
   drawerOpened?: boolean;
   onDrawerClose?: () => void;
   drawerTitle?: React.ReactNode;
@@ -17,6 +18,7 @@ export function CardChrome({
   showEdit,
   onEdit,
   children,
+  cardProps,
   drawerOpened,
   onDrawerClose,
   drawerTitle,
@@ -27,7 +29,7 @@ export function CardChrome({
 
   return (
     <>
-      <Card withBorder padding="md">
+      <Card withBorder padding="md" {...cardProps}>
         {hasHeader ? (
           <Card.Section inheritPadding py={8} style={{ position: "relative" }}>
             <Group justify="space-between" align="center">

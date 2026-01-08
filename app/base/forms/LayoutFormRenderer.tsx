@@ -100,6 +100,7 @@ function CardRenderer({ card, form, mode, ctx, onSave }: CardRendererProps) {
         title={card.title}
         showEdit={showEdit}
         onEdit={() => setDrawerOpen(true)}
+        cardProps={card.cardProps}
         drawerOpened={drawerOpen}
         onDrawerClose={() => setDrawerOpen(false)}
         drawerTitle={card.drawerTitle || card.title}

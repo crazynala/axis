@@ -53,6 +53,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       taxRate: true,
     },
   });
+  const lineIdToPo = new Map<number, number>();
+  for (const line of lineRows) {
+    const lineId = Number(line.id || 0);
+    const poId = Number(line.purchaseOrderId || 0);
+    if (!Number.isFinite(lineId) || !Number.isFinite(poId)) continue;
+    lineIdToPo.set(lineId, poId);
+  }
   const lineIds = lineRows.map((l) => l.id);
   const receiptLines = lineIds.length
     ? await prismaBase.shipmentLine.findMany({
@@ -63,6 +70,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
         select: { purchaseOrderLineId: true, quantity: true },
       })
     : [];
+  const receiptLineCountByPo = new Map<number, number>();
+  for (const sl of receiptLines) {
+    const lineId = Number(sl.purchaseOrderLineId || 0);
+    if (!Number.isFinite(lineId) || !lineId) continue;
+    const poId = lineIdToPo.get(lineId);
+    if (!poId) continue;
+    receiptLineCountByPo.set(poId, (receiptLineCountByPo.get(poId) || 0) + 1);
+  }
   const invoicesByPo = new Map<number, typeof invoiceRows>();
   for (const inv of invoiceRows) {
     const poId = Number(inv.purchaseOrderId || 0);
@@ -101,10 +116,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (qty.gt(0)) hasReceipts = true;
       const unit = new Prisma.Decimal(line.manualCost ?? line.priceCost ?? 0);
       const lineEx = qty.mul(unit);
+      const lineEx2 = lineEx.toDecimalPlaces(2);
       const taxRate = normalizeTaxRate(line.taxRate);
-      const lineTax = lineEx.mul(taxRate);
-      expectedExSum = expectedExSum.plus(lineEx);
-      expectedTaxSum = expectedTaxSum.plus(lineTax);
+      const lineTax = lineEx2.mul(taxRate);
+      const lineTax2 = lineTax.toDecimalPlaces(2);
+      expectedExSum = expectedExSum.plus(lineEx2);
+      expectedTaxSum = expectedTaxSum.plus(lineTax2);
     }
     const expectedIncSum = expectedExSum.plus(expectedTaxSum);
     const effectiveRate = expectedExSum.eq(0)
@@ -112,21 +129,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
       : expectedTaxSum.div(expectedExSum);
     let invoicedSum = new Prisma.Decimal(0);
     for (const inv of poInvoices) {
-      const amt = new Prisma.Decimal(inv.totalExTax ?? 0);
+      const amt = new Prisma.Decimal(inv.totalExTax ?? 0).toDecimalPlaces(2);
       invoicedSum =
         inv.type === "CREDIT_MEMO"
           ? invoicedSum.minus(amt)
           : invoicedSum.plus(amt);
     }
-    const invoicedIncSum = invoicedSum.mul(
-      new Prisma.Decimal(1).plus(effectiveRate)
-    );
+    const invoicedIncSum = invoicedSum
+      .mul(new Prisma.Decimal(1).plus(effectiveRate))
+      .toDecimalPlaces(2);
     const expected2 = expectedIncSum.toDecimalPlaces(2);
     const invoiced2 = invoicedIncSum.toDecimalPlaces(2);
     const delta2 = invoiced2.minus(expected2);
     const warnings = buildPurchaseOrderWarnings({
       invoiceCount: poInvoices.length,
       hasReceipts,
+      receiptShipmentLineCount: receiptLineCountByPo.get(poId) || 0,
       deltaRounded: delta2,
       expectedRounded: expected2,
       invoicedRounded: invoiced2,

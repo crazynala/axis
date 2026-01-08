@@ -1,5 +1,6 @@
 import { Link } from "@remix-run/react";
 import type { ColumnDef } from "~/base/index/columns";
+import { WarningsCell } from "~/components/WarningsCell";
 
 export const jobColumns: ColumnDef[] = [
   {
@@ -60,5 +61,12 @@ export const jobColumns: ColumnDef[] = [
     accessor: "status",
     sortable: true,
     layout: { width: 120 },
+  },
+  {
+    key: "warnings",
+    title: "Warnings",
+    accessor: "warnings",
+    layout: { width: 200 },
+    render: (r: any) => <WarningsCell warnings={r?.warnings} />,
   },
 ];
