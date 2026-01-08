@@ -698,10 +698,16 @@ export function JobDetailView() {
     if (!defaultId) return null;
     return shipToAddressById.get(Number(defaultId)) ?? null;
   }, [companyId, customerById, shipToAddressById]);
+  const prevCompanyIdRef = useRef<number | null>(null);
   useEffect(() => {
     const nextCompanyId =
       companyId != null && companyId !== "" ? Number(companyId) : null;
-    if (!nextCompanyId) return;
+    if (!nextCompanyId) {
+      prevCompanyIdRef.current = null;
+      return;
+    }
+    if (prevCompanyIdRef.current === nextCompanyId) return;
+    prevCompanyIdRef.current = nextCompanyId;
     if (companyAddressFetcher.state === "idle") {
       companyAddressFetcher.load(
         `/api/company-addresses?companyId=${nextCompanyId}`

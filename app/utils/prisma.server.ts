@@ -15,7 +15,9 @@ function sumIntArray(arr: number[] | null | undefined): number {
 }
 
 // Create base client (keep global error logging enabled)
-const enableQueryLogging = process.env.PRISMA_QUERY_LOG === "1";
+const enableQueryLogging =
+  process.env.PRISMA_QUERY_LOG === "1" &&
+  process.env.NODE_ENV !== "production";
 const enableProfiling = process.env.PRISMA_PROF === "1";
 const enableActivityLog = process.env.DB_ACTIVITY_LOG === "1";
 const stockSnapshotOnly = process.env.STOCK_SNAPSHOT_ONLY === "1"; // when true, skip legacy per-product stock enrichment in extension

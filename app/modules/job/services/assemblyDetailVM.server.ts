@@ -23,6 +23,7 @@ import { loadMaterialCoverage } from "~/modules/production/services/materialCove
 import { loadSupplierOptionsByExternalStepTypes } from "~/modules/company/services/companyOptions.server";
 import type { AssemblyDetailVM } from "~/modules/job/types/assemblyDetailVM";
 import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
+import { getProductStockSnapshots } from "~/utils/prisma.server";
 import {
   getActivitiesForAssemblies,
   getActiveProductsList,
@@ -34,7 +35,6 @@ import {
   getDefectReasons,
   getJobMinimal,
   getOpenBoxes,
-  getProductForStockSnapshot,
   getProductMovementsForActivities,
   getProductsForCostingStocks,
   getProductVariantSetsForProducts,
@@ -48,6 +48,10 @@ export async function loadAssemblyDetailVM(opts: {
   params: Params;
 }): Promise<Response> {
   const userId = await requireUserId(opts.request);
+  const url = new URL(opts.request.url);
+  const debugCoverage =
+    process.env.NODE_ENV !== "production" &&
+    url.searchParams.get("debugCoverage") === "1";
   const jobId = Number(opts.params.jobId);
   const raw = String(opts.params.assemblyId || "");
   const idList = raw
@@ -163,18 +167,46 @@ export async function loadAssemblyDetailVM(opts: {
   const stockByProduct = new Map<
     number,
     {
-      allStock: number;
-      byLocation: Array<{ location_id: number; qty: number }>;
+      totalQty: number;
+      byLocation: Array<{ locationId: number | null; qty: number }>;
     }
   >();
-  for (const pid of compIds) {
-    const p = await getProductForStockSnapshot({ productId: pid });
-    const allStock = Number((p as any)?.c_stockQty ?? 0);
-    const byLocation = ((p as any)?.c_byLocation || []) as Array<{
-      location_id: number;
-      qty: number;
-    }>;
-    stockByProduct.set(pid, { allStock, byLocation });
+  const stockSnapshots = compIds.length
+    ? await getProductStockSnapshots(compIds)
+    : [];
+  const snapshotList = Array.isArray(stockSnapshots)
+    ? stockSnapshots
+    : stockSnapshots
+    ? [stockSnapshots]
+    : [];
+  snapshotList.forEach((snap) => {
+    stockByProduct.set(snap.productId, {
+      totalQty: Number(snap.totalQty ?? 0) || 0,
+      byLocation: (snap.byLocation || []).map((loc) => ({
+        locationId: loc.locationId ?? null,
+        qty: Number(loc.qty ?? 0) || 0,
+      })),
+    });
+  });
+  if (debugCoverage) {
+    const debugAssembly = (assemblies as any[]).find((a) => a.id === 3500);
+    if (debugAssembly) {
+      const jobLocId =
+        debugAssembly.job?.stockLocationId ??
+        debugAssembly.job?.stockLocation?.id ??
+        null;
+      console.debug("[assembly.detail] material coverage stock debug", {
+        assemblyId: debugAssembly.id,
+        jobId: debugAssembly.job?.id ?? null,
+        jobStockLocationId: jobLocId,
+        productIds: compIds,
+        stockByProduct: compIds.map((pid) => ({
+          productId: pid,
+          totalQty: stockByProduct.get(pid)?.totalQty ?? 0,
+          byLocation: stockByProduct.get(pid)?.byLocation ?? [],
+        })),
+      });
+    }
   }
 
   const usedByCosting = new Map<number, number>();
@@ -200,9 +232,9 @@ export async function loadAssemblyDetailVM(opts: {
         continue;
       }
       const stock = stockByProduct.get(Number(pid));
-      const allStock = stock?.allStock ?? 0;
+      const allStock = stock?.totalQty ?? 0;
       const locStock = Number(
-        (stock?.byLocation || []).find((r: any) => (r.location_id ?? null) === jobLocId)?.qty ??
+        (stock?.byLocation || []).find((r: any) => (r.locationId ?? null) === jobLocId)?.qty ??
           0
       );
       costingStats[c.id] = {
