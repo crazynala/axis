@@ -1,16 +1,56 @@
-import { Links, Meta, Outlet, Scripts, Form, useLoaderData, useLocation, useNavigate, NavLink as RemixNavLink } from "@remix-run/react";
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  Form,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+  NavLink as RemixNavLink,
+} from "@remix-run/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import type { UserLevel } from "@prisma/client";
 import { loadLogLevels } from "~/utils/log-config.server";
 // LinksFunction imported above
-import { AppShell, Anchor, Stack, Title, Group, Card, Button, Burger, ColorSchemeScript, NavLink, ActionIcon, Divider, TextInput, Text, Paper, Modal, Tooltip, Accordion } from "@mantine/core";
-import { MantineProvider, createTheme, Input, rem, em, type CSSVariablesResolver } from "@mantine/core";
+import {
+  AppShell,
+  Anchor,
+  Stack,
+  Title,
+  Group,
+  Card,
+  Button,
+  Burger,
+  ColorSchemeScript,
+  NavLink,
+  ActionIcon,
+  Divider,
+  TextInput,
+  Text,
+  Paper,
+  Modal,
+  Tooltip,
+} from "@mantine/core";
+import {
+  MantineProvider,
+  createTheme,
+  Input,
+  rem,
+  em,
+  type CSSVariablesResolver,
+} from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { HotkeyAwareModal } from "./base/hotkeys/HotkeyAwareModal";
 import { useDisclosure } from "@mantine/hooks";
-import { GlobalFormProvider, SaveCancelHeader, useGlobalSaveShortcut, RecordBrowserWidget } from "@aa/timber";
+import {
+  GlobalFormProvider,
+  SaveCancelHeader,
+  useGlobalSaveShortcut,
+  RecordBrowserWidget,
+} from "@aa/timber";
 import { Notifications } from "@mantine/notifications";
 
 import "./styles/css-layers.css";
@@ -22,7 +62,10 @@ import "mantine-datatable/styles.layer.css";
 import "./styles/app.layer.css";
 import { getUser, getUserId } from "./utils/auth.server";
 import { FindProvider } from "./base/find/FindContext";
-import { RecordProvider, GlobalRecordBrowser } from "./base/record/RecordContext";
+import {
+  RecordProvider,
+  GlobalRecordBrowser,
+} from "./base/record/RecordContext";
 import { HotkeyProvider } from "./base/hotkeys/HotkeyContext";
 import { loadOptions } from "./utils/options.server";
 import { type OptionsData } from "./base/options/OptionsClient";
@@ -44,9 +87,16 @@ import {
   IconListDetails,
   IconMapPin,
   IconUser,
+  IconChevronRight,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { useFind } from "./base/find/FindContext";
-import { clearSavedNavLocation, useNavHref, getSavedIndexSearch, useRegisterNavLocation } from "~/hooks/useNavLocation";
+import {
+  clearSavedNavLocation,
+  getSavedIndexSearch,
+  getSavedNavLocation,
+  useRegisterNavLocation,
+} from "~/hooks/useNavLocation";
 import { getInitials } from "~/utils/avatar";
 // import { prisma } from "./utils/prisma.server";
 
@@ -54,7 +104,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const path = url.pathname;
   const publicPaths = ["/login", "/forgot", "/reset"]; // reset uses /reset/:token
-  const isPublic = publicPaths.some((p) => path === p || path.startsWith("/reset") || path.startsWith("/api"));
+  const isPublic = publicPaths.some(
+    (p) => path === p || path.startsWith("/reset") || path.startsWith("/api")
+  );
   const logLevels = await loadLogLevels();
   if (isPublic)
     return json({
@@ -71,7 +123,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     throw redirect(`/login?redirectTo=${redirectTo}`);
   }
   const me = await getUser(request);
-  const colorScheme: "light" | "dark" = (me?.colorScheme as "light" | "dark" | undefined) || "light";
+  const colorScheme: "light" | "dark" =
+    (me?.colorScheme as "light" | "dark" | undefined) || "light";
   const desktopNavOpened = me?.desktopNavOpened ?? true;
   const options = await loadOptions();
   // console.log("Root loaded options: ", options);
@@ -100,13 +153,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // };
 
 export function meta() {
-  return [{ title: "Holy shit! It's AXIS" }, { name: "viewport", content: "width=device-width, initial-scale=1" }];
+  return [
+    { title: "Holy shit! It's AXIS" },
+    { name: "viewport", content: "width=device-width, initial-scale=1" },
+  ];
 }
 
 const theme = createTheme({
   primaryShade: { light: 6, dark: 9 },
   colors: {
-    slate: ["#B5BFC4ff", "#A1ABB0ff", "#8E979Cff", "#7A8388ff", "#677075ff", "#535C61ff", "#40484Dff", "#2C3439ff", "#192025ff", "#111619ff"],
+    slate: [
+      "#B5BFC4ff",
+      "#A1ABB0ff",
+      "#8E979Cff",
+      "#7A8388ff",
+      "#677075ff",
+      "#535C61ff",
+      "#40484Dff",
+      "#2C3439ff",
+      "#192025ff",
+      "#111619ff",
+    ],
   },
   headings: {
     sizes: {
@@ -237,7 +304,8 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--aa-card-bg": t.colors.gray[0],
     "--dsg-border-color": t.colors.gray[3],
     "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
-    "--dsg-selection-background-color": "color-mix(in oklab, var(--mantine-primary-color-filled) 6%, transparent)",
+    "--dsg-selection-background-color":
+      "color-mix(in oklab, var(--mantine-primary-color-filled) 6%, transparent)",
     "--dsg-selection-disabled-border-color": t.colors.gray[5],
     "--dsg-selection-disabled-background-color": "rgba(0,0,0,.04)",
     "--dsg-header-text-color": t.colors.gray[6],
@@ -270,7 +338,8 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--mantine-color-body": t.colors.dark[9],
     "--dsg-border-color": t.colors.dark[5],
     "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
-    "--dsg-selection-background-color": "color-mix(in oklab, var(--mantine-primary-color-filled) 10%, transparent)",
+    "--dsg-selection-background-color":
+      "color-mix(in oklab, var(--mantine-primary-color-filled) 10%, transparent)",
     "--dsg-selection-disabled-border-color": t.colors.dark[3],
     "--dsg-selection-disabled-background-color": "rgba(255,255,255,.04)",
     "--dsg-header-text-color": t.colors.dark[2],
@@ -318,6 +387,10 @@ function isNavGroupItem(item: NavMenuItem): item is NavGroupItem {
   return (item as NavGroupItem).kind === "group";
 }
 
+function isNavLinkItem(item: NavMenuItem): item is NavLinkItem {
+  return !isNavDividerItem(item) && !isNavGroupItem(item);
+}
+
 export default function App() {
   const data = useLoaderData<typeof loader>();
   const colorScheme = data.colorScheme;
@@ -329,7 +402,9 @@ export default function App() {
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
-  const isSuppressAppShell = location.pathname.includes("fullzoom") || location.pathname.includes("costings-sheet");
+  const isSuppressAppShell =
+    location.pathname.includes("fullzoom") ||
+    location.pathname.includes("costings-sheet");
 
   const navTopItems: NavMenuItem[] = [
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
@@ -389,7 +464,11 @@ export default function App() {
     <>
       {/* If using Mantine v7: */}
       {/* <ColorSchemeScript defaultColorScheme={colorScheme} /> */}
-      <html lang="en" data-mantine-color-scheme={colorScheme} suppressHydrationWarning>
+      <html
+        lang="en"
+        data-mantine-color-scheme={colorScheme}
+        suppressHydrationWarning
+      >
         <head>
           <meta charSet="utf-8" />
           <Meta />
@@ -403,7 +482,11 @@ export default function App() {
               __html: `window.__LOG_LEVELS__=${JSON.stringify(logLevels)};`,
             }}
           />
-          <MantineProvider defaultColorScheme={colorScheme} theme={theme} cssVariablesResolver={cssVariablesResolver}>
+          <MantineProvider
+            defaultColorScheme={colorScheme}
+            theme={theme}
+            cssVariablesResolver={cssVariablesResolver}
+          >
             <ModalsProvider>
               <Notifications />
               {isLogin || isAdmin ? (
@@ -419,7 +502,13 @@ export default function App() {
                           {isSuppressAppShell ? (
                             <Outlet />
                           ) : (
-                            <AppShellLayout desktopNavOpenedInitial={desktopNavPref} navTopItems={navTopItems} navBottomItems={navBottomItems} accountUser={accountUser} disabled={isAdmin} />
+                            <AppShellLayout
+                              desktopNavOpenedInitial={desktopNavPref}
+                              navTopItems={navTopItems}
+                              navBottomItems={navBottomItems}
+                              accountUser={accountUser}
+                              disabled={isAdmin}
+                            />
                           )}
                         </OptionsProvider>
                       </GlobalFormProvider>
@@ -454,15 +543,29 @@ function AppShellLayout({
   disabled?: boolean;
 }) {
   const [mobileNavOpened, { toggle: toggleNavMobile }] = useDisclosure();
-  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(desktopNavOpenedInitial);
+  const [desktopNavOpened, { toggle: toggleNavDesktop }] = useDisclosure(
+    desktopNavOpenedInitial
+  );
   const [navHydrated, setNavHydrated] = useState(false);
+  const [navRefresh, setNavRefresh] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
   // Register current location globally for per-module restoration
-  const navExcludePrefixes = ["/jobs", "/companies", "/products", "/purchase-orders", "/shipments", "/boxes", "/invoices"];
+  const navExcludePrefixes = [
+    "/jobs",
+    "/companies",
+    "/products",
+    "/purchase-orders",
+    "/shipments",
+    "/boxes",
+    "/invoices",
+  ];
   useRegisterNavLocation({
     includeSearch: true,
-    exclude: (pathname) => navExcludePrefixes.some((base) => pathname === base || pathname.startsWith(`${base}/`)),
+    exclude: (pathname) =>
+      navExcludePrefixes.some(
+        (base) => pathname === base || pathname.startsWith(`${base}/`)
+      ),
   });
 
   // Persist desktop nav toggle per user
@@ -480,17 +583,49 @@ function AppShellLayout({
   useEffect(() => {
     setNavHydrated(true);
   }, []);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key) return;
+      if (!e.key.startsWith("axis:nl:v1:")) return;
+      setNavRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const navHrefByBase = useMemo(() => {
+    const map = new Map<string, string>();
+    const items = [
+      ...navTopItems.flatMap((item) =>
+        isNavGroupItem(item) ? [item.parent, ...item.children] : [item]
+      ),
+      ...navBottomItems,
+    ].filter((item) => isNavLinkItem(item)) as NavLinkItem[];
+    for (const item of items) {
+      let href = item.to;
+      const saved = getSavedNavLocation(item.to);
+      if (saved) href = saved;
+      else if (navHydrated) {
+        const search = getSavedIndexSearch(item.to);
+        if (search) href = `${item.to}${search}`;
+      }
+      map.set(item.to, href);
+    }
+    return map;
+  }, [navBottomItems, navHydrated, navTopItems, navRefresh]);
 
   // Color scheme toggle moved to settings page
-  const getNavLinkConfig = (item: NavLinkItem) => {
-    let href = useNavHref(item.to);
-    const insideModule = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
+  const getNavLinkConfig = (
+    item: NavLinkItem,
+    opts?: { insideModule?: boolean }
+  ) => {
+    let href = navHrefByBase.get(item.to) || item.to;
+    const insideModule =
+      opts?.insideModule ??
+      (location.pathname === item.to ||
+        location.pathname.startsWith(`${item.to}/`));
     if (insideModule) {
       href = item.to;
-    }
-    if (navHydrated && href === item.to) {
-      const search = getSavedIndexSearch(item.to);
-      if (search) href = `${item.to}${search}`;
     }
     const onClick = (e: any) => {
       if (e.altKey) {
@@ -502,39 +637,107 @@ function AppShellLayout({
     return { href, onClick, insideModule };
   };
 
-  const renderNavLinkItem = (item: NavLinkItem) => {
-    const { href, onClick } = getNavLinkConfig(item);
+  const navLinkStyles = {
+    root: { textDecoration: "none", color: "inherit", overflow: "visible" },
+    body: { overflow: "visible " }, // for accordion carets
+    label: { textDecoration: "none", overflow: "visible" },
+  } as const;
+
+  const renderNavLinkItem = (
+    item: NavLinkItem,
+    opts?: {
+      insideModule?: boolean;
+      rightSection?: ReactNode;
+      labelOverride?: ReactNode;
+    }
+  ) => {
+    const { href, onClick, insideModule } = getNavLinkConfig(item, {
+      insideModule: opts?.insideModule,
+    });
     if (desktopNavOpened) {
-      return <NavLink component={RemixNavLink} label={item.label} to={href} leftSection={item.icon} key={item.to} onClick={onClick} />;
+      return (
+        <NavLink
+          component={RemixNavLink}
+          label={item.label}
+          to={href}
+          leftSection={item.icon}
+          rightSection={opts?.rightSection}
+          key={item.to}
+          onClick={onClick}
+          styles={navLinkStyles}
+          fw={insideModule ? 600 : 400}
+        />
+      );
     }
     return (
       <Tooltip label={item.label} position="right" withArrow>
-        <NavLink px="xs" component={RemixNavLink} label={item.icon} to={href} key={item.to} onClick={onClick} />
+        <NavLink
+          px="xs"
+          component={RemixNavLink}
+          label={opts?.labelOverride ?? item.icon}
+          to={href}
+          key={item.to}
+          onClick={onClick}
+          styles={navLinkStyles}
+        />
       </Tooltip>
     );
   };
   const isGroupActive = (item: NavGroupItem) => {
-    const groupPaths = [item.parent.to, ...item.children.map((child) => child.to)];
-    return groupPaths.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
-  };
-  const activeGroupKey = useMemo(() => {
-    for (const item of navTopItems) {
-      if (isNavGroupItem(item) && isGroupActive(item)) return item.key;
-    }
-    return null;
-  }, [navTopItems, location.pathname]);
-  const renderAccordionControl = (item: NavLinkItem) => {
-    const { href, onClick, insideModule } = getNavLinkConfig(item);
-    return (
-      <Accordion.Control component={RemixNavLink} to={href} onClick={onClick}>
-        <Group gap="xs" wrap="nowrap">
-          {item.icon}
-          <Text size="sm" fw={insideModule ? 600 : 400}>
-            {item.label}
-          </Text>
-        </Group>
-      </Accordion.Control>
+    const groupPaths = [
+      item.parent.to,
+      ...item.children.map((child) => child.to),
+    ];
+    return groupPaths.some(
+      (path) =>
+        location.pathname === path || location.pathname.startsWith(`${path}/`)
     );
+  };
+  const renderGroupParent = (group: NavGroupItem) => {
+    const active = isGroupActive(group);
+    const caret = active ? (
+      <IconChevronDown size={14} />
+    ) : (
+      <IconChevronRight size={14} />
+    );
+    return renderNavLinkItem(group.parent, {
+      insideModule: active,
+      rightSection: caret,
+    });
+  };
+  const renderCollapsedGroupParent = (group: NavGroupItem) => {
+    const active = isGroupActive(group);
+    const CaretIcon = active ? IconChevronDown : IconChevronRight;
+    const label = (
+      <div
+        style={{
+          position: "relative",
+          width: 24,
+          height: 24,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {group.parent.icon}
+        {!active && (
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              transform: "translateX(-50%)",
+              bottom: -15,
+            }}
+          >
+            <IconChevronDown size={12} />
+          </div>
+        )}
+      </div>
+    );
+    return renderNavLinkItem(group.parent, {
+      insideModule: active,
+      labelOverride: label,
+    });
   };
   const initials = getInitials({
     name: accountUser?.name ?? undefined,
@@ -557,8 +760,18 @@ function AppShellLayout({
       <AppShell.Header>
         <Group justify="space-between" p="xs" align="center">
           <Group w={desktopNavOpened ? 330 : 220} align="center">
-            <Burger opened={mobileNavOpened} onClick={toggleNavMobile} hiddenFrom="sm" size="sm" />
-            <Burger opened={desktopNavOpened} onClick={toggleNavDesktop} visibleFrom="sm" size="sm" />
+            <Burger
+              opened={mobileNavOpened}
+              onClick={toggleNavMobile}
+              hiddenFrom="sm"
+              size="sm"
+            />
+            <Burger
+              opened={desktopNavOpened}
+              onClick={toggleNavDesktop}
+              visibleFrom="sm"
+              size="sm"
+            />
             <Title order={3}>Axis</Title>
           </Group>
           <SaveCancelHeader></SaveCancelHeader>
@@ -573,42 +786,49 @@ function AppShellLayout({
       <AppShell.Navbar py="md" px={desktopNavOpened ? "md" : 0}>
         <Stack justify="space-between" style={{ height: "100%" }}>
           <Stack gap={0}>
-            {desktopNavOpened ? (
-              <Accordion key={activeGroupKey ?? "nav-none"} defaultValue={activeGroupKey ?? undefined} unstyled>
-                {navTopItems.map((item) => {
+            {desktopNavOpened
+              ? navTopItems.map((item) => {
                   if (isNavDividerItem(item)) {
                     return <Divider key={item.key} my="xs" />;
                   }
                   if (isNavGroupItem(item)) {
+                    const active = isGroupActive(item);
                     return (
-                      <Accordion.Item key={item.key} value={item.key}>
-                        {renderAccordionControl(item.parent)}
-                        <Accordion.Panel>
+                      <div key={item.key}>
+                        {renderGroupParent(item)}
+                        {active ? (
                           <Stack gap={0} pl="md">
-                            {item.children.map((child) => renderNavLinkItem(child))}
+                            {item.children.map((child) =>
+                              renderNavLinkItem(child)
+                            )}
                           </Stack>
-                        </Accordion.Panel>
-                      </Accordion.Item>
+                        ) : null}
+                      </div>
                     );
                   }
-                  return (
-                    <Accordion.Item key={item.to} value={item.to}>
-                      {renderAccordionControl(item)}
-                    </Accordion.Item>
-                  );
+                  return renderNavLinkItem(item);
+                })
+              : navTopItems.map((item) => {
+                  if (isNavDividerItem(item)) {
+                    return <Divider key={item.key} my="xs" mx="xs" />;
+                  }
+                  if (isNavGroupItem(item)) {
+                    const active = isGroupActive(item);
+                    return (
+                      <div key={item.key}>
+                        {renderCollapsedGroupParent(item)}
+                        {active ? (
+                          <Stack gap={0}>
+                            {item.children.map((child) =>
+                              renderNavLinkItem(child)
+                            )}
+                          </Stack>
+                        ) : null}
+                      </div>
+                    );
+                  }
+                  return renderNavLinkItem(item);
                 })}
-              </Accordion>
-            ) : (
-              navTopItems.map((item) => {
-                if (isNavDividerItem(item)) {
-                  return <Divider key={item.key} my="xs" mx="xs" />;
-                }
-                if (isNavGroupItem(item)) {
-                  return renderNavLinkItem(item.parent);
-                }
-                return renderNavLinkItem(item);
-              })
-            )}
           </Stack>
           <Stack gap={0}>
             {navBottomItems.map((item) => renderNavLinkItem(item))}
@@ -695,7 +915,11 @@ function GlobalHotkeys() {
         const target = e.target as HTMLElement | null;
         if (target) {
           const tag = target.tagName;
-          if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
+          if (
+            tag === "INPUT" ||
+            tag === "TEXTAREA" ||
+            target.isContentEditable
+          ) {
             return;
           }
         }
@@ -715,7 +939,8 @@ function GlobalHotkeys() {
 function isFindCapablePath(pathname: string): boolean {
   // Modules with registered FindManagers
   if (pathname.startsWith("/jobs")) return true;
-  if (pathname === "/products" || pathname.startsWith("/products/")) return true;
+  if (pathname === "/products" || pathname.startsWith("/products/"))
+    return true;
   if (pathname.startsWith("/companies")) return true;
   if (pathname.startsWith("/purchase-orders")) return true;
   if (pathname.startsWith("/invoices")) return true;
@@ -731,7 +956,12 @@ function GlobalFindTrigger() {
   const { triggerFind } = useFind();
   if (!isFindCapablePath(location.pathname)) return null;
   return (
-    <Button variant="default" size="xs" leftSection={<IconSearch size={14} stroke={1.5} />} onClick={() => triggerFind()}>
+    <Button
+      variant="default"
+      size="xs"
+      leftSection={<IconSearch size={14} stroke={1.5} />}
+      onClick={() => triggerFind()}
+    >
       ⌘F
     </Button>
   );
@@ -753,7 +983,12 @@ function GlobalSearchTrigger() {
   }, []);
   return (
     <>
-      <ActionIcon variant="default" aria-label="Search (Cmd+K)" onClick={() => setOpen(true)} title="Search (Cmd+K)">
+      <ActionIcon
+        variant="default"
+        aria-label="Search (Cmd+K)"
+        onClick={() => setOpen(true)}
+        title="Search (Cmd+K)"
+      >
         <IconSearch size={18} stroke={1.8} />
       </ActionIcon>
       {open && <GlobalSearchModal onClose={() => setOpen(false)} />}
@@ -790,9 +1025,20 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
     fetchResults(q);
   }, [q, fetchResults]);
   return (
-    <HotkeyAwareModal opened onClose={onClose} title="Search" centered size="lg">
+    <HotkeyAwareModal
+      opened
+      onClose={onClose}
+      title="Search"
+      centered
+      size="lg"
+    >
       <Stack>
-        <TextInput placeholder="Search jobs, products... (Cmd+K)" value={q} onChange={(e) => setQ(e.currentTarget.value)} autoFocus />
+        <TextInput
+          placeholder="Search jobs, products... (Cmd+K)"
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+          autoFocus
+        />
         <Stack gap={6}>
           {results?.jobs?.length ? (
             <>
@@ -801,7 +1047,12 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
               </Text>
               <Paper withBorder p="xs">
                 {results.jobs.map((j) => (
-                  <RemixNavLink key={`job-${j.id}`} to={`/jobs/${j.id}`} onClick={onClose} prefetch="intent">
+                  <RemixNavLink
+                    key={`job-${j.id}`}
+                    to={`/jobs/${j.id}`}
+                    onClick={onClose}
+                    prefetch="intent"
+                  >
                     {({ isActive }: { isActive: boolean }) => (
                       <Anchor component="span" fw={isActive ? 700 : 500}>
                         {j.id} {j.projectCode ? `(${j.projectCode})` : ""}
@@ -820,7 +1071,12 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
               </Text>
               <Paper withBorder p="xs">
                 {results.products.map((p: any) => (
-                  <RemixNavLink key={`prod-${p.id}`} to={`/products/${p.id}`} onClick={onClose} prefetch="intent">
+                  <RemixNavLink
+                    key={`prod-${p.id}`}
+                    to={`/products/${p.id}`}
+                    onClick={onClose}
+                    prefetch="intent"
+                  >
                     {({ isActive }: { isActive: boolean }) => (
                       <Anchor component="span" fw={isActive ? 700 : 500}>
                         {p.id} {p.sku || ""} {p.name || ""}
@@ -832,7 +1088,9 @@ function GlobalSearchModal({ onClose }: { onClose: () => void }) {
             </>
           ) : null}
           {!results && <Text c="dimmed">Type to search...</Text>}
-          {results && !results.jobs.length && !results.products.length && <Text c="dimmed">No results</Text>}
+          {results && !results.jobs.length && !results.products.length && (
+            <Text c="dimmed">No results</Text>
+          )}
         </Stack>
       </Stack>
     </HotkeyAwareModal>

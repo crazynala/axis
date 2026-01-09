@@ -22,6 +22,7 @@ type AssemblyWithCostings = {
           name: string | null;
           defaultLeadTimeDays?: number | null;
         } | null;
+        externalStepType?: ExternalStepType | null;
       } | null;
     }
   >;
@@ -95,10 +96,15 @@ function deriveStepsForAssembly(
 ): DerivedExternalStep[] {
   const expectedTypes = new Set<ExternalStepType>();
   for (const costing of assembly.costings || []) {
-    if (costing?.externalStepType) {
-      expectedTypes.add(costing.externalStepType);
+    const type =
+      costing?.externalStepType ??
+      (costing as any)?.product?.externalStepType ??
+      null;
+    if (type) {
+      expectedTypes.add(type);
     }
   }
+  // TODO: after backfilling costings.externalStepType, drop product fallback.
   const recordedTypes = new Set<ExternalStepType>();
   for (const activity of activities || []) {
     if (activity?.externalStepType) {

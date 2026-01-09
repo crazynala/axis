@@ -54,6 +54,7 @@ import { AxisChip } from "~/components/AxisChip";
 import { JumpLink } from "~/components/JumpLink";
 import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
+import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 import type { StageRow } from "~/modules/job/types/stageRows";
 import type { StageStats } from "~/modules/job/services/stageRows.server";
@@ -559,7 +560,11 @@ export function AssembliesEditor(props: {
           .flatMap((a) => a.costings || [])
           .map((c: any) => [
             String(c.id),
-            normalizeCostingActivityUsed(c.activityUsed),
+            (c.externalStepType || c.product?.externalStepType)
+              ? mapExternalStepTypeToActivityUsed(
+                  c.externalStepType || c.product?.externalStepType
+                ) || ""
+              : normalizeCostingActivityUsed(c.activityUsed),
           ])
       ) as any,
       costingDisabled: Object.fromEntries(
@@ -731,6 +736,8 @@ export function AssembliesEditor(props: {
         variants: { labels: it?.variants?.labels || [] },
         ordered: it?.ordered || [],
         cut: it?.cut || [],
+        finishInput: it?.finishInput?.breakdown || [],
+        finishDone: it?.stageStats?.finish?.usableArr || [],
       };
     });
   }, [assemblies, isGroup, quantityItems]);
@@ -2442,6 +2449,11 @@ export function AssembliesEditor(props: {
           }}
           assembly={modalAssembly}
           productVariantSet={{ variants: modalVariantLabels } as any}
+          quantityItem={
+            modalAssembly?.id
+              ? quantityItemsByAssemblyId.get(modalAssembly.id)
+              : undefined
+          }
           groupQtyItems={
             !editActivity && isGroup ? (groupQtyItemsPayload as any) : undefined
           }

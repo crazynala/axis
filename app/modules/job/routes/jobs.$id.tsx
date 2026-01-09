@@ -706,6 +706,16 @@ export function JobDetailView() {
       prevCompanyIdRef.current = null;
       return;
     }
+    const fetchedCompanyId = (() => {
+      const data = companyAddressFetcher.data as
+        | { companyId?: number | null }
+        | undefined;
+      return data?.companyId != null ? Number(data.companyId) : null;
+    })();
+    if (fetchedCompanyId === nextCompanyId) {
+      prevCompanyIdRef.current = nextCompanyId;
+      return;
+    }
     if (prevCompanyIdRef.current === nextCompanyId) return;
     prevCompanyIdRef.current = nextCompanyId;
     if (companyAddressFetcher.state === "idle") {
@@ -713,7 +723,7 @@ export function JobDetailView() {
         `/api/company-addresses?companyId=${nextCompanyId}`
       );
     }
-  }, [companyId, companyAddressFetcher]);
+  }, [companyId, companyAddressFetcher.state, companyAddressFetcher.data]);
   useEffect(() => {
     const data = companyAddressFetcher.data as { addresses?: any[] } | undefined;
     if (data?.addresses) {

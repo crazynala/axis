@@ -34,6 +34,7 @@ import {
   lookupProductsBySkus,
   type ProductLookupInfo,
 } from "~/modules/product/utils/productLookup.client";
+import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 
 export type CostingEditRow = {
   id: number | null; // costing id
@@ -43,6 +44,7 @@ export type CostingEditRow = {
   productSku: string;
   productName: string;
   activityUsed: string;
+  externalStepType?: string | null;
   quantityPerUnit: number | string;
   unitCost: number | string;
   required: number | string;
@@ -66,6 +68,7 @@ const blankCostingRow = (): CostingEditRow => ({
   productSku: "",
   productName: "",
   activityUsed: "",
+  externalStepType: null,
   quantityPerUnit: "",
   unitCost: "",
   required: "",
@@ -139,6 +142,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       quantityPerUnit: true,
       unitCost: true,
       activityUsed: true,
+      externalStepType: true,
       product: { select: { sku: true, name: true } },
     },
   });
@@ -155,6 +159,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
       productSku: c.product?.sku || "",
       productName: c.product?.name || "",
       activityUsed: String(c.activityUsed || ""),
+      externalStepType: c.externalStepType ?? null,
       quantityPerUnit: qpu,
       unitCost: Number(c.unitCost || 0) || 0,
       required,
@@ -189,7 +194,7 @@ export async function action({ request }: ActionFunctionArgs) {
     productId: number | null;
     productSku: string;
     quantityPerUnit: number | null;
-    activityUsed: "cut" | "make" | null;
+    activityUsed: "cut" | "sew" | "finish" | "make" | null;
   };
 
   const sanitizeQuantity = (value: unknown): number | null => {
@@ -198,9 +203,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return Number.isFinite(num) ? num : null;
   };
 
-  const sanitizeActivity = (value: unknown): "cut" | "make" | null => {
+  const sanitizeActivity = (
+    value: unknown
+  ): "cut" | "sew" | "finish" | "make" | null => {
     const str = typeof value === "string" ? value.trim().toLowerCase() : "";
-    return str === "cut" || str === "make" ? (str as "cut" | "make") : null;
+    return str === "cut" || str === "sew" || str === "finish" || str === "make"
+      ? (str as "cut" | "sew" | "finish" | "make")
+      : null;
   };
 
   const sanitizedRows: SanitizedRow[] = rows
@@ -229,6 +238,7 @@ export async function action({ request }: ActionFunctionArgs) {
     new Set(sanitizedRows.map((r) => r.productSku).filter(Boolean))
   );
   const productBySku = new Map<string, number>();
+  const productExternalStepById = new Map<number, string | null>();
   if (requestedSkus.length) {
     const products = await prismaBase.product.findMany({
       where: {
@@ -236,11 +246,31 @@ export async function action({ request }: ActionFunctionArgs) {
           sku: { equals: sku, mode: "insensitive" as const },
         })),
       },
-      select: { id: true, sku: true },
+      select: { id: true, sku: true, externalStepType: true },
     });
     for (const product of products) {
       if (!product.sku) continue;
       productBySku.set(product.sku.toLowerCase(), product.id);
+      productExternalStepById.set(product.id, product.externalStepType ?? null);
+    }
+  }
+  const requestedProductIds = Array.from(
+    new Set(
+      sanitizedRows
+        .map((r) => r.productId)
+        .filter((id): id is number => Number.isFinite(Number(id)))
+        .map((id) => Number(id))
+    )
+  );
+  if (requestedProductIds.length) {
+    const products = await prismaBase.product.findMany({
+      where: { id: { in: requestedProductIds } },
+      select: { id: true, externalStepType: true },
+    });
+    for (const product of products) {
+      if (!productExternalStepById.has(product.id)) {
+        productExternalStepById.set(product.id, product.externalStepType ?? null);
+      }
     }
   }
 
@@ -258,7 +288,29 @@ export async function action({ request }: ActionFunctionArgs) {
       const data: any = {};
       if (row.quantityPerUnit !== null)
         data.quantityPerUnit = row.quantityPerUnit;
-      if (row.activityUsed) data.activityUsed = row.activityUsed;
+      const externalStepType = resolvedProductId
+        ? productExternalStepById.get(resolvedProductId) ?? null
+        : null;
+      const externalActivity = externalStepType
+        ? mapExternalStepTypeToActivityUsed(externalStepType)
+        : null;
+      if (externalStepType) {
+        if (row.activityUsed && row.activityUsed !== externalActivity) {
+          return json(
+            {
+              error:
+                "External-step costings must use their external activity.",
+            },
+            { status: 400 }
+          );
+        }
+        data.activityUsed = externalActivity;
+        data.externalStepType = externalStepType;
+      } else if (row.activityUsed) {
+        const normalized =
+          row.activityUsed === "make" ? "finish" : row.activityUsed;
+        data.activityUsed = normalized;
+      }
       if (row.productSku && !resolvedProductId) {
         unknownSkus.add(row.productSku);
       } else if (resolvedProductId && resolvedProductId !== row.productId) {
@@ -275,13 +327,19 @@ export async function action({ request }: ActionFunctionArgs) {
         unknownSkus.add(row.productSku);
         continue;
       }
+      const externalStepType =
+        productExternalStepById.get(resolvedProductId) ?? null;
+      const externalActivity = externalStepType
+        ? mapExternalStepTypeToActivityUsed(externalStepType)
+        : null;
       createOps.push(
         prismaBase.costing.create({
           data: {
             assemblyId: row.assemblyId,
             productId: resolvedProductId,
             quantityPerUnit: row.quantityPerUnit ?? 0,
-            activityUsed: row.activityUsed,
+            activityUsed: externalStepType ? externalActivity : row.activityUsed,
+            externalStepType,
           },
         })
       );
@@ -360,6 +418,7 @@ export default function CostingsSheetRoute() {
             typeof row.productSku === "string" ? row.productSku.trim() : "",
           localKey: row.localKey || nextLocalKey(),
           activityUsed: normalizeUsageValue(row.activityUsed),
+          externalStepType: row.externalStepType ?? null,
         };
         if (!normalized.productSku) normalized.productSku = "";
         if (!isRowMeaningful(normalized)) {
@@ -674,7 +733,7 @@ export default function CostingsSheetRoute() {
           <UsageSelectCell
             value={(rowData.activityUsed || "") as UsageValue}
             focus={focus}
-            readOnly={rowDisabled}
+            readOnly={rowDisabled || Boolean(rowData.externalStepType)}
             onBlur={() => stopEditing?.({ nextRow: false })}
             onChange={(value) =>
               setRowData({

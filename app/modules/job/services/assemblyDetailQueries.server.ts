@@ -84,6 +84,7 @@ export async function getAssembliesForJob(opts: { jobId: number; assemblyIds: nu
               supplier: {
                 select: { id: true, name: true, defaultLeadTimeDays: true },
               },
+              externalStepType: true,
             },
           },
           salePriceGroup: { select: { id: true, saleRanges: true } },

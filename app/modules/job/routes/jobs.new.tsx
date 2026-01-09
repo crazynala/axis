@@ -429,6 +429,13 @@ export default function NewJobRoute() {
       form.setValue("stockLocationId", "");
       return;
     }
+    const fetchedCompanyId = (() => {
+      const data = companyAddressFetcher.data as
+        | { companyId?: number | null }
+        | undefined;
+      return data?.companyId != null ? Number(data.companyId) : null;
+    })();
+    if (fetchedCompanyId === nextCompanyId) return;
     const selected = customerById.get(nextCompanyId);
     const nextStockLocationId =
       selected?.stockLocationId != null ? selected.stockLocationId : 1;
@@ -453,7 +460,14 @@ export default function NewJobRoute() {
         `/api/company-addresses?companyId=${nextCompanyId}`
       );
     }
-  }, [companyId, companyAddressFetcher, customerById, form, jobProjectCodePrefix]);
+  }, [
+    companyId,
+    companyAddressFetcher.state,
+    companyAddressFetcher.data,
+    customerById,
+    form,
+    jobProjectCodePrefix,
+  ]);
   useEffect(() => {
     const data = companyAddressFetcher.data as { addresses?: any[] } | undefined;
     if (data?.addresses) setCompanyAddresses(data.addresses);

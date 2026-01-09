@@ -8,6 +8,7 @@ type MinimalCosting = {
     name?: string | null;
     stockTrackingEnabled?: boolean | null;
     batchTrackingEnabled?: boolean | null;
+    externalStepType?: string | null;
     salePriceGroup?: { saleRanges?: any[] | null } | null;
     salePriceRanges?: any[] | null;
     pricingModel?: string | null;
@@ -23,6 +24,7 @@ type MinimalCosting = {
   manualMargin?: any;
   salePriceGroup?: { saleRanges?: any[] | null } | null;
   activityUsed?: string | null;
+  externalStepType?: string | null;
   flagIsDisabled?: boolean | null;
   flagDefinedInProduct?: boolean | null;
 };
@@ -94,6 +96,11 @@ export function buildCostingRows(options: {
       name: c.product?.name || null,
       productStage: (c.product as any)?.productStage ?? null,
       activityUsed: String((c as any).activityUsed ?? "").toLowerCase(),
+      externalStepType:
+        (c as any).externalStepType ??
+        // TODO: drop product fallback after externalStepType backfill.
+        (c.product as any)?.externalStepType ??
+        null,
       quantityPerUnit: Number(c.quantityPerUnit || 0) || null,
       unitCost: Number(c.unitCost || 0) || null,
       required,

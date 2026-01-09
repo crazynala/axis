@@ -45,6 +45,7 @@ export async function duplicateAssembly(
         salePriceGroupId: costing.salePriceGroupId,
         manualSalePrice: costing.manualSalePrice,
         manualMargin: costing.manualMargin,
+        externalStepType: costing.externalStepType ?? null,
         flagAssembly: costing.flagAssembly,
         flagDefinedInProduct: costing.flagDefinedInProduct,
         flagIsBillableDefaultOrManual: costing.flagIsBillableDefaultOrManual,

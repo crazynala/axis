@@ -1,3 +1,5 @@
+import { computeEffectiveOrderedBreakdown } from "~/modules/job/quantityUtils";
+
 export type QuantityValue = { value: string };
 
 export type AssemblyGroupQtyValue = {
@@ -25,6 +27,67 @@ export type BuildAssemblyActivityDefaultsArgs = {
   groupDefaults?: AssemblyGroupDefault[] | null;
   initialConsumption?: Record<number, Record<number, number>> | null;
 };
+
+export function computeDefaultActivityBreakdownFromArrays(args: {
+  activityType: "cut" | "finish" | "pack";
+  labelsLen: number;
+  ordered?: number[];
+  canceled?: number[];
+  alreadyCut?: number[];
+  leftToCut?: number[];
+  finishInput?: number[];
+  finishDone?: number[];
+  packedDone?: number[];
+}) {
+  const {
+    activityType,
+    labelsLen,
+    ordered = [],
+    canceled = [],
+    alreadyCut = [],
+    leftToCut = [],
+    finishInput = [],
+    finishDone = [],
+    packedDone = [],
+  } = args;
+  const effectiveOrdered = computeEffectiveOrderedBreakdown({
+    orderedBySize: ordered,
+    canceledBySize: canceled,
+  }).effective;
+
+  const clamp = (n: number) => (Number.isFinite(n) ? Math.max(0, n) : 0);
+  const get = (arr: number[], idx: number) => Number(arr[idx] ?? 0) || 0;
+
+  if (activityType === "cut") {
+    return Array.from({ length: labelsLen }, (_, i) => {
+      const ext = leftToCut[i];
+      if (Number.isFinite(ext)) {
+        return clamp(Math.min(Number(ext), get(effectiveOrdered, i)));
+      }
+      return clamp(get(effectiveOrdered, i) - get(alreadyCut, i));
+    });
+  }
+
+  if (activityType === "finish") {
+    return Array.from({ length: labelsLen }, (_, i) => {
+      const cap = finishInput.length
+        ? get(finishInput, i)
+        : alreadyCut.length
+        ? get(alreadyCut, i)
+        : get(effectiveOrdered, i);
+      return clamp(cap - get(finishDone, i));
+    });
+  }
+
+  return Array.from({ length: labelsLen }, (_, i) => {
+    const cap = finishInput.length
+      ? get(finishInput, i)
+      : alreadyCut.length
+      ? get(alreadyCut, i)
+      : get(effectiveOrdered, i);
+    return clamp(cap - get(packedDone, i));
+  });
+}
 
 export function mapConsumptionToStrings(
   input?: Record<number, Record<number, number>> | null

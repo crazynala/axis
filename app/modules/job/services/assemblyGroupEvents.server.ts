@@ -1,5 +1,6 @@
 import { ActivityAction, ActivityKind, AssemblyStage } from "@prisma/client";
 import { prisma, refreshProductStockSnapshot } from "~/utils/prisma.server";
+import { assertBatchLinePresence } from "~/utils/stockMovementGuards";
 
 export type PooledCutAssemblyInput = {
   assemblyId: number;
@@ -55,6 +56,10 @@ export async function createPooledCutEvent(options: {
   const normalizedNotes = notes?.trim() || null;
 
   const result = await prisma.$transaction(async (tx) => {
+    const product = await tx.product.findUnique({
+      where: { id: fabricProductId },
+      select: { batchTrackingEnabled: true },
+    });
     const event = await tx.assemblyGroupEvent.create({
       data: {
         assemblyGroupId,
@@ -111,6 +116,13 @@ export async function createPooledCutEvent(options: {
         quantity: qtyTotalMeters,
         notes: "Group cut consumption",
       },
+    });
+
+    assertBatchLinePresence({
+      movementType: movement.movementType,
+      batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
+      hasBatchId: false,
+      context: { movementId: movement.id, productId: fabricProductId },
     });
 
     await tx.productMovementLine.create({

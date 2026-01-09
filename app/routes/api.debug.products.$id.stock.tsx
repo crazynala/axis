@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { requireUserId } from "~/utils/auth.server";
 import { getDebugAccessForUser } from "~/modules/debug/debugAccess.server";
-import { buildProductDebug } from "~/modules/debug/builders/product.server";
+import { buildProductStockDebug } from "~/modules/debug/builders/productStock.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const userId = await requireUserId(request);
@@ -16,12 +16,17 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit") ?? "");
-  const includeMovements = url.searchParams.get("includeMovements");
+  const cursor = url.searchParams.get("cursor");
   const includeSnapshot = url.searchParams.get("includeSnapshot");
-  const payload = await buildProductDebug(id, {
+  const includeLedger = url.searchParams.get("includeLedger");
+  const includeReconciliation = url.searchParams.get("includeReconciliation");
+
+  const payload = await buildProductStockDebug(id, {
     limit: Number.isFinite(limit) ? limit : undefined,
-    includeMovements: includeMovements !== "false",
+    cursor: cursor && cursor.trim() ? cursor : null,
     includeSnapshot: includeSnapshot !== "false",
+    includeLedger: includeLedger !== "false",
+    includeReconciliation: includeReconciliation !== "false",
   });
   if (!payload) {
     throw new Response("Not found", { status: 404 });

@@ -7,6 +7,7 @@ import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import {
   Button,
   Card,
+  Code,
   Menu,
   ActionIcon,
   Anchor,
@@ -15,6 +16,7 @@ import {
   SegmentedControl,
   Grid,
   Group,
+  ScrollArea,
   Stack,
   Table,
   Text,
@@ -48,6 +50,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { getMovementLabel } from "~/utils/movementLabels";
 import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
 import { AxisChip } from "~/components/AxisChip";
 import { computeProductValidation } from "~/modules/product/validation/computeProductValidation";
@@ -263,14 +266,71 @@ export default function ProductDetailRoute() {
   }, [actionData]);
   const debugFetcher = useFetcher();
   const [debugOpen, setDebugOpen] = useState(false);
+  const stockDebugFetcher = useFetcher();
+  const [stockDebugRequested, setStockDebugRequested] = useState(false);
   // Sync RecordContext currentId for global navigation consistency
   const { setCurrentId } = useRecordContext();
   useEffect(() => {
     setCurrentId(product.id, "restore");
     // Do NOT clear on unmount; preserve selection like invoices module
   }, [product.id, setCurrentId]);
+  useEffect(() => {
+    if (!debugOpen) setStockDebugRequested(false);
+  }, [debugOpen]);
   // Prev/Next hotkeys handled globally in RecordProvider
   const submit = useSubmit();
+  const loadStockDebug = useCallback(() => {
+    const qs = new URLSearchParams();
+    qs.set("limit", "200");
+    stockDebugFetcher.load(
+      `/api/debug/products/${product.id}/stock?${qs.toString()}`
+    );
+  }, [product.id, stockDebugFetcher]);
+
+  const stockDebugText = useMemo(() => {
+    const data = stockDebugFetcher.data as any;
+    if (!data) return "";
+    try {
+      return JSON.stringify(data, null, 2);
+    } catch {
+      return String(data);
+    }
+  }, [stockDebugFetcher.data]);
+
+  const StockSnapshotTab = ({ active }: { active: boolean }) => {
+    useEffect(() => {
+      if (!debugOpen || !active || stockDebugRequested) return;
+      setStockDebugRequested(true);
+      loadStockDebug();
+    }, [active, debugOpen, stockDebugRequested, loadStockDebug]);
+    if (stockDebugFetcher.state === "loading" && !stockDebugFetcher.data) {
+      return (
+        <Text size="sm" c="dimmed">
+          Loading…
+        </Text>
+      );
+    }
+    const data = stockDebugFetcher.data as any;
+    if (stockDebugRequested && (!data || !data.context)) {
+      return (
+        <Text size="sm" c="red.7">
+          Failed to load stock snapshot debug.
+        </Text>
+      );
+    }
+    if (!data) {
+      return (
+        <Text size="sm" c="dimmed">
+          Select this tab to load stock snapshot debug.
+        </Text>
+      );
+    }
+    return (
+      <ScrollArea h={400}>
+        <Code block>{stockDebugText}</Code>
+      </ScrollArea>
+    );
+  };
 
   // Findify hook (forms, mode, style, helpers) – pass nav for auto-exit
   const { editForm, findForm, buildUpdatePayload } = useProductFindify(
@@ -1236,27 +1296,43 @@ export default function ProductDetailRoute() {
           assertions,
         });
         return (
-          <DebugDrawer
-            opened={debugOpen}
-            onClose={() => setDebugOpen(false)}
-            title={`Debug – Product ${product.id}`}
-            payload={debugFetcher.data as any}
-            loading={debugFetcher.state !== "idle"}
-            formStateCopyText={debugText}
-            formStatePanel={
-              <FormProvider {...editForm}>
-                <FormStateDebugPanel
-                  formId={`product-${product.id}`}
-                  getDefaultValues={() => debugDefaults}
-                  collapseLong
-                  dirtySources={dirtySources}
-                  saveSignals={saveSignals}
-                  formInstances={formInstances}
-                  assertions={assertions}
-                />
-              </FormProvider>
-            }
-          />
+          <>
+            <DebugDrawer
+              opened={debugOpen}
+              onClose={() => setDebugOpen(false)}
+              title={`Debug – Product ${product.id}`}
+              payload={debugFetcher.data as any}
+              loading={debugFetcher.state !== "idle"}
+              formStateCopyText={debugText}
+              extraTabs={
+                canDebug
+                  ? [
+                      {
+                        key: "stockSnapshot",
+                        label: "Stock Snapshot",
+                        render: ({ active }) => (
+                          <StockSnapshotTab active={active} />
+                        ),
+                        copyText: stockDebugText,
+                      },
+                    ]
+                  : []
+              }
+              formStatePanel={
+                <FormProvider {...editForm}>
+                  <FormStateDebugPanel
+                    formId={`product-${product.id}`}
+                    getDefaultValues={() => debugDefaults}
+                    collapseLong
+                    dirtySources={dirtySources}
+                    saveSignals={saveSignals}
+                    formInstances={formInstances}
+                    assertions={assertions}
+                  />
+                </FormProvider>
+              }
+            />
+          </>
         );
       })()}
       <Form id="product-form" method="post">
@@ -1937,7 +2013,7 @@ export default function ProductDetailRoute() {
                                     : ""}
                                 </Table.Td>
                                 <Table.Td>
-                                  {ml.movement?.movementType || ""}
+                                  {getMovementLabel(ml.movement?.movementType)}
                                 </Table.Td>
                                 <Table.Td>
                                   {ml.movement?.locationOutId != null
@@ -2040,7 +2116,7 @@ export default function ProductDetailRoute() {
                               <Table.Td>
                                 {mh.date ? fmtDate(mh.date) : ""}
                               </Table.Td>
-                              <Table.Td>{mh.movementType || ""}</Table.Td>
+                              <Table.Td>{getMovementLabel(mh.movementType)}</Table.Td>
                               <Table.Td>
                                 {mh.locationOutId != null
                                   ? locById?.[mh.locationOutId] ||
@@ -2160,7 +2236,7 @@ export default function ProductDetailRoute() {
                           : "—"}
                       </Text>
                       <Text size="sm">
-                        Type: {detailMovement?.movementType || "—"}
+                        Type: {getMovementLabel(detailMovement?.movementType) || "—"}
                       </Text>
                     </Group>
                     <Group justify="space-between">

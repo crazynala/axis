@@ -18,6 +18,7 @@ import { ExternalLink } from "./ExternalLink";
 import { IconInfoCircle } from "@tabler/icons-react";
 import {
   buildAssemblyActivityDefaultValues,
+  computeDefaultActivityBreakdownFromArrays,
   calculateConsumptionTotals,
   calculateUnitsInCut,
   serializeAssemblyActivityValues,
@@ -82,7 +83,10 @@ export function AssemblyActivityModal(props: {
     variants: { labels: string[]; numVariants?: number };
     ordered?: number[];
     cut?: number[];
+    finishInput?: number[];
+    finishDone?: number[];
   }>;
+  quantityItem?: any;
 }) {
   const {
     opened,
@@ -141,25 +145,26 @@ export function AssemblyActivityModal(props: {
     (((assembly as any).c_qtyLeftToCut_Breakdown || []) as number[]) || [];
   const defaultBreakdown = useMemo(() => {
     const len = labels.length; // strictly respect effective variant columns
-    if (activityType === "finish") {
-      return Array.from({ length: len }, (_, i) =>
-        Math.max(0, Number(alreadyCut[i] || 0) || 0)
-      );
-    }
-    return Array.from({ length: len }, (_, i) => {
-      const ext = leftToCutExt[i];
-      if (Number.isFinite(ext)) {
-        return Math.max(
-          0,
-          Math.min(Number(ext), Number(effectiveOrdered[i] || 0))
-        );
-      }
-      return Math.max(
-        0,
-        (effectiveOrdered[i] || 0) - (alreadyCut[i] || 0)
-      );
+    const finishInput =
+      ((props.quantityItem as any)?.finishInput?.breakdown as number[]) || [];
+    const finishDone =
+      ((props.quantityItem as any)?.stageStats?.finish?.usableArr as number[]) || [];
+    const packedDone =
+      ((props.quantityItem as any)?.stageStats?.pack?.usableArr as number[]) || [];
+    return computeDefaultActivityBreakdownFromArrays({
+      activityType,
+      labelsLen: len,
+      ordered: effectiveOrdered,
+      canceled,
+      alreadyCut,
+      leftToCut: leftToCutExt,
+      finishInput,
+      finishDone: finishDone.length
+        ? finishDone
+        : (((assembly as any).c_qtyFinish_Breakdown as number[]) || []),
+      packedDone,
     });
-  }, [activityType, labels, effectiveOrdered, alreadyCut, leftToCutExt]);
+  }, [activityType, labels, effectiveOrdered, canceled, alreadyCut, leftToCutExt, props.quantityItem, assembly]);
 
   // Group-assembly defaults prepared from provided groupQtyItems
   const groupDefaults = useMemo(() => {
@@ -184,14 +189,13 @@ export function AssemblyActivityModal(props: {
         last >= 0 ? Math.min(baseLen, last + 1) : baseLen
       );
       const labels = rawLabels.slice(0, effectiveLen);
-      const def = Array.from({ length: effectiveLen }, (_, i) => {
-        if (activityType === "finish") {
-          return Math.max(0, Number(g.cut?.[i] || 0) || 0);
-        }
-        const ord = Number(g.ordered?.[i] || 0) || 0;
-        const cut = Number(g.cut?.[i] || 0) || 0;
-        const left = Math.max(0, ord - cut);
-        return left;
+      const def = computeDefaultActivityBreakdownFromArrays({
+        activityType,
+        labelsLen: effectiveLen,
+        ordered: g.ordered || [],
+        alreadyCut: g.cut || [],
+        finishInput: g.finishInput || [],
+        finishDone: g.finishDone || [],
       });
       return {
         assemblyId: g.assemblyId,

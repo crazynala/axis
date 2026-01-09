@@ -68,18 +68,24 @@ export async function handleActivityCreateDefect(opts: {
     if (validationError) {
       return json({ error: validationError }, { status: 400 });
     }
-    await createDefectActivity({
-      assemblyId: targetAssemblyId,
-      jobId: opts.jobId,
-      activityDate: new Date(),
-      stage: stageEnum,
-      quantity: qty,
-      qtyBreakdown,
-      defectReasonId: defectReasonId ?? undefined,
-      defectDisposition: disposition,
-      notes: typeof notes === "string" ? notes : undefined,
-    });
+    try {
+      await createDefectActivity({
+        assemblyId: targetAssemblyId,
+        jobId: opts.jobId,
+        activityDate: new Date(),
+        stage: stageEnum,
+        quantity: qty,
+        qtyBreakdown,
+        defectReasonId: defectReasonId ?? undefined,
+        defectDisposition: disposition,
+        notes: typeof notes === "string" ? notes : undefined,
+      });
+    } catch (err: any) {
+      const message =
+        err?.message ||
+        "Unable to record defect due to missing stock locations.";
+      return json({ error: message }, { status: 400 });
+    }
   }
   return redirect(`/jobs/${opts.jobId}/assembly/${opts.rawAssemblyIdParam}`);
 }
-

@@ -1,5 +1,6 @@
 import { redirect } from "@remix-run/node";
 import { prisma } from "~/utils/prisma.server";
+import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 
 export async function handleCostingRefreshProduct(opts: {
   jobId: number;
@@ -69,6 +70,10 @@ export async function handleCostingRefreshProduct(opts: {
       const resolvedActivity = matchedLine?.activityUsed
         ? String(matchedLine.activityUsed).toLowerCase()
         : ((costing as any).activityUsed ?? null);
+      const finalActivity =
+        childProduct?.externalStepType != null
+          ? mapExternalStepTypeToActivityUsed(childProduct.externalStepType)
+          : resolvedActivity;
       const updateData: any = {
         quantityPerUnit:
           resolvedQuantity == null || Number.isNaN(Number(resolvedQuantity))
@@ -78,7 +83,7 @@ export async function handleCostingRefreshProduct(opts: {
           resolvedUnitCost == null || Number.isNaN(Number(resolvedUnitCost))
             ? null
             : resolvedUnitCost,
-        activityUsed: resolvedActivity,
+        activityUsed: finalActivity,
         salePriceGroupId: childProduct?.salePriceGroupId ?? null,
         manualSalePrice:
           childProduct?.manualSalePrice != null ? Number(childProduct.manualSalePrice) : null,

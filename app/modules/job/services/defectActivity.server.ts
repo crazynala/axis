@@ -4,7 +4,11 @@ import {
   DefectDisposition,
   Prisma,
 } from "@prisma/client";
-import { prisma } from "~/utils/prisma.server";
+import { prisma, refreshProductStockSnapshot } from "~/utils/prisma.server";
+import {
+  assertBatchLinePresence,
+  assertTransferLocations,
+} from "~/utils/stockMovementGuards";
 
 const DEFECT_MOVEMENT_TYPE: Record<DefectDisposition, string> = {
   none: "DEFECT_NONE",
@@ -42,6 +46,22 @@ async function findDestinationLocationId(
   return loc.id;
 }
 
+function buildMissingLocationError(disposition: DefectDisposition) {
+  const label =
+    disposition === "scrap"
+      ? "Scrap"
+      : disposition === "review"
+      ? "Review"
+      : disposition === "offSpec"
+      ? "Off-spec"
+      : disposition === "sample"
+      ? "Samples"
+      : "Destination";
+  return new Error(
+    `${label} location is missing; cannot record Defect → ${label}. Create the location or fix seed data.`
+  );
+}
+
 async function maybeCreateDefectMovement(
   tx: Prisma.TransactionClient,
   args: {
@@ -56,6 +76,15 @@ async function maybeCreateDefectMovement(
 ) {
   if (!args.quantity || args.quantity <= 0) return null;
   if (!args.disposition || args.disposition === "none") return null;
+  const productIdFromArgs = args.productId ?? null;
+  const product =
+    productIdFromArgs != null
+      ? await tx.product.findUnique({
+          where: { id: productIdFromArgs },
+          select: { batchTrackingEnabled: true, stockTrackingEnabled: true },
+        })
+      : null;
+  if (product?.stockTrackingEnabled === false) return null;
   const assembly = await tx.assembly.findUnique({
     where: { id: args.assemblyId },
     select: { productId: true, jobId: true },
@@ -70,12 +99,7 @@ async function maybeCreateDefectMovement(
     args.disposition
   );
   if (!destinationLocationId || !sourceLocationId) {
-    console.warn("[defect] Skipping movement; missing locations", {
-      sourceLocationId,
-      destinationLocationId,
-      disposition: args.disposition,
-    });
-    return null;
+    throw buildMissingLocationError(args.disposition);
   }
   const productId = args.productId ?? assembly?.productId ?? null;
   if (!productId) {
@@ -99,6 +123,12 @@ async function maybeCreateDefectMovement(
       notes: `Auto defect movement (${args.disposition})`,
     },
   });
+  assertTransferLocations({
+    movementType: movement.movementType,
+    locationInId: movement.locationInId,
+    locationOutId: movement.locationOutId,
+    context: { movementId: movement.id, activityId: args.activityId },
+  });
   let batchId: number | null = null;
   const normalizedStage = (args.stage as string | null) ?? null;
   if (
@@ -115,6 +145,12 @@ async function maybeCreateDefectMovement(
     });
     batchId = batch?.id ?? null;
   }
+  assertBatchLinePresence({
+    movementType: movement.movementType,
+    batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
+    hasBatchId: batchId != null,
+    context: { movementId: movement.id, productId },
+  });
   await tx.productMovementLine.create({
     data: {
       movementId: movement.id,
@@ -163,6 +199,16 @@ export async function moveDefectDisposition(
     if (!source || !dest) return null;
     const productId = activity.productId ?? assembly?.productId ?? null;
     if (!productId) return null;
+    assertTransferLocations({
+      movementType: DEFECT_MOVEMENT_TYPE[newDisposition],
+      locationInId: dest,
+      locationOutId: source,
+      context: { activityId, assemblyId: activity.assemblyId },
+    });
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { batchTrackingEnabled: true },
+    });
     const movement = await tx.productMovement.create({
       data: {
         movementType: DEFECT_MOVEMENT_TYPE[newDisposition],
@@ -176,6 +222,12 @@ export async function moveDefectDisposition(
         quantity: Math.abs(Number(activity.quantity)),
         notes: `Defect disposition change to ${newDisposition}`,
       },
+    });
+    assertBatchLinePresence({
+      movementType: movement.movementType,
+      batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
+      hasBatchId: true,
+      context: { movementId: movement.id, productId },
     });
     await tx.productMovementLine.create({
       data: {
@@ -210,7 +262,30 @@ type CreateDefectInput = {
 export async function createDefectActivity(input: CreateDefectInput) {
   const disposition =
     input.defectDisposition ?? DefectDisposition.review;
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    if (disposition !== DefectDisposition.none) {
+      const productIdForCheck = input.productId ?? null;
+      const product =
+        productIdForCheck != null
+          ? await tx.product.findUnique({
+              where: { id: productIdForCheck },
+              select: { stockTrackingEnabled: true },
+            })
+          : null;
+      if (product?.stockTrackingEnabled !== false) {
+        const job = await tx.job.findUnique({
+          where: { id: input.jobId },
+          select: { stockLocationId: true },
+        });
+        const destinationLocationId = await findDestinationLocationId(
+          tx,
+          disposition
+        );
+        if (!job?.stockLocationId || !destinationLocationId) {
+          throw buildMissingLocationError(disposition);
+        }
+      }
+    }
     const activity = await tx.assemblyActivity.create({
       data: {
         assemblyId: input.assemblyId,
@@ -228,7 +303,7 @@ export async function createDefectActivity(input: CreateDefectInput) {
       },
     });
 
-    await maybeCreateDefectMovement(tx, {
+    const movement = await maybeCreateDefectMovement(tx, {
       activityId: activity.id,
       assemblyId: input.assemblyId,
       jobId: input.jobId,
@@ -238,6 +313,11 @@ export async function createDefectActivity(input: CreateDefectInput) {
       stage: input.stage,
     });
 
-    return activity;
+    return { activity, movement };
   });
+  if (result.movement?.productId) {
+    // Defect movements are transfer-like and must be reflected in the snapshot immediately.
+    await refreshProductStockSnapshot();
+  }
+  return result.activity;
 }

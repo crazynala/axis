@@ -1,12 +1,28 @@
 import { NativeSelect } from "@mantine/core";
 import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 
-export type UsageValue = "cut" | "make" | "";
+export type UsageValue =
+  | "cut"
+  | "make"
+  | "sew"
+  | "finish"
+  | "wash"
+  | "embroidery"
+  | "dye"
+  | "";
 
 export function normalizeUsageValue(value: unknown): UsageValue {
   if (typeof value !== "string") return "";
   const trimmed = value.trim().toLowerCase();
-  return trimmed === "cut" || trimmed === "make" ? trimmed : "";
+  return trimmed === "cut" ||
+    trimmed === "make" ||
+    trimmed === "sew" ||
+    trimmed === "finish" ||
+    trimmed === "wash" ||
+    trimmed === "embroidery" ||
+    trimmed === "dye"
+    ? (trimmed as UsageValue)
+    : "";
 }
 
 export type SheetSelectOption = { label: string; value: string };
@@ -36,7 +52,10 @@ export function SheetSelectCell({
     else if (!focus && ref.current) ref.current.blur();
   }, [focus, readOnly]);
 
-  if (readOnly) return <div style={{ width: "100%", height: "100%" }} />;
+  if (readOnly) {
+    const label = options.find((opt) => opt.value === value)?.label || "";
+    return <div style={{ width: "100%", height: "100%" }}>{label}</div>;
+  }
 
   return (
     <NativeSelect
@@ -73,7 +92,12 @@ type UsageSelectCellProps = {
 const OPTIONS: { label: string; value: UsageValue }[] = [
   { label: "", value: "" },
   { label: "Cut", value: "cut" },
+  { label: "Sew", value: "sew" },
+  { label: "Finish", value: "finish" },
   { label: "Make", value: "make" },
+  { label: "Wash", value: "wash" },
+  { label: "Embroidery", value: "embroidery" },
+  { label: "Dye", value: "dye" },
 ];
 
 export function UsageSelectCell({

@@ -1,4 +1,5 @@
 import { prismaBase, refreshProductStockSnapshot } from "~/utils/prisma.server";
+import { assertTransferLocations } from "~/utils/stockMovementGuards";
 
 export async function amendBatch(
   productId: number | null,
@@ -166,6 +167,12 @@ export async function transferBetweenBatches(
       quantity: Math.abs(qty),
       notes: "Inventory transfer",
     },
+  });
+  assertTransferLocations({
+    movementType: hdr.movementType,
+    locationInId: hdr.locationInId,
+    locationOutId: hdr.locationOutId,
+    context: { movementId: hdr.id, productId },
   });
   await prismaBase.productMovementLine.create({
     data: {

@@ -1,4 +1,5 @@
 import { prisma } from "~/utils/prisma.server";
+import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 
 /**
  * Create an Assembly from a source Product and seed Costings from its BOM (productLines).
@@ -87,12 +88,17 @@ export async function createAssemblyFromProductAndSeedCostings(
       const qty = Number(ln.quantity ?? 1) || 1;
       const unitCost = Number(ln.unitCost ?? child.costPrice ?? 0) || 0;
       const act = String(ln.activityUsed || "").toLowerCase();
+      const resolvedActivity = child.externalStepType
+        ? mapExternalStepTypeToActivityUsed(child.externalStepType)
+        : act
+        ? act
+        : null;
       return {
         assemblyId: created.id,
         productId: child.id,
         quantityPerUnit: qty,
         unitCost,
-        activityUsed: act ? act : null,
+        activityUsed: resolvedActivity,
         salePriceGroupId: child.salePriceGroupId ?? null,
         manualSalePrice: child.manualSalePrice ?? null,
         manualMargin: child.manualMargin ?? null,

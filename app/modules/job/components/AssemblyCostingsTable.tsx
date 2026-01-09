@@ -36,6 +36,10 @@ import {
 import { formatUSD } from "~/utils/format";
 import { JumpLink } from "~/components/JumpLink";
 import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
+import {
+  labelForExternalStepType,
+  mapExternalStepTypeToActivityUsed,
+} from "~/modules/job/services/externalStepActivity";
 
 const ACTIVITY_USAGE_OPTIONS = [
   { value: "cut", label: "Cut" },
@@ -64,6 +68,7 @@ export type CostingRow = {
   productStage?: string | null;
   /** Per-activity usage type: "cut", "sew", or "finish" */
   activityUsed?: string | null;
+  externalStepType?: string | null;
   quantityPerUnit?: number | null;
   unitCost?: number | null;
   required?: number | null;
@@ -194,12 +199,29 @@ export function AssemblyCostingsTable(props: {
         canEditFn(row)
     );
 
+  const isExternalStepCosting = (row: CostingRow) =>
+    Boolean(row.externalStepType);
+  const activityValueForRow = (row: CostingRow) =>
+    isExternalStepCosting(row)
+      ? mapExternalStepTypeToActivityUsed(row.externalStepType)
+      : normalizeActivityUsage(row.activityUsed);
+  const activityLabelForRow = (row: CostingRow) => {
+    if (isExternalStepCosting(row)) {
+      return labelForExternalStepType(row.externalStepType) || "";
+    }
+    return (
+      ACTIVITY_USAGE_OPTIONS.find(
+        (opt) => opt.value === activityValueForRow(row)
+      )?.label || ""
+    );
+  };
+
   const isChildRow = (row: CostingRow) => Boolean((row as any).isChild);
   const isMasterRow = (row: CostingRow) => Boolean((row as any).isMaster);
   const isSingleRow = (row: CostingRow) => Boolean((row as any).isSingle);
 
   const activityEditable = (row: CostingRow) =>
-    hasRHF && canEditBaseRow(row) && !isChildRow(row);
+    hasRHF && canEditBaseRow(row) && !isChildRow(row) && !isExternalStepCosting(row);
 
   const qpuEditable = (row: CostingRow, grouped: boolean) => {
     if (!hasRHF || !canEditBaseRow(row)) return false;
@@ -332,7 +354,7 @@ export function AssemblyCostingsTable(props: {
             {showActivityInput ? (
               <NativeSelect
                 data={ACTIVITY_USAGE_OPTIONS}
-                defaultValue={normalizeActivityUsage(c.activityUsed) || undefined}
+                defaultValue={activityValueForRow(c) || undefined}
                 variant="unstyled"
                 {...register!(fieldNameForActivityUsed!(c))}
                 rightSectionWidth={0}
@@ -344,13 +366,19 @@ export function AssemblyCostingsTable(props: {
                 }}
               />
             ) : (
-              <Text style={disabledStyle(c)}>
-                {
-                  ACTIVITY_USAGE_OPTIONS.find(
-                    (opt) => opt.value === normalizeActivityUsage(c.activityUsed)
-                  )?.label
+              <Tooltip
+                label={
+                  isExternalStepCosting(c)
+                    ? "External step costings are locked to the external stage"
+                    : undefined
                 }
-              </Text>
+                disabled={!isExternalStepCosting(c)}
+                withArrow
+              >
+                <span>
+                  <Text style={disabledStyle(c)}>{activityLabelForRow(c)}</Text>
+                </span>
+              </Tooltip>
             )}
           </Table.Td>
           <Table.Td
@@ -674,7 +702,7 @@ export function AssemblyCostingsTable(props: {
           return (
             <NativeSelect
               data={ACTIVITY_USAGE_OPTIONS}
-              defaultValue={normalizeActivityUsage(c.activityUsed) || undefined}
+              defaultValue={activityValueForRow(c) || undefined}
               variant="unstyled"
               {...register!(fieldNameForActivityUsed!(c))}
               rightSectionWidth={0}
@@ -689,13 +717,17 @@ export function AssemblyCostingsTable(props: {
         }
         if (isChildRow(c)) return "";
         return (
-          <span style={disabledStyle(c)}>
-            {
-              ACTIVITY_USAGE_OPTIONS.find(
-                (opt) => opt.value === normalizeActivityUsage(c.activityUsed)
-              )?.label
+          <Tooltip
+            label={
+              isExternalStepCosting(c)
+                ? "External step costings are locked to the external stage"
+                : undefined
             }
-          </span>
+            disabled={!isExternalStepCosting(c)}
+            withArrow
+          >
+            <span style={disabledStyle(c)}>{activityLabelForRow(c)}</span>
+          </Tooltip>
         );
       },
     },

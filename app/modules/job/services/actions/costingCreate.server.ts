@@ -1,5 +1,6 @@
 import { redirect } from "@remix-run/node";
 import { prisma } from "~/utils/prisma.server";
+import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 
 export async function handleCostingCreate(opts: {
   jobId: number;
@@ -14,22 +15,30 @@ export async function handleCostingCreate(opts: {
     : null;
   let unitCost = opts.form.get("unitCost") ? Number(opts.form.get("unitCost")) : null;
   const notes = (opts.form.get("notes") as string) || null;
-  if ((unitCost == null || Number.isNaN(unitCost)) && productId) {
+  let externalStepType: string | null = null;
+  if (productId) {
     const p = await prisma.product.findUnique({
       where: { id: productId },
-      select: { costPrice: true },
+      select: { costPrice: true, externalStepType: true },
     });
-    unitCost = Number(p?.costPrice ?? 0) || 0;
+    if (unitCost == null || Number.isNaN(unitCost)) {
+      unitCost = Number(p?.costPrice ?? 0) || 0;
+    }
+    externalStepType = p?.externalStepType ?? null;
   }
+  const activityUsed = externalStepType
+    ? mapExternalStepTypeToActivityUsed(externalStepType)
+    : null;
   await prisma.costing.create({
     data: {
       assemblyId: opts.assemblyId,
       productId: productId ?? undefined,
       quantityPerUnit,
       unitCost,
+      activityUsed: activityUsed ?? undefined,
+      externalStepType,
       notes,
     },
   });
   return redirect(`/jobs/${opts.jobId}/assembly/${opts.assemblyId}`);
 }
-

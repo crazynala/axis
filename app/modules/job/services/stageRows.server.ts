@@ -95,7 +95,7 @@ export function aggregateAssemblyStages(
     cut: filterStage(activities, "cut"),
     sew: filterStage(activities, "sew"),
     finish: filterStage(activities, "finish"),
-    pack: [] as AggregationActivity[],
+    pack: filterStage(activities, "pack"),
     qc: filterStage(activities, "qc"),
   };
   const fallbackCutArr = normalizeBreakdown(
@@ -194,6 +194,11 @@ export function buildStageRowsFromAggregation(options: {
 } {
   const { aggregation, derivedExternalSteps } = options;
   const rows: StageRow[] = [];
+  const sewGate = computeSewGateBreakdown({
+    aggregation,
+    derivedExternalSteps,
+    allowCutFallback: false,
+  });
   rows.push({
     kind: "internal",
     stage: "order",
@@ -212,8 +217,9 @@ export function buildStageRowsFromAggregation(options: {
     kind: "internal",
     stage: "sew",
     label: "Sew",
-    breakdown: aggregation.displayArrays.sew,
-    total: aggregation.totals.sew,
+    breakdown: sewGate.breakdown,
+    total: sewGate.total,
+    hint: formatSewGateHint(sewGate.source),
   });
 
   const externalSteps = Array.isArray(derivedExternalSteps)
@@ -270,13 +276,12 @@ export function buildStageRowsFromAggregation(options: {
     total: aggregation.totals.qc,
   });
 
-  let finishInputBreakdown = [...aggregation.displayArrays.sew];
-  for (const step of externalSteps) {
-    if (!step.expected) continue;
-    const aggregates = aggregation.externalAggregates.get(step.type);
-    const net = aggregates?.net ?? [];
-    finishInputBreakdown = minArrays(finishInputBreakdown, net);
-  }
+  const finishGate = computeSewGateBreakdown({
+    aggregation,
+    derivedExternalSteps,
+    allowCutFallback: true,
+  });
+  const finishInputBreakdown = [...finishGate.breakdown];
   const finishInput = {
     breakdown: finishInputBreakdown,
     total: sumArray(finishInputBreakdown),
@@ -307,6 +312,7 @@ export async function loadAssemblyStageRows(
                   defaultLeadTimeDays: true,
                 },
               },
+              externalStepType: true,
             },
           },
         },
@@ -481,6 +487,112 @@ function minArrays(a: number[], b: number[]) {
     out[i] = Math.min(Number(a[i] ?? 0) || 0, Number(b[i] ?? 0) || 0);
   }
   return out;
+}
+
+function maxArrays(a: number[], b: number[]) {
+  const len = Math.max(a.length, b.length);
+  const out: number[] = [];
+  for (let i = 0; i < len; i++) {
+    out[i] = Math.max(Number(a[i] ?? 0) || 0, Number(b[i] ?? 0) || 0);
+  }
+  return out;
+}
+
+function hasAny(arr: number[]) {
+  return (arr || []).some((val) => Number(val ?? 0) > 0);
+}
+
+type SewGateSource =
+  | "external_received"
+  | "external_sent"
+  | "sew"
+  | "finish"
+  | "fallback_cut"
+  | "none";
+
+export function computeSewGateBreakdown(options: {
+  aggregation: StageAggregation;
+  derivedExternalSteps: DerivedExternalStep[] | undefined | null;
+  allowCutFallback?: boolean;
+}): { breakdown: number[]; total: number; source: SewGateSource } {
+  const { aggregation, derivedExternalSteps, allowCutFallback = true } = options;
+  const externalSteps = Array.isArray(derivedExternalSteps)
+    ? derivedExternalSteps
+    : [];
+  if (externalSteps.length) {
+    let receivedGate: number[] | null = null;
+    for (const step of externalSteps) {
+      const aggregates =
+        aggregation.externalAggregates.get(step.type) ??
+        emptyExternalAggregate();
+      if (!hasAny(aggregates.received)) continue;
+      receivedGate = receivedGate
+        ? minArrays(receivedGate, aggregates.received)
+        : [...aggregates.received];
+    }
+    if (receivedGate && hasAny(receivedGate)) {
+      return {
+        breakdown: receivedGate,
+        total: sumArray(receivedGate),
+        source: "external_received",
+      };
+    }
+    let sentGate: number[] | null = null;
+    for (const step of externalSteps) {
+      const aggregates =
+        aggregation.externalAggregates.get(step.type) ??
+        emptyExternalAggregate();
+      if (!hasAny(aggregates.sent)) continue;
+      sentGate = sentGate
+        ? minArrays(sentGate, aggregates.sent)
+        : [...aggregates.sent];
+    }
+    if (sentGate && hasAny(sentGate)) {
+      return {
+        breakdown: sentGate,
+        total: sumArray(sentGate),
+        source: "external_sent",
+      };
+    }
+  }
+
+  const sewArr = aggregation.stageStats.sew.usableArr || [];
+  const finishArr = aggregation.stageStats.finish.usableArr || [];
+  const sewTotal = sumArray(sewArr);
+  const finishTotal = sumArray(finishArr);
+  if (sewTotal > 0 || finishTotal > 0) {
+    const breakdown = maxArrays(sewArr, finishArr);
+    return {
+      breakdown,
+      total: sumArray(breakdown),
+      source: finishTotal >= sewTotal ? "finish" : "sew",
+    };
+  }
+
+  const fallback = aggregation.stageStats.cut.usableArr || [];
+  if (!allowCutFallback) {
+    return { breakdown: [], total: 0, source: "none" };
+  }
+  return {
+    breakdown: fallback,
+    total: sumArray(fallback),
+    source: "fallback_cut",
+  };
+}
+
+function formatSewGateHint(source: SewGateSource): string | undefined {
+  switch (source) {
+    case "external_received":
+      return "Implied from external received";
+    case "external_sent":
+      return "Implied from external sent";
+    case "finish":
+      return "Implied from finish";
+    case "fallback_cut":
+      return "Implied from cut usable";
+    default:
+      return undefined;
+  }
 }
 
 function buildExternalAggregates(

@@ -22,6 +22,12 @@ type DebugDrawerProps = {
   loading?: boolean;
   formStatePanel?: ReactNode;
   formStateCopyText?: string;
+  extraTabs?: Array<{
+    key: string;
+    label: string;
+    render: (ctx: { active: boolean }) => ReactNode;
+    copyText?: string;
+  }>;
 };
 
 export function DebugDrawer({
@@ -32,6 +38,7 @@ export function DebugDrawer({
   loading,
   formStatePanel,
   formStateCopyText,
+  extraTabs,
 }: DebugDrawerProps) {
   const [tab, setTab] = useState<string>("summary");
 
@@ -74,13 +81,22 @@ export function DebugDrawer({
     );
   }, [payload]);
 
+  const extraCopyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (extraTabs || []).forEach((tab) => {
+      if (tab.copyText) map.set(tab.key, tab.copyText);
+    });
+    return map;
+  }, [extraTabs]);
+
   const activeCopyText = useMemo(() => {
     if (tab === "summary") return summaryText;
     if (tab === "numbers") return numbersText;
     if (tab === "json") return jsonText;
     if (tab === "formState") return formStateCopyText || "";
+    if (extraCopyMap.has(tab)) return extraCopyMap.get(tab) || "";
     return "";
-  }, [formStateCopyText, jsonText, numbersText, summaryText, tab]);
+  }, [extraCopyMap, formStateCopyText, jsonText, numbersText, summaryText, tab]);
 
   const handleCopy = async (text: string) => {
     if (!text) return;
@@ -100,13 +116,24 @@ export function DebugDrawer({
 
   const hasPayload = !!payload;
   const hasFormState = !!formStatePanel;
-  const showTabs = hasPayload || hasFormState;
+  const showTabs = hasPayload || hasFormState || (extraTabs?.length ?? 0) > 0;
+  const availableTabs = useMemo(() => {
+    const base = ["summary", "numbers", "json"];
+    if (hasFormState) base.push("formState");
+    (extraTabs || []).forEach((t) => base.push(t.key));
+    return new Set(base);
+  }, [extraTabs, hasFormState]);
 
   useEffect(() => {
     if (!hasFormState && tab === "formState") {
       setTab("summary");
     }
   }, [hasFormState, tab]);
+  useEffect(() => {
+    if (!availableTabs.has(tab)) {
+      setTab("summary");
+    }
+  }, [availableTabs, tab]);
 
   return (
     <Drawer
@@ -137,10 +164,15 @@ export function DebugDrawer({
               <Tabs.Tab value="summary">Summary</Tabs.Tab>
               <Tabs.Tab value="numbers">Numbers</Tabs.Tab>
               <Tabs.Tab value="json">JSON</Tabs.Tab>
-              {hasFormState ? (
-                <Tabs.Tab value="formState">Form State</Tabs.Tab>
-              ) : null}
-            </Tabs.List>
+            {hasFormState ? (
+              <Tabs.Tab value="formState">Form State</Tabs.Tab>
+            ) : null}
+            {(extraTabs || []).map((tab) => (
+              <Tabs.Tab key={tab.key} value={tab.key}>
+                {tab.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
             <Tabs.Panel value="summary" pt="sm">
               {payload ? (
                 <Stack gap="xs">
@@ -204,6 +236,14 @@ export function DebugDrawer({
                 {formStatePanel}
               </Tabs.Panel>
             ) : null}
+            {(extraTabs || []).map((tabItem) => {
+              const isActive = tab === tabItem.key;
+              return (
+                <Tabs.Panel key={tabItem.key} value={tabItem.key} pt="sm">
+                  {tabItem.render({ active: isActive })}
+                </Tabs.Panel>
+              );
+            })}
           </Tabs>
         ) : (
           <Text size="sm" c="dimmed">

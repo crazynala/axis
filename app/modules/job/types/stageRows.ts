@@ -19,6 +19,7 @@ export type InternalStageRow = {
   label: string;
   breakdown: number[];
   total: number;
+  hint?: string;
 };
 
 export type ExternalStageRow = {

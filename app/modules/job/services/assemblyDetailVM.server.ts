@@ -472,6 +472,13 @@ export async function loadAssemblyDetailVM(opts: {
     });
     item.stageRows = rows;
     item.finishInput = finishInput;
+    const sewRow = rows.find(
+      (row) => row.kind === "internal" && row.stage === "sew"
+    );
+    if (sewRow && sewRow.kind === "internal") {
+      item.sew = sewRow.breakdown;
+      item.totals.sew = sewRow.total;
+    }
   }
 
   const toleranceDefaults = await loadCoverageToleranceDefaults();

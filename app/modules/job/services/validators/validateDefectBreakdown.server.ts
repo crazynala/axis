@@ -81,9 +81,9 @@ export async function validateDefectBreakdown(opts: {
     const sewDef = Number(sewDefArr[i] ?? 0) || 0;
     const finish = Number(finishArr[i] ?? 0) || 0;
     const finishDef = Number(finishDefArr[i] ?? 0) || 0;
-    const pack = Number(packArr[i] ?? 0) || 0;
     availableCut[i] = cut - cutDef - sew;
     availableSew[i] = sew - sewDef - finish;
+    const pack = Number(packArr[i] ?? 0) || 0;
     availableFinish[i] = finish - finishDef - pack;
   }
   const errs: string[] = [];
@@ -125,4 +125,3 @@ export async function validateDefectBreakdown(opts: {
   }
   return errs.length ? errs.join("; ") : null;
 }
-

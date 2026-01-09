@@ -710,9 +710,19 @@ export function AssemblyQuantitiesCard({
                           style={tdBase}
                           className="axis-stage-col axis-stage-col--stage"
                         >
-                          <Text fw={600} size="xs">
-                            {getStageLabelForRow(internalRow)}
-                          </Text>
+                          {internalRow.hint ? (
+                            <Tooltip label={internalRow.hint} withArrow>
+                              <span>
+                                <Text fw={600} size="xs">
+                                  {getStageLabelForRow(internalRow)}
+                                </Text>
+                              </span>
+                            </Tooltip>
+                          ) : (
+                            <Text fw={600} size="xs">
+                              {getStageLabelForRow(internalRow)}
+                            </Text>
+                          )}
                         </Table.Td>
                         {breakdownValues.map((value, i) => (
                           <Table.Td
