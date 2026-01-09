@@ -252,7 +252,6 @@ export function AssembliesEditor(props: {
   );
   const [externalStepUnknownVendor, setExternalStepUnknownVendor] =
     useState(false);
-  const [externalStepRecordSew, setExternalStepRecordSew] = useState(false);
   const [externalStepError, setExternalStepError] = useState<string | null>(null);
   const [factoryAssemblyId, setFactoryAssemblyId] = useState<number | null>(
     null
@@ -344,6 +343,15 @@ export function AssembliesEditor(props: {
     }
   }, [externalStepFetcher.data, revalidator]);
 
+  const resolveDefaultExternalVendorId = (step: ExternalStageRow) => {
+    const fallback = vendorOptionsByStep?.[step.externalStepType]?.[0]?.value;
+    const fallbackId =
+      fallback != null && Number.isFinite(Number(fallback))
+        ? Number(fallback)
+        : null;
+    return step.vendor?.id ?? fallbackId ?? null;
+  };
+
   const openExternalStepModal = (assemblyId: number, step: ExternalStageRow) => {
     const mode: "send" | "receive" =
       step.status === "NOT_STARTED"
@@ -355,9 +363,8 @@ export function AssembliesEditor(props: {
     setExternalStepAction({ mode, assemblyId, step });
     setExternalStepBreakdown(defaultBreakdown);
     setExternalStepDate(new Date());
-    setExternalStepVendorId(step.vendor?.id ?? null);
+    setExternalStepVendorId(resolveDefaultExternalVendorId(step));
     setExternalStepUnknownVendor(false);
-    setExternalStepRecordSew(false);
     setExternalStepError(null);
   };
 
@@ -371,7 +378,6 @@ export function AssembliesEditor(props: {
         mode
       );
       setExternalStepBreakdown(defaultBreakdown);
-      setExternalStepRecordSew(false);
       setExternalStepError(null);
       return { ...prev, mode };
     });
@@ -398,7 +404,8 @@ export function AssembliesEditor(props: {
       return Number.isFinite(n) && n > 0 ? n : 0;
     });
     const qty = qtyBreakdown.reduce((sum, value) => sum + value, 0);
-    const vendorId = externalStepVendorId;
+    const vendorId =
+      externalStepVendorId ?? externalStepAction?.step.vendor?.id ?? null;
     const unknownVendor = externalStepUnknownVendor;
     if (!unknownVendor && !vendorId) {
       setExternalStepError("Vendor is required (or choose Unknown vendor).");
@@ -424,9 +431,6 @@ export function AssembliesEditor(props: {
     fd.set("qtyBreakdown", JSON.stringify(qtyBreakdown));
     if (vendorId) fd.set("vendorCompanyId", String(vendorId));
     if (unknownVendor) fd.set("vendorUnknown", "1");
-    if (externalStepAction.mode === "send" && externalStepRecordSew) {
-      fd.set("recordSewNow", "1");
-    }
     externalStepFetcher.submit(fd, { method: "post" });
   };
 
@@ -2120,19 +2124,11 @@ export function AssembliesEditor(props: {
               ) : null}
               {sewMissing ? (
                 <Alert color="yellow" title="Sew missing">
-                  <Stack gap="xs">
-                    <Text size="sm">
-                      This assembly has no Sew recorded. You can continue, but
-                      the step will be marked low confidence.
-                    </Text>
-                    <Checkbox
-                      label="Record Sew now for the same qty"
-                      checked={externalStepRecordSew}
-                      onChange={(e) =>
-                        setExternalStepRecordSew(e.currentTarget.checked)
-                      }
-                    />
-                  </Stack>
+                  <Text size="sm">
+                    This assembly has no Sew recorded. You can continue, but
+                    the step will be marked low confidence. No Sew activity
+                    will be created automatically.
+                  </Text>
                 </Alert>
               ) : null}
               {externalStepError ? (

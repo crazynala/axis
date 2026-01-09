@@ -19,6 +19,8 @@ export type InternalStageRow = {
   label: string;
   breakdown: number[];
   total: number;
+  loss?: number[];
+  lossTotal?: number;
   hint?: string;
 };
 

@@ -60,6 +60,7 @@ export function AssemblyPackModal({
   const fetcher = useFetcher();
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmOverride, setConfirmOverride] = useState(false);
+  const [createShortfall, setCreateShortfall] = useState(false);
   const baseLabels = useMemo(() => {
     if (variantLabels.length) return variantLabels;
     const fromQuantityItem = quantityItem?.variants?.labels || [];
@@ -129,6 +130,7 @@ export function AssemblyPackModal({
     form.reset(defaultValues);
     setServerError(null);
     setConfirmOverride(false);
+    setCreateShortfall(true);
   }, [opened, defaultValues, form]);
 
   const qtyBreakdownValues =
@@ -163,6 +165,7 @@ export function AssemblyPackModal({
   const remainingAfterPack = Math.max(0, totalAvailable - unitsEntered);
   const exceedsAvailable = unitsEntered > totalAvailable;
   const hasUnits = unitsEntered > 0;
+  const hasShortfall = !exceedsAvailable && hasUnits && remainingAfterPack > 0;
   const needsExistingSelection = boxMode === "existing" && !existingBoxId;
   const missingLocation = boxMode === "new" && !stockLocationName;
   const hasOverrideNote = boxNotes.trim().length > 0;
@@ -182,6 +185,12 @@ export function AssemblyPackModal({
     needsExistingSelection ||
     missingLocation ||
     (exceedsAvailable && !(confirmOverride && hasOverrideNote));
+
+  useEffect(() => {
+    if (!hasShortfall && createShortfall) {
+      setCreateShortfall(false);
+    }
+  }, [hasShortfall, createShortfall]);
 
   const onSubmit = form.handleSubmit((values) => {
     if (overfillMessage && !(confirmOverride && hasOverrideNote)) {
@@ -206,6 +215,9 @@ export function AssemblyPackModal({
     if (values.boxNotes) fd.set("boxNotes", values.boxNotes);
     if (exceedsAvailable && confirmOverride && hasOverrideNote) {
       fd.set("allowOverpack", "1");
+    }
+    if (hasShortfall && createShortfall) {
+      fd.set("createShortfall", "1");
     }
     fetcher.submit(fd, { method: "post" });
   });
@@ -304,6 +316,13 @@ export function AssemblyPackModal({
                 label="Override ready-to-pack limit"
                 checked={confirmOverride}
                 onChange={(e) => setConfirmOverride(e.currentTarget.checked)}
+              />
+            ) : null}
+            {hasShortfall ? (
+              <Checkbox
+                label={`Create shortfall for remaining ${remainingAfterPack} units`}
+                checked={createShortfall}
+                onChange={(e) => setCreateShortfall(e.currentTarget.checked)}
               />
             ) : null}
           </Stack>

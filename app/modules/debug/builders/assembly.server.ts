@@ -238,7 +238,10 @@ export async function buildAssemblyDebug(
 function summarizeActivities(activities: any[]) {
   const summary: Record<string, { count: number; qty: number }> = {};
   activities.forEach((activity) => {
-    const key = `${activity.stage || "other"}:${activity.action || "unknown"}`;
+    const stageKey = activity.externalStepType
+      ? String(activity.externalStepType).toLowerCase()
+      : activity.stage || "other";
+    const key = `${stageKey}:${activity.action || "unknown"}`;
     const curr = summary[key] || { count: 0, qty: 0 };
     curr.count += 1;
     curr.qty += Number(activity.quantity || 0) || 0;

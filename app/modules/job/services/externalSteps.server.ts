@@ -198,9 +198,14 @@ function deriveStep(opts: {
     .reduce((total, act) => total + Math.abs(toNumber(act.quantity) || 0), 0);
   const defectQty = defectQtyRaw > 0 ? defectQtyRaw : null;
 
+  const defaultVendor =
+    costingForStep?.product?.supplier ??
+    assembly.product?.supplier ??
+    null;
   const vendor =
     latestReceived?.vendorCompany ||
     latestSent?.vendorCompany ||
+    defaultVendor ||
     null;
 
   const costingForStep = findCostingForStep(assembly, type);
@@ -238,14 +243,13 @@ function deriveStep(opts: {
     status !== "DONE" &&
     status !== "IMPLICIT_DONE" &&
     etaDate!.getTime() < Date.now();
+  const hasExplicitEvents =
+    sentEvents.length > 0 || receivedEvents.length > 0;
   const lowConfidence =
-    !hasSew &&
+    !hasExplicitEvents &&
     (status === "IN_PROGRESS" ||
       status === "DONE" ||
       status === "IMPLICIT_DONE");
-
-  const hasExplicitEvents =
-    sentEvents.length > 0 || receivedEvents.length > 0;
   const inferredStart =
     !hasExplicitEvents ? stageDates.sew ?? stageDates.cut ?? null : null;
   const inferredEnd = !hasExplicitEvents ? stageDates.finish ?? null : null;

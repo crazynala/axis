@@ -1,4 +1,4 @@
-import { AssemblyStage, ActivityKind } from "@prisma/client";
+import { ActivityAction, AssemblyStage, ActivityKind } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 import { normalizeBreakdown, sumInto } from "../parsers/assemblyDetailFormParsers.server";
 
@@ -9,6 +9,26 @@ export async function validateDefectBreakdown(opts: {
   excludeActivityId?: number | null;
 }) {
   if (!opts.breakdown.length) return null;
+  if (
+    opts.stage === AssemblyStage.cut ||
+    opts.stage === AssemblyStage.sew
+  ) {
+    const externalDone = await prisma.assemblyActivity.findFirst({
+      where: {
+        assemblyId: opts.assemblyId,
+        externalStepType: { not: null },
+        action: ActivityAction.RECEIVED_IN,
+        quantity: { gt: 0 },
+        ...(opts.excludeActivityId
+          ? { id: { not: opts.excludeActivityId } }
+          : {}),
+      },
+      select: { id: true },
+    });
+    if (externalDone) {
+      return "Cannot record upstream defects after an external step is received. Record the defect at the external step or a downstream stage instead.";
+    }
+  }
   const acts = await prisma.assemblyActivity.findMany({
     where: {
       assemblyId: opts.assemblyId,

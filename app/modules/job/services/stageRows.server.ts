@@ -123,7 +123,9 @@ export function aggregateAssemblyStages(
       fallbackFinishArr,
       Number(fallbackTotals.finish ?? 0)
     ),
-    pack: computeStageStats(stageActs.pack, fallbackPackArr, fallbackPackTotal),
+    pack: computeStageStats(stageActs.pack, fallbackPackArr, fallbackPackTotal, {
+      useFallbackIfNoNormal: true,
+    }),
     qc: computeStageStats(stageActs.qc, [], 0),
   };
 
@@ -212,6 +214,8 @@ export function buildStageRowsFromAggregation(options: {
     label: "Cut",
     breakdown: aggregation.displayArrays.cut,
     total: aggregation.totals.cut,
+    loss: aggregation.stageStats.cut.defectArr,
+    lossTotal: aggregation.stageStats.cut.defectTotal,
   });
   rows.push({
     kind: "internal",
@@ -219,6 +223,8 @@ export function buildStageRowsFromAggregation(options: {
     label: "Sew",
     breakdown: sewGate.breakdown,
     total: sewGate.total,
+    loss: aggregation.stageStats.sew.defectArr,
+    lossTotal: aggregation.stageStats.sew.defectTotal,
     hint: formatSewGateHint(sewGate.source),
   });
 
@@ -260,6 +266,8 @@ export function buildStageRowsFromAggregation(options: {
     label: "Finish",
     breakdown: aggregation.displayArrays.finish,
     total: aggregation.totals.finish,
+    loss: aggregation.stageStats.finish.defectArr,
+    lossTotal: aggregation.stageStats.finish.defectTotal,
   });
   rows.push({
     kind: "internal",
@@ -267,6 +275,8 @@ export function buildStageRowsFromAggregation(options: {
     label: "Pack",
     breakdown: aggregation.displayArrays.pack,
     total: aggregation.totals.pack,
+    loss: aggregation.stageStats.pack.defectArr,
+    lossTotal: aggregation.stageStats.pack.defectTotal,
   });
   rows.push({
     kind: "internal",
@@ -274,6 +284,8 @@ export function buildStageRowsFromAggregation(options: {
     label: "QC",
     breakdown: aggregation.displayArrays.qc,
     total: aggregation.totals.qc,
+    loss: aggregation.stageStats.qc.defectArr,
+    lossTotal: aggregation.stageStats.qc.defectTotal,
   });
 
   const finishGate = computeSewGateBreakdown({
@@ -402,7 +414,8 @@ function filterStage(
 function computeStageStats(
   acts: AggregationActivity[],
   fallbackArr: number[],
-  fallbackTotal: number
+  fallbackTotal: number,
+  options?: { useFallbackIfNoNormal?: boolean }
 ): StageStats {
   if (!acts.length) {
     const arrCopy = [...fallbackArr];
@@ -431,6 +444,15 @@ function computeStageStats(
       goodTotal += qty;
       addInto(goodArr, breakdown);
     }
+  }
+  if (
+    options?.useFallbackIfNoNormal &&
+    goodTotal === 0 &&
+    defectTotal > 0 &&
+    fallbackArr.length
+  ) {
+    goodArr.splice(0, goodArr.length, ...fallbackArr);
+    goodTotal = fallbackTotal;
   }
   const len = Math.max(goodArr.length, defectArr.length);
   const usableArr: number[] = [];

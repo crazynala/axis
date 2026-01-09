@@ -80,6 +80,8 @@ const buildLegacyRows = (item: SingleQuantities): StageRow[] => {
     label,
     breakdown,
     total,
+    loss: [],
+    lossTotal: 0,
   });
   return [
     makeRow("order", "Ordered", item.ordered || [], sumArr(item.ordered)),
@@ -287,6 +289,7 @@ export function AssemblyQuantitiesCard({
     stage: 100,
     total: 70,
     loss: 70,
+    out: 70,
     eta: 90,
     status: "100%",
     act: 40,
@@ -367,7 +370,6 @@ export function AssemblyQuantitiesCard({
     const ops: ChipSpec[] = [];
     const extState: ChipSpec[] = [];
     const derived: ChipSpec[] = [];
-    const scope: ChipSpec[] = [];
 
     // Missing sizes: only for legacy ORDER cases:
     // total > 0 AND breakdown empty/null AND stage is ORDER (or order_adjust equivalents).
@@ -388,17 +390,6 @@ export function AssemblyQuantitiesCard({
     }
 
     if (row.kind === "external") {
-      const type = String(row.externalStepType || "").toLowerCase();
-      if (type) {
-        const label = type.charAt(0).toUpperCase() + type.slice(1);
-        scope.push({
-          key: `scope-${type}`,
-          tone: "neutral",
-          label,
-          tooltip: `${label} scope.`,
-        });
-      }
-
       if (row.isLate) {
         ops.push({
           key: "late",
@@ -418,9 +409,22 @@ export function AssemblyQuantitiesCard({
         });
       }
 
-      // External step state chip is omitted when the single action already communicates state.
-      // If the step is done (no action button), show it for clarity.
-      if (row.status === "DONE" || row.status === "IMPLICIT_DONE") {
+      if (row.totals.loss > 0) {
+        extState.push({
+          key: "outstanding",
+          tone: "neutral",
+          label: `Out ${row.totals.loss}`,
+          tooltip: "Outstanding units (sent - received).",
+        });
+      }
+
+      // External step state chip is omitted when actions already communicate state.
+      // Show it for IN_PROGRESS/DONE/IMPLICIT_DONE for clarity.
+      if (
+        row.status === "IN_PROGRESS" ||
+        row.status === "DONE" ||
+        row.status === "IMPLICIT_DONE"
+      ) {
         extState.push({
           key: "ext-status",
           tone: "neutral",
@@ -434,14 +438,11 @@ export function AssemblyQuantitiesCard({
     const orderedOps = ops;
     const orderedExtState = extState.slice(0, 1);
     const orderedDerived = derived.slice(0, 1);
-    const orderedScope = scope;
-
     const out: ChipSpec[] = [];
     out.push(...collapseChips(orderedWarnings, 2, (n) => `+${n}`));
     out.push(...collapseChips(orderedOps, 2, (n) => `+${n}`));
     out.push(...orderedExtState);
     out.push(...orderedDerived);
-    out.push(...collapseChips(orderedScope, 2, (n) => `+${n} scope`));
     return out;
   };
 
@@ -540,6 +541,9 @@ export function AssemblyQuantitiesCard({
                     <Table.Th style={{ ...thCenter, width: colWidths.loss }}>
                       Loss
                     </Table.Th>
+                    <Table.Th style={{ ...thCenter, width: colWidths.out }}>
+                      Out
+                    </Table.Th>
                     <Table.Th style={{ ...thCenter, width: colWidths.eta }}>
                       ETA
                     </Table.Th>
@@ -601,13 +605,21 @@ export function AssemblyQuantitiesCard({
                             </Text>
                           </Table.Td>
                           <Table.Td style={tdCenter}>
-                            <Text
-                              fw={600}
-                              size="sm"
-                              c={externalRow.totals.loss > 0 ? "red" : "dimmed"}
-                            >
-                              {fmtNum(externalRow.totals.loss)}
+                            <Text fw={600} size="sm" c="dimmed">
+                              —
                             </Text>
+                          </Table.Td>
+                          <Table.Td style={tdCenter}>
+                            <Tooltip
+                              label="Outstanding (sent - received)"
+                              withArrow
+                            >
+                              <span>
+                                <Text fw={600} size="sm">
+                                  {fmtNum(externalRow.totals.loss)}
+                                </Text>
+                              </span>
+                            </Tooltip>
                           </Table.Td>
                           <Table.Td style={tdCenter} title={etaText}>
                             <Text
@@ -766,7 +778,16 @@ export function AssemblyQuantitiesCard({
                               : fmtNum(internalRow.total)}
                           </Text>
                         </Table.Td>
-                        <Table.Td style={tdCenter} />
+                        <Table.Td style={tdCenter}>
+                          <Text fw={600} size="sm">
+                            {fmtNum(internalRow.lossTotal)}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td style={tdCenter}>
+                          <Text fw={600} size="sm" c="dimmed">
+                            —
+                          </Text>
+                        </Table.Td>
                         <Table.Td style={tdCenter} />
                         <Table.Td
                           style={tdBase}

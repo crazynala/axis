@@ -1,3 +1,4 @@
+import { ActivityKind, AssemblyStage, DefectDisposition } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 
 function normalizeBreakdown(values: number[] | undefined | null): number[] {
@@ -99,6 +100,7 @@ type PackActivityInput = {
   boxDescription?: string | null;
   boxNotes?: string | null;
   allowOverpack?: boolean;
+  createShortfall?: boolean;
 };
 
 function buildAvailableForPack(
@@ -236,6 +238,30 @@ export async function createPackActivity(input: PackActivityInput) {
       qtyBreakdown: normalizedBreakdown,
       notes: trimmedNotes ?? null,
     });
+
+    if (input.createShortfall && !exceedsAvailable) {
+      const shortfallBreakdown = available.map((qty, idx) =>
+        Math.max(0, (Number(qty) || 0) - (normalizedBreakdown[idx] ?? 0))
+      );
+      const shortfallTotal = sumBreakdown(shortfallBreakdown);
+      if (shortfallTotal > 0) {
+        await tx.assemblyActivity.create({
+          data: {
+            assemblyId: assembly.id,
+            jobId: assembly.jobId ?? input.jobId,
+            stage: AssemblyStage.pack,
+            kind: ActivityKind.defect,
+            name: "Shortfall",
+            defectDisposition: DefectDisposition.none,
+            quantity: shortfallTotal,
+            qtyBreakdown: shortfallBreakdown as any,
+            activityDate: input.activityDate,
+            notes: "Implied shortfall (unpacked units)",
+            productId: assembly.productId ?? undefined,
+          },
+        });
+      }
+    }
     return { ok: true };
   });
 }

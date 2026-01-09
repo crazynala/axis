@@ -50,9 +50,10 @@ export async function handleExternalStepSendReceive(opts: {
     data: {
       assemblyId: targetAssemblyId,
       jobId: targetAssembly.jobId ?? opts.jobId,
-      stage: AssemblyStage.finish,
+      stage: AssemblyStage.other,
       kind: ActivityKind.normal,
       action,
+      name: externalStepType,
       externalStepType,
       vendorCompanyId: vendorCompanyId ?? undefined,
       activityDate,
@@ -61,23 +62,5 @@ export async function handleExternalStepSendReceive(opts: {
       notes: vendorUnknown ? "Unknown vendor selected" : null,
     },
   });
-  const recordSewNow = opts.intent === "externalStep.send" && String(opts.form.get("recordSewNow") || "") === "1";
-  if (recordSewNow) {
-    await prisma.assemblyActivity.create({
-      data: {
-        assemblyId: targetAssemblyId,
-        jobId: targetAssembly.jobId ?? opts.jobId,
-        name: "Sew",
-        stage: AssemblyStage.sew,
-        kind: ActivityKind.normal,
-        action: ActivityAction.RECORDED,
-        activityDate,
-        quantity: qty,
-        qtyBreakdown,
-        notes: "Recorded from Send Out helper",
-      },
-    });
-  }
   return json({ ok: true });
 }
-

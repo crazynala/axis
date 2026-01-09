@@ -301,10 +301,6 @@ export async function action({ request }: LoaderFunctionArgs) {
       intent === "externalStep.batchSend"
         ? ActivityAction.SENT_OUT
         : ActivityAction.RECEIVED_IN;
-    const recordSewNow =
-      action === ActivityAction.SENT_OUT &&
-      String(form.get("recordSewNow") || "") === "1" &&
-      items.length === 1;
 
     const assemblyIds = Array.from(
       new Set(items.map((item) => item.assemblyId))
@@ -375,9 +371,10 @@ export async function action({ request }: LoaderFunctionArgs) {
         data: {
           assemblyId: item.assemblyId,
           jobId: jobId ?? undefined,
-          stage: AssemblyStage.finish,
+          stage: AssemblyStage.other,
           kind: ActivityKind.normal,
           action,
+          name: externalStepType,
           externalStepType,
           vendorCompanyId: vendorCompanyId ?? undefined,
           activityDate,
@@ -386,22 +383,6 @@ export async function action({ request }: LoaderFunctionArgs) {
           notes: vendorUnknown ? "Unknown vendor selected" : null,
         },
       });
-      if (recordSewNow) {
-        await prisma.assemblyActivity.create({
-          data: {
-            assemblyId: item.assemblyId,
-            jobId: jobId ?? undefined,
-            name: "Sew",
-            stage: AssemblyStage.sew,
-            kind: ActivityKind.normal,
-            action: ActivityAction.RECORDED,
-            activityDate,
-            quantity: qty,
-            qtyBreakdown,
-            notes: "Recorded from Send Out helper",
-          },
-        });
-      }
       created += 1;
     }
 
@@ -747,7 +728,6 @@ export default function ProductionDashboardRoute() {
     }>;
     availableStepTypes: Array<{ value: string; label: string }>;
     selectedStepType: string | null;
-    recordSewNow: boolean;
   } | null>(null);
   const [batchVendorId, setBatchVendorId] = useState<number | null>(null);
   const [batchUnknownVendor, setBatchUnknownVendor] = useState(false);
@@ -934,7 +914,6 @@ export default function ProductionDashboardRoute() {
       rows: opts.rows,
       availableStepTypes,
       selectedStepType,
-      recordSewNow: false,
     });
     setBatchVendorId(opts.vendorId ?? null);
     setBatchUnknownVendor(false);
@@ -1105,9 +1084,6 @@ export default function ProductionDashboardRoute() {
     fd.set("activityDate", activityDate.toISOString());
     if (batchVendorId) fd.set("vendorCompanyId", String(batchVendorId));
     if (batchUnknownVendor) fd.set("vendorUnknown", "1");
-    if (batchAction.mode === "send" && batchAction.recordSewNow) {
-      fd.set("recordSewNow", "1");
-    }
     batchFetcher.submit(fd, { method: "post" });
   };
 
@@ -2068,26 +2044,11 @@ export default function ProductionDashboardRoute() {
             batchAction.rows.length === 1 &&
             batchAction.rows[0].sewMissing ? (
               <Alert color="yellow" title="Sew missing">
-                <Stack gap="xs">
-                  <Text size="sm">
-                    This assembly has no Sew recorded. You can continue, but the
-                    step will be marked low confidence.
-                  </Text>
-                  <Checkbox
-                    label="Record Sew now for the same qty"
-                    checked={batchAction.recordSewNow}
-                    onChange={(e) =>
-                      setBatchAction((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              recordSewNow: e.currentTarget.checked,
-                            }
-                          : prev
-                      )
-                    }
-                  />
-                </Stack>
+                <Text size="sm">
+                  This assembly has no Sew recorded. You can continue, but the
+                  step will be marked low confidence. No Sew activity will be
+                  created automatically.
+                </Text>
               </Alert>
             ) : null}
             <Group grow align="flex-end">

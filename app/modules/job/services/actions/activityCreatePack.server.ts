@@ -32,6 +32,7 @@ export async function handleActivityCreatePack(opts: {
   const boxDescription = (opts.form.get("boxDescription") as string) || null;
   const boxNotes = (opts.form.get("boxNotes") as string) || null;
   const allowOverpack = String(opts.form.get("allowOverpack") || "") === "1";
+  const createShortfall = String(opts.form.get("createShortfall") || "") === "1";
   try {
     await createPackActivity({
       assemblyId: targetAssemblyId,
@@ -44,6 +45,7 @@ export async function handleActivityCreatePack(opts: {
       boxDescription,
       boxNotes,
       allowOverpack,
+      createShortfall,
     });
   } catch (err) {
     const message =
@@ -58,4 +60,3 @@ export async function handleActivityCreatePack(opts: {
   }
   return redirect(`/jobs/${opts.jobId}/assembly/${opts.rawAssemblyIdParam}`);
 }
-
