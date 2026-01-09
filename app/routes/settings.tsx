@@ -117,7 +117,7 @@ export default function Settings() {
     setSchemeSaving(true);
     setSchemeError(null);
     try {
-      const res = await fetch("/api.color-scheme", {
+      const res = await fetch("/api/color-scheme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ colorScheme: next }),
@@ -163,12 +163,7 @@ export default function Settings() {
                 value={profileName}
                 onChange={(e) => setProfileName(e.currentTarget.value)}
               />
-              <TextInput
-                name="email"
-                label="Email"
-                value={email}
-                readOnly
-              />
+              <TextInput name="email" label="Email" value={email} readOnly />
               <Button
                 type="submit"
                 name="intent"
@@ -205,15 +200,9 @@ export default function Settings() {
           <Title order={4}>Security</Title>
           <Form method="post">
             <Stack>
-              <PasswordInput
-                name="currentPassword"
-                label="Current password"
-              />
+              <PasswordInput name="currentPassword" label="Current password" />
               <PasswordInput name="newPassword" label="New password" />
-              <PasswordInput
-                name="confirmPassword"
-                label="Confirm password"
-              />
+              <PasswordInput name="confirmPassword" label="Confirm password" />
               <Button
                 type="submit"
                 name="intent"
@@ -229,12 +218,7 @@ export default function Settings() {
         <Stack gap="sm">
           <Title order={4}>Session</Title>
           <Form method="post" action="/logout">
-            <Button
-              type="submit"
-              variant="default"
-              color="red"
-              disabled={busy}
-            >
+            <Button type="submit" variant="default" color="red" disabled={busy}>
               Log out
             </Button>
           </Form>
