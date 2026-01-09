@@ -9,6 +9,10 @@ import type { StageRow } from "~/modules/job/types/stageRows";
 import { buildExternalStepsByAssembly } from "~/modules/job/services/externalSteps.server";
 import { prisma } from "~/utils/prisma.server";
 import { computeEffectiveOrderedBreakdown } from "~/modules/job/quantityUtils";
+import {
+  computeExternalGateFromSteps,
+  computeFinishCapBreakdown,
+} from "~/modules/job/utils/stageGateUtils";
 
 type AggregationActivity = {
   stage?: string | null;
@@ -22,10 +26,16 @@ type AggregationActivity = {
 export type StageStats = {
   goodArr: number[];
   defectArr: number[];
+  loggedDefectArr: number[];
+  reconciledDefectArr: number[];
+  processedArr: number[];
   usableArr: number[];
   attemptsArr: number[];
   goodTotal: number;
   defectTotal: number;
+  loggedDefectTotal: number;
+  reconciledDefectTotal: number;
+  processedTotal: number;
   usableTotal: number;
   attemptsTotal: number;
 };
@@ -216,6 +226,7 @@ export function buildStageRowsFromAggregation(options: {
     total: aggregation.totals.cut,
     loss: aggregation.stageStats.cut.defectArr,
     lossTotal: aggregation.stageStats.cut.defectTotal,
+    loggedDefectTotal: aggregation.stageStats.cut.loggedDefectTotal,
   });
   rows.push({
     kind: "internal",
@@ -225,6 +236,7 @@ export function buildStageRowsFromAggregation(options: {
     total: sewGate.total,
     loss: aggregation.stageStats.sew.defectArr,
     lossTotal: aggregation.stageStats.sew.defectTotal,
+    loggedDefectTotal: aggregation.stageStats.sew.loggedDefectTotal,
     hint: formatSewGateHint(sewGate.source),
   });
 
@@ -268,6 +280,7 @@ export function buildStageRowsFromAggregation(options: {
     total: aggregation.totals.finish,
     loss: aggregation.stageStats.finish.defectArr,
     lossTotal: aggregation.stageStats.finish.defectTotal,
+    loggedDefectTotal: aggregation.stageStats.finish.loggedDefectTotal,
   });
   rows.push({
     kind: "internal",
@@ -277,6 +290,7 @@ export function buildStageRowsFromAggregation(options: {
     total: aggregation.totals.pack,
     loss: aggregation.stageStats.pack.defectArr,
     lossTotal: aggregation.stageStats.pack.defectTotal,
+    loggedDefectTotal: aggregation.stageStats.pack.loggedDefectTotal,
   });
   rows.push({
     kind: "internal",
@@ -286,14 +300,29 @@ export function buildStageRowsFromAggregation(options: {
     total: aggregation.totals.qc,
     loss: aggregation.stageStats.qc.defectArr,
     lossTotal: aggregation.stageStats.qc.defectTotal,
+    loggedDefectTotal: aggregation.stageStats.qc.loggedDefectTotal,
   });
 
-  const finishGate = computeSewGateBreakdown({
-    aggregation,
-    derivedExternalSteps,
-    allowCutFallback: true,
+  const externalGate = computeExternalGateFromSteps(
+    externalSteps.map((step) => {
+      const aggregates =
+        aggregation.externalAggregates.get(step.type) ??
+        emptyExternalAggregate();
+      return { sent: aggregates.sent, received: aggregates.received };
+    })
+  );
+  const sewRecorded = aggregation.stageStats.sew.goodArr || [];
+  const cutRecorded = aggregation.stageStats.cut.goodArr || [];
+  const sewHasExplicit = aggregation.stageStats.sew.attemptsTotal > 0;
+  const finishInputBreakdown = computeFinishCapBreakdown({
+    externalGate,
+    sewRecorded,
+    sewHasExplicit,
+    cutRecorded,
+    finishRecorded: aggregation.stageStats.finish.goodArr || [],
+    finishLogged: [],
+    finishLossReconciled: aggregation.stageStats.finish.defectArr || [],
   });
-  const finishInputBreakdown = [...finishGate.breakdown];
   const finishInput = {
     breakdown: finishInputBreakdown,
     total: sumArray(finishInputBreakdown),
@@ -422,24 +451,46 @@ function computeStageStats(
     return {
       goodArr: arrCopy,
       defectArr: [],
+      loggedDefectArr: [],
+      reconciledDefectArr: [],
+      processedArr: arrCopy,
       usableArr: arrCopy,
       attemptsArr: arrCopy,
       goodTotal: fallbackTotal,
       defectTotal: 0,
+      loggedDefectTotal: 0,
+      reconciledDefectTotal: 0,
+      processedTotal: fallbackTotal,
       usableTotal: fallbackTotal,
       attemptsTotal: fallbackTotal,
     };
   }
   const goodArr: number[] = [];
   const defectArr: number[] = [];
+  const loggedDefectArr: number[] = [];
+  const reconciledDefectArr: number[] = [];
   let goodTotal = 0;
   let defectTotal = 0;
+  let loggedDefectTotal = 0;
+  let reconciledDefectTotal = 0;
   for (const act of acts) {
     const qty = Number(act.quantity ?? 0) || 0;
     const breakdown = normalizeBreakdown(act.qtyBreakdown, qty);
-    if (String(act.kind || "").toLowerCase() === ActivityKind.defect.toLowerCase()) {
+    if (
+      String(act.kind || "").toLowerCase() ===
+      ActivityKind.defect.toLowerCase()
+    ) {
       defectTotal += qty;
       addInto(defectArr, breakdown);
+      if (act.action === ActivityAction.LOSS_RECONCILED ||
+          act.action === ActivityAction.ADJUSTMENT) {
+        reconciledDefectTotal += qty;
+        addInto(reconciledDefectArr, breakdown);
+      }
+      if (act.action === ActivityAction.DEFECT_LOGGED) {
+        loggedDefectTotal += qty;
+        addInto(loggedDefectArr, breakdown);
+      }
     } else {
       goodTotal += qty;
       addInto(goodArr, breakdown);
@@ -454,24 +505,38 @@ function computeStageStats(
     goodArr.splice(0, goodArr.length, ...fallbackArr);
     goodTotal = fallbackTotal;
   }
-  const len = Math.max(goodArr.length, defectArr.length);
+  const len = Math.max(
+    goodArr.length,
+    defectArr.length,
+    loggedDefectArr.length,
+    reconciledDefectArr.length
+  );
+  const processedArr: number[] = [];
   const usableArr: number[] = [];
   const attemptsArr: number[] = [];
   for (let i = 0; i < len; i++) {
     const good = Number(goodArr[i] ?? 0) || 0;
     const bad = Number(defectArr[i] ?? 0) || 0;
-    usableArr[i] = good - bad;
-    attemptsArr[i] = good;
+    processedArr[i] = good + bad;
+    usableArr[i] = good;
+    attemptsArr[i] = processedArr[i];
   }
+  const processedTotal = goodTotal + defectTotal;
   return {
     goodArr,
     defectArr,
+    loggedDefectArr,
+    reconciledDefectArr,
+    processedArr,
     usableArr,
     attemptsArr,
     goodTotal,
     defectTotal,
-    usableTotal: goodTotal - defectTotal,
-    attemptsTotal: goodTotal,
+    loggedDefectTotal,
+    reconciledDefectTotal,
+    processedTotal,
+    usableTotal: goodTotal,
+    attemptsTotal: processedTotal,
   };
 }
 
@@ -578,8 +643,8 @@ export function computeSewGateBreakdown(options: {
     }
   }
 
-  const sewArr = aggregation.stageStats.sew.usableArr || [];
-  const finishArr = aggregation.stageStats.finish.usableArr || [];
+  const sewArr = aggregation.stageStats.sew.processedArr || [];
+  const finishArr = aggregation.stageStats.finish.processedArr || [];
   const sewTotal = sumArray(sewArr);
   const finishTotal = sumArray(finishArr);
   if (sewTotal > 0 || finishTotal > 0) {
@@ -591,7 +656,7 @@ export function computeSewGateBreakdown(options: {
     };
   }
 
-  const fallback = aggregation.stageStats.cut.usableArr || [];
+  const fallback = aggregation.stageStats.cut.processedArr || [];
   if (!allowCutFallback) {
     return { breakdown: [], total: 0, source: "none" };
   }

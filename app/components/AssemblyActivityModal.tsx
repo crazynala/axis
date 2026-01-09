@@ -4,9 +4,11 @@ import {
   Button,
   Group,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
+  Textarea,
   TextInput,
   Title,
 } from "@mantine/core";
@@ -25,6 +27,14 @@ import {
 } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
 import type { AssemblyActivityFormValues } from "~/modules/job/forms/jobAssemblyActivityMarshaller";
 import { computeEffectiveOrderedBreakdown } from "~/modules/job/quantityUtils";
+import {
+  anyPositive,
+  computeDownstreamUsed,
+  computeExternalGateFromSteps,
+  computeFinishCapBreakdown,
+  computeReconcileDefault,
+  computeReconcileMax,
+} from "~/modules/job/utils/stageGateUtils";
 
 type Costing = {
   id: number;
@@ -68,7 +78,8 @@ export function AssemblyActivityModal(props: {
   assembly: any;
   productVariantSet?: { variants: string[] } | null;
   costings: Costing[];
-  activityType: "cut" | "finish" | "pack";
+  defectReasons?: Array<{ id: number; label: string | null }>;
+  activityType: "cut" | "sew" | "finish" | "pack";
   mode?: "create" | "edit";
   activityId?: number;
   initialDate?: Date | string | null;
@@ -85,6 +96,7 @@ export function AssemblyActivityModal(props: {
     cut?: number[];
     finishInput?: number[];
     finishDone?: number[];
+    sewDone?: number[];
   }>;
   quantityItem?: any;
 }) {
@@ -94,6 +106,7 @@ export function AssemblyActivityModal(props: {
     assembly,
     productVariantSet,
     costings,
+    defectReasons,
     activityType,
     mode = "create",
     activityId,
@@ -105,6 +118,7 @@ export function AssemblyActivityModal(props: {
     packReference,
   } = props;
   const submit = useSubmit();
+  const isGroupMode = Array.isArray(props.groupQtyItems) && props.groupQtyItems.length > 0;
   const labelsRaw =
     (assembly.variantSet?.variants?.length
       ? assembly.variantSet.variants
@@ -128,6 +142,7 @@ export function AssemblyActivityModal(props: {
     );
     return labelsRaw.slice(0, effectiveLen);
   }, [labelsRaw, assembly]);
+  const [activityMode, setActivityMode] = useState<"record" | "reconcile">("record");
   // Single-assembly defaults
   const ordered = ((assembly as any).qtyOrderedBreakdown || []) as number[];
   const canceled = ((assembly as any).c_canceled_Breakdown || []) as number[];
@@ -143,20 +158,129 @@ export function AssemblyActivityModal(props: {
     (((assembly as any).c_qtyCut_Breakdown || []) as number[]) || [];
   const leftToCutExt =
     (((assembly as any).c_qtyLeftToCut_Breakdown || []) as number[]) || [];
+  const stageStats = (props.quantityItem as any)?.stageStats || {};
+  const stageRows = (props.quantityItem as any)?.stageRows || [];
+  const externalGate = useMemo(() => {
+    const steps = (stageRows || [])
+      .filter((row: any) => row?.kind === "external")
+      .map((row: any) => ({
+        sent: row?.sent || [],
+        received: row?.received || [],
+      }));
+    return computeExternalGateFromSteps(steps);
+  }, [stageRows]);
+  const finishCap = useMemo(() => {
+    const sewRecorded = (stageStats?.sew?.goodArr as number[]) || [];
+    const cutRecorded = (stageStats?.cut?.goodArr as number[]) || [];
+    const sewHasExplicit =
+      Number(stageStats?.sew?.attemptsTotal ?? 0) > 0;
+    return computeFinishCapBreakdown({
+      externalGate,
+      sewRecorded,
+      sewHasExplicit,
+      cutRecorded,
+      finishRecorded: (stageStats?.finish?.goodArr as number[]) || [],
+      finishLogged: [],
+      finishLossReconciled: (stageStats?.finish?.defectArr as number[]) || [],
+    });
+  }, [externalGate, stageStats]);
+  const reconcileDefaults = useMemo(() => {
+    if (mode !== "create" || isGroupMode) return [];
+    if (activityType === "sew") return [];
+    const sewRecorded = (stageStats?.sew?.processedArr as number[]) || [];
+    const finishRecorded = (stageStats?.finish?.processedArr as number[]) || [];
+    const packRecorded = (stageStats?.pack?.processedArr as number[]) || [];
+    const downstream = computeDownstreamUsed({
+      externalGate,
+      sewRecorded,
+      finishRecorded,
+      packRecorded,
+    });
+    const usable =
+      activityType === "cut"
+        ? (stageStats?.cut?.usableArr as number[]) || []
+        : activityType === "finish"
+        ? (stageStats?.finish?.usableArr as number[]) || []
+        : (stageStats?.pack?.usableArr as number[]) || [];
+    const downstreamUsed =
+      activityType === "cut"
+        ? downstream.cut
+        : activityType === "finish"
+        ? downstream.finish
+        : downstream.pack;
+    if (!anyPositive(downstreamUsed)) {
+      const len = Math.max(usable.length, 1);
+      return Array.from({ length: len }, () => 0);
+    }
+    return computeReconcileDefault(usable, downstreamUsed);
+  }, [mode, isGroupMode, stageStats, activityType, externalGate]);
+  const reconcileEligible = useMemo(() => {
+    if (mode !== "create" || isGroupMode) return false;
+    if (activityType === "sew") return false;
+    const sewRecorded = (stageStats?.sew?.processedArr as number[]) || [];
+    const finishRecorded = (stageStats?.finish?.processedArr as number[]) || [];
+    const packRecorded = (stageStats?.pack?.processedArr as number[]) || [];
+    const downstream = computeDownstreamUsed({
+      externalGate,
+      sewRecorded,
+      finishRecorded,
+      packRecorded,
+    });
+    const usable =
+      activityType === "cut"
+        ? (stageStats?.cut?.usableArr as number[]) || []
+        : activityType === "finish"
+        ? (stageStats?.finish?.usableArr as number[]) || []
+        : (stageStats?.pack?.usableArr as number[]) || [];
+    const alreadyReconciled =
+      activityType === "cut"
+        ? (stageStats?.cut?.reconciledDefectArr as number[]) || []
+        : activityType === "finish"
+        ? (stageStats?.finish?.reconciledDefectArr as number[]) || []
+        : (stageStats?.pack?.reconciledDefectArr as number[]) || [];
+    const downstreamUsed =
+      activityType === "cut"
+        ? downstream.cut
+        : activityType === "finish"
+        ? downstream.finish
+        : downstream.pack;
+    const maxRecon = computeReconcileMax(
+      usable,
+      downstreamUsed,
+      alreadyReconciled
+    );
+    return anyPositive(maxRecon);
+  }, [mode, isGroupMode, stageStats, activityType, externalGate]);
+  useEffect(() => {
+    if (!opened) return;
+    setActivityMode("record");
+  }, [opened]);
+  useEffect(() => {
+    if (!reconcileEligible && activityMode === "reconcile") {
+      setActivityMode("record");
+    }
+  }, [reconcileEligible, activityMode]);
   const defaultBreakdown = useMemo(() => {
     const len = labels.length; // strictly respect effective variant columns
     const finishInput =
-      ((props.quantityItem as any)?.finishInput?.breakdown as number[]) || [];
+      finishCap.length
+        ? finishCap
+        : ((props.quantityItem as any)?.finishInput?.breakdown as number[]) || [];
+    const processedCut =
+      ((props.quantityItem as any)?.stageStats?.cut?.processedArr as number[]) || [];
+    const sewDone =
+      ((props.quantityItem as any)?.stageStats?.sew?.processedArr as number[]) || [];
     const finishDone =
-      ((props.quantityItem as any)?.stageStats?.finish?.usableArr as number[]) || [];
+      ((props.quantityItem as any)?.stageStats?.finish?.processedArr as number[]) || [];
     const packedDone =
-      ((props.quantityItem as any)?.stageStats?.pack?.usableArr as number[]) || [];
+      ((props.quantityItem as any)?.stageStats?.pack?.processedArr as number[]) || [];
     return computeDefaultActivityBreakdownFromArrays({
       activityType,
       labelsLen: len,
       ordered: effectiveOrdered,
       canceled,
-      alreadyCut,
+      alreadyCut: processedCut.length ? processedCut : alreadyCut,
+      alreadySew: sewDone,
       leftToCut: leftToCutExt,
       finishInput,
       finishDone: finishDone.length
@@ -164,7 +288,11 @@ export function AssemblyActivityModal(props: {
         : (((assembly as any).c_qtyFinish_Breakdown as number[]) || []),
       packedDone,
     });
-  }, [activityType, labels, effectiveOrdered, canceled, alreadyCut, leftToCutExt, props.quantityItem, assembly]);
+  }, [activityType, labels, effectiveOrdered, canceled, alreadyCut, leftToCutExt, props.quantityItem, assembly, finishCap]);
+  const activeDefaultBreakdown =
+    activityMode === "reconcile" && reconcileEligible
+      ? reconcileDefaults
+      : defaultBreakdown;
 
   // Group-assembly defaults prepared from provided groupQtyItems
   const groupDefaults = useMemo(() => {
@@ -194,6 +322,7 @@ export function AssemblyActivityModal(props: {
         labelsLen: effectiveLen,
         ordered: g.ordered || [],
         alreadyCut: g.cut || [],
+        alreadySew: g.sewDone || [],
         finishInput: g.finishInput || [],
         finishDone: g.finishDone || [],
       });
@@ -211,8 +340,8 @@ export function AssemblyActivityModal(props: {
       .join("|");
   }, [groupDefaults]);
   const defaultBreakdownResetKey = useMemo(
-    () => defaultBreakdown.join(","),
-    [defaultBreakdown]
+    () => activeDefaultBreakdown.join(","),
+    [activeDefaultBreakdown]
   );
   const initialBreakdownResetKey = useMemo(
     () => (initialBreakdown ? initialBreakdown.join(",") : "none"),
@@ -238,7 +367,7 @@ export function AssemblyActivityModal(props: {
         mode,
         initialDate,
         initialBreakdown,
-        defaultBreakdown,
+        defaultBreakdown: activeDefaultBreakdown,
         groupDefaults: groupDefaults?.map(
           ({ assemblyId, defaultBreakdown }) => ({
             assemblyId,
@@ -251,7 +380,7 @@ export function AssemblyActivityModal(props: {
       mode,
       initialDate,
       initialBreakdown,
-      defaultBreakdown,
+      activeDefaultBreakdown,
       groupDefaults,
       initialConsumption,
     ]
@@ -266,6 +395,7 @@ export function AssemblyActivityModal(props: {
       activityId ?? "new",
       dateKey,
       defaultBreakdownResetKey,
+      activityMode,
       groupDefaultsResetKey,
       initialBreakdownResetKey,
       initialConsumptionResetKey,
@@ -276,6 +406,7 @@ export function AssemblyActivityModal(props: {
     activityId,
     initialDate,
     defaultBreakdownResetKey,
+    activityMode,
     groupDefaultsResetKey,
     initialBreakdownResetKey,
     initialConsumptionResetKey,
@@ -333,7 +464,16 @@ export function AssemblyActivityModal(props: {
   const isPack = activityType === "pack";
   const isLegacyPack = isPack && packReference?.kind === "shipment";
   const readOnly = mode === "edit" && (!isEditing || isLegacyPack);
-  const showConsumptionSection = !isPack;
+  const showConsumptionSection = !isPack && activityMode !== "reconcile";
+  const showReconcileInfo = activityMode === "reconcile";
+  const stageLabel =
+    activityType === "cut"
+      ? "Cut"
+      : activityType === "sew"
+      ? "Sew"
+      : activityType === "finish"
+      ? "Finish"
+      : "Pack";
   const setConsumptionValue = useCallback(
     (cid: number, bid: number, value: string) => {
       const path = `consumption.${cid}.${bid}` as const;
@@ -473,6 +613,9 @@ export function AssemblyActivityModal(props: {
       extraFields,
       overrideIntent,
     });
+    if (activityMode === "reconcile") {
+      fd.set("activityMode", "reconcile");
+    }
     submit(fd, { method: "post" });
     onClose();
   });
@@ -488,13 +631,29 @@ export function AssemblyActivityModal(props: {
       closeOnClickOutside={false}
       withCloseButton={mode === "edit"}
       title={
-        mode === "edit"
-          ? "Edit Activity"
-          : activityType === "cut"
-          ? "Record Cut"
-          : activityType === "finish"
-          ? "Record Finish"
-          : "Record Activity"
+        mode === "edit" ? (
+          "Edit Activity"
+        ) : reconcileEligible ? (
+          <SegmentedControl
+            size="md"
+            value={activityMode}
+            onChange={(val) =>
+              setActivityMode(val === "reconcile" ? "reconcile" : "record")
+            }
+            data={[
+              { label: `Record ${stageLabel}`, value: "record" },
+              { label: `Reconcile ${stageLabel}`, value: "reconcile" },
+            ]}
+            styles={{
+              root: { minHeight: 36 },
+              label: { fontSize: 16, fontWeight: 600, padding: "6px 12px" },
+            }}
+          />
+        ) : (
+          <Text fw={600} size="lg">
+            Record {stageLabel}
+          </Text>
+        )
       }
       size="xxl"
       centered
@@ -638,6 +797,7 @@ export function AssemblyActivityModal(props: {
                                       {...registration}
                                       readOnly={readOnly}
                                       disabled={readOnly}
+                                      autoFocus={groupIndex === 0 && labelIndex === 0}
                                       styles={{
                                         input: {
                                           width: "100%",
@@ -700,6 +860,7 @@ export function AssemblyActivityModal(props: {
                             {...registration}
                             readOnly={readOnly}
                             disabled={readOnly}
+                            autoFocus={index === 0}
                             styles={{
                               input: {
                                 width: "100%",
@@ -719,6 +880,61 @@ export function AssemblyActivityModal(props: {
               </Table>
             )}
           </Stack>
+
+          {showReconcileInfo ? (
+            <Stack gap="sm">
+              <Group grow gap="md">
+                <TextInput label="Stage" value={stageLabel} readOnly />
+                <Controller
+                  control={control}
+                  name="defectDisposition"
+                  render={({ field }) => (
+                    <Select
+                      label="Disposition"
+                      data={[
+                        { value: "review", label: "Set aside for QC review" },
+                        { value: "scrap", label: "Scrap" },
+                        { value: "offSpec", label: "Off-spec / Donation" },
+                        { value: "sample", label: "Sample" },
+                      ]}
+                      value={field.value || ""}
+                      onChange={(val) => field.onChange(val || "")}
+                      clearable
+                    />
+                  )}
+                />
+              </Group>
+              <Controller
+                control={control}
+                name="defectReasonId"
+                render={({ field }) => (
+                  <Select
+                    label="Defect Reason"
+                    placeholder="Select reason"
+                    data={(defectReasons || []).map((r) => ({
+                      value: String(r.id),
+                      label: r.label || `#${r.id}`,
+                    }))}
+                    value={field.value || ""}
+                    onChange={(val) => field.onChange(val || "")}
+                    clearable
+                  />
+                )}
+              />
+              <Controller
+                control={control}
+                name="notes"
+                render={({ field }) => (
+                  <Textarea
+                    label="Notes"
+                    minRows={2}
+                    value={field.value || ""}
+                    onChange={(e) => field.onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
+            </Stack>
+          ) : null}
 
           {showConsumptionSection ? (
             <Stack gap="md">

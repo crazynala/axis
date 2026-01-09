@@ -375,3 +375,40 @@ export async function createFinishActivity(options: {
   }
   return activity;
 }
+
+export async function createSewActivity(options: {
+  assemblyId: number;
+  jobId: number;
+  activityDate: Date;
+  qtyBreakdown: number[];
+  notes?: string | null;
+  groupKey?: string | null;
+}) {
+  const { assemblyId, jobId, activityDate, qtyBreakdown, notes, groupKey } =
+    options;
+  const totalSew = (qtyBreakdown || []).reduce(
+    (t, n) => (Number.isFinite(n) ? t + (n as number) : t),
+    0
+  );
+  console.log("[activity] createSewActivity begin", {
+    assemblyId,
+    jobId,
+    activityDate: activityDate?.toISOString?.() || activityDate,
+    totalSew,
+  });
+  return prisma.assemblyActivity.create({
+    data: {
+      assemblyId,
+      jobId,
+      name: "Sew",
+      stage: AssemblyStage.sew,
+      kind: ActivityKind.normal,
+      action: ActivityAction.RECORDED,
+      activityDate,
+      qtyBreakdown: qtyBreakdown as any,
+      quantity: totalSew,
+      notes: notes ?? null,
+      groupKey: groupKey ?? null,
+    },
+  });
+}

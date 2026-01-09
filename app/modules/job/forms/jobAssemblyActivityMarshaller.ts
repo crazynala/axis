@@ -12,6 +12,9 @@ export type AssemblyActivityFormValues = {
   qtyBreakdown: QuantityValue[];
   qtyGroup?: AssemblyGroupQtyValue[];
   consumption: Record<string, Record<string, string>>;
+  defectDisposition?: string | null;
+  defectReasonId?: string | null;
+  notes?: string | null;
 };
 
 export type AssemblyGroupDefault = {
@@ -29,11 +32,12 @@ export type BuildAssemblyActivityDefaultsArgs = {
 };
 
 export function computeDefaultActivityBreakdownFromArrays(args: {
-  activityType: "cut" | "finish" | "pack";
+  activityType: "cut" | "sew" | "finish" | "pack";
   labelsLen: number;
   ordered?: number[];
   canceled?: number[];
   alreadyCut?: number[];
+  alreadySew?: number[];
   leftToCut?: number[];
   finishInput?: number[];
   finishDone?: number[];
@@ -45,6 +49,7 @@ export function computeDefaultActivityBreakdownFromArrays(args: {
     ordered = [],
     canceled = [],
     alreadyCut = [],
+    alreadySew = [],
     leftToCut = [],
     finishInput = [],
     finishDone = [],
@@ -65,6 +70,15 @@ export function computeDefaultActivityBreakdownFromArrays(args: {
         return clamp(Math.min(Number(ext), get(effectiveOrdered, i)));
       }
       return clamp(get(effectiveOrdered, i) - get(alreadyCut, i));
+    });
+  }
+
+  if (activityType === "sew") {
+    return Array.from({ length: labelsLen }, (_, i) => {
+      const cap = alreadyCut.length
+        ? get(alreadyCut, i)
+        : get(effectiveOrdered, i);
+      return clamp(cap - get(alreadySew, i));
     });
   }
 
@@ -144,12 +158,15 @@ export function buildAssemblyActivityDefaultValues(
     activityDate: baseDate,
     qtyBreakdown: sourceBreakdown.map((n) => ({ value: String(n || 0) })),
     consumption,
+    defectDisposition: null,
+    defectReasonId: null,
+    notes: null,
   };
 }
 
 export type SerializeAssemblyActivityOptions = {
   mode: "create" | "edit";
-  activityType: "cut" | "make" | "pack";
+  activityType: "cut" | "sew" | "make" | "pack";
   activityId?: number;
   extraFields?: Record<string, string | number>;
   overrideIntent?: string;
@@ -221,6 +238,16 @@ export function serializeAssemblyActivityValues(
       return acc;
     }, []);
   fd.set("consumptions", JSON.stringify(consumptionsArr));
+
+  if (values.defectDisposition) {
+    fd.set("defectDisposition", values.defectDisposition);
+  }
+  if (values.defectReasonId) {
+    fd.set("defectReasonId", values.defectReasonId);
+  }
+  if (values.notes) {
+    fd.set("notes", values.notes);
+  }
 
   return fd;
 }

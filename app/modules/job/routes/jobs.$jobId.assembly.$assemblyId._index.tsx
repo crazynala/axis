@@ -25,6 +25,7 @@ import {
   Group,
   Menu,
   Modal,
+  Popover,
   SegmentedControl,
   Stack,
   Table,
@@ -570,7 +571,9 @@ export function AssemblyDetailView({
   };
   const [manualHoldSegment, setManualHoldSegment] = useState("OFF");
   const [manualHoldReason, setManualHoldReason] = useState("");
-  const [manualHoldDirty, setManualHoldDirty] = useState(false);
+  const [holdPopoverOpen, setHoldPopoverOpen] = useState(false);
+  const [holdPendingType, setHoldPendingType] = useState<"CLIENT" | "INTERNAL" | null>(null);
+  const [holdPendingReason, setHoldPendingReason] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelArr, setCancelArr] = useState<number[]>([]);
   const [cancelLabels, setCancelLabels] = useState<string[]>([]);
@@ -593,6 +596,9 @@ export function AssemblyDetailView({
     setManualHoldSegment(on ? type : "OFF");
     setManualHoldReason(String(primaryAssembly.manualHoldReason || ""));
     setManualHoldDirty(false);
+    setHoldPopoverOpen(false);
+    setHoldPendingType(null);
+    setHoldPendingReason("");
   }, [
     primaryAssembly?.id,
     primaryAssembly?.manualHoldOn,
@@ -678,10 +684,12 @@ export function AssemblyDetailView({
     setCancelBaseline(baselineLabel);
     setCancelOpen(true);
   };
-  const submitManualHold = () => {
+  const submitManualHold = (override?: { type?: string; reason?: string }) => {
     if (!primaryAssembly) return;
-    const holdOn = manualHoldSegment !== "OFF";
-    if (holdOn && !manualHoldReason.trim()) {
+    const type = override?.type ?? manualHoldSegment;
+    const reason = override?.reason ?? manualHoldReason;
+    const holdOn = type !== "OFF";
+    if (holdOn && !reason.trim()) {
       showToastError("Assembly hold requires a reason.");
       return;
     }
@@ -689,8 +697,8 @@ export function AssemblyDetailView({
     fd.set("_intent", "assembly.update");
     fd.set("assemblyId", String(primaryAssembly.id));
     fd.set("manualHoldOn", holdOn ? "true" : "false");
-    fd.set("manualHoldType", holdOn ? manualHoldSegment : "");
-    fd.set("manualHoldReason", holdOn ? manualHoldReason.trim() : "");
+    fd.set("manualHoldType", holdOn ? type : "");
+    fd.set("manualHoldReason", holdOn ? reason.trim() : "");
     if (typeof window !== "undefined") {
       fd.set("returnTo", window.location.pathname + window.location.search);
     }
@@ -789,50 +797,84 @@ export function AssemblyDetailView({
     const manualHoldControls =
       !isGroup && primaryAssembly ? (
         <Stack gap={4}>
-          <SegmentedControl
-            data={holdSegmentOptions}
-            value={manualHoldSegment}
-            disabled={manualHoldDisabled}
-            onChange={(value) => {
-              setManualHoldSegment(value);
-              if (value === "OFF") {
-                setManualHoldReason("");
-              }
-              setManualHoldDirty(true);
-            }}
-            size="xs"
-          />
-          {manualHoldSegment !== "OFF" ? (
-            <Textarea
-              placeholder="Hold reason"
-              value={manualHoldReason}
-              onChange={(e) => {
-                setManualHoldReason(e.currentTarget.value);
-                setManualHoldDirty(true);
-              }}
-              autosize
-              minRows={2}
-            />
+          <Popover
+            opened={holdPopoverOpen}
+            onChange={setHoldPopoverOpen}
+            withinPortal
+            position="bottom-start"
+          >
+            <Popover.Target>
+              <SegmentedControl
+                data={holdSegmentOptions}
+                value={manualHoldSegment}
+                disabled={manualHoldDisabled}
+                onChange={(value) => {
+                  if (value === "OFF") {
+                    if (manualHoldSegment !== "OFF") {
+                      setManualHoldSegment("OFF");
+                      setManualHoldReason("");
+                      submitManualHold({ type: "OFF", reason: "" });
+                    }
+                    return;
+                  }
+                  const pending = value === "CLIENT" ? "CLIENT" : "INTERNAL";
+                  setHoldPendingType(pending);
+                  setHoldPendingReason(
+                    pending === manualHoldSegment ? manualHoldReason : ""
+                  );
+                  setHoldPopoverOpen(true);
+                }}
+                size="xs"
+              />
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap="xs" style={{ width: 260 }}>
+                <Textarea
+                  placeholder="Hold reason"
+                  value={holdPendingReason}
+                  onChange={(e) => setHoldPendingReason(e.currentTarget.value)}
+                  autosize
+                  minRows={2}
+                />
+                <Group justify="flex-end" gap="xs">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    onClick={() => {
+                      setHoldPopoverOpen(false);
+                      setHoldPendingType(null);
+                      setHoldPendingReason("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="xs"
+                    disabled={!holdPendingReason.trim() || !holdPendingType}
+                    onClick={() => {
+                      if (!holdPendingType) return;
+                      setManualHoldSegment(holdPendingType);
+                      setManualHoldReason(holdPendingReason);
+                      submitManualHold({
+                        type: holdPendingType,
+                        reason: holdPendingReason,
+                      });
+                      setHoldPopoverOpen(false);
+                      setHoldPendingType(null);
+                      setHoldPendingReason("");
+                    }}
+                  >
+                    Apply
+                  </Button>
+                </Group>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+          {effectiveHoldLabel ? (
+            <Badge size="sm" color="orange" variant="light">
+              {effectiveHoldLabel}
+            </Badge>
           ) : null}
-          <Group gap="xs">
-            <Button
-              size="xs"
-              variant="light"
-              disabled={
-                manualHoldDisabled ||
-                (!manualHoldDirty && manualHoldSegment === "OFF") ||
-                (manualHoldSegment !== "OFF" && !manualHoldReason.trim())
-              }
-              onClick={submitManualHold}
-            >
-              Apply hold
-            </Button>
-            {effectiveHoldLabel ? (
-              <Badge size="sm" color="orange" variant="light">
-                {effectiveHoldLabel}
-              </Badge>
-            ) : null}
-          </Group>
         </Stack>
       ) : null;
     const groupBadge =
@@ -973,11 +1015,32 @@ export function AssemblyDetailView({
   // This caused the costings table to render empty for single assembly while group view worked.
   // Treat single assembly as a degenerate group: rely on `assembly.costings` like group mode.
   const topForm = useForm({ defaultValues: {} });
+  const primaryCostingId =
+    primaryAssembly?.id != null
+      ? (data.primaryCostingIdByAssembly?.[primaryAssembly.id] ??
+          (primaryAssembly as any)?.primaryCostingId ??
+          null)
+      : null;
+  const primaryCosting =
+    primaryCostingId != null
+      ? (assembly?.costings || []).find(
+          (c: any) => Number(c?.id) === Number(primaryCostingId)
+        )
+      : null;
+  const primaryFabric = primaryCosting?.product
+    ? {
+        id: primaryCosting.product.id,
+        sku: primaryCosting.product.sku,
+        name: primaryCosting.product.name,
+      }
+    : null;
   const assemblyDetailCtx = {
     isLoudMode,
     job,
     primaryAssembly,
     productForAssembly,
+    primaryFabric,
+    primaryFabricMissing: !primaryCostingId || !primaryCosting,
     assemblyTypeOptions,
     shipToAddressOptions: shipToAddressOptions as any,
     shipToAddressById,

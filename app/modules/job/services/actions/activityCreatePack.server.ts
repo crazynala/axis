@@ -1,5 +1,10 @@
 import { json, redirect } from "@remix-run/node";
+import { AssemblyStage } from "@prisma/client";
 import { createPackActivity } from "~/modules/job/services/boxPacking.server";
+import {
+  createReconcileActivity,
+  validateReconcileBreakdown,
+} from "~/modules/job/services/reconcileStage.server";
 
 export async function handleActivityCreatePack(opts: {
   request: Request;
@@ -11,6 +16,7 @@ export async function handleActivityCreatePack(opts: {
   const isFetch = opts.request.headers.get("X-Remix-Fetch") === "true";
   const qtyArrStr = String(opts.form.get("qtyBreakdown") || "[]");
   const activityDateStr = String(opts.form.get("activityDate") || "");
+  const activityMode = String(opts.form.get("activityMode") || "record");
   let qtyArr: number[] = [];
   try {
     const arr = JSON.parse(qtyArrStr);
@@ -33,6 +39,33 @@ export async function handleActivityCreatePack(opts: {
   const boxNotes = (opts.form.get("boxNotes") as string) || null;
   const allowOverpack = String(opts.form.get("allowOverpack") || "") === "1";
   const createShortfall = String(opts.form.get("createShortfall") || "") === "1";
+  if (activityMode === "reconcile") {
+    const error = await validateReconcileBreakdown({
+      assemblyId: targetAssemblyId,
+      stage: AssemblyStage.pack,
+      breakdown: qtyArr,
+    });
+    if (error) {
+      return json({ error }, { status: 400 });
+    }
+    const defectDisposition = String(opts.form.get("defectDisposition") || "");
+    const defectReasonId = String(opts.form.get("defectReasonId") || "");
+    const notes = String(opts.form.get("notes") || "");
+    await createReconcileActivity({
+      assemblyId: targetAssemblyId,
+      jobId: opts.jobId,
+      stage: AssemblyStage.pack,
+      qtyBreakdown: qtyArr,
+      activityDate,
+      defectDisposition: defectDisposition.length ? defectDisposition : null,
+      defectReasonId: defectReasonId.length ? Number(defectReasonId) : null,
+      notes: notes.length ? notes : null,
+    });
+    if (isFetch) {
+      return json({ success: true });
+    }
+    return redirect(`/jobs/${opts.jobId}/assembly/${opts.rawAssemblyIdParam}`);
+  }
   try {
     await createPackActivity({
       assemblyId: targetAssemblyId,

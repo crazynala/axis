@@ -1444,6 +1444,8 @@ enum ActivityAction {
   RECEIVED_IN
   ADJUSTMENT
   NOTE
+  DEFECT_LOGGED
+  LOSS_RECONCILED
 }
 
 enum ExternalStepType {

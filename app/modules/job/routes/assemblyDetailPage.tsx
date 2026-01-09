@@ -1,6 +1,6 @@
 import React from "react";
 import { DatePickerInput } from "@mantine/dates";
-import { CloseButton, Select, TextInput } from "@mantine/core";
+import { CloseButton, Select, Stack, TextInput } from "@mantine/core";
 import { Link } from "@remix-run/react";
 import type { PageNode } from "~/base/forms/layoutTypes";
 import type {
@@ -11,6 +11,7 @@ import type {
 import { L } from "~/base/forms/layoutDsl";
 import { ui } from "~/base/forms/cfg";
 import { DisplayField } from "~/base/forms/components/DisplayField";
+import { AxisChip } from "~/components/AxisChip";
 
 const isDraft = ({ ctx }: { ctx?: any }) => Boolean(ctx?.isLoudMode);
 
@@ -85,13 +86,36 @@ const assemblyProductField: FieldConfig = {
     const assembly = (ctx as any)?.primaryAssembly;
     const productId = product?.id ?? assembly?.productId;
     const label = product?.name || (productId ? `Product ${productId}` : "—");
-    return productId ? (
-      <DisplayField
-        label="Product"
-        value={<Link to={`/products/${productId}`}>{label}</Link>}
-      />
-    ) : (
-      <DisplayField label="Product" value={label} />
+    const primaryFabric = (ctx as any)?.primaryFabric;
+    const primaryMissing = Boolean((ctx as any)?.primaryFabricMissing);
+    const primaryLabel =
+      primaryFabric?.sku ||
+      primaryFabric?.name ||
+      (primaryFabric?.id ? `Product ${primaryFabric.id}` : "—");
+    return (
+      <Stack gap={4}>
+        {productId ? (
+          <DisplayField
+            label="Product"
+            value={<Link to={`/products/${productId}`}>{label}</Link>}
+          />
+        ) : (
+          <DisplayField label="Product" value={label} />
+        )}
+        {primaryFabric ? (
+          <DisplayField
+            label="Primary fabric"
+            value={
+              <Link to={`/products/${primaryFabric.id}`}>{primaryLabel}</Link>
+            }
+          />
+        ) : primaryMissing ? (
+          <DisplayField
+            label="Primary fabric"
+            value={<AxisChip tone="warning">Missing primary fabric</AxisChip>}
+          />
+        ) : null}
+      </Stack>
     );
   },
 };

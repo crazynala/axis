@@ -69,20 +69,26 @@ export function AssemblyPackModal({
   }, [variantLabels, quantityItem?.variants?.labels]);
 
   const finishBreakdown = useMemo(() => {
-    const finish = quantityItem?.finish || [];
+    const finish =
+      (quantityItem as any)?.stageStats?.finish?.processedArr ||
+      quantityItem?.finish ||
+      [];
     const len = Math.max(baseLabels.length, finish.length, 1);
     return Array.from({ length: len }, (_, idx) =>
       Number(finish[idx] ?? 0) || 0
     );
-  }, [baseLabels.length, quantityItem?.finish]);
+  }, [baseLabels.length, quantityItem]);
 
   const packedBreakdown = useMemo(() => {
-    const packed = quantityItem?.pack || [];
+    const packed =
+      (quantityItem as any)?.stageStats?.pack?.processedArr ||
+      quantityItem?.pack ||
+      [];
     const len = Math.max(baseLabels.length, packed.length, 1);
     return Array.from({ length: len }, (_, idx) =>
       Number(packed[idx] ?? 0) || 0
     );
-  }, [baseLabels.length, quantityItem?.pack]);
+  }, [baseLabels.length, quantityItem]);
 
   const availableBreakdown = useMemo(() => {
     const len = Math.max(

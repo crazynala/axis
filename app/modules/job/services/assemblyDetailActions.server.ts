@@ -13,6 +13,7 @@ import { handleCostingDelete } from "./actions/costingDelete.server";
 import { handleCostingRefreshProduct } from "./actions/costingRefreshProduct.server";
 import { handleActivityDelete } from "./actions/activityDelete.server";
 import { handleActivityCreateCut } from "./actions/activityCreateCut.server";
+import { handleActivityCreateSew } from "./actions/activityCreateSew.server";
 import { handleActivityCreateFinish } from "./actions/activityCreateFinish.server";
 import { handleActivityCreatePack } from "./actions/activityCreatePack.server";
 import { handleActivityUpdate } from "./actions/activityUpdate.server";
@@ -102,6 +103,9 @@ export async function handleAssemblyDetailAction({
   }
   if (intentStr === "activity.create.cut") {
     return handleActivityCreateCut({ jobId, assemblyId, form });
+  }
+  if (intentStr === "activity.create.sew") {
+    return handleActivityCreateSew({ jobId, assemblyId, form });
   }
   if (intentStr === "activity.create.finish") {
     return handleActivityCreateFinish({ jobId, assemblyId, form });

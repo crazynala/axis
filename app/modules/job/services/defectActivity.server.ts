@@ -1,4 +1,5 @@
 import {
+  ActivityAction,
   ActivityKind,
   AssemblyStage,
   DefectDisposition,
@@ -293,6 +294,7 @@ export async function createDefectActivity(input: CreateDefectInput) {
         name: "Defect",
         stage: input.stage,
         kind: ActivityKind.defect,
+        action: ActivityAction.DEFECT_LOGGED,
         defectDisposition: disposition,
         defectReasonId: input.defectReasonId ?? null,
         activityDate: input.activityDate,

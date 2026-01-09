@@ -21,6 +21,7 @@ export type InternalStageRow = {
   total: number;
   loss?: number[];
   lossTotal?: number;
+  loggedDefectTotal?: number;
   hint?: string;
 };
 

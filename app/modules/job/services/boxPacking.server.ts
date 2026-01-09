@@ -1,4 +1,9 @@
-import { ActivityKind, AssemblyStage, DefectDisposition } from "@prisma/client";
+import {
+  ActivityAction,
+  ActivityKind,
+  AssemblyStage,
+  DefectDisposition,
+} from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
 
 function normalizeBreakdown(values: number[] | undefined | null): number[] {
@@ -251,6 +256,7 @@ export async function createPackActivity(input: PackActivityInput) {
             jobId: assembly.jobId ?? input.jobId,
             stage: AssemblyStage.pack,
             kind: ActivityKind.defect,
+            action: ActivityAction.LOSS_RECONCILED,
             name: "Shortfall",
             defectDisposition: DefectDisposition.none,
             quantity: shortfallTotal,

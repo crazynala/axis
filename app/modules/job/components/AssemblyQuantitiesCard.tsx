@@ -15,6 +15,7 @@ import {
   IconArrowDownLeft,
   IconArrowUpRight,
   IconBox,
+  IconNeedle,
   IconScissors,
   IconSettings,
 } from "@tabler/icons-react";
@@ -153,6 +154,8 @@ export function AssemblyQuantitiesCard({
   holdByAssemblyId?: Record<number, { jobHold: boolean; assemblyHold: boolean }>;
   actionColumn?: {
     onRecordCut?: () => void;
+    onRecordSew?: () => void;
+    recordSewDisabled?: boolean;
     onRecordFinish?: () => void;
     recordFinishDisabled?: boolean;
     onRecordPack?: () => void;
@@ -170,6 +173,7 @@ export function AssemblyQuantitiesCard({
   const hasInternalActions = Boolean(
     actionColumn &&
       (actionColumn.onRecordCut ||
+        actionColumn.onRecordSew ||
         actionColumn.onRecordFinish ||
         actionColumn.onRecordPack)
   );
@@ -387,9 +391,27 @@ export function AssemblyQuantitiesCard({
             "Legacy order record: total exists but the size breakdown is empty.",
         });
       }
+
+      const logged = Number((row as any).loggedDefectTotal ?? 0) || 0;
+      if (logged > 0) {
+        ops.push({
+          key: "logged-defects",
+          tone: "neutral",
+          label: `Logged ${logged}`,
+          tooltip: "Defects logged out-of-band (do not change counts).",
+        });
+      }
     }
 
     if (row.kind === "external") {
+      if (row.status === "IMPLICIT_DONE") {
+        derived.push({
+          key: "derived",
+          tone: "info",
+          label: "Derived",
+          tooltip: "This row is implied from downstream activity.",
+        });
+      }
       if (row.isLate) {
         ops.push({
           key: "late",
@@ -399,7 +421,7 @@ export function AssemblyQuantitiesCard({
         });
       }
 
-      if (row.lowConfidence) {
+      if (row.lowConfidence && row.status !== "IMPLICIT_DONE") {
         derived.push({
           key: "derived",
           tone: "info",
@@ -420,11 +442,7 @@ export function AssemblyQuantitiesCard({
 
       // External step state chip is omitted when actions already communicate state.
       // Show it for IN_PROGRESS/DONE/IMPLICIT_DONE for clarity.
-      if (
-        row.status === "IN_PROGRESS" ||
-        row.status === "DONE" ||
-        row.status === "IMPLICIT_DONE"
-      ) {
+      if (row.status === "IN_PROGRESS" || row.status === "DONE") {
         extState.push({
           key: "ext-status",
           tone: "neutral",
@@ -432,6 +450,14 @@ export function AssemblyQuantitiesCard({
           tooltip: "External step status.",
         });
       }
+    }
+    if (row.kind === "internal" && row.stage === "sew" && row.hint) {
+      derived.push({
+        key: "derived",
+        tone: "info",
+        label: "Derived",
+        tooltip: row.hint,
+      });
     }
 
     const orderedWarnings = warnings;
@@ -827,6 +853,19 @@ export function AssemblyQuantitiesCard({
                                     onClick={actionColumn.onRecordCut}
                                   >
                                     <IconScissors size={16} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              ) : null}
+                              {internalRow.stage === "sew" &&
+                              actionColumn?.onRecordSew &&
+                              !actionColumn.recordSewDisabled ? (
+                                <Tooltip label="Record Sew" withArrow>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    aria-label="Record sew"
+                                    onClick={actionColumn.onRecordSew}
+                                  >
+                                    <IconNeedle size={16} />
                                   </ActionIcon>
                                 </Tooltip>
                               ) : null}

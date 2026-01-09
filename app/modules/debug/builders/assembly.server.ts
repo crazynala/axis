@@ -241,7 +241,13 @@ function summarizeActivities(activities: any[]) {
     const stageKey = activity.externalStepType
       ? String(activity.externalStepType).toLowerCase()
       : activity.stage || "other";
-    const key = `${stageKey}:${activity.action || "unknown"}`;
+    const actionKey =
+      String(activity.kind || "").toLowerCase() === "defect"
+        ? activity.action === "LOSS_RECONCILED" || activity.action === "ADJUSTMENT"
+          ? "LOSS"
+          : "DEFECT"
+        : activity.action || "unknown";
+    const key = `${stageKey}:${actionKey}`;
     const curr = summary[key] || { count: 0, qty: 0 };
     curr.count += 1;
     curr.qty += Number(activity.quantity || 0) || 0;

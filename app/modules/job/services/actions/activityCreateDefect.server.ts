@@ -1,8 +1,6 @@
 import { json, redirect } from "@remix-run/node";
 import { AssemblyStage, DefectDisposition } from "@prisma/client";
 import { createDefectActivity } from "~/modules/job/services/defectActivity.server";
-import { normalizeBreakdown } from "../parsers/assemblyDetailFormParsers.server";
-import { validateDefectBreakdown } from "../validators/validateDefectBreakdown.server";
 
 export async function handleActivityCreateDefect(opts: {
   jobId: number;
@@ -58,16 +56,7 @@ export async function handleActivityCreateDefect(opts: {
     ? (dispositionRaw as DefectDisposition)
     : DefectDisposition.review;
   const notes = opts.form.get("notes");
-  const breakdownForValidation = normalizeBreakdown(qtyBreakdown, qty);
   if (Number.isFinite(qty) && qty > 0) {
-    const validationError = await validateDefectBreakdown({
-      assemblyId: targetAssemblyId,
-      stage: stageEnum,
-      breakdown: breakdownForValidation,
-    });
-    if (validationError) {
-      return json({ error: validationError }, { status: 400 });
-    }
     try {
       await createDefectActivity({
         assemblyId: targetAssemblyId,

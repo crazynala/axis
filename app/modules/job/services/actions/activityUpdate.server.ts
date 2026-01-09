@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { AssemblyStage, DefectDisposition, ActivityAction } from "@prisma/client";
+import { AssemblyStage, DefectDisposition, ActivityAction, ActivityKind } from "@prisma/client";
 import { prisma, refreshProductStockSnapshot } from "~/utils/prisma.server";
 import { ensureFinishInventoryArtifacts } from "~/utils/activity.server";
 import { moveDefectDisposition } from "~/modules/job/services/defectActivity.server";
@@ -51,14 +51,21 @@ export async function handleActivityUpdate(opts: {
   const qtyTotal = qtyArr.reduce((t, n) => t + (Number(n) || 0), 0);
   const existingForValidation = await prisma.assemblyActivity.findUnique({
     where: { id: activityId },
-    select: { assemblyId: true, stage: true, defectDisposition: true },
+    select: { assemblyId: true, stage: true, defectDisposition: true, kind: true, action: true },
   });
   const existingStageLower = String(existingForValidation?.stage || "").toLowerCase();
   if (existingStageLower === "cancel" && !notesValue) {
     return json({ error: "Cancellation requires a reason." }, { status: 400 });
   }
   const validationBreakdown = normalizeBreakdown(qtyArr, qtyTotal);
-  if (existingForValidation?.assemblyId) {
+  if (
+    existingForValidation?.assemblyId &&
+    !(
+      existingForValidation.kind === "defect" &&
+      (existingForValidation.action === ActivityAction.DEFECT_LOGGED ||
+        existingForValidation.action === ActivityAction.NOTE)
+    )
+  ) {
     const validationError = await validateDefectBreakdown({
       assemblyId: existingForValidation.assemblyId,
       stage: existingForValidation.stage as AssemblyStage,
@@ -79,14 +86,20 @@ export async function handleActivityUpdate(opts: {
         stage: true,
         assemblyId: true,
         action: true,
+        kind: true,
       },
     });
     previousDisposition = (existingActivity?.defectDisposition ?? null) as DefectDisposition | null;
     const stageLower = String(existingActivity?.stage || "").toLowerCase();
-    const isRecordedStage = ["cut", "make", "finish", "pack", "cancel"].includes(
+    const isRecordedStage = ["cut", "sew", "make", "finish", "pack", "cancel"].includes(
       stageLower
     );
-    const updateAction = isRecordedStage ? ActivityAction.RECORDED : existingActivity?.action ?? null;
+    const updateAction =
+      existingActivity?.kind === ActivityKind.defect
+        ? existingActivity?.action ?? ActivityAction.DEFECT_LOGGED
+        : isRecordedStage
+        ? ActivityAction.RECORDED
+        : existingActivity?.action ?? null;
     const updated = await tx.assemblyActivity.update({
       where: { id: activityId },
       data: {

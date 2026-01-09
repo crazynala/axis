@@ -87,7 +87,7 @@ type MinimalCosting = Parameters<
   typeof buildCostingRows
 >[0]["costings"][number];
 
-type ActivityModalType = "cut" | "finish" | "pack";
+type ActivityModalType = "cut" | "sew" | "finish" | "pack";
 
 export function AssembliesEditor(props: {
   job?: { id: number; name?: string | null } | null;
@@ -739,9 +739,10 @@ export function AssembliesEditor(props: {
         assemblyId: a.id,
         variants: { labels: it?.variants?.labels || [] },
         ordered: it?.ordered || [],
-        cut: it?.cut || [],
+        cut: it?.stageStats?.cut?.processedArr || it?.cut || [],
+        sewDone: it?.stageStats?.sew?.processedArr || [],
         finishInput: it?.finishInput?.breakdown || [],
-        finishDone: it?.stageStats?.finish?.usableArr || [],
+        finishDone: it?.stageStats?.finish?.processedArr || [],
       };
     });
   }, [assemblies, isGroup, quantityItems]);
@@ -914,6 +915,25 @@ export function AssembliesEditor(props: {
     const cut = Number(totals.cut ?? 0) || 0;
     const finish = Number(totals.finish ?? 0) || 0;
     return cut > finish;
+  };
+  const canRecordSewForAssembly = (assemblyId: number) => {
+    const item = quantityItemsByAssemblyId.get(assemblyId);
+    if (!item) return false;
+    const sewHasExplicit =
+      Number(item?.stageStats?.sew?.attemptsTotal ?? 0) > 0;
+    if (sewHasExplicit) return true;
+    const finishRecorded =
+      Number(item?.stageStats?.finish?.processedTotal ?? 0) > 0;
+    const packRecorded =
+      Number(item?.stageStats?.pack?.processedTotal ?? 0) > 0;
+    const externalProgress = (item.stageRows || []).some((row: any) => {
+      if (row?.kind !== "external") return false;
+      const sent = Number(row?.totals?.sent ?? 0) || 0;
+      const received = Number(row?.totals?.received ?? 0) || 0;
+      return sent > 0 || received > 0;
+    });
+    if (finishRecorded || packRecorded || externalProgress) return false;
+    return true;
   };
   const canRecordPackForAssembly = (assemblyId: number) => {
     const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
@@ -1112,9 +1132,11 @@ export function AssembliesEditor(props: {
 
   const resolveActivityType = (activity: any | null): ActivityModalType => {
     const stage = String(activity?.stage || "").toLowerCase();
+    if (stage === "sew") return "sew";
     if (stage === "finish" || stage === "make") return "finish";
     if (stage === "pack") return "pack";
     const raw = String(activity?.name || "").toLowerCase();
+    if (raw.includes("sew")) return "sew";
     if (raw.includes("finish") || raw.includes("make")) return "finish";
     if (raw.includes("pack")) return "pack";
     return "cut";
@@ -1257,27 +1279,7 @@ export function AssembliesEditor(props: {
         ? costings.find((c: any) => Number(c?.id) === Number(primaryId))
         : null;
 
-    if (!primaryId || !primary) {
-      warnings.push({
-        key: "no-primary",
-        tone: "warning",
-        label: "No primary fabric",
-        tooltip: "No primary fabric costing is set.",
-      });
-    } else {
-      const labelCore =
-        primary?.product?.sku ||
-        primary?.product?.name ||
-        primary?.sku ||
-        primary?.name ||
-        `#${primaryId}`;
-      neutrals.push({
-        key: "primary",
-        tone: "neutral",
-        label: `Primary fabric: ${String(labelCore)}`,
-        tooltip: "Primary fabric costing (main fabric).",
-      });
-
+    if (primaryId && primary) {
       const qpuMissing =
         primary?.quantityPerUnit == null ||
         Number(primary.quantityPerUnit) <= 0 ||
@@ -1345,10 +1347,10 @@ export function AssembliesEditor(props: {
     const item = quantityItemsByAssemblyId.get(assemblyId);
     const stats = item?.stageStats;
     if (!stats) return null;
-    const cut = (stats.cut?.usableArr as number[]) || [];
-    const sew = (stats.sew?.usableArr as number[]) || [];
-    const finish = (stats.finish?.usableArr as number[]) || [];
-    const pack = (stats.pack?.usableArr as number[]) || [];
+    const cut = (stats.cut?.processedArr as number[]) || [];
+    const sew = (stats.sew?.processedArr as number[]) || [];
+    const finish = (stats.finish?.processedArr as number[]) || [];
+    const pack = (stats.pack?.processedArr as number[]) || [];
     const len = Math.max(cut.length, sew.length, finish.length, pack.length);
     const arr = Array.from({ length: len }, (_, idx) => {
       const c = Number(cut[idx] ?? 0) || 0;
@@ -1442,6 +1444,18 @@ export function AssembliesEditor(props: {
     confirmIfHeld(targetId, () => {
       setModalAssemblyId(targetId);
       setCreateActivityType("cut");
+      setEditActivity(null);
+      setActivityModalOpen(true);
+    });
+  };
+
+  const handleRecordSew = (assemblyId: number) => {
+    if (!canRecordSewForAssembly(assemblyId)) return;
+    const targetId = assemblyId ?? firstAssembly?.id ?? null;
+    if (!targetId) return;
+    confirmIfHeld(targetId, () => {
+      setModalAssemblyId(targetId);
+      setCreateActivityType("sew");
       setEditActivity(null);
       setActivityModalOpen(true);
     });
@@ -1718,6 +1732,8 @@ export function AssembliesEditor(props: {
                     }
                     actionColumn={{
                       onRecordCut: () => handleRecordCut(a.id),
+                      onRecordSew: () => handleRecordSew(a.id),
+                      recordSewDisabled: !canRecordSewForAssembly(a.id),
                       onRecordFinish: () => handleRecordFinish(a.id),
                       recordFinishDisabled: !canRecordFinishForAssembly(a.id),
                       onRecordPack: () => handleRecordPack(a.id),
@@ -1919,11 +1935,19 @@ export function AssembliesEditor(props: {
                                 representative?.stage != null
                                   ? String(representative.stage).trim()
                                   : "";
-                              if (stageRaw) return stageRaw.toUpperCase();
                               const kindRaw =
                                 representative?.kind != null
                                   ? String(representative.kind).trim()
                                   : "";
+                              if (kindRaw.toLowerCase() === "defect") {
+                                const stageLabel = stageRaw
+                                  ? `${stageRaw.charAt(0).toUpperCase()}${stageRaw
+                                      .slice(1)
+                                      .toLowerCase()}`
+                                  : "Defect";
+                                return `${stageLabel} defect`;
+                              }
+                              if (stageRaw) return stageRaw.toUpperCase();
                               const actionRaw =
                                 representative?.action != null
                                   ? String(representative.action).trim()
@@ -1949,6 +1973,19 @@ export function AssembliesEditor(props: {
                               const note = representative?.notes;
                               const createdBy = representative?.createdBy;
                               const createdAt = representative?.createdAt;
+                              const dispositionRaw = representative?.defectDisposition;
+                              const defectReasonId = Number(representative?.defectReasonId);
+                              const defectReasonLabel = defectReasons?.find(
+                                (r: any) => Number(r.id) === defectReasonId
+                              )?.label;
+                              const defectMeta = [
+                                dispositionRaw
+                                  ? `Disposition: ${String(dispositionRaw)}`
+                                  : "",
+                                defectReasonLabel
+                                  ? `Reason: ${defectReasonLabel}`
+                                  : "",
+                              ].filter(Boolean);
                               const metaParts = [
                                 createdBy ? `by ${createdBy}` : "",
                                 createdAt
@@ -1967,6 +2004,11 @@ export function AssembliesEditor(props: {
                                   {note ? (
                                     <Text size="xs" lineClamp={2}>
                                       {note}
+                                    </Text>
+                                  ) : null}
+                                  {defectMeta.length ? (
+                                    <Text size="xs" c="dimmed">
+                                      {defectMeta.join(" · ")}
                                     </Text>
                                   ) : null}
                                   {metaParts.length ? (
@@ -2454,6 +2496,7 @@ export function AssembliesEditor(props: {
             !editActivity && isGroup ? (groupQtyItemsPayload as any) : undefined
           }
           costings={modalCostings as any}
+          defectReasons={defectReasons as any}
           activityType={modalActivityType}
           mode={editActivity ? "edit" : "create"}
           activityId={editActivity?.id ?? undefined}
@@ -2646,7 +2689,11 @@ export function AssembliesEditor(props: {
       <Modal
         opened={defectModalOpen}
         onClose={closeDefectModal}
-        title={defectEditActivityId ? "Edit Defect" : "Record Defect"}
+        title={
+          <Text fw={600} size="lg">
+            {defectEditActivityId ? "Edit Defect" : "Record Defect"}
+          </Text>
+        }
         centered
         size="lg"
       >
@@ -2670,76 +2717,6 @@ export function AssembliesEditor(props: {
             ) || 0;
           return (
         <Stack gap="md">
-          <Group grow gap="md">
-            <Select
-              label="Stage"
-              data={[
-                { value: "cut", label: "Cut" },
-                { value: "sew", label: "Sew" },
-                { value: "finish", label: "Finish" },
-                { value: "pack", label: "Pack" },
-                { value: "qc", label: "QC" },
-                { value: "other", label: "Other" },
-              ]}
-              value={defectStage}
-              onChange={(val) => setDefectStage(val || "cut")}
-            />
-            <Select
-              label="Disposition"
-              data={[
-                { value: "review", label: "Set aside for QC review" },
-                { value: "scrap", label: "Scrap" },
-                { value: "offSpec", label: "Off-spec / Donation" },
-                { value: "sample", label: "Sample" },
-              ]}
-              value={defectDisposition}
-              onChange={(val) => setDefectDisposition(val || "review")}
-            />
-          </Group>
-          <Group grow gap="md">
-            {isGroup ? (
-              <Select
-                label="Assembly"
-                data={(assemblies || []).map((a) => ({
-                  value: String(a.id),
-                  label: `Assembly ${a.id}`,
-                }))}
-                value={defectAssemblyId ? String(defectAssemblyId) : undefined}
-                onChange={(val) =>
-                  setDefectAssemblyId(
-                    val ? Number(val) : firstAssembly?.id ?? null
-                  )
-                }
-              />
-            ) : (
-              <TextInput
-                label="Assembly"
-                value={
-                  defectAssemblyId
-                    ? `Assembly ${defectAssemblyId}`
-                    : `Assembly ${firstAssembly?.id ?? ""}`
-                }
-                readOnly
-              />
-            )}
-            <DatePickerInput
-              label="Date"
-              value={defectDate}
-              onChange={(value) => setDefectDate(value)}
-              valueFormat="YYYY-MM-DD"
-            />
-          </Group>
-          <Select
-            label="Defect Reason"
-            placeholder="Select reason"
-            data={(defectReasons || []).map((r) => ({
-              value: String(r.id),
-              label: r.label || `#${r.id}`,
-            }))}
-            value={defectReasonId || undefined}
-            onChange={(val) => setDefectReasonId(val || "")}
-            clearable
-          />
           <Stack gap="xs">
             <Group justify="space-between" align="center">
               <Title order={6}>Quantity breakdown</Title>
@@ -2774,6 +2751,7 @@ export function AssembliesEditor(props: {
                           variant="unstyled"
                           inputMode="numeric"
                           disabled={disabled}
+                          autoFocus={idx === 0}
                           value={displayVal}
                           placeholder={cap ? undefined : ""}
                           onChange={(e) => {
@@ -2804,6 +2782,43 @@ export function AssembliesEditor(props: {
               </Table.Tbody>
             </Table>
           </Stack>
+          <Group grow gap="md">
+            <Select
+              label="Stage"
+              data={[
+                { value: "cut", label: "Cut" },
+                { value: "sew", label: "Sew" },
+                { value: "finish", label: "Finish" },
+                { value: "pack", label: "Pack" },
+                { value: "qc", label: "QC" },
+                { value: "other", label: "Other" },
+              ]}
+              value={defectStage}
+              onChange={(val) => setDefectStage(val || "cut")}
+            />
+            <Select
+              label="Disposition"
+              data={[
+                { value: "review", label: "Set aside for QC review" },
+                { value: "scrap", label: "Scrap" },
+                { value: "offSpec", label: "Off-spec / Donation" },
+                { value: "sample", label: "Sample" },
+              ]}
+              value={defectDisposition}
+              onChange={(val) => setDefectDisposition(val || "review")}
+            />
+          </Group>
+          <Select
+            label="Defect Reason"
+            placeholder="Select reason"
+            data={(defectReasons || []).map((r) => ({
+              value: String(r.id),
+              label: r.label || `#${r.id}`,
+            }))}
+            value={defectReasonId || undefined}
+            onChange={(val) => setDefectReasonId(val || "")}
+            clearable
+          />
           <Textarea
             label="Notes"
             minRows={2}

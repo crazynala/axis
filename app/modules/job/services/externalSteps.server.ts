@@ -198,15 +198,15 @@ function deriveStep(opts: {
     .reduce((total, act) => total + Math.abs(toNumber(act.quantity) || 0), 0);
   const defectQty = defectQtyRaw > 0 ? defectQtyRaw : null;
 
-  const costingForStep = findCostingForStep(assembly, type);
+  const stepCosting = findCostingForStep(assembly, type);
   const defaultVendor =
-    costingForStep?.product?.supplier ??
+    stepCosting?.product?.supplier ??
     assembly.product?.supplier ??
     null;
   const productForStep =
-    costingForStep?.product ?? assembly.product ?? null;
+    stepCosting?.product ?? assembly.product ?? null;
   const companyForStep =
-    costingForStep?.product?.supplier ??
+    stepCosting?.product?.supplier ??
     assembly.product?.supplier ??
     null;
   const vendor =
@@ -216,7 +216,7 @@ function deriveStep(opts: {
     null;
 
   const leadTimeInfo = resolveLeadTimeDetail({
-    costing: costingForStep ? { leadTimeDays: costingForStep.leadTimeDays } : undefined,
+    costing: stepCosting ? { leadTimeDays: stepCosting.leadTimeDays } : undefined,
     product: productForStep
       ? { leadTimeDays: productForStep.leadTimeDays }
       : undefined,

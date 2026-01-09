@@ -65,16 +65,20 @@ export async function validateDefectBreakdown(opts: {
   };
   acts.forEach((act) => {
     if (opts.excludeActivityId && act.id === opts.excludeActivityId) return;
+    const isCountAffectingDefect =
+      act.kind === ActivityKind.defect &&
+      (act.action === ActivityAction.LOSS_RECONCILED ||
+        act.action === ActivityAction.ADJUSTMENT);
     if (act.stage === AssemblyStage.cut) {
-      if (act.kind === ActivityKind.defect) apply(cutDefArr, act, 1);
+      if (isCountAffectingDefect) apply(cutDefArr, act, 1);
       else apply(cutArr, act, 1);
     }
     if (act.stage === AssemblyStage.sew) {
-      if (act.kind === ActivityKind.defect) apply(sewDefArr, act, 1);
+      if (isCountAffectingDefect) apply(sewDefArr, act, 1);
       else apply(sewArr, act, 1);
     }
     if (act.stage === AssemblyStage.finish) {
-      if (act.kind === ActivityKind.defect) apply(finishDefArr, act, 1);
+      if (isCountAffectingDefect) apply(finishDefArr, act, 1);
       else apply(finishArr, act, 1);
     }
     if (act.stage === AssemblyStage.pack) {
