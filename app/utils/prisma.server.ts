@@ -388,7 +388,10 @@ async function computeProductStockQty(productId: number): Promise<number> {
     ) AS qty,
     COUNT(*)::int AS n
     FROM "ProductMovement" pm
-    WHERE pm."productId" = $1 AND lower(trim(COALESCE(pm."movementType",''))) <> 'transfer'
+    WHERE pm."productId" = $1
+      AND lower(trim(COALESCE(pm."movementType",''))) <> 'transfer'
+      AND lower(trim(COALESCE(pm."movementType",''))) <> 'retain'
+      AND lower(trim(COALESCE(pm."movementType",''))) NOT LIKE 'defect_%'
     `,
     productId
   )) as Array<{ qty: any; n: number }>;
@@ -485,14 +488,14 @@ async function computeProductByLocation(productId: number): Promise<Array<{ loca
       WHERE pm."productId" = $1
     ), exploded AS (
       -- Transfers: split with +/- ABS(qty)
-      SELECT loc_in  AS location_id, ABS(qty)  AS qty FROM pm_rows WHERE mt = 'transfer' AND loc_in  IS NOT NULL
+      SELECT loc_in  AS location_id, ABS(qty)  AS qty FROM pm_rows WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_in  IS NOT NULL
       UNION ALL
-      SELECT loc_out AS location_id, -ABS(qty) AS qty FROM pm_rows WHERE mt = 'transfer' AND loc_out IS NOT NULL
+      SELECT loc_out AS location_id, -ABS(qty) AS qty FROM pm_rows WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
       UNION ALL
       -- Non-transfers: use stored signed qty for each present location side
-      SELECT loc_in  AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND loc_in  IS NOT NULL
+      SELECT loc_in  AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_in  IS NOT NULL
       UNION ALL
-      SELECT loc_out AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND loc_out IS NOT NULL
+      SELECT loc_out AS location_id, qty AS qty FROM pm_rows WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
     )
     SELECT e.location_id, COALESCE(l.name,'') AS location_name, COALESCE(SUM(e.qty),0) AS qty
     FROM exploded e
@@ -601,7 +604,7 @@ export async function debugProductByLocation(productId: number) {
     const q = toNumber(r.qty);
     const absq = Math.abs(q);
     const mt = (r.mt || "").toLowerCase();
-    if (mt === "transfer") {
+    if (mt === "transfer" || mt === "retain" || mt.startsWith("defect_")) {
       if (r.loc_out != null)
         contrib.push({
           kind: "transfer_out",
@@ -653,7 +656,7 @@ export async function debugProductByLocation(productId: number) {
     const q = toNumber(r.qty);
     const absq = Math.abs(q);
     const mt = (r.mt || "").toLowerCase();
-    if (mt === "transfer") {
+    if (mt === "transfer" || mt === "retain" || mt.startsWith("defect_")) {
       if (r.loc_out != null) compareMap.set(r.loc_out, (compareMap.get(r.loc_out) ?? 0) - absq);
       if (r.loc_in != null) compareMap.set(r.loc_in, (compareMap.get(r.loc_in) ?? 0) + absq);
     } else {
@@ -866,7 +869,10 @@ type MaybeAssembly = {
   variantSetId?: number | null;
 } | null;
 
-function isStage(a: { name?: string | null; stage?: string | null }, needle: "cut" | "sew" | "finish" | "pack") {
+function isStage(
+  a: { name?: string | null; stage?: string | null },
+  needle: "cut" | "sew" | "finish" | "pack" | "retain"
+) {
   const stage = (a.stage || "").toString().toLowerCase();
   if (stage) return stage === needle;
   const s = (a.name || "").toString().toLowerCase();
@@ -951,8 +957,10 @@ async function computeAssemblyBreakdowns(
   const packArrays = (activities as Act[]).filter((a: Act) => isStage(a, "pack")).map((a: Act) => a.qtyBreakdown);
   const keepArrays = (activities as Act[])
     .filter((a: Act) => {
+      const stage = (a.stage || "").toString().toLowerCase();
+      if (stage === "retain") return true;
       const s = (a.name || "").toString().toLowerCase();
-      return s.includes("keep");
+      return s.includes("keep") || s.includes("retain");
     })
     .map((a: Act) => a.qtyBreakdown);
   const c_qtyCut_Breakdown = subtractArrays(len, sumArrays(len, cutArrays), sumArrays(len, trashCutArrays));

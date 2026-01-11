@@ -71,11 +71,19 @@ export async function getProductsForAssemblies(opts: { productIds: number[] }) {
 }
 
 export async function getAssemblyTypes() {
-  return prisma.valueList.findMany({
+  const rows = await prisma.valueList.findMany({
     where: { type: "AssemblyType" },
     select: { label: true },
     orderBy: { label: "asc" },
   });
+  const labels = new Set(rows.map((row) => String(row.label || "").trim()));
+  if (!labels.has("Keep")) {
+    rows.push({ label: "Keep" });
+  }
+  if (!labels.has("Internal Dev")) {
+    rows.push({ label: "Internal Dev" });
+  }
+  return rows;
 }
 
 export async function getCustomers() {

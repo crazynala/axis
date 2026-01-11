@@ -10,6 +10,7 @@ import {
   assertBatchLinePresence,
   assertTransferLocations,
 } from "~/utils/stockMovementGuards";
+import { ensureDestinationBatch, findAssemblyStockBatch } from "~/utils/batch.server";
 
 const DEFECT_MOVEMENT_TYPE: Record<DefectDisposition, string> = {
   none: "DEFECT_NONE",
@@ -131,27 +132,57 @@ async function maybeCreateDefectMovement(
     context: { movementId: movement.id, activityId: args.activityId },
   });
   let batchId: number | null = null;
+  let sourceBatchId: number | null = null;
   const normalizedStage = (args.stage as string | null) ?? null;
   if (
     normalizedStage === AssemblyStage.finish ||
     normalizedStage === "make"
   ) {
-    const batch = await tx.batch.findFirst({
-      where: {
-        productId,
-        assemblyId: args.assemblyId,
-        jobId: args.jobId,
-      },
-      orderBy: { createdAt: "desc" },
+    const destLocation = await tx.location.findUnique({
+      where: { id: destinationLocationId },
+      select: { name: true },
+    });
+    const batch = await ensureDestinationBatch(tx, {
+      productId,
+      jobId: args.jobId,
+      assemblyId: args.assemblyId,
+      locationId: destinationLocationId,
+      name: `A${args.assemblyId} Defect - ${destLocation?.name || "Destination"}`,
     });
     batchId = batch?.id ?? null;
+    if (product?.batchTrackingEnabled) {
+      const sourceBatch = await findAssemblyStockBatch(tx, {
+        productId,
+        jobId: args.jobId,
+        assemblyId: args.assemblyId,
+        locationId: sourceLocationId,
+      });
+      sourceBatchId = sourceBatch?.id ?? null;
+      if (!sourceBatchId) {
+        throw new Error(
+          "Finished goods batch is missing in stock location; record Finish before Defect."
+        );
+      }
+    }
   }
   assertBatchLinePresence({
     movementType: movement.movementType,
     batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
-    hasBatchId: batchId != null,
+    hasBatchId: batchId != null && (!product?.batchTrackingEnabled || sourceBatchId != null),
     context: { movementId: movement.id, productId },
   });
+  if (product?.batchTrackingEnabled && sourceBatchId) {
+    await tx.productMovementLine.create({
+      data: {
+        movementId: movement.id,
+        productMovementId: movement.id,
+        productId,
+        batchId: sourceBatchId,
+        quantity: -Math.abs(args.quantity),
+        notes: "Defect (source)",
+      },
+    });
+  }
   await tx.productMovementLine.create({
     data: {
       movementId: movement.id,
@@ -179,6 +210,7 @@ export async function moveDefectDisposition(
         productId: true,
         quantity: true,
         defectDisposition: true,
+        stage: true,
       },
     });
     if (!activity) return null;
@@ -224,21 +256,64 @@ export async function moveDefectDisposition(
         notes: `Defect disposition change to ${newDisposition}`,
       },
     });
-    assertBatchLinePresence({
-      movementType: movement.movementType,
-      batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
-      hasBatchId: true,
-      context: { movementId: movement.id, productId },
-    });
-    await tx.productMovementLine.create({
-      data: {
-        movementId: movement.id,
-        productMovementId: movement.id,
+    const normalizedStage = String(activity.stage || "").toLowerCase();
+    if (normalizedStage === "finish" || normalizedStage === "make") {
+      const destLocation = await tx.location.findUnique({
+        where: { id: dest },
+        select: { name: true },
+      });
+      const batch = await ensureDestinationBatch(tx, {
         productId,
-        quantity: Math.abs(Number(activity.quantity)),
-        notes: `Defect disposition change to ${newDisposition}`,
-      },
-    });
+        jobId: activity.jobId ?? null,
+        assemblyId: activity.assemblyId ?? null,
+        locationId: dest,
+        name: `A${activity.assemblyId ?? "?"} Defect - ${destLocation?.name || "Destination"}`,
+      });
+      let sourceBatchId: number | null = null;
+      if (product?.batchTrackingEnabled) {
+        const sourceBatch = await findAssemblyStockBatch(tx, {
+          productId,
+          jobId: activity.jobId ?? null,
+          assemblyId: activity.assemblyId ?? null,
+          locationId: source,
+        });
+        sourceBatchId = sourceBatch?.id ?? null;
+        if (!sourceBatchId) {
+          throw new Error(
+            "Finished goods batch is missing in stock location; record Finish before Defect."
+          );
+        }
+      }
+      assertBatchLinePresence({
+        movementType: movement.movementType,
+        batchTrackingEnabled: Boolean(product?.batchTrackingEnabled),
+        hasBatchId:
+          batch?.id != null && (!product?.batchTrackingEnabled || sourceBatchId != null),
+        context: { movementId: movement.id, productId },
+      });
+      if (product?.batchTrackingEnabled && sourceBatchId) {
+        await tx.productMovementLine.create({
+          data: {
+            movementId: movement.id,
+            productMovementId: movement.id,
+            productId,
+            batchId: sourceBatchId,
+            quantity: -Math.abs(Number(activity.quantity)),
+            notes: "Defect (source)",
+          },
+        });
+      }
+      await tx.productMovementLine.create({
+        data: {
+          movementId: movement.id,
+          productMovementId: movement.id,
+          productId,
+          batchId: batch?.id ?? undefined,
+          quantity: Math.abs(Number(activity.quantity)),
+          notes: `Defect disposition change to ${newDisposition}`,
+        },
+      });
+    }
     await tx.assemblyActivity.update({
       where: { id: activityId },
       data: { defectDisposition: newDisposition },

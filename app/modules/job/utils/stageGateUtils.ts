@@ -87,6 +87,7 @@ export function computeDownstreamUsed(opts: {
   sewRecorded: number[];
   finishRecorded: number[];
   packRecorded: number[];
+  retainRecorded?: number[];
 }): {
   cut: number[];
   sew: number[];
@@ -94,13 +95,16 @@ export function computeDownstreamUsed(opts: {
   pack: number[];
 } {
   const extGate = opts.externalGate.gate || [];
-  const finishDown = maxArrays(opts.finishRecorded, opts.packRecorded);
+  const packLike = opts.retainRecorded
+    ? maxArrays(opts.packRecorded, opts.retainRecorded)
+    : opts.packRecorded;
+  const finishDown = maxArrays(opts.finishRecorded, packLike);
   const sewDown = maxArrays(finishDown, extGate);
   const cutDown = maxArrays(sewDown, opts.sewRecorded);
   return {
     cut: clampArray(cutDown),
     sew: clampArray(sewDown),
-    finish: clampArray(opts.packRecorded),
+    finish: clampArray(packLike),
     pack: [],
   };
 }

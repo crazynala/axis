@@ -51,8 +51,23 @@ export async function handleActivityUpdate(opts: {
   const qtyTotal = qtyArr.reduce((t, n) => t + (Number(n) || 0), 0);
   const existingForValidation = await prisma.assemblyActivity.findUnique({
     where: { id: activityId },
-    select: { assemblyId: true, stage: true, defectDisposition: true, kind: true, action: true },
+    select: {
+      assemblyId: true,
+      stage: true,
+      defectDisposition: true,
+      kind: true,
+      action: true,
+      splitAllocationId: true,
+      isProjected: true,
+      sourceActivityId: true,
+    },
   });
+  if (existingForValidation?.splitAllocationId || (existingForValidation as any)?.isProjected || (existingForValidation as any)?.sourceActivityId) {
+    return json(
+      { error: "Inherited split activities cannot be edited. Edit the split allocation instead." },
+      { status: 400 }
+    );
+  }
   const existingStageLower = String(existingForValidation?.stage || "").toLowerCase();
   if (existingStageLower === "cancel" && !notesValue) {
     return json({ error: "Cancellation requires a reason." }, { status: 400 });
@@ -78,6 +93,50 @@ export async function handleActivityUpdate(opts: {
   }
   let updatedDisposition: DefectDisposition | null = null;
   let previousDisposition: DefectDisposition | null = null;
+  if (
+    existingForValidation?.assemblyId &&
+    String(existingForValidation.stage || "").toLowerCase() === "cut" &&
+    existingForValidation.kind !== ActivityKind.defect
+  ) {
+    const splitGroup = await prisma.assemblySplitGroup.findFirst({
+      where: { parentAssemblyId: existingForValidation.assemblyId },
+      include: { allocations: true },
+    });
+    if (splitGroup) {
+      const parent = await prisma.assembly.findUnique({
+        where: { id: existingForValidation.assemblyId },
+        select: { qtyOrderedBreakdown: true },
+      });
+      const remainder = Array.isArray(parent?.qtyOrderedBreakdown)
+        ? (parent?.qtyOrderedBreakdown as number[])
+        : [];
+      const allocationSum = (splitGroup.allocations || []).reduce((sum, a) => {
+        const arr = Array.isArray(a.allocatedBreakdown)
+          ? (a.allocatedBreakdown as number[])
+          : [];
+        const len = Math.max(sum.length, arr.length);
+        const next = new Array(len).fill(0);
+        for (let i = 0; i < len; i++) {
+          next[i] = (Number(sum[i] ?? 0) || 0) + (Number(arr[i] ?? 0) || 0);
+        }
+        return next;
+      }, [] as number[]);
+      const len = Math.max(allocationSum.length, remainder.length, validationBreakdown.length);
+      for (let i = 0; i < len; i++) {
+        const required = (Number(allocationSum[i] ?? 0) || 0) + (Number(remainder[i] ?? 0) || 0);
+        const actual = Number(validationBreakdown[i] ?? 0) || 0;
+        if (actual < required) {
+          return json(
+            {
+              error:
+                "Cut total cannot be reduced below split allocations plus parent remainder. Adjust the split allocation first.",
+            },
+            { status: 400 }
+          );
+        }
+      }
+    }
+  }
   await prisma.$transaction(async (tx) => {
     const existingActivity = await tx.assemblyActivity.findUnique({
       where: { id: activityId },

@@ -398,6 +398,8 @@ model Assembly {
   shipToLocationOverride       Location?           @relation("Assembly_shipToLocation", fields: [shipToLocationIdOverride], references: [id])
   shipToAddressOverride        Address?            @relation("AssemblyShipToAddressOverride", fields: [shipToAddressIdOverride], references: [id], onDelete: SetNull)
   activities                   AssemblyActivity[]  @relation("Assembly_Activities")
+  splitGroups                  AssemblySplitGroup[] @relation("AssemblySplitGroup_parent")
+  splitAllocations             AssemblySplitAllocation[] @relation("AssemblySplitAllocation_child")
   assemblyTags                 AssemblyTag[]
   batches                      Batch[]
   boxLines                     BoxLine[]
@@ -725,6 +727,38 @@ model SavedView {
   modifiedBy String?
 }
 
+model AssemblySplitGroup {
+  id               Int                      @id @default(autoincrement())
+  parentAssemblyId Int
+  createdBy        String?
+  modifiedBy       String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  parentAssembly   Assembly                 @relation("AssemblySplitGroup_parent", fields: [parentAssemblyId], references: [id], onDelete: Cascade)
+  allocations      AssemblySplitAllocation[]
+
+  @@index([parentAssemblyId])
+}
+
+model AssemblySplitAllocation {
+  id                Int                 @id @default(autoincrement())
+  splitGroupId      Int
+  childAssemblyId   Int
+  allocatedBreakdown Int[]              @default([])
+  finishBreakdown   Int[]               @default([])
+  externalAllocations Json?
+  createdBy         String?
+  modifiedBy        String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  splitGroup        AssemblySplitGroup  @relation(fields: [splitGroupId], references: [id], onDelete: Cascade)
+  childAssembly     Assembly            @relation("AssemblySplitAllocation_child", fields: [childAssemblyId], references: [id], onDelete: Cascade)
+  inheritedActivities AssemblyActivity[]
+
+  @@unique([splitGroupId, childAssemblyId])
+  @@index([childAssemblyId])
+}
+
 model AssemblyActivity {
   id                       Int                 @id @default(autoincrement())
   assemblyId               Int?
@@ -742,6 +776,7 @@ model AssemblyActivity {
   qtyFabricConsumed        Decimal?            @db.Decimal(14, 4)
   qtyFabricConsumedPerUnit Decimal?            @db.Decimal(14, 4)
   qtyBreakdown             Int[]               @default([])
+  metaJson                 Json?
   createdBy                String?
   modifiedBy               String?
   createdAt                DateTime?           @default(now())
@@ -753,8 +788,14 @@ model AssemblyActivity {
   action                   ActivityAction?
   externalStepType         ExternalStepType?
   vendorCompanyId          Int?
+  splitAllocationId        Int?
+  isProjected              Boolean             @default(false)
+  sourceActivityId         Int?
   assembly                 Assembly?           @relation("Assembly_Activities", fields: [assemblyId], references: [id])
   assemblyGroupEvent       AssemblyGroupEvent? @relation(fields: [assemblyGroupEventId], references: [id], onDelete: SetNull)
+  splitAllocation          AssemblySplitAllocation? @relation(fields: [splitAllocationId], references: [id], onDelete: SetNull)
+  sourceActivity           AssemblyActivity?   @relation("AssemblyActivity_SourceActivity", fields: [sourceActivityId], references: [id], onDelete: SetNull)
+  projectedActivities      AssemblyActivity[]  @relation("AssemblyActivity_SourceActivity")
   defectReason             ValueList?          @relation("AssemblyActivity_defectReason", fields: [defectReasonId], references: [id])
   job                      Job?                @relation(fields: [jobId], references: [id])
   locationIn               Location?           @relation("AssemblyActivity_LocationIn", fields: [locationInId], references: [id])
@@ -1427,6 +1468,7 @@ enum AssemblyStage {
   sew
   finish
   pack
+  retain
   qc
   other
   cancel
@@ -1446,6 +1488,7 @@ enum ActivityAction {
   NOTE
   DEFECT_LOGGED
   LOSS_RECONCILED
+  SPLIT
 }
 
 enum ExternalStepType {

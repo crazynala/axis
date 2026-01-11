@@ -143,6 +143,15 @@ export async function createPackActivity(input: PackActivityInput) {
   if (!assembly) {
     throw new Error("Assembly not found for this job.");
   }
+  const assemblyType = String(assembly.assemblyType || "").toLowerCase();
+  if (
+    assemblyType === "keep" ||
+    assemblyType === "internal_dev" ||
+    assemblyType === "internal dev" ||
+    assemblyType === "internal-dev"
+  ) {
+    throw new Error("Packing is disabled for retain assemblies.");
+  }
   if (!assembly.productId) {
     throw new Error("Assign a product to the assembly before recording pack.");
   }

@@ -174,22 +174,11 @@ export function JobDetailView() {
       .map((c) => c.trim())
       .filter(Boolean);
     const reasons: string[] = [];
-    if (codes.includes("status")) {
-      reasons.push("Selected assemblies must share the same status.");
-    }
-    if (codes.includes("activity")) {
-      reasons.push("Assemblies with recorded activity cannot be grouped.");
-    }
     if (codes.includes("missing")) {
       reasons.push("One or more assemblies could not be found.");
     }
     setGroupGuardMessage(
-      [
-        "Assemblies can only be grouped when they share the same state and have no activity.",
-        reasons.join(" "),
-      ]
-        .join(" ")
-        .trim()
+      reasons.join(" ").trim()
     );
     navigate(`/jobs/${job.id}`, { replace: true });
   }, [sp, navigate, job.id]);
@@ -942,8 +931,6 @@ export function JobDetailView() {
   const handleGroupSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
       if (selectedAsmIds.length < 2) return;
-      const statuses = new Set<string>();
-      const idsWithActivity: number[] = [];
       const missing: number[] = [];
       for (const asmId of selectedAsmIds) {
         const asm = assembliesById.get(asmId);
@@ -951,39 +938,17 @@ export function JobDetailView() {
           missing.push(asmId);
           continue;
         }
-        const normalized =
-          normalizeAssemblyState(asm.status as string | null) ?? "DRAFT";
-        statuses.add(normalized);
-        if ((activityCounts?.[asmId] || 0) > 0) {
-          idsWithActivity.push(asmId);
-        }
       }
       const issues: string[] = [];
-      if (statuses.size > 1) {
-        const label = Array.from(statuses).join(", ");
-        issues.push(`Selected assemblies are in different states (${label}).`);
-      }
-      if (idsWithActivity.length > 0) {
-        issues.push(
-          `Assemblies ${idsWithActivity.join(", ")} have recorded activity.`
-        );
-      }
       if (missing.length > 0) {
         issues.push(`Assemblies ${missing.join(", ")} could not be found.`);
       }
       if (issues.length > 0) {
         event.preventDefault();
-        setGroupGuardMessage(
-          [
-            "Assemblies can only be grouped when they share the same state and have no activity.",
-            issues.join(" "),
-          ]
-            .join(" ")
-            .trim()
-        );
+        setGroupGuardMessage(issues.join(" ").trim());
       }
     },
-    [selectedAsmIds, assembliesById, activityCounts]
+    [selectedAsmIds, assembliesById]
   );
 
   const jobWhiteboardValue = jobForm.watch("statusWhiteboard") ?? "";
@@ -1511,13 +1476,18 @@ export function JobDetailView() {
                   name="assemblyIds"
                   value={selectedAsmIds.join(",")}
                 />
-                <Button
-                  type="submit"
-                  variant="default"
-                  disabled={selectedAsmIds.length < 2}
+                <Tooltip
+                  label="Pricing-only; does not affect production steps or stock."
+                  withArrow
                 >
-                  Group
-                </Button>
+                  <Button
+                    type="submit"
+                    variant="default"
+                    disabled={selectedAsmIds.length < 2}
+                  >
+                    Pricing group
+                  </Button>
+                </Tooltip>
               </Form>
             </Group>
           </Group>
@@ -1705,7 +1675,7 @@ export function JobDetailView() {
                         style={stickyRailStyle}
                       >
                         {pos === "first" ? (
-                          <Tooltip label="Linked group">
+                        <Tooltip label="Pricing group">
                             <ActionIcon
                               variant="transparent"
                               color="gray"
@@ -2321,14 +2291,14 @@ export function JobDetailView() {
       <HotkeyAwareModal
         opened={Boolean(groupGuardMessage)}
         onClose={() => setGroupGuardMessage(null)}
-        title="Cannot Group Assemblies"
+        title="Cannot Create Pricing Group"
         size="sm"
         centered
       >
         <Stack>
           <Text>
             {groupGuardMessage ||
-              "Assemblies must share the same state and have no activity before grouping."}
+              "Assemblies could not be grouped."}
           </Text>
           <Group justify="flex-end" mt="sm">
             <Button onClick={() => setGroupGuardMessage(null)}>OK</Button>

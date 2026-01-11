@@ -14,15 +14,24 @@ const defaultLocations: SeedLocation[] = [
   { name: "Scrap", type: LocationType.scrap, notes: "Physical scrap / trash" },
   { name: "Off-spec", type: LocationType.off_spec, notes: "Defect but kept for donation/testing" },
   { name: "Samples", type: LocationType.sample, notes: "Reference/keep samples" },
+  { name: "Dev Samples", type: LocationType.sample, notes: "Internal development samples" },
   { name: "WIP", type: LocationType.wip, notes: "Work in progress" },
   { name: "Warehouse", type: LocationType.warehouse, notes: "General stock" },
 ];
 
 async function main() {
   for (const loc of defaultLocations) {
-    const existing = await prisma.location.findFirst({
-      where: { type: loc.type },
-    });
+    const existing =
+      loc.type === LocationType.sample
+        ? await prisma.location.findFirst({
+            where: {
+              type: loc.type,
+              name: { equals: loc.name, mode: "insensitive" },
+            },
+          })
+        : await prisma.location.findFirst({
+            where: { type: loc.type },
+          });
     if (existing) {
       // Update name/notes if blank to standardize
       const updates: Partial<SeedLocation> = {};

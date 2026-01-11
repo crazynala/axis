@@ -10,13 +10,28 @@ export async function handleActivityDelete(opts: {
   if (Number.isFinite(aid)) {
     const activity = await prisma.assemblyActivity.findUnique({
       where: { id: aid },
-      select: { id: true, assemblyGroupEventId: true },
+      select: {
+        id: true,
+        assemblyGroupEventId: true,
+        splitAllocationId: true,
+        isProjected: true,
+        sourceActivityId: true,
+      },
     });
     if (activity?.assemblyGroupEventId) {
       return json(
         {
           error:
             "This activity was created by a group event. Delete the group event to remove it.",
+        },
+        { status: 400 }
+      );
+    }
+    if (activity?.splitAllocationId || activity?.isProjected || activity?.sourceActivityId) {
+      return json(
+        {
+          error:
+            "This is an inherited split activity. Edit the split allocation instead.",
         },
         { status: 400 }
       );
@@ -52,4 +67,3 @@ export async function handleActivityDelete(opts: {
   }
   return redirect(`/jobs/${opts.jobId}/assembly/${opts.assemblyId}`);
 }
-

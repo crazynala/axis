@@ -306,7 +306,7 @@ export function reconcileProductStock(opts: {
   const hasMovements = Array.isArray(movements) && movements.length > 0;
   const transferLike = (mtRaw: any) => {
     const mt = (mtRaw || "").toString().toLowerCase();
-    return mt === "transfer" || mt.startsWith("defect_");
+    return mt === "transfer" || mt === "retain" || mt.startsWith("defect_");
   };
 
   if (batchTracked) {

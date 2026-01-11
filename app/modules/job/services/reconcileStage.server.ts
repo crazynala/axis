@@ -108,6 +108,7 @@ export async function validateReconcileBreakdown(opts: {
     sewRecorded: stats.sew.processedArr || [],
     finishRecorded: stats.finish.processedArr || [],
     packRecorded: stats.pack.processedArr || [],
+    retainRecorded: stats.retain.processedArr || [],
   });
   const usable =
     stageKey === "cut"

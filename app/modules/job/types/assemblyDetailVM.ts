@@ -37,6 +37,26 @@ export type AssemblyDetailVM = {
   rollupsByAssembly: Record<number, any>;
   vendorOptionsByStep: any;
   materialCoverageByAssembly: Array<{ assemblyId: number; coverage: any | null }>;
+  splitGroups: Array<{
+    id: number;
+    parentAssemblyId: number;
+    allocations: Array<{
+      id: number;
+      childAssemblyId: number;
+      allocatedBreakdown: number[];
+      finishBreakdown: number[];
+      externalAllocations: Record<string, { sent?: number[]; received?: number[] }>;
+    }>;
+  }>;
+  splitAllocations: Array<{
+    id: number;
+    splitGroupId: number;
+    childAssemblyId: number;
+    allocatedBreakdown: number[];
+    finishBreakdown: number[];
+    externalAllocations: Record<string, { sent?: number[]; received?: number[] }>;
+    splitGroup: { id: number; parentAssemblyId: number };
+  }>;
   locations: Array<{ id: number; name: string | null }>;
   shipToAddresses: Array<{
     id: number;

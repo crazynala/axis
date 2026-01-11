@@ -199,6 +199,98 @@ export async function createCancelActivity(options: {
   });
 }
 
+export async function upsertSplitActivity(options: {
+  tx?: Prisma.TransactionClient;
+  splitGroupId: number;
+  assemblyId: number;
+  jobId: number;
+  activityDate: Date;
+  splitStageKey: string;
+  allocatedBreakdown: number[];
+  totalAllocated: number;
+  parentRemainder: number;
+  childAssemblyIds: number[];
+}) {
+  const {
+    tx,
+    splitGroupId,
+    assemblyId,
+    jobId,
+    activityDate,
+    splitStageKey,
+    allocatedBreakdown,
+    totalAllocated,
+    parentRemainder,
+    childAssemblyIds,
+  } = options;
+  const client = tx ?? prisma;
+  const stageKeyLower = String(splitStageKey || "").toLowerCase();
+  const stage =
+    stageKeyLower === "cut"
+      ? AssemblyStage.cut
+      : stageKeyLower === "sew"
+        ? AssemblyStage.sew
+        : stageKeyLower === "finish"
+          ? AssemblyStage.finish
+          : stageKeyLower === "pack"
+            ? AssemblyStage.pack
+            : stageKeyLower === "order"
+              ? AssemblyStage.order
+              : AssemblyStage.sew;
+  const metaJson = {
+    splitStageKey,
+    allocatedBreakdown,
+    allocatedTotal: totalAllocated,
+    parentRemainder,
+    childAssemblyIds,
+  };
+  const groupKey = `split:${splitGroupId}`;
+  const existing = await client.assemblyActivity.findFirst({
+    where: { groupKey },
+    select: { id: true },
+  });
+  if (existing) {
+    return client.assemblyActivity.update({
+      where: { id: existing.id },
+      data: {
+        name: "Split",
+        stage,
+        kind: ActivityKind.normal,
+        action: ActivityAction.SPLIT,
+        activityDate,
+        qtyBreakdown: allocatedBreakdown as any,
+        quantity: Number(totalAllocated) || 0,
+        metaJson: metaJson as any,
+      },
+    });
+  }
+  return client.assemblyActivity.create({
+    data: {
+      assemblyId,
+      jobId,
+      name: "Split",
+      stage,
+      kind: ActivityKind.normal,
+      action: ActivityAction.SPLIT,
+      activityDate,
+      groupKey,
+      qtyBreakdown: allocatedBreakdown as any,
+      quantity: Number(totalAllocated) || 0,
+      metaJson: metaJson as any,
+    },
+  });
+}
+
+export async function deleteSplitActivity(options: {
+  tx?: Prisma.TransactionClient;
+  splitGroupId: number;
+}) {
+  const { tx, splitGroupId } = options;
+  const client = tx ?? prisma;
+  const groupKey = `split:${splitGroupId}`;
+  await client.assemblyActivity.deleteMany({ where: { groupKey } });
+}
+
 type FinishInventoryParams = {
   activityId: number;
   assemblyId: number;

@@ -11,6 +11,7 @@ export type StageKey =
   | "sew"
   | "finish"
   | "pack"
+  | "retain"
   | "qc";
 
 export type InternalStageRow = {

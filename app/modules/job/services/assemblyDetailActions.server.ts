@@ -16,11 +16,17 @@ import { handleActivityCreateCut } from "./actions/activityCreateCut.server";
 import { handleActivityCreateSew } from "./actions/activityCreateSew.server";
 import { handleActivityCreateFinish } from "./actions/activityCreateFinish.server";
 import { handleActivityCreatePack } from "./actions/activityCreatePack.server";
+import { handleActivityCreateRetain } from "./actions/activityCreateRetain.server";
 import { handleActivityUpdate } from "./actions/activityUpdate.server";
 import { handleActivityCreateDefect } from "./actions/activityCreateDefect.server";
 import { handleExternalStepSendReceive } from "./actions/externalStepSendReceive.server";
 import { handleAssemblyUpdateOrderedBreakdown } from "./actions/assemblyUpdateOrderedBreakdown.server";
 import { handleAssemblyCancel } from "./actions/assemblyCancel.server";
+import {
+  handleAssemblySplitCommit,
+  handleAssemblySplitUpdate,
+  handleAssemblySplitUndo,
+} from "./actions/assemblySplitAllocations.server";
 
 export async function handleAssemblyDetailAction({
   request,
@@ -119,6 +125,14 @@ export async function handleAssemblyDetailAction({
       form,
     });
   }
+  if (intentStr === "activity.create.retain") {
+    return handleActivityCreateRetain({
+      request,
+      jobId,
+      assemblyId,
+      form,
+    });
+  }
   if (intentStr === "activity.update") {
     return handleActivityUpdate({ jobId, assemblyId, form });
   }
@@ -138,6 +152,15 @@ export async function handleAssemblyDetailAction({
   }
   if (intentStr === "assembly.cancel") {
     return handleAssemblyCancel({ jobId, assemblyId, form, rawAssemblyIdParam: raw });
+  }
+  if (intentStr === "assembly.split.update") {
+    return handleAssemblySplitUpdate({ jobId, assemblyId, form });
+  }
+  if (intentStr === "assembly.split.commit") {
+    return handleAssemblySplitCommit({ jobId, assemblyId, form });
+  }
+  if (intentStr === "assembly.split.undo") {
+    return handleAssemblySplitUndo({ jobId, assemblyId, form });
   }
 
   return redirect(`/jobs/${jobId}/assembly/${assemblyId}`);

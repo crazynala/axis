@@ -25,20 +25,20 @@ movement_contrib AS (
   -- Transfer-like split logic (explicit transfers + defect disposition moves)
   SELECT product_id, loc_in  AS location_id, ABS(qty)  AS qty
   FROM movement_rows
-  WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
+  WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
   UNION ALL
   SELECT product_id, loc_out AS location_id, -ABS(qty) AS qty
   FROM movement_rows
-  WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
+  WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
   UNION ALL
   -- Non-transfer signed quantity applied to each present side
   SELECT product_id, loc_in  AS location_id, qty
   FROM movement_rows
-  WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
+  WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
   UNION ALL
   SELECT product_id, loc_out AS location_id, qty
   FROM movement_rows
-  WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
+  WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
 ),
 location_totals AS (
   SELECT product_id, location_id, COALESCE(SUM(qty),0) AS location_qty
@@ -51,7 +51,7 @@ product_movement_totals AS (
     -- Collapse movement header representation into movement-based net qty using rules:
     -- For transfers net contribution is zero overall (handled by opposing +/- in contrib set), included for mov_n counting only.
     SELECT product_id,
-           CASE WHEN mt = 'transfer' OR mt LIKE 'defect_%' THEN 0 ELSE qty END AS qty
+           CASE WHEN mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%' THEN 0 ELSE qty END AS qty
     FROM movement_rows
   ) t
   GROUP BY product_id
@@ -80,21 +80,26 @@ batch_line_counts AS (
   GROUP BY batch_id
 ),
 batch_line_contrib AS (
+  -- Transfer-like lines use the line sign to choose in vs out
   SELECT batch_id, product_id, loc_in AS location_id, ABS(qty) AS qty
   FROM movement_line_batch
-  WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
+  WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%')
+    AND loc_in IS NOT NULL
+    AND qty >= 0
   UNION ALL
   SELECT batch_id, product_id, loc_out AS location_id, -ABS(qty) AS qty
   FROM movement_line_batch
-  WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
+  WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%')
+    AND loc_out IS NOT NULL
+    AND qty < 0
   UNION ALL
   SELECT batch_id, product_id, loc_in AS location_id, qty
   FROM movement_line_batch
-  WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
+  WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
   UNION ALL
   SELECT batch_id, product_id, loc_out AS location_id, qty
   FROM movement_line_batch
-  WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
+  WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
 ),
 batch_line_totals AS (
   SELECT batch_id, product_id, location_id, COALESCE(SUM(qty),0) AS qty

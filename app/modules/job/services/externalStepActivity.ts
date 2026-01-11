@@ -24,8 +24,9 @@ export function mapExternalStepTypeToActivityUsed(
 export function labelForExternalStepType(
   type?: ExternalStepKey | string | null
 ): string | null {
+  if (!type) return null;
   const activity = mapExternalStepTypeToActivityUsed(type);
-  return activity ? EXTERNAL_ACTIVITY_LABELS[activity] : null;
+  return activity ? EXTERNAL_ACTIVITY_LABELS[activity] : String(type);
 }
 
 export function labelForExternalActivity(

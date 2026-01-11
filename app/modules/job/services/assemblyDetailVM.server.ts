@@ -262,6 +262,8 @@ export async function loadAssemblyDetailVM(opts: {
       else if (name.includes("sew")) stage = "sew";
       else if (name.includes("finish") || name.includes("make")) stage = "finish";
       else if (name.includes("pack")) stage = "pack";
+      else if (name.includes("retain") || name.includes("keep"))
+        stage = "retain";
       else if (name.includes("qc")) stage = "qc";
       else if (name.includes("cancel")) stage = "cancel";
       else stage = "other";
@@ -288,6 +290,179 @@ export async function loadAssemblyDetailVM(opts: {
     const arr = activitiesByAssembly.get(aid) || [];
     arr.push(act);
     activitiesByAssembly.set(aid, arr);
+  }
+
+  const splitGroupClient = (prisma as any).assemblySplitGroup;
+  const splitAllocationClient = (prisma as any).assemblySplitAllocation;
+  const splitGroups =
+    assemblyIds.length && splitGroupClient?.findMany
+      ? await splitGroupClient.findMany({
+          where: { parentAssemblyId: { in: assemblyIds } },
+          include: { allocations: true },
+        })
+      : [];
+  const splitAllocations =
+    assemblyIds.length && splitAllocationClient?.findMany
+      ? await splitAllocationClient.findMany({
+          where: { childAssemblyId: { in: assemblyIds } },
+          include: { splitGroup: true },
+        })
+      : [];
+  const splitParentIds = new Set(splitGroups.map((g) => g.parentAssemblyId));
+
+  if (splitParentIds.size) {
+    for (const assembly of assemblies as any[]) {
+      if (!splitParentIds.has(assembly.id)) continue;
+      const acts = activitiesByAssembly.get(assembly.id) || [];
+      const filtered = acts.filter((act) => {
+        const stage = String(act?.stage || "").toLowerCase();
+        const action = String(act?.action || "").toLowerCase();
+        if (action === "split") return true;
+        if (stage === "cut") {
+          return String(act?.kind || "").toLowerCase() === "defect";
+        }
+        if (stage === "finish") {
+          return String(act?.kind || "").toLowerCase() === "defect";
+        }
+        if (act?.externalStepType) {
+          return false;
+        }
+        return true;
+      });
+      const remainder = Array.isArray((assembly as any)?.qtyOrderedBreakdown)
+        ? ((assembly as any).qtyOrderedBreakdown as number[])
+        : [];
+      const remainderTotal = remainder.reduce((sum, n) => sum + (Number(n) || 0), 0);
+      if (remainderTotal > 0) {
+        filtered.push({
+          assemblyId: assembly.id,
+          stage: "cut",
+          kind: ActivityKind.normal,
+          action: ActivityAction.NOTE,
+          name: "Split remainder",
+          qtyBreakdown: remainder,
+          quantity: remainderTotal,
+          notes: "Derived from split allocation",
+        });
+      }
+      const group = splitGroups.find((g) => g.parentAssemblyId === assembly.id);
+      if (group) {
+        const finishAllocSum = sumBreakdownArrays(
+          (group.allocations || []).map((a) => (a.finishBreakdown as number[]) || [])
+        );
+        const finishActs = acts.filter(
+          (act) =>
+            String(act?.stage || "").toLowerCase() === "finish" &&
+            String(act?.kind || "").toLowerCase() !== "defect" &&
+            !act?.isProjected &&
+            !act?.splitAllocationId
+        );
+        const finishRecorded = sumBreakdownArrays(
+          finishActs.map((act) => coerceBreakdown(act?.qtyBreakdown, act?.quantity))
+        );
+        const finishRemainder = finishRecorded.map(
+          (val, idx) => (Number(val) || 0) - (Number(finishAllocSum[idx] ?? 0) || 0)
+        );
+        const finishTotal = finishRemainder.reduce((sum, n) => sum + (Number(n) || 0), 0);
+        if (finishTotal > 0) {
+          filtered.push({
+            assemblyId: assembly.id,
+            stage: "finish",
+            kind: ActivityKind.normal,
+            action: ActivityAction.RECORDED,
+            name: "Split finish remainder",
+            qtyBreakdown: finishRemainder,
+            quantity: finishTotal,
+            notes: "Derived from split allocation",
+          });
+        }
+        const externalAllocSums = new Map<
+          string,
+          { sent: number[]; received: number[] }
+        >();
+        for (const act of acts) {
+          if (act?.externalStepType) {
+            const key = String(act.externalStepType);
+            if (!externalAllocSums.has(key)) {
+              externalAllocSums.set(key, { sent: [], received: [] });
+            }
+          }
+        }
+        for (const alloc of group.allocations || []) {
+          const externalAllocations =
+            (alloc.externalAllocations as Record<string, { sent?: number[]; received?: number[] }>) ||
+            {};
+          for (const [type, payload] of Object.entries(externalAllocations)) {
+            const current = externalAllocSums.get(type) || { sent: [], received: [] };
+            const sent = payload?.sent || [];
+            const received = payload?.received || [];
+            externalAllocSums.set(type, {
+              sent: sumBreakdownArrays([current.sent, sent]),
+              received: sumBreakdownArrays([current.received, received]),
+            });
+          }
+        }
+        for (const [type, allocSum] of externalAllocSums.entries()) {
+          if (!Object.values(ExternalStepType).includes(type as ExternalStepType)) continue;
+          const extType = type as ExternalStepType;
+          const sentActs = acts.filter(
+            (act) =>
+              act?.externalStepType === extType &&
+              act?.action === ActivityAction.SENT_OUT &&
+              !act?.isProjected &&
+              !act?.splitAllocationId
+          );
+          const receivedActs = acts.filter(
+            (act) =>
+              act?.externalStepType === extType &&
+              act?.action === ActivityAction.RECEIVED_IN &&
+              !act?.isProjected &&
+              !act?.splitAllocationId
+          );
+          const sentRecorded = sumBreakdownArrays(
+            sentActs.map((act) => coerceBreakdown(act?.qtyBreakdown, act?.quantity))
+          );
+          const receivedRecorded = sumBreakdownArrays(
+            receivedActs.map((act) => coerceBreakdown(act?.qtyBreakdown, act?.quantity))
+          );
+          const sentRemainder = sentRecorded.map(
+            (val, idx) => (Number(val) || 0) - (Number(allocSum.sent[idx] ?? 0) || 0)
+          );
+          const receivedRemainder = receivedRecorded.map(
+            (val, idx) => (Number(val) || 0) - (Number(allocSum.received[idx] ?? 0) || 0)
+          );
+          const sentTotal = sentRemainder.reduce((sum, n) => sum + (Number(n) || 0), 0);
+          const receivedTotal = receivedRemainder.reduce((sum, n) => sum + (Number(n) || 0), 0);
+          if (sentTotal > 0) {
+            filtered.push({
+              assemblyId: assembly.id,
+              stage: "sew",
+              kind: ActivityKind.normal,
+              action: ActivityAction.SENT_OUT,
+              externalStepType: extType,
+              name: `Split ${type} sent remainder`,
+              qtyBreakdown: sentRemainder,
+              quantity: sentTotal,
+              notes: "Derived from split allocation",
+            });
+          }
+          if (receivedTotal > 0) {
+            filtered.push({
+              assemblyId: assembly.id,
+              stage: "sew",
+              kind: ActivityKind.normal,
+              action: ActivityAction.RECEIVED_IN,
+              externalStepType: extType,
+              name: `Split ${type} received remainder`,
+              qtyBreakdown: receivedRemainder,
+              quantity: receivedTotal,
+              notes: "Derived from split allocation",
+            });
+          }
+        }
+      }
+      activitiesByAssembly.set(assembly.id, filtered);
+    }
   }
 
   const canceledByAssembly = new Map<number, number[]>();
@@ -393,6 +568,12 @@ export async function loadAssemblyDetailVM(opts: {
 
   const stageAggregations = new Map<number, StageAggregation>();
   const quantityItems = assemblies.map((a: any) => {
+    const assemblyType = String((a as any).assemblyType || "").toLowerCase();
+    const showRetain =
+      assemblyType === "keep" ||
+      assemblyType === "internal_dev" ||
+      assemblyType === "internal dev" ||
+      assemblyType === "internal-dev";
     let labels = (a.variantSet?.variants || []) as string[];
     if ((!labels || labels.length === 0) && (a as any).productId) {
       const fb = prodVariantMap.get(Number((a as any).productId));
@@ -415,6 +596,22 @@ export async function loadAssemblyDetailVM(opts: {
       activities: activitiesByAssembly.get(a.id) || [],
     });
     stageAggregations.set(a.id, aggregation);
+    const projectedStages = (() => {
+      const flags = { cut: false, finish: false, externalTypes: [] as string[] };
+      const acts = activitiesByAssembly.get(a.id) || [];
+      const externalSet = new Set<string>();
+      for (const act of acts) {
+        if (!act?.isProjected && !act?.splitAllocationId) continue;
+        const stage = String(act?.stage || "").toLowerCase();
+        if (stage === "cut") flags.cut = true;
+        if (stage === "finish") flags.finish = true;
+        if (act?.externalStepType) {
+          externalSet.add(String(act.externalStepType));
+        }
+      }
+      flags.externalTypes = Array.from(externalSet);
+      return flags;
+    })();
     return {
       assemblyId: a.id,
       label: `Assembly ${a.id}`,
@@ -429,21 +626,33 @@ export async function loadAssemblyDetailVM(opts: {
       sew: aggregation.displayArrays.sew,
       finish: aggregation.displayArrays.finish,
       pack: aggregation.displayArrays.pack,
+      retain: aggregation.displayArrays.retain,
       totals: {
         cut: aggregation.totals.cut,
         sew: aggregation.totals.sew,
         finish: aggregation.totals.finish,
         pack: aggregation.totals.pack,
+        retain: aggregation.totals.retain,
       },
+      showRetain,
       stageStats: aggregation.stageStats,
       stageRows: [],
       finishInput: { breakdown: [], total: 0 },
+      projectedStages,
     };
   });
 
   const quantityByAssembly = new Map<
     number,
-    { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }
+    {
+      totals?: {
+        cut?: number;
+        sew?: number;
+        finish?: number;
+        pack?: number;
+        retain?: number;
+      };
+    }
   >();
   for (const [assemblyId, aggregation] of stageAggregations.entries()) {
     quantityByAssembly.set(assemblyId, {
@@ -452,6 +661,7 @@ export async function loadAssemblyDetailVM(opts: {
         sew: aggregation.totals.sew,
         finish: aggregation.totals.finish,
         pack: aggregation.totals.pack,
+        retain: aggregation.totals.retain,
       },
     });
   }
@@ -466,9 +676,19 @@ export async function loadAssemblyDetailVM(opts: {
     const aggregation = stageAggregations.get(item.assemblyId);
     if (!aggregation) continue;
     const derivedSteps = externalStepsByAssembly[item.assemblyId] || [];
+    const assemblyType = String(
+      (assemblies as any[]).find((a) => a.id === item.assemblyId)?.assemblyType ||
+        ""
+    ).toLowerCase();
+    const showRetain =
+      assemblyType === "keep" ||
+      assemblyType === "internal_dev" ||
+      assemblyType === "internal dev" ||
+      assemblyType === "internal-dev";
     const { rows, finishInput } = buildStageRowsFromAggregation({
       aggregation,
       derivedExternalSteps: derivedSteps,
+      showRetain,
     });
     item.stageRows = rows;
     item.finishInput = finishInput;
@@ -567,6 +787,8 @@ export async function loadAssemblyDetailVM(opts: {
       assemblyId: assembly.id,
       coverage: materialCoverage.get(assembly.id) ?? null,
     })),
+    splitGroups,
+    splitAllocations,
     locations,
     shipToAddresses,
     defaultLeadDays,

@@ -4,6 +4,7 @@ const MOVEMENT_LABELS: Record<string, string> = {
   DEFECT_SCRAP: "Defect → Scrap",
   DEFECT_OFF_SPEC: "Defect → Off-spec",
   DEFECT_NONE: "Defect → None",
+  RETAIN: "Retain",
 };
 
 export function getMovementLabel(raw: string | null | undefined): string {

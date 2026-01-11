@@ -40,7 +40,10 @@ export type StageStats = {
   attemptsTotal: number;
 };
 
-type StageStatsMap = Record<"cut" | "sew" | "finish" | "pack" | "qc", StageStats>;
+type StageStatsMap = Record<
+  "cut" | "sew" | "finish" | "pack" | "retain" | "qc",
+  StageStats
+>;
 
 type ExternalAggregate = {
   sent: number[];
@@ -59,8 +62,14 @@ export type StageAggregation = {
   canceled: number[];
   ordered: number[];
   orderedTotal: number;
-  displayArrays: Record<"cut" | "sew" | "finish" | "pack" | "qc", number[]>;
-  totals: Record<"cut" | "sew" | "finish" | "pack" | "qc", number>;
+  displayArrays: Record<
+    "cut" | "sew" | "finish" | "pack" | "retain" | "qc",
+    number[]
+  >;
+  totals: Record<
+    "cut" | "sew" | "finish" | "pack" | "retain" | "qc",
+    number
+  >;
   stageStats: StageStatsMap;
   externalAggregates: Map<ExternalStepType, ExternalAggregate>;
 };
@@ -106,6 +115,7 @@ export function aggregateAssemblyStages(
     sew: filterStage(activities, "sew"),
     finish: filterStage(activities, "finish"),
     pack: filterStage(activities, "pack"),
+    retain: filterStage(activities, "retain"),
     qc: filterStage(activities, "qc"),
   };
   const fallbackCutArr = normalizeBreakdown(
@@ -136,6 +146,7 @@ export function aggregateAssemblyStages(
     pack: computeStageStats(stageActs.pack, fallbackPackArr, fallbackPackTotal, {
       useFallbackIfNoNormal: true,
     }),
+    retain: computeStageStats(stageActs.retain, [], 0),
     qc: computeStageStats(stageActs.qc, [], 0),
   };
 
@@ -157,6 +168,12 @@ export function aggregateAssemblyStages(
   const usablePackArr = hasPackData
     ? minArrays(stageStats.pack.usableArr, usableFinishArr)
     : usableFinishArr;
+  const hasRetainData =
+    stageStats.retain.attemptsTotal > 0 ||
+    stageStats.retain.usableArr.some((n) => Number(n ?? 0) !== 0);
+  const usableRetainArr = hasRetainData
+    ? minArrays(stageStats.retain.usableArr, usableFinishArr)
+    : usableFinishArr;
 
   const displayCutArr = hasSewData ? minArrays(usableCutArr, usableSewArr) : usableCutArr;
   const displaySewArr = hasFinishData
@@ -166,6 +183,9 @@ export function aggregateAssemblyStages(
   const displayPackArr = hasPackData
     ? usablePackArr
     : Array.from({ length: usableFinishArr.length }, () => 0);
+  const displayRetainArr = hasRetainData
+    ? usableRetainArr
+    : Array.from({ length: usableFinishArr.length }, () => 0);
   const displayQcArr = stageStats.qc.usableArr;
 
   const displayArrays = {
@@ -173,6 +193,7 @@ export function aggregateAssemblyStages(
     sew: displaySewArr,
     finish: displayFinishArr,
     pack: displayPackArr,
+    retain: displayRetainArr,
     qc: displayQcArr,
   };
   const totals = {
@@ -180,6 +201,7 @@ export function aggregateAssemblyStages(
     sew: sumArray(displaySewArr),
     finish: sumArray(displayFinishArr),
     pack: sumArray(displayPackArr),
+    retain: sumArray(displayRetainArr),
     qc: sumArray(displayQcArr),
   };
   const externalAggregates = buildExternalAggregates(activities);
@@ -200,11 +222,12 @@ export function aggregateAssemblyStages(
 export function buildStageRowsFromAggregation(options: {
   aggregation: StageAggregation;
   derivedExternalSteps: DerivedExternalStep[] | undefined | null;
+  showRetain?: boolean;
 }): {
   rows: StageRow[];
   finishInput: { breakdown: number[]; total: number };
 } {
-  const { aggregation, derivedExternalSteps } = options;
+  const { aggregation, derivedExternalSteps, showRetain } = options;
   const rows: StageRow[] = [];
   const sewGate = computeSewGateBreakdown({
     aggregation,
@@ -282,16 +305,29 @@ export function buildStageRowsFromAggregation(options: {
     lossTotal: aggregation.stageStats.finish.defectTotal,
     loggedDefectTotal: aggregation.stageStats.finish.loggedDefectTotal,
   });
-  rows.push({
-    kind: "internal",
-    stage: "pack",
-    label: "Pack",
-    breakdown: aggregation.displayArrays.pack,
-    total: aggregation.totals.pack,
-    loss: aggregation.stageStats.pack.defectArr,
-    lossTotal: aggregation.stageStats.pack.defectTotal,
-    loggedDefectTotal: aggregation.stageStats.pack.loggedDefectTotal,
-  });
+  if (showRetain) {
+    rows.push({
+      kind: "internal",
+      stage: "retain",
+      label: "Retain",
+      breakdown: aggregation.displayArrays.retain,
+      total: aggregation.totals.retain,
+      loss: aggregation.stageStats.retain.defectArr,
+      lossTotal: aggregation.stageStats.retain.defectTotal,
+      loggedDefectTotal: aggregation.stageStats.retain.loggedDefectTotal,
+    });
+  } else {
+    rows.push({
+      kind: "internal",
+      stage: "pack",
+      label: "Pack",
+      breakdown: aggregation.displayArrays.pack,
+      total: aggregation.totals.pack,
+      loss: aggregation.stageStats.pack.defectArr,
+      lossTotal: aggregation.stageStats.pack.defectTotal,
+      loggedDefectTotal: aggregation.stageStats.pack.loggedDefectTotal,
+    });
+  }
   rows.push({
     kind: "internal",
     stage: "qc",
@@ -374,6 +410,12 @@ export async function loadAssemblyStageRows(
     },
   });
   if (!assembly) return [];
+  const assemblyType = String((assembly as any).assemblyType || "").toLowerCase();
+  const showRetain =
+    assemblyType === "keep" ||
+    assemblyType === "internal_dev" ||
+    assemblyType === "internal dev" ||
+    assemblyType === "internal-dev";
   const boxLines = await prisma.boxLine.findMany({
     where: { assemblyId, packingOnly: { not: true } },
     select: { qtyBreakdown: true, quantity: true },
@@ -407,7 +449,15 @@ export async function loadAssemblyStageRows(
   activitiesByAssembly.set(assemblyId, activitiesRaw);
   const quantityByAssembly = new Map<
     number,
-    { totals?: { cut?: number; sew?: number; finish?: number; pack?: number } }
+    {
+      totals?: {
+        cut?: number;
+        sew?: number;
+        finish?: number;
+        pack?: number;
+        retain?: number;
+      };
+    }
   >();
   quantityByAssembly.set(assemblyId, {
     totals: {
@@ -415,6 +465,7 @@ export async function loadAssemblyStageRows(
       sew: aggregation.totals.sew,
       finish: aggregation.totals.finish,
       pack: aggregation.totals.pack,
+      retain: aggregation.totals.retain,
     },
   });
   const externalSteps = buildExternalStepsByAssembly({
@@ -426,13 +477,14 @@ export async function loadAssemblyStageRows(
   const { rows } = buildStageRowsFromAggregation({
     aggregation,
     derivedExternalSteps: derivedSteps,
+    showRetain,
   });
   return rows;
 }
 
 function filterStage(
   activities: AggregationActivity[],
-  stage: "cut" | "sew" | "finish" | "pack" | "qc"
+  stage: "cut" | "sew" | "finish" | "pack" | "retain" | "qc"
 ) {
   return (activities || []).filter((act) => {
     const raw = String(act?.stage || "").toLowerCase();
@@ -757,16 +809,18 @@ function mergePackBreakdown(
 
 function normalizeActivityForAggregation(act: AssemblyActivity): AggregationActivity {
   let stage = String(act.stage || "").toLowerCase();
-  if (!stage) {
-    const name = String(act.name || "").toLowerCase();
-    if (name.includes("cut")) stage = "cut";
-    else if (name.includes("sew")) stage = "sew";
-    else if (name.includes("finish") || name.includes("make")) stage = "finish";
-    else if (name.includes("pack")) stage = "pack";
-    else if (name.includes("qc")) stage = "qc";
-    else if (name.includes("cancel")) stage = "cancel";
-    else stage = "other";
-  }
+    if (!stage) {
+      const name = String(act.name || "").toLowerCase();
+      if (name.includes("cut")) stage = "cut";
+      else if (name.includes("sew")) stage = "sew";
+      else if (name.includes("finish") || name.includes("make")) stage = "finish";
+      else if (name.includes("pack")) stage = "pack";
+      else if (name.includes("retain") || name.includes("keep"))
+        stage = "retain";
+      else if (name.includes("qc")) stage = "qc";
+      else if (name.includes("cancel")) stage = "cancel";
+      else stage = "other";
+    }
   if (stage === "make") stage = "finish";
   if (stage === "trim") stage = "sew";
   if (stage === "embroidery") stage = "finish";

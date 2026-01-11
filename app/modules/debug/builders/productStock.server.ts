@@ -477,19 +477,23 @@ async function aggregateLedgerForProduct(productId: number) {
     line_contrib_expanded AS (
       SELECT batch_id, loc_in AS location_id, ABS(qty) AS qty
       FROM line_contrib
-      WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
+      WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%')
+        AND loc_in IS NOT NULL
+        AND qty >= 0
       UNION ALL
       SELECT batch_id, loc_out AS location_id, -ABS(qty) AS qty
       FROM line_contrib
-      WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
+      WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%')
+        AND loc_out IS NOT NULL
+        AND qty < 0
       UNION ALL
       SELECT batch_id, loc_in AS location_id, qty
       FROM line_contrib
-      WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
+      WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
       UNION ALL
       SELECT batch_id, loc_out AS location_id, qty
       FROM line_contrib
-      WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
+      WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
     ),
     header_only AS (
       SELECT mr.mt, mr.loc_in, mr.loc_out, mr.qty
@@ -500,19 +504,19 @@ async function aggregateLedgerForProduct(productId: number) {
     header_contrib_expanded AS (
       SELECT NULL::int AS batch_id, loc_in AS location_id, ABS(qty) AS qty
       FROM header_only
-      WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
+      WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_in IS NOT NULL
       UNION ALL
       SELECT NULL::int AS batch_id, loc_out AS location_id, -ABS(qty) AS qty
       FROM header_only
-      WHERE (mt = 'transfer' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
+      WHERE (mt = 'transfer' OR mt = 'retain' OR mt LIKE 'defect_%') AND loc_out IS NOT NULL
       UNION ALL
       SELECT NULL::int AS batch_id, loc_in AS location_id, qty
       FROM header_only
-      WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
+      WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_in IS NOT NULL
       UNION ALL
       SELECT NULL::int AS batch_id, loc_out AS location_id, qty
       FROM header_only
-      WHERE mt <> 'transfer' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
+      WHERE mt <> 'transfer' AND mt <> 'retain' AND mt NOT LIKE 'defect_%' AND loc_out IS NOT NULL
     ),
     combined AS (
       SELECT * FROM line_contrib_expanded
@@ -581,6 +585,7 @@ async function countInvalidTransferMoves(productId: number) {
     FROM "ProductMovement" pm
     WHERE pm."productId" = ${productId}
       AND (lower(trim(COALESCE(pm."movementType", ''))) = 'transfer'
+           OR lower(trim(COALESCE(pm."movementType", ''))) = 'retain'
            OR lower(trim(COALESCE(pm."movementType", ''))) LIKE 'defect_%')
       AND (pm."locationInId" IS NULL OR pm."locationOutId" IS NULL)
   `;

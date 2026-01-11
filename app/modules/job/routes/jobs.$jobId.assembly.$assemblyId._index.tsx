@@ -571,6 +571,7 @@ export function AssemblyDetailView({
   };
   const [manualHoldSegment, setManualHoldSegment] = useState("OFF");
   const [manualHoldReason, setManualHoldReason] = useState("");
+  const [manualHoldDirty, setManualHoldDirty] = useState(false);
   const [holdPopoverOpen, setHoldPopoverOpen] = useState(false);
   const [holdPendingType, setHoldPendingType] = useState<"CLIENT" | "INTERNAL" | null>(null);
   const [holdPendingReason, setHoldPendingReason] = useState("");
@@ -880,15 +881,20 @@ export function AssemblyDetailView({
     const groupBadge =
       !isGroup && primaryAssembly?.assemblyGroupId ? (
         <Group gap="xs">
-          <Badge variant="light">
-            Group G{primaryAssembly.assemblyGroupId}
-          </Badge>
+          <Tooltip
+            label="Pricing-only; does not affect production steps or stock."
+            withArrow
+          >
+            <Badge variant="light">
+              Pricing group G{primaryAssembly.assemblyGroupId}
+            </Badge>
+          </Tooltip>
           <Button
             size="xs"
             variant="light"
             onClick={() => setGroupDrawerOpen(true)}
           >
-            View group
+            View pricing group
           </Button>
         </Group>
       ) : null;
@@ -998,6 +1004,8 @@ export function AssemblyDetailView({
             (t: any) => t.label || ""
           )}
           defectReasons={data.defectReasons as any}
+          splitGroups={data.splitGroups as any}
+          splitAllocations={data.splitAllocations as any}
           renderStatusBar={renderStatusBar}
           packContext={data.packContext as any}
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
@@ -1110,6 +1118,8 @@ export function AssemblyDetailView({
             : (productVariantSet?.variants as any)) || []
         }
         defectReasons={data.defectReasons as any}
+        splitGroups={data.splitGroups as any}
+        splitAllocations={data.splitAllocations as any}
         renderStatusBar={renderStatusBar}
         packContext={data.packContext as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
@@ -1278,7 +1288,7 @@ export function AssemblyDetailView({
       <Drawer
         opened={groupDrawerOpen}
         onClose={() => setGroupDrawerOpen(false)}
-        title={`Group G${groupInfo?.id ?? ""}`}
+        title={`Pricing group G${groupInfo?.id ?? ""}`}
         position="right"
         size="lg"
       >

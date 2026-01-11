@@ -8,6 +8,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { Link } from "@remix-run/react";
 import { AxisChip } from "~/components/AxisChip";
 import { EmbeddedTextInput } from "~/components/EmbeddedTextInput";
 import { useEffect, useMemo, useState } from "react";
@@ -55,6 +56,7 @@ const STAGE_LABELS: Record<string, string> = {
   dye: "DYE",
   finish: "FINISH",
   pack: "PACK",
+  retain: "RETAIN",
   qc: "QC",
 };
 
@@ -95,10 +97,12 @@ const buildLegacyRows = (item: SingleQuantities): StageRow[] => {
       item.totals.finish ?? sumArr(item.finish)
     ),
     makeRow(
-      "pack",
-      "Pack",
-      item.pack || [],
-      item.totals.pack ?? sumArr(item.pack)
+      item.showRetain ? "retain" : "pack",
+      item.showRetain ? "Retain" : "Pack",
+      item.showRetain ? item.retain || [] : item.pack || [],
+      item.showRetain
+        ? item.totals.retain ?? sumArr(item.retain || [])
+        : item.totals.pack ?? sumArr(item.pack)
     ),
   ];
 };
@@ -117,8 +121,11 @@ type SingleQuantities = {
   sew: number[];
   finish: number[];
   pack: number[];
-  totals: { cut: number; sew: number; finish: number; pack: number };
+  retain?: number[];
+  totals: { cut: number; sew: number; finish: number; pack: number; retain?: number };
+  showRetain?: boolean;
   stageRows?: StageRow[];
+  projectedStages?: { cut?: boolean; finish?: boolean; externalTypes?: string[] };
 };
 
 export function AssemblyQuantitiesCard({
@@ -136,6 +143,9 @@ export function AssemblyQuantitiesCard({
   actionColumn,
   onExternalSend,
   onExternalReceive,
+  jobId,
+  splitMetaByAssemblyId,
+  splitParentByAssemblyId,
 }: {
   title?: string;
   variants: VariantInfo;
@@ -160,9 +170,23 @@ export function AssemblyQuantitiesCard({
     recordFinishDisabled?: boolean;
     onRecordPack?: () => void;
     recordPackDisabled?: boolean;
+    onRecordRetain?: () => void;
+    recordRetainDisabled?: boolean;
   };
   onExternalSend?: (assemblyId: number, row: ExternalStageRow) => void;
   onExternalReceive?: (assemblyId: number, row: ExternalStageRow) => void;
+  jobId?: number;
+  splitMetaByAssemblyId?: Record<
+    number,
+    {
+      splitStageKey?: string;
+      allocatedBreakdown?: number[];
+      totalAllocated?: number;
+      parentRemainder?: number;
+      childAssemblyIds?: number[];
+    }
+  >;
+  splitParentByAssemblyId?: Record<number, number>;
 }) {
   const fmtNum = (n: number | undefined) =>
     n === undefined || n === null || !Number.isFinite(n) || n === 0
@@ -175,7 +199,8 @@ export function AssemblyQuantitiesCard({
       (actionColumn.onRecordCut ||
         actionColumn.onRecordSew ||
         actionColumn.onRecordFinish ||
-        actionColumn.onRecordPack)
+        actionColumn.onRecordPack ||
+        actionColumn.onRecordRetain)
   );
   const rawLabels = variants.labels;
   // Determine if labels include any non-empty values and where the last non-empty is
@@ -307,8 +332,13 @@ export function AssemblyQuantitiesCard({
     const orderedTotal = sumArr(item.ordered);
     const canceledTotal = sumArr(item.canceled);
     const netToFulfill = Math.max(orderedTotal - canceledTotal, 0);
-    const packedQty =
-      typeof item.totals?.pack === "number" ? item.totals.pack : sumArr(item.pack);
+    const packedQty = item.showRetain
+      ? typeof item.totals?.retain === "number"
+        ? item.totals.retain
+        : sumArr(item.retain || [])
+      : typeof item.totals?.pack === "number"
+        ? item.totals.pack
+        : sumArr(item.pack);
     const remaining = Math.max(netToFulfill - packedQty, 0);
     const started =
       sumArr(item.cut) > 0 ||
@@ -345,6 +375,21 @@ export function AssemblyQuantitiesCard({
     tone: ChipTone;
     label: string;
     tooltip: string;
+  };
+
+  const renderAssemblyChip = (assemblyId: number, label?: string) => {
+    const text = label || `A${assemblyId}`;
+    if (!jobId) {
+      return <AxisChip tone="neutral">{text}</AxisChip>;
+    }
+    return (
+      <Link
+        to={`/jobs/${jobId}/assembly/${assemblyId}`}
+        style={{ textDecoration: "none" }}
+      >
+        <AxisChip tone="neutral">{text}</AxisChip>
+      </Link>
+    );
   };
 
   const collapseChips = (
@@ -503,7 +548,7 @@ export function AssemblyQuantitiesCard({
                     Net {summary.netToFulfill}
                   </Badge>
                   <Badge size="sm" variant="light">
-                    Packed {summary.packedQty}
+                    {it.showRetain ? "Retained" : "Packed"} {summary.packedQty}
                   </Badge>
                   <Badge size="sm" variant="light">
                     Remaining {summary.remaining}
@@ -591,11 +636,30 @@ export function AssemblyQuantitiesCard({
                     ? it.stageRows
                     : buildLegacyRows(it)
                   ).map((row, rowIdx) => {
+                    const splitMeta = splitMetaByAssemblyId?.[it.assemblyId];
+                    const splitStageKey = String(
+                      splitMeta?.splitStageKey || ""
+                    ).toLowerCase();
+                    const splitParentId = splitParentByAssemblyId?.[it.assemblyId];
                     if (row.kind === "external") {
                       const externalRow = row as ExternalStageRow;
                       const receivedValues = padArray(
                         externalRow.received,
                         cols.length
+                      );
+                      const isSplitStage =
+                        Boolean(splitMeta) &&
+                        splitStageKey.startsWith("external:") &&
+                        splitStageKey.split(":")[1]?.toLowerCase() ===
+                          String(externalRow.externalStepType || "").toLowerCase();
+                      const splitOutTotal = isSplitStage
+                        ? sumArr(splitMeta?.allocatedBreakdown || []) ||
+                          Number(splitMeta?.totalAllocated || 0)
+                        : 0;
+                      const showProjectedExternal = Boolean(
+                        it.projectedStages?.externalTypes?.includes(
+                          String(externalRow.externalStepType)
+                        )
                       );
                       const etaText = externalRow.etaDate
                         ? fmtEta(externalRow.etaDate) || ""
@@ -611,9 +675,27 @@ export function AssemblyQuantitiesCard({
                             style={tdBase}
                             className="axis-stage-col axis-stage-col--stage"
                           >
-                            <Text fw={600} size="xs">
-                              {getStageLabelForRow(externalRow)}
-                            </Text>
+                            <Group gap={6} wrap="nowrap">
+                              <Text fw={600} size="xs">
+                                {getStageLabelForRow(externalRow)}
+                              </Text>
+                              {showProjectedExternal ? (
+                                <Tooltip
+                                  label="Inherited from split"
+                                  withArrow
+                                >
+                                  <AxisChip tone="info">
+                                    Inherited (split)
+                                  </AxisChip>
+                                </Tooltip>
+                              ) : null}
+                              {showProjectedExternal && splitParentId ? (
+                                renderAssemblyChip(
+                                  splitParentId,
+                                  `From A${splitParentId}`
+                                )
+                              ) : null}
+                            </Group>
                           </Table.Td>
                           {cols.map((_l, i) => (
                             <Table.Td
@@ -668,6 +750,22 @@ export function AssemblyQuantitiesCard({
                               wrap="nowrap"
                               style={{ overflow: "hidden", height: 26 }}
                             >
+                              {isSplitStage ? (
+                                <>
+                                  <AxisChip tone="neutral">
+                                    Split out: {Number(splitOutTotal) || 0}
+                                  </AxisChip>
+                                  {(splitMeta?.childAssemblyIds || []).map(
+                                    (childId) => (
+                                      <span
+                                        key={`split-child-${it.assemblyId}-${childId}`}
+                                      >
+                                        {renderAssemblyChip(childId)}
+                                      </span>
+                                    )
+                                  )}
+                                </>
+                              ) : null}
                               {chips.map((chip) => (
                                 <Tooltip
                                   key={`${it.assemblyId}-${rowIdx}-${chip.key}`}
@@ -730,6 +828,19 @@ export function AssemblyQuantitiesCard({
                       );
                     }
                     const internalRow = row;
+                    const showProjectedCut =
+                      internalRow.stage === "cut" &&
+                      Boolean(it.projectedStages?.cut);
+                    const showProjectedFinish =
+                      internalRow.stage === "finish" &&
+                      Boolean(it.projectedStages?.finish);
+                    const isSplitStage =
+                      Boolean(splitMeta) &&
+                      splitStageKey === String(internalRow.stage || "").toLowerCase();
+                    const splitOutTotal = isSplitStage
+                      ? sumArr(splitMeta?.allocatedBreakdown || []) ||
+                        Number(splitMeta?.totalAllocated || 0)
+                      : 0;
                     const breakdownValues =
                       internalRow.stage === "order" &&
                       idx === 0 &&
@@ -742,25 +853,64 @@ export function AssemblyQuantitiesCard({
                       breakdownValues,
                       internalRow.breakdown
                     );
+                    const extraChips: ChipSpec[] = [];
+                    if (internalRow.stage === "retain") {
+                      const finishTotal =
+                        typeof it.totals?.finish === "number"
+                          ? it.totals.finish
+                          : sumArr(it.finish);
+                      const remaining = Math.max(
+                        0,
+                        Number(finishTotal || 0) - Number(internalRow.total || 0)
+                      );
+                      if (remaining > 0) {
+                        extraChips.push({
+                          key: "retain-remaining",
+                          tone: "neutral",
+                          label: `Remaining ${remaining}`,
+                          tooltip: "Finished units not retained yet.",
+                        });
+                      }
+                    }
+                    const rowChips = [...extraChips, ...chips];
                     return (
                       <Table.Tr key={`int-${idx}-${rowIdx}`}>
                         <Table.Td
                           style={tdBase}
                           className="axis-stage-col axis-stage-col--stage"
                         >
-                          {internalRow.hint ? (
-                            <Tooltip label={internalRow.hint} withArrow>
-                              <span>
-                                <Text fw={600} size="xs">
-                                  {getStageLabelForRow(internalRow)}
-                                </Text>
-                              </span>
-                            </Tooltip>
-                          ) : (
-                            <Text fw={600} size="xs">
-                              {getStageLabelForRow(internalRow)}
-                            </Text>
-                          )}
+                          <Group gap={6} wrap="nowrap">
+                            {internalRow.hint ? (
+                              <Tooltip label={internalRow.hint} withArrow>
+                                <span>
+                                  <Text fw={600} size="xs">
+                                    {getStageLabelForRow(internalRow)}
+                                  </Text>
+                                </span>
+                              </Tooltip>
+                            ) : (
+                              <Text fw={600} size="xs">
+                                {getStageLabelForRow(internalRow)}
+                              </Text>
+                            )}
+                            {showProjectedCut || showProjectedFinish ? (
+                              <Tooltip
+                                label="Inherited from split"
+                                withArrow
+                              >
+                                <AxisChip tone="info">
+                                  Inherited (split)
+                                </AxisChip>
+                              </Tooltip>
+                            ) : null}
+                            {(showProjectedCut || showProjectedFinish) &&
+                            splitParentId
+                              ? renderAssemblyChip(
+                                  splitParentId,
+                                  `From A${splitParentId}`
+                                )
+                              : null}
+                          </Group>
                         </Table.Td>
                         {breakdownValues.map((value, i) => (
                           <Table.Td
@@ -824,7 +974,23 @@ export function AssemblyQuantitiesCard({
                             wrap="nowrap"
                             style={{ overflow: "hidden", height: 26 }}
                           >
-                            {chips.map((chip) => (
+                            {isSplitStage ? (
+                              <>
+                                <AxisChip tone="neutral">
+                                  Split out: {Number(splitOutTotal) || 0}
+                                </AxisChip>
+                                {(splitMeta?.childAssemblyIds || []).map(
+                                  (childId) => (
+                                    <span
+                                      key={`split-child-${it.assemblyId}-${childId}`}
+                                    >
+                                      {renderAssemblyChip(childId)}
+                                    </span>
+                                  )
+                                )}
+                              </>
+                            ) : null}
+                            {rowChips.map((chip) => (
                               <Tooltip
                                 key={`${it.assemblyId}-${rowIdx}-${chip.key}`}
                                 label={chip.tooltip}
@@ -890,6 +1056,19 @@ export function AssemblyQuantitiesCard({
                                     aria-label="Add to box"
                                     onClick={actionColumn.onRecordPack}
                                     disabled={actionColumn.recordPackDisabled}
+                                  >
+                                    <IconBox size={16} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              ) : null}
+                              {internalRow.stage === "retain" &&
+                              actionColumn?.onRecordRetain ? (
+                                <Tooltip label="Retain" withArrow>
+                                  <ActionIcon
+                                    variant="subtle"
+                                    aria-label="Retain"
+                                    onClick={actionColumn.onRecordRetain}
+                                    disabled={actionColumn.recordRetainDisabled}
                                   >
                                     <IconBox size={16} />
                                   </ActionIcon>

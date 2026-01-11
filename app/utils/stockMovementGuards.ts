@@ -14,7 +14,7 @@ type BatchGuardInput = {
 
 export function isTransferLikeMovementType(movementType: string | null | undefined) {
   const mt = (movementType ?? "").toString().trim().toLowerCase();
-  return mt === "transfer" || mt.startsWith("defect_");
+  return mt === "transfer" || mt.startsWith("defect_") || mt === "retain";
 }
 
 export function assertTransferLocations(input: TransferGuardInput) {

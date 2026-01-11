@@ -5,6 +5,7 @@ import {
   Badge,
   Card,
   Checkbox,
+  Collapse,
   Divider,
   Grid,
   Group,
@@ -28,6 +29,7 @@ import { HotkeyAwareModalRoot } from "~/base/hotkeys/HotkeyAwareModal";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   Fragment,
   type ChangeEvent,
@@ -54,12 +56,18 @@ import { AxisChip } from "~/components/AxisChip";
 import { JumpLink } from "~/components/JumpLink";
 import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 import { AssemblyPackModal } from "~/modules/job/components/AssemblyPackModal";
+import { AssemblyRetainModal } from "~/modules/job/components/AssemblyRetainModal";
 import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
 import type { PackBoxSummary } from "~/modules/job/types/pack";
 import type { StageRow } from "~/modules/job/types/stageRows";
 import type { StageStats } from "~/modules/job/services/stageRows.server";
 import type { CompanyOption } from "~/modules/company/components/CompanySelect";
 import type { ExternalStageRow } from "~/modules/job/types/stageRows";
+import { sumBreakdownArrays } from "~/modules/job/quantityUtils";
+import {
+  computeDownstreamUsed,
+  computeExternalGateFromSteps,
+} from "~/modules/job/utils/stageGateUtils";
 
 export type QuantityItem = {
   assemblyId: number;
@@ -71,12 +79,16 @@ export type QuantityItem = {
   sew: number[];
   finish: number[];
   pack: number[];
-  totals: { cut: number; sew: number; finish: number; pack: number };
+  retain?: number[];
+  totals: { cut: number; sew: number; finish: number; pack: number; retain?: number };
+  showRetain?: boolean;
+  projectedStages?: { cut?: boolean; finish?: boolean; externalTypes?: string[] };
   stageStats: {
     cut: StageStats;
     sew: StageStats;
     finish: StageStats;
     pack: StageStats;
+    retain: StageStats;
     qc: StageStats;
   };
   stageRows: StageRow[];
@@ -149,6 +161,26 @@ export function AssembliesEditor(props: {
   } | null;
   assemblyTypeOptions?: string[] | null;
   defectReasons?: Array<{ id: number; label: string | null }>;
+  splitGroups?: Array<{
+    id: number;
+    parentAssemblyId: number;
+    allocations: Array<{
+      id: number;
+      childAssemblyId: number;
+      allocatedBreakdown: number[];
+      finishBreakdown: number[];
+      externalAllocations: Record<string, { sent?: number[]; received?: number[] }>;
+    }>;
+  }>;
+  splitAllocations?: Array<{
+    id: number;
+    splitGroupId: number;
+    childAssemblyId: number;
+    allocatedBreakdown: number[];
+    finishBreakdown: number[];
+    externalAllocations: Record<string, { sent?: number[]; received?: number[] }>;
+    splitGroup: { id: number; parentAssemblyId: number };
+  }>;
   rollupsByAssembly?: Record<number, any> | null;
   vendorOptionsByStep?: Record<string, CompanyOption[]> | null;
   legacyStatusReadOnly?: boolean;
@@ -173,6 +205,8 @@ export function AssembliesEditor(props: {
     packActivityReferences,
     assemblyTypeOptions,
     defectReasons,
+    splitGroups,
+    splitAllocations,
     primaryCostingIdByAssembly,
     rollupsByAssembly,
     vendorOptionsByStep,
@@ -183,9 +217,37 @@ export function AssembliesEditor(props: {
   const activityList = activitiesProp || [];
   const submit = useSubmit();
   const externalStepFetcher = useFetcher<{ ok?: boolean; error?: string }>();
+  const splitAllocationFetcher = useFetcher<{ error?: string }>();
   const revalidator = useRevalidator();
   const isGroup = (assemblies?.length ?? 0) > 1;
   const firstAssembly = assemblies[0];
+  const splitGroupById = useMemo(() => {
+    const map = new Map<number, NonNullable<typeof splitGroups>[number]>();
+    (splitGroups || []).forEach((g) => map.set(g.id, g));
+    return map;
+  }, [splitGroups]);
+  const splitAllocById = useMemo(() => {
+    const map = new Map<number, NonNullable<typeof splitAllocations>[number]>();
+    (splitAllocations || []).forEach((a) => map.set(a.id, a));
+    return map;
+  }, [splitAllocations]);
+  const splitGroupByChild = useMemo(() => {
+    const map = new Map<number, NonNullable<typeof splitAllocations>[number]>();
+    (splitAllocations || []).forEach((a) => {
+      map.set(a.childAssemblyId, a);
+    });
+    return map;
+  }, [splitAllocations]);
+  const splitGroupForPrimary = useMemo(() => {
+    if (!firstAssembly) return null;
+    const parentGroup = (splitGroups || []).find(
+      (g) => Number(g.parentAssemblyId) === Number(firstAssembly.id)
+    );
+    if (parentGroup) return parentGroup;
+    const alloc = splitGroupByChild.get(Number(firstAssembly.id));
+    if (alloc) return splitGroupById.get(alloc.splitGroupId) || null;
+    return null;
+  }, [firstAssembly, splitGroups, splitGroupByChild, splitGroupById]);
   const holdByAssemblyId = useMemo(() => {
     const map: Record<number, { jobHold: boolean; assemblyHold: boolean }> = {};
     (assemblies || []).forEach((a) => {
@@ -197,7 +259,7 @@ export function AssembliesEditor(props: {
     return map;
   }, [assemblies]);
   const assemblyTypeData = (
-    assemblyTypeOptions || ["Prod", "Keep", "PP", "SMS"]
+    assemblyTypeOptions || ["Prod", "Keep", "Internal Dev", "PP", "SMS"]
   ).map((label) => ({
     value: label,
     label,
@@ -221,6 +283,10 @@ export function AssembliesEditor(props: {
     null
   );
   const [packModalOpen, setPackModalOpen] = useState(false);
+  const [retainModalAssemblyId, setRetainModalAssemblyId] = useState<number | null>(
+    null
+  );
+  const [retainModalOpen, setRetainModalOpen] = useState(false);
   const [deleteActivity, setDeleteActivity] = useState<any | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [defectModalOpen, setDefectModalOpen] = useState(false);
@@ -236,6 +302,21 @@ export function AssembliesEditor(props: {
   const [defectEditActivityId, setDefectEditActivityId] = useState<
     number | null
   >(null);
+  const [splitAllocationOpen, setSplitAllocationOpen] = useState(false);
+  const [splitAllocationGroupId, setSplitAllocationGroupId] = useState<number | null>(null);
+  const [splitAllocationParentId, setSplitAllocationParentId] = useState<number | null>(null);
+  const [splitAllocationMode, setSplitAllocationMode] = useState<"create" | "edit">("edit");
+  const [splitAllocationMap, setSplitAllocationMap] = useState<Record<string, number[]>>({});
+  const [splitFinishAllocationMap, setSplitFinishAllocationMap] = useState<Record<string, number[]>>({});
+  const [splitExternalAllocationMap, setSplitExternalAllocationMap] = useState<
+    Record<string, Record<string, { sent?: number[]; received?: number[] }>>
+  >({});
+  const [splitDraftChildren, setSplitDraftChildren] = useState<Array<{ key: string }>>([]);
+  const splitDraftCounter = useRef(0);
+  const [splitAllocationSubmitted, setSplitAllocationSubmitted] = useState(false);
+  const [splitAllocationError, setSplitAllocationError] = useState<string | null>(null);
+  const [splitStage, setSplitStage] = useState<string>("cut");
+  const [splitDetailsOpen, setSplitDetailsOpen] = useState(false);
   const [externalStepAction, setExternalStepAction] = useState<{
     mode: "send" | "receive";
     assemblyId: number;
@@ -497,14 +578,24 @@ export function AssembliesEditor(props: {
     >();
     (assemblies || []).forEach((a) => {
       const item = quantityItemsById.get(a.id);
+      const assemblyType = String((a as any)?.assemblyType || "").toLowerCase();
+      const useRetain =
+        assemblyType === "keep" ||
+        assemblyType === "internal_dev" ||
+        assemblyType === "internal dev" ||
+        assemblyType === "internal-dev";
       const ordered =
         Array.isArray(item?.ordered) && item.ordered.length
           ? item.ordered.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
           : Number((a as any).quantity ?? 0) || 0;
       const packed =
-        Array.isArray(item?.pack) && item.pack.length
-          ? item.pack.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
-          : Number(item?.totals?.pack ?? 0) || 0;
+        useRetain
+          ? Array.isArray(item?.retain) && item.retain.length
+            ? item.retain.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
+            : Number(item?.totals?.retain ?? 0) || 0
+          : Array.isArray(item?.pack) && item.pack.length
+            ? item.pack.reduce((t: number, n: number) => t + (Number(n) || 0), 0)
+            : Number(item?.totals?.pack ?? 0) || 0;
       const defects = (defectsByAssembly.get(a.id) || []).reduce(
         (t, r) => t + (Number(r.qty) || 0),
         0
@@ -689,6 +780,9 @@ export function AssembliesEditor(props: {
   const packModalAssembly =
     (packModalAssemblyId != null && assembliesById.get(packModalAssemblyId)) ||
     null;
+  const retainModalAssembly =
+    (retainModalAssemblyId != null && assembliesById.get(retainModalAssemblyId)) ||
+    null;
   const costingDisabledMap = editForm.watch("costingDisabled") as Record<
     string,
     boolean
@@ -747,11 +841,57 @@ export function AssembliesEditor(props: {
     });
   }, [assemblies, isGroup, quantityItems]);
   const activityRows = activityList;
+  const splitMetaByAssemblyId = useMemo(() => {
+    const map: Record<
+      number,
+      {
+        splitStageKey?: string;
+        allocatedBreakdown?: number[];
+        totalAllocated?: number;
+        parentRemainder?: number;
+        childAssemblyIds?: number[];
+      }
+    > = {};
+    for (const act of activityList) {
+      const action = String(act?.action || "").toLowerCase();
+      if (action !== "split") continue;
+      const assemblyId = Number(act?.assemblyId);
+      if (!Number.isFinite(assemblyId) || assemblyId <= 0) continue;
+      const meta = (act as any)?.metaJson || {};
+      const allocatedBreakdown = Array.isArray(act?.qtyBreakdown)
+        ? (act.qtyBreakdown as number[])
+        : Array.isArray(meta?.allocatedBreakdown)
+          ? (meta.allocatedBreakdown as number[])
+          : [];
+      map[assemblyId] = {
+        splitStageKey: meta?.splitStageKey || String(act?.stage || ""),
+        allocatedBreakdown,
+        totalAllocated:
+          meta?.allocatedTotal != null ? Number(meta.allocatedTotal) : Number(act?.quantity ?? 0),
+        parentRemainder:
+          meta?.parentRemainder != null ? Number(meta.parentRemainder) : undefined,
+        childAssemblyIds: Array.isArray(meta?.childAssemblyIds) ? meta.childAssemblyIds : [],
+      };
+    }
+    return map;
+  }, [activityList]);
+  const splitParentByAssemblyId = useMemo(() => {
+    const map: Record<number, number> = {};
+    (splitAllocations || []).forEach((alloc) => {
+      if (alloc?.childAssemblyId && alloc?.splitGroup?.parentAssemblyId) {
+        map[alloc.childAssemblyId] = alloc.splitGroup.parentAssemblyId;
+      }
+    });
+    return map;
+  }, [splitAllocations]);
   const modalVariantLabels = modalAssembly?.id
     ? getVariantLabelsForAssembly(modalAssembly.id)
     : activityVariantLabels || [];
   const packModalVariantLabels = packModalAssemblyId
     ? getVariantLabelsForAssembly(packModalAssemblyId)
+    : [];
+  const retainModalVariantLabels = retainModalAssemblyId
+    ? getVariantLabelsForAssembly(retainModalAssemblyId)
     : [];
   const modalCostings = useMemo(() => {
     const raw = ((modalAssembly as any)?.costings || []) as any[];
@@ -762,6 +902,9 @@ export function AssembliesEditor(props: {
   }, [modalAssembly]);
   const packModalQuantityItem = packModalAssemblyId
     ? quantityItemsByAssemblyId.get(packModalAssemblyId)
+    : undefined;
+  const retainModalQuantityItem = retainModalAssemblyId
+    ? quantityItemsByAssemblyId.get(retainModalAssemblyId)
     : undefined;
   const groupAssemblyIds = useMemo(
     () => (assemblies || []).map((a) => a.id),
@@ -916,6 +1059,22 @@ export function AssembliesEditor(props: {
     const finish = Number(totals.finish ?? 0) || 0;
     return cut > finish;
   };
+  const isRetainAssemblyType = (assemblyId: number) => {
+    const assembly = assembliesById.get(assemblyId) as any;
+    const raw = String(assembly?.assemblyType || "").toLowerCase();
+    return (
+      raw === "keep" ||
+      raw === "internal_dev" ||
+      raw === "internal dev" ||
+      raw === "internal-dev"
+    );
+  };
+  const retainDestinationLabelForAssembly = (assemblyId: number) => {
+    const assembly = assembliesById.get(assemblyId) as any;
+    const raw = String(assembly?.assemblyType || "").toLowerCase();
+    if (raw === "keep") return "Samples";
+    return "Dev Samples";
+  };
   const canRecordSewForAssembly = (assemblyId: number) => {
     const item = quantityItemsByAssemblyId.get(assemblyId);
     if (!item) return false;
@@ -924,8 +1083,9 @@ export function AssembliesEditor(props: {
     if (sewHasExplicit) return true;
     const finishRecorded =
       Number(item?.stageStats?.finish?.processedTotal ?? 0) > 0;
-    const packRecorded =
-      Number(item?.stageStats?.pack?.processedTotal ?? 0) > 0;
+    const packRecorded = isRetainAssemblyType(assemblyId)
+      ? Number(item?.stageStats?.retain?.processedTotal ?? 0) > 0
+      : Number(item?.stageStats?.pack?.processedTotal ?? 0) > 0;
     const externalProgress = (item.stageRows || []).some((row: any) => {
       if (row?.kind !== "external") return false;
       const sent = Number(row?.totals?.sent ?? 0) || 0;
@@ -936,11 +1096,25 @@ export function AssembliesEditor(props: {
     return true;
   };
   const canRecordPackForAssembly = (assemblyId: number) => {
+    if (isRetainAssemblyType(assemblyId)) return false;
     const totals = quantityItemsByAssemblyId.get(assemblyId)?.totals;
     if (!totals) return false;
     const finish = Number(totals.finish ?? 0) || 0;
     const pack = Number(totals.pack ?? 0) || 0;
     return finish > pack;
+  };
+  const canRecordRetainForAssembly = (assemblyId: number) => {
+    if (!isRetainAssemblyType(assemblyId)) return false;
+    const stats = quantityItemsByAssemblyId.get(assemblyId)?.stageStats;
+    if (!stats) return false;
+    const finishArr = stats.finish?.usableArr || [];
+    const retainArr = stats.retain?.usableArr || [];
+    const len = Math.max(finishArr.length, retainArr.length);
+    let available = 0;
+    for (let i = 0; i < len; i++) {
+      available += Math.max(0, Number(finishArr[i] ?? 0) - Number(retainArr[i] ?? 0));
+    }
+    return available > 0;
   };
   const assembliesResetKey = useMemo(
     () =>
@@ -1155,6 +1329,87 @@ export function AssembliesEditor(props: {
     setDefectModalOpen(false);
     setDefectEditActivityId(null);
   };
+  const closeSplitAllocationModal = () => {
+    setSplitAllocationOpen(false);
+    setSplitAllocationGroupId(null);
+    setSplitAllocationParentId(null);
+    setSplitAllocationMode("edit");
+    setSplitAllocationSubmitted(false);
+    setSplitAllocationMap({});
+    setSplitFinishAllocationMap({});
+    setSplitExternalAllocationMap({});
+    setSplitAllocationError(null);
+    setSplitDraftChildren([]);
+    setSplitStage("cut");
+    setSplitDetailsOpen(false);
+  };
+
+  const openSplitAllocationModal = (groupId: number) => {
+    const group = splitGroupById.get(groupId);
+    if (!group) return;
+    const map: Record<string, number[]> = {};
+    const finishMap: Record<string, number[]> = {};
+    const externalMap: Record<
+      string,
+      Record<string, { sent?: number[]; received?: number[] }>
+    > = {};
+    const externalKeys = new Set<string>();
+    group.allocations.forEach((a) => {
+      const key = String(a.childAssemblyId);
+      const arr = Array.isArray(a.allocatedBreakdown) ? (a.allocatedBreakdown as number[]) : [];
+      const finishArr = Array.isArray(a.finishBreakdown) ? (a.finishBreakdown as number[]) : [];
+      const externalAllocations =
+        (a.externalAllocations as Record<string, { sent?: number[]; received?: number[] }>) ||
+        {};
+      map[key] = [...arr];
+      finishMap[key] = [...finishArr];
+      externalMap[key] = externalAllocations;
+      Object.entries(externalAllocations).forEach(([type, payload]) => {
+        const sent = payload?.sent || [];
+        const received = payload?.received || [];
+        if (sent.some((n) => Number(n) > 0) || received.some((n) => Number(n) > 0)) {
+          externalKeys.add(type);
+        }
+      });
+    });
+    setSplitAllocationMap(map);
+    setSplitFinishAllocationMap(finishMap);
+    setSplitExternalAllocationMap(externalMap);
+    const hasExternal = externalKeys.size > 0;
+    const hasFinish = group.allocations.some(
+      (a) =>
+        Array.isArray(a.finishBreakdown) &&
+        (a.finishBreakdown as number[]).some((n) => Number(n) > 0)
+    );
+    const nextStage = hasExternal
+      ? `external:${Array.from(externalKeys)[0]}`
+      : hasFinish
+        ? "finish"
+        : "cut";
+    setSplitStage(nextStage);
+    setSplitAllocationMode("edit");
+    setSplitAllocationGroupId(groupId);
+    setSplitAllocationParentId(group.parentAssemblyId);
+    setSplitDraftChildren([]);
+    setSplitAllocationSubmitted(false);
+    setSplitAllocationOpen(true);
+    setSplitAllocationError(null);
+  };
+
+  const openSplitAllocationDraft = (parentId: number) => {
+    splitDraftCounter.current = 0;
+    setSplitAllocationMode("create");
+    setSplitAllocationGroupId(null);
+    setSplitAllocationParentId(parentId);
+    setSplitAllocationMap({});
+    setSplitFinishAllocationMap({});
+    setSplitExternalAllocationMap({});
+    setSplitDraftChildren([]);
+    setSplitAllocationSubmitted(false);
+    setSplitAllocationError(null);
+    setSplitStage("order");
+    setSplitAllocationOpen(true);
+  };
 
   const resolveCancelEditLabels = () => {
     const labels = cancelEditAssemblyId
@@ -1177,6 +1432,88 @@ export function AssembliesEditor(props: {
     });
   }, [defectModalOpen, defectAssemblyId, firstAssembly?.id]);
 
+  useEffect(() => {
+    if (!splitAllocationOpen) return;
+    const parentId =
+      splitAllocationMode === "create"
+        ? splitAllocationParentId
+        : splitAllocationGroupId
+          ? splitGroupById.get(splitAllocationGroupId)?.parentAssemblyId
+          : null;
+    if (!parentId) return;
+    const metrics = buildSplitStageMetrics(parentId);
+    const options = buildSplitStageOptions(metrics);
+    const current = options.find((opt) => opt.value === splitStage);
+    if (current && !current.disabled) return;
+    const next = options.find((opt) => !opt.disabled);
+    if (next) {
+      setSplitStage(next.value);
+    }
+  }, [
+    splitAllocationOpen,
+    splitGroupById,
+    splitStage,
+    assembliesById,
+    quantityItemsByAssemblyId,
+    splitAllocationParentId,
+    splitAllocationMode,
+  ]);
+
+  useEffect(() => {
+    if (!splitAllocationOpen) return;
+    const parentId =
+      splitAllocationMode === "create"
+        ? splitAllocationParentId
+        : splitAllocationGroupId
+          ? splitGroupById.get(splitAllocationGroupId)?.parentAssemblyId
+          : null;
+    if (!parentId) return;
+    const childKeys =
+      splitAllocationMode === "create"
+        ? splitDraftChildren.map((child) => child.key)
+        : splitAllocationGroupId
+          ? (splitGroupById.get(splitAllocationGroupId)?.allocations || []).map((a) =>
+              String(a.childAssemblyId)
+            )
+          : [];
+    if (childKeys.length !== 1) return;
+    const metrics = buildSplitStageMetrics(parentId);
+    const stageMetrics = splitStage.startsWith("external:")
+      ? metrics.externals.get(splitStage.split(":")[1] || "")
+      : (metrics as any)[splitStage];
+    if (!stageMetrics) return;
+    if (!anyPositive(stageMetrics.minKeep || [])) return;
+    const slack = clampArray(
+      subtractArrays(stageMetrics.cap, stageMetrics.minKeep)
+    );
+    if (!anyPositive(slack)) return;
+    const childKey = childKeys[0];
+    const current = getStageAllocationForChild(splitStage, childKey);
+    if (anyPositive(current)) return;
+    setStageAllocationForChild(splitStage, childKey, slack);
+  }, [
+    splitAllocationOpen,
+    splitAllocationGroupId,
+    splitAllocationParentId,
+    splitAllocationMode,
+    splitDraftChildren,
+    splitGroupById,
+    splitStage,
+    assembliesById,
+    quantityItemsByAssemblyId,
+  ]);
+
+  useEffect(() => {
+    if (!splitAllocationOpen) return;
+    if (!splitAllocationSubmitted) return;
+    if (splitAllocationFetcher.state !== "idle") return;
+    if (splitAllocationFetcher.data && (splitAllocationFetcher.data as any).error) return;
+    revalidator.revalidate();
+    setSplitAllocationOpen(false);
+    setSplitAllocationGroupId(null);
+    setSplitAllocationSubmitted(false);
+  }, [splitAllocationFetcher.state, splitAllocationFetcher.data, splitAllocationOpen, splitAllocationSubmitted]);
+
   function resolveVariantLabels(assemblyId: number | null) {
     if (!assemblyId) return ["Qty"];
     const labels =
@@ -1185,6 +1522,27 @@ export function AssembliesEditor(props: {
       [];
     return labels && labels.length ? labels : ["Qty"];
   }
+
+  const resolveSplitStageLabel = (activity: any) => {
+    const assemblyId = Number(activity?.assemblyId ?? 0) || 0;
+    const meta = activity?.metaJson || {};
+    const keyRaw = String(meta?.splitStageKey || activity?.stage || "").trim();
+    if (!keyRaw) return "Split";
+    const keyLower = keyRaw.toLowerCase();
+    if (keyLower.startsWith("external:")) {
+      const type = keyLower.split(":")[1] || "";
+      const item = quantityItemsByAssemblyId.get(assemblyId);
+      const externalRow = (item?.stageRows || []).find(
+        (row: any) =>
+          row?.kind === "external" &&
+          String(row?.externalStepType || "").toLowerCase() === type
+      );
+      const label = externalRow?.label || externalRow?.name || type || "External";
+      return `External: ${label}`;
+    }
+    const pretty = keyLower.charAt(0).toUpperCase() + keyLower.slice(1);
+    return pretty;
+  };
 
   const buildExternalStepDefaultBreakdown = (
     assemblyId: number,
@@ -1216,6 +1574,188 @@ export function AssembliesEditor(props: {
     const labels = resolveVariantLabels(assemblyId);
     const len = Math.max(base.length, labels.length, 1);
     return Array.from({ length: len }, (_, idx) => Number(base[idx] ?? 0) || 0);
+  };
+
+  const toNum = (value: unknown) =>
+    Number.isFinite(Number(value)) ? Number(value) : 0;
+  const anyPositive = (arr: number[]) => arr.some((n) => toNum(n) > 0);
+  const maxArrays = (a: number[], b: number[]) => {
+    const len = Math.max(a.length, b.length);
+    return Array.from({ length: len }, (_, i) =>
+      Math.max(toNum(a[i]), toNum(b[i]))
+    );
+  };
+  const subtractArrays = (a: number[], b: number[]) => {
+    const len = Math.max(a.length, b.length);
+    return Array.from({ length: len }, (_, i) => toNum(a[i]) - toNum(b[i]));
+  };
+  const clampArray = (arr: number[]) => arr.map((n) => Math.max(0, toNum(n)));
+
+  const buildSplitStageMetrics = (parentId: number) => {
+    const qtyItem = quantityItemsByAssemblyId.get(parentId);
+    const parent = assembliesById.get(parentId);
+    const ordered = Array.isArray(parent?.qtyOrderedBreakdown)
+      ? (parent?.qtyOrderedBreakdown as number[])
+      : [];
+    const cutRecorded = (qtyItem?.stageStats?.cut?.processedArr as number[]) || [];
+    const finishRecorded =
+      (qtyItem?.stageStats?.finish?.processedArr as number[]) || [];
+    const packRecorded =
+      (qtyItem?.stageStats?.pack?.processedArr as number[]) || [];
+    const retainRecorded =
+      (qtyItem?.stageStats?.retain?.processedArr as number[]) || [];
+    const sewRecorded = (qtyItem?.stageStats?.sew?.processedArr as number[]) || [];
+    const stageRows = qtyItem?.stageRows || [];
+    const externalRows = stageRows.filter(
+      (row: StageRow): row is ExternalStageRow => row.kind === "external"
+    );
+    const externalSteps = externalRows.map((row) => ({
+      sent: row.sent || [],
+      received: row.received || [],
+    }));
+    const externalGate = computeExternalGateFromSteps(externalSteps);
+    const downstream = computeDownstreamUsed({
+      externalGate,
+      sewRecorded,
+      finishRecorded,
+      packRecorded,
+      retainRecorded,
+    });
+    const finishDown = maxArrays(
+      finishRecorded,
+      maxArrays(packRecorded, retainRecorded)
+    );
+    const cutCap = anyPositive(cutRecorded) ? cutRecorded : ordered;
+    const externalMetrics = new Map<
+      string,
+      { cap: number[]; minKeep: number[]; label: string }
+    >();
+    for (const row of externalRows) {
+      const received = row.received || [];
+      const sent = row.sent || [];
+      const cap = anyPositive(received) ? received : sent;
+      externalMetrics.set(String(row.externalStepType), {
+        cap,
+        minKeep: finishDown,
+        label: row.label || String(row.externalStepType),
+      });
+    }
+    return {
+      order: { cap: ordered, minKeep: downstream.cut || [] },
+      cut: { cap: cutCap, minKeep: downstream.cut || [] },
+      sew: { cap: sewRecorded, minKeep: downstream.sew || [] },
+      finish: { cap: finishRecorded, minKeep: downstream.finish || [] },
+      pack: { cap: packRecorded, minKeep: packRecorded },
+      recorded: {
+        cut: cutRecorded,
+        sew: sewRecorded,
+        finish: finishRecorded,
+        pack: packRecorded,
+      },
+      externals: externalMetrics,
+    };
+  };
+
+  const buildSplitStageOptions = (metrics: ReturnType<typeof buildSplitStageMetrics>) => {
+    const options: Array<{
+      value: string;
+      label: string;
+      disabled: boolean;
+      reason: string;
+    }> = [
+      {
+        value: "order",
+        label: "ORDER",
+        disabled: false,
+        reason: "",
+      },
+    ];
+    if (anyPositive(metrics.recorded.cut)) {
+      options.push({
+        value: "cut",
+        label: "CUT",
+        disabled: false,
+        reason: "",
+      });
+    }
+    if (anyPositive(metrics.recorded.sew)) {
+      options.push({
+        value: "sew",
+        label: "SEW",
+        disabled: false,
+        reason: "",
+      });
+    }
+    for (const [type, meta] of metrics.externals.entries()) {
+      const capTotal = meta.cap.reduce((t, n) => t + toNum(n), 0);
+      if (capTotal > 0) {
+        options.push({
+          value: `external:${type}`,
+          label: `External: ${meta.label || String(type)}`,
+          disabled: false,
+          reason: "",
+        });
+      }
+    }
+    if (anyPositive(metrics.recorded.finish)) {
+      options.push({
+        value: "finish",
+        label: "FINISH",
+        disabled: false,
+        reason: "",
+      });
+    }
+    return options;
+  };
+
+  const getStageAllocationForChild = (
+    stage: string,
+    childKey: string
+  ) => {
+    if (stage === "finish") return splitFinishAllocationMap[childKey] || [];
+    if (stage.startsWith("external:")) {
+      const type = stage.split(":")[1] || "";
+      const entry = splitExternalAllocationMap[childKey]?.[type] || {};
+      return entry.received || entry.sent || [];
+    }
+    return splitAllocationMap[childKey] || [];
+  };
+
+  const setStageAllocationForChild = (
+    stage: string,
+    childKey: string,
+    values: number[]
+  ) => {
+    if (stage === "finish") {
+      setSplitFinishAllocationMap((prev) => ({
+        ...prev,
+        [childKey]: [...values],
+      }));
+      setSplitAllocationMap((prev) => ({
+        ...prev,
+        [childKey]: [...values],
+      }));
+      return;
+    }
+    if (stage.startsWith("external:")) {
+      const type = stage.split(":")[1] || "";
+      setSplitExternalAllocationMap((prev) => {
+        const next = { ...prev };
+        const perChild = { ...(next[childKey] || {}) };
+        perChild[type] = { sent: [...values], received: [...values] };
+        next[childKey] = perChild;
+        return next;
+      });
+      setSplitAllocationMap((prev) => ({
+        ...prev,
+        [childKey]: [...values],
+      }));
+      return;
+    }
+    setSplitAllocationMap((prev) => ({
+      ...prev,
+      [childKey]: [...values],
+    }));
   };
 
   const watchedPrimaryCostingIds =
@@ -1483,6 +2023,16 @@ export function AssembliesEditor(props: {
     });
   };
 
+  const handleRecordRetain = (assemblyId: number) => {
+    if (!canRecordRetainForAssembly(assemblyId)) return;
+    const targetId = assemblyId ?? firstAssembly?.id ?? null;
+    if (!targetId) return;
+    confirmIfHeld(targetId, () => {
+      setRetainModalAssemblyId(targetId);
+      setRetainModalOpen(true);
+    });
+  };
+
   const statusControlElements = legacyStatusReadOnly
     ? (() => {
         if (isGroup) {
@@ -1709,14 +2259,20 @@ export function AssembliesEditor(props: {
                         sew: item.sew,
                         finish: item.finish,
                         pack: item.pack,
+                        retain: item.retain,
+                        showRetain: item.showRetain,
                         totals: item.totals,
                         stageRows: item.stageRows,
+                        projectedStages: item.projectedStages,
                       },
                     ]}
                     editableOrdered
                     hideInlineActions
                     showOperationalSummary={!isGroup}
                     holdByAssemblyId={holdByAssemblyId}
+                    jobId={job?.id}
+                    splitMetaByAssemblyId={splitMetaByAssemblyId}
+                    splitParentByAssemblyId={splitParentByAssemblyId}
                     orderedValue={editForm.watch(
                       `orderedByAssembly.${a.id}` as any
                     )}
@@ -1736,8 +2292,18 @@ export function AssembliesEditor(props: {
                       recordSewDisabled: !canRecordSewForAssembly(a.id),
                       onRecordFinish: () => handleRecordFinish(a.id),
                       recordFinishDisabled: !canRecordFinishForAssembly(a.id),
-                      onRecordPack: () => handleRecordPack(a.id),
-                      recordPackDisabled: !canRecordPackForAssembly(a.id),
+                      onRecordPack: isRetainAssemblyType(a.id)
+                        ? undefined
+                        : () => handleRecordPack(a.id),
+                      recordPackDisabled: isRetainAssemblyType(a.id)
+                        ? true
+                        : !canRecordPackForAssembly(a.id),
+                      onRecordRetain: isRetainAssemblyType(a.id)
+                        ? () => handleRecordRetain(a.id)
+                        : undefined,
+                      recordRetainDisabled: isRetainAssemblyType(a.id)
+                        ? !canRecordRetainForAssembly(a.id)
+                        : true,
                     }}
                     onExternalSend={(assemblyId, row) =>
                       openExternalStepModal(assemblyId, row)
@@ -1877,15 +2443,37 @@ export function AssembliesEditor(props: {
             <Card.Section inheritPadding py="xs">
               <Group justify="space-between" align="center">
                 <Title order={4}>Activity History</Title>
-                <Button
-                  size="xs"
-                  variant="default"
-                  onClick={() => {
-                    openDefectModal({ assemblyId: firstAssembly?.id ?? null });
-                  }}
-                >
-                  Record Defect
-                </Button>
+                <Group gap="xs">
+                  {!splitGroupForPrimary && firstAssembly ? (
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => {
+                        openSplitAllocationDraft(Number(firstAssembly.id));
+                      }}
+                    >
+                      Split assembly...
+                    </Button>
+                  ) : null}
+                  {splitGroupForPrimary ? (
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => openSplitAllocationModal(splitGroupForPrimary.id)}
+                    >
+                      Edit split allocation
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="xs"
+                    variant="default"
+                    onClick={() => {
+                      openDefectModal({ assemblyId: firstAssembly?.id ?? null });
+                    }}
+                  >
+                    Record Defect
+                  </Button>
+                </Group>
               </Group>
             </Card.Section>
             <Card.Section>
@@ -1939,25 +2527,62 @@ export function AssembliesEditor(props: {
                                 representative?.kind != null
                                   ? String(representative.kind).trim()
                                   : "";
-                              if (kindRaw.toLowerCase() === "defect") {
-                                const stageLabel = stageRaw
-                                  ? `${stageRaw.charAt(0).toUpperCase()}${stageRaw
-                                      .slice(1)
-                                      .toLowerCase()}`
-                                  : "Defect";
-                                return `${stageLabel} defect`;
-                              }
-                              if (stageRaw) return stageRaw.toUpperCase();
                               const actionRaw =
                                 representative?.action != null
                                   ? String(representative.action).trim()
                                   : "";
-                              if (kindRaw && actionRaw) {
-                                return `${kindRaw}_${actionRaw}`.toUpperCase();
-                              }
-                              if (kindRaw) return kindRaw.toUpperCase();
-                              if (actionRaw) return actionRaw.toUpperCase();
-                              return representative?.name || "Activity";
+                              const label = (() => {
+                                if (actionRaw.toLowerCase() === "split") {
+                                  return `Split @ ${resolveSplitStageLabel(representative)}`;
+                                }
+                                if (kindRaw.toLowerCase() === "defect") {
+                                  const stageLabel = stageRaw
+                                    ? `${stageRaw.charAt(0).toUpperCase()}${stageRaw
+                                        .slice(1)
+                                        .toLowerCase()}`
+                                    : "Defect";
+                                  return `${stageLabel} defect`;
+                                }
+                                if (stageRaw) return stageRaw.toUpperCase();
+                                if (kindRaw && actionRaw) {
+                                  return `${kindRaw}_${actionRaw}`.toUpperCase();
+                                }
+                                if (kindRaw) return kindRaw.toUpperCase();
+                                if (actionRaw) return actionRaw.toUpperCase();
+                                return representative?.name || "Activity";
+                              })();
+                              const isProjected = Boolean(
+                                representative?.isProjected || representative?.splitAllocationId
+                              );
+                              const sourceId =
+                                Number(representative?.sourceActivityId) || null;
+                              const alloc =
+                                representative?.splitAllocationId != null
+                                  ? splitAllocById.get(
+                                      Number(representative.splitAllocationId)
+                                    )
+                                  : null;
+                              const sourceAssemblyId = alloc?.splitGroup?.parentAssemblyId ?? null;
+                              return isProjected ? (
+                                <Stack gap={2}>
+                                  <Text size="sm">{label}</Text>
+                                  <Tooltip
+                                    label={
+                                      sourceId || sourceAssemblyId
+                                        ? `Inherited from A${sourceAssemblyId ?? "?"} activity #${sourceId ?? "?"}`
+                                        : "Inherited from split allocation"
+                                    }
+                                  >
+                                    <span>
+                                      <AxisChip size="xs" variant="neutral">
+                                        Inherited (split)
+                                      </AxisChip>
+                                    </span>
+                                  </Tooltip>
+                                </Stack>
+                              ) : (
+                                label
+                              );
                             })()}
                           </Table.Td>
                           <Table.Td>{assemblyLabel}</Table.Td>
@@ -1973,19 +2598,66 @@ export function AssembliesEditor(props: {
                               const note = representative?.notes;
                               const createdBy = representative?.createdBy;
                               const createdAt = representative?.createdAt;
+                              const isDefect =
+                                String(representative?.kind || "").toLowerCase() ===
+                                "defect";
                               const dispositionRaw = representative?.defectDisposition;
                               const defectReasonId = Number(representative?.defectReasonId);
                               const defectReasonLabel = defectReasons?.find(
                                 (r: any) => Number(r.id) === defectReasonId
                               )?.label;
-                              const defectMeta = [
-                                dispositionRaw
-                                  ? `Disposition: ${String(dispositionRaw)}`
-                                  : "",
-                                defectReasonLabel
-                                  ? `Reason: ${defectReasonLabel}`
-                                  : "",
-                              ].filter(Boolean);
+                              const defectMeta = isDefect
+                                ? [
+                                    dispositionRaw
+                                      ? `Disposition: ${String(dispositionRaw)}`
+                                      : "",
+                                    defectReasonLabel
+                                      ? `Reason: ${defectReasonLabel}`
+                                      : "",
+                                  ].filter(Boolean)
+                                : [];
+                              const isSplit =
+                                String(representative?.action || "").toLowerCase() ===
+                                "split";
+                              if (isSplit) {
+                                const meta = representative?.metaJson || {};
+                                const allocatedTotal =
+                                  meta?.allocatedTotal != null
+                                    ? Number(meta.allocatedTotal)
+                                    : Number(representative?.quantity ?? 0);
+                                const parentRemainder =
+                                  meta?.parentRemainder != null
+                                    ? Number(meta.parentRemainder)
+                                    : null;
+                                const childIds = Array.isArray(meta?.childAssemblyIds)
+                                  ? meta.childAssemblyIds
+                                  : [];
+                                return (
+                                  <Stack gap={2}>
+                                    <Text size="xs">
+                                      Total allocated: {Number(allocatedTotal) || 0}
+                                      {parentRemainder != null
+                                        ? ` · Parent remainder: ${Number(parentRemainder) || 0}`
+                                        : ""}
+                                    </Text>
+                                    {childIds.length ? (
+                                      <Group gap={6} wrap="wrap">
+                                        {childIds.map((id: number) => (
+                                          <Link
+                                            key={`split-child-${id}`}
+                                            to={`/jobs/${job?.id}/assembly/${id}`}
+                                            style={{ textDecoration: "none" }}
+                                          >
+                                            <AxisChip size="xs" variant="neutral">
+                                              A{id}
+                                            </AxisChip>
+                                          </Link>
+                                        ))}
+                                      </Group>
+                                    ) : null}
+                                  </Stack>
+                                );
+                              }
                               const metaParts = [
                                 createdBy ? `by ${createdBy}` : "",
                                 createdAt
@@ -2035,72 +2707,122 @@ export function AssembliesEditor(props: {
                                 </ActionIcon>
                               </Menu.Target>
                               <Menu.Dropdown>
-                                <Menu.Item
-                                  onClick={() => {
-                                    const targetAssemblyId =
-                                      assemblyIds[0] ||
-                                      Number(representative?.assemblyId) ||
-                                      firstAssembly?.id ||
-                                      null;
-                                    const stage = String(
-                                      representative?.stage || ""
-                                    ).toLowerCase();
-                                    if (stage === "cancel") {
-                                      const labels = trimVariantLabels(
-                                        getVariantLabelsForAssembly(
-                                          targetAssemblyId ?? 0
-                                        )
+                                {String(representative?.action || "").toLowerCase() === "split" ? (
+                                  <Menu.Item
+                                    onClick={() => {
+                                      if (splitGroupForPrimary) {
+                                        openSplitAllocationModal(splitGroupForPrimary.id);
+                                      }
+                                    }}
+                                  >
+                                    Edit split allocation
+                                  </Menu.Item>
+                                ) : null}
+                                {String(representative?.action || "").toLowerCase() === "split" ? (
+                                  <Menu.Item
+                                    color="red"
+                                    onClick={() => {
+                                      const rawKey = String(representative?.groupKey || "");
+                                      const idStr = rawKey.startsWith("split:")
+                                        ? rawKey.split(":")[1]
+                                        : "";
+                                      const splitGroupId = Number(idStr || 0) || splitGroupForPrimary?.id;
+                                      if (!splitGroupId) return;
+                                      const fd = new FormData();
+                                      fd.set("_intent", "assembly.split.undo");
+                                      fd.set("splitGroupId", String(splitGroupId));
+                                      submit(fd, { method: "post" });
+                                    }}
+                                  >
+                                    Undo split
+                                  </Menu.Item>
+                                ) : representative?.splitAllocationId || representative?.isProjected ? (
+                                  <Menu.Item
+                                    onClick={() => {
+                                      const alloc = splitAllocById.get(
+                                        Number(representative?.splitAllocationId)
                                       );
-                                      const breakdown = Array.isArray(
-                                        representative?.qtyBreakdown
-                                      )
-                                        ? (representative.qtyBreakdown as number[])
-                                        : [];
-                                      const effectiveLen = Math.max(
-                                        labels.length,
-                                        breakdown.length
-                                      );
-                                      const normalized = Array.from(
-                                        { length: effectiveLen },
-                                        (_, idx) => Number(breakdown[idx] ?? 0) || 0
-                                      );
-                                      setCancelEditActivity(representative);
-                                      setCancelEditAssemblyId(targetAssemblyId);
-                                      setCancelEditBreakdown(normalized);
-                                      setCancelEditReason(
-                                        String(representative?.notes || "")
-                                      );
-                                      setCancelEditDate(
-                                        representative?.activityDate
-                                          ? new Date(representative.activityDate)
-                                          : new Date()
-                                      );
-                                      setCancelEditOpen(true);
-                                    } else if (
-                                      representative?.kind === "defect"
-                                    ) {
-                                      openDefectModal({
-                                        assemblyId: targetAssemblyId,
-                                        activity: representative,
-                                      });
-                                    } else {
-                                      setModalAssemblyId(targetAssemblyId);
-                                      setEditActivity(representative);
-                                      setActivityModalOpen(true);
-                                    }
-                                  }}
-                                >
-                                  Edit
-                                </Menu.Item>
-                                <Menu.Item
-                                  color="red"
-                                  onClick={() => {
-                                    setDeleteActivity(representative);
-                                    setDeleteConfirmation("");
-                                  }}
-                                >
-                                  Delete
-                                </Menu.Item>
+                                      if (alloc) {
+                                        openSplitAllocationModal(alloc.splitGroupId);
+                                        return;
+                                      }
+                                      if (splitGroupForPrimary) {
+                                        openSplitAllocationModal(splitGroupForPrimary.id);
+                                      }
+                                    }}
+                                  >
+                                    Edit split allocation
+                                  </Menu.Item>
+                                ) : (
+                                  <>
+                                    <Menu.Item
+                                      onClick={() => {
+                                        const targetAssemblyId =
+                                          assemblyIds[0] ||
+                                          Number(representative?.assemblyId) ||
+                                          firstAssembly?.id ||
+                                          null;
+                                        const stage = String(
+                                          representative?.stage || ""
+                                        ).toLowerCase();
+                                        if (stage === "cancel") {
+                                          const labels = trimVariantLabels(
+                                            getVariantLabelsForAssembly(
+                                              targetAssemblyId ?? 0
+                                            )
+                                          );
+                                          const breakdown = Array.isArray(
+                                            representative?.qtyBreakdown
+                                          )
+                                            ? (representative.qtyBreakdown as number[])
+                                            : [];
+                                          const effectiveLen = Math.max(
+                                            labels.length,
+                                            breakdown.length
+                                          );
+                                          const normalized = Array.from(
+                                            { length: effectiveLen },
+                                            (_, idx) => Number(breakdown[idx] ?? 0) || 0
+                                          );
+                                          setCancelEditActivity(representative);
+                                          setCancelEditAssemblyId(targetAssemblyId);
+                                          setCancelEditBreakdown(normalized);
+                                          setCancelEditReason(
+                                            String(representative?.notes || "")
+                                          );
+                                          setCancelEditDate(
+                                            representative?.activityDate
+                                              ? new Date(representative.activityDate)
+                                              : new Date()
+                                          );
+                                          setCancelEditOpen(true);
+                                        } else if (
+                                          representative?.kind === "defect"
+                                        ) {
+                                          openDefectModal({
+                                            assemblyId: targetAssemblyId,
+                                            activity: representative,
+                                          });
+                                        } else {
+                                          setModalAssemblyId(targetAssemblyId);
+                                          setEditActivity(representative);
+                                          setActivityModalOpen(true);
+                                        }
+                                      }}
+                                    >
+                                      Edit
+                                    </Menu.Item>
+                                    <Menu.Item
+                                      color="red"
+                                      onClick={() => {
+                                        setDeleteActivity(representative);
+                                        setDeleteConfirmation("");
+                                      }}
+                                    >
+                                      Delete
+                                    </Menu.Item>
+                                  </>
+                                )}
                               </Menu.Dropdown>
                             </Menu>
                           </Table.Td>
@@ -2318,7 +3040,8 @@ export function AssembliesEditor(props: {
               cut: item?.cut || [],
               sew: item?.sew || [],
               finish: item?.finish || [],
-              pack: item?.pack || [],
+              pack: item?.showRetain ? item?.retain || [] : item?.pack || [],
+              retain: item?.retain || [],
             };
             const sumArray = (arr?: number[]) =>
               (arr || []).reduce((t, n) => t + (Number(n) || 0), 0);
@@ -2346,10 +3069,13 @@ export function AssembliesEditor(props: {
               cut: item?.totals?.cut,
               sew: item?.totals?.sew,
               finish: item?.totals?.finish,
-              pack: item?.totals?.pack,
+              pack: item?.showRetain ? item?.totals?.retain : item?.totals?.pack,
+              retain: item?.totals?.retain,
             };
             const factoryRows = (
-              ["cut", "sew", "finish", "pack"] as const
+              (item?.showRetain
+                ? ["cut", "sew", "finish", "retain"]
+                : ["cut", "sew", "finish", "pack"]) as const
             ).flatMap((stage) => {
                 const stats = stageStats?.[stage];
                 if (!stats) return [];
@@ -2380,6 +3106,9 @@ export function AssembliesEditor(props: {
               }
             );
             const rowsToRender = [...orderRows, ...factoryRows];
+            const packedLabel = item?.showRetain
+              ? "retained"
+              : "packed/shippable";
             return (
               <Stack gap="md">
                 <Card withBorder padding="sm">
@@ -2390,7 +3119,7 @@ export function AssembliesEditor(props: {
                       </Title>
                       {summary ? (
                         <Text size="sm" c="dimmed">
-                          {summary.ordered} ordered · {summary.packed} packed/shippable
+                          {summary.ordered} ordered · {summary.packed} {packedLabel}
                           {summary.review
                             ? ` · ${summary.review} in QC review`
                             : ""}
@@ -2656,6 +3385,19 @@ export function AssembliesEditor(props: {
           openBoxes={packContext?.openBoxes ?? []}
         />
       )}
+      {retainModalAssembly && (
+        <AssemblyRetainModal
+          opened={retainModalOpen}
+          onClose={() => {
+            setRetainModalOpen(false);
+            setRetainModalAssemblyId(null);
+          }}
+          assembly={retainModalAssembly}
+          variantLabels={retainModalVariantLabels}
+          quantityItem={retainModalQuantityItem}
+          destinationLabel={retainDestinationLabelForAssembly(retainModalAssembly.id)}
+        />
+      )}
       <Modal
         opened={!!deleteActivity}
         onClose={closeDeleteModal}
@@ -2832,6 +3574,393 @@ export function AssembliesEditor(props: {
             <Button onClick={submitDefect}>Save</Button>
           </Group>
         </Stack>
+          );
+        })()}
+      </Modal>
+      <Modal
+        opened={splitAllocationOpen}
+        onClose={closeSplitAllocationModal}
+        title={
+          <Text fw={600} size="lg">
+            {splitAllocationMode === "create" ? "Split assembly" : "Edit split allocation"}
+          </Text>
+        }
+        centered
+        size="xl"
+      >
+        {(() => {
+          const group =
+            splitAllocationMode === "edit" && splitAllocationGroupId
+              ? splitGroupById.get(splitAllocationGroupId) || null
+              : null;
+          const allocationError =
+            splitAllocationError || splitAllocationFetcher.data?.error || null;
+          const parentId =
+            splitAllocationMode === "create"
+              ? splitAllocationParentId
+              : group?.parentAssemblyId ?? null;
+          if (splitAllocationMode === "edit" && !group) {
+            return (
+              <Stack gap="sm">
+                {allocationError ? (
+                  <Alert color="red">{allocationError}</Alert>
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    No split group found.
+                  </Text>
+                )}
+                <Group justify="flex-end">
+                  <Button variant="default" onClick={closeSplitAllocationModal}>
+                    Close
+                  </Button>
+                </Group>
+              </Stack>
+            );
+          }
+          if (!parentId) {
+            return (
+              <Stack gap="sm">
+                <Alert color="red">No parent assembly found for this split.</Alert>
+                <Group justify="flex-end">
+                  <Button variant="default" onClick={closeSplitAllocationModal}>
+                    Close
+                  </Button>
+                </Group>
+              </Stack>
+            );
+          }
+          const variantLabels = resolveVariantLabels(parentId);
+          const children =
+            splitAllocationMode === "create"
+              ? splitDraftChildren.map((child, idx) => ({
+                  key: child.key,
+                  childAssemblyId: null,
+                  name: `New child ${idx + 1}`,
+                }))
+              : group?.allocations || [];
+          const metrics = buildSplitStageMetrics(parentId);
+          const stageOptions = buildSplitStageOptions(metrics);
+          const stageData = splitStage.startsWith("external:")
+            ? metrics.externals.get(splitStage.split(":")[1] || "")
+            : (metrics as any)[splitStage] || metrics.cut;
+          const externalType = splitStage.startsWith("external:")
+            ? splitStage.split(":")[1] || ""
+            : "";
+          const stageLabel = splitStage.startsWith("external:")
+            ? `External: ${metrics.externals.get(externalType)?.label || externalType || "External"}`
+            : splitStage.toUpperCase();
+          const capAtStage = stageData?.cap || [];
+          const minKeepAtStage = stageData?.minKeep || [];
+          const slackAtStage = clampArray(
+            subtractArrays(capAtStage, minKeepAtStage)
+          );
+          const allocationRows = children.map((child: any) => {
+            const childKey =
+              splitAllocationMode === "create"
+                ? child.key
+                : String(child.childAssemblyId);
+            return {
+              child,
+              childKey,
+              breakdown: getStageAllocationForChild(splitStage, childKey),
+            };
+          });
+          const allocationSum = allocationRows.reduce(
+            (sum, row) => sumBreakdownArrays([sum, row.breakdown]),
+            [] as number[]
+          );
+          const remainder = clampArray(
+            subtractArrays(capAtStage, allocationSum)
+          );
+          const remainderTotal = remainder.reduce(
+            (t, n) => t + (Number(n) || 0),
+            0
+          );
+          const totalAllocated = allocationSum.reduce(
+            (t, n) => t + (Number(n) || 0),
+            0
+          );
+          const capTotal = capAtStage.reduce((t, n) => t + (Number(n) || 0), 0);
+          const minKeepTotal = minKeepAtStage.reduce(
+            (t, n) => t + (Number(n) || 0),
+            0
+          );
+          const slackTotal = slackAtStage.reduce(
+            (t, n) => t + (Number(n) || 0),
+            0
+          );
+          const showDevDetails = process.env.NODE_ENV !== "production";
+          const disabledStageNotes = stageOptions
+            .filter((opt) => opt.disabled && opt.reason)
+            .map((opt) => `${opt.label}: ${opt.reason}`);
+          return (
+            <Stack gap="md">
+              <Stack gap={6}>
+                <Text size="sm" c="dimmed">
+                  Total allocated: {totalAllocated} · Parent remainder: {remainderTotal}
+                </Text>
+                <Text size="sm">
+                  Cap at {stageLabel}: {capTotal} · Committed downstream: {minKeepTotal} ·
+                  Max allocatable now: {slackTotal}
+                </Text>
+                {showDevDetails ? (
+                  <Group justify="flex-end">
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      onClick={() => setSplitDetailsOpen((prev) => !prev)}
+                    >
+                      {splitDetailsOpen ? "Hide details" : "Details"}
+                    </Button>
+                  </Group>
+                ) : null}
+              </Stack>
+              {allocationError ? (
+                <Alert color="red">{allocationError}</Alert>
+              ) : null}
+              <Stack gap="xs">
+                <Select
+                  label="Split at stage"
+                  data={stageOptions.map((opt) => ({
+                    value: opt.value,
+                    label: opt.label,
+                    disabled: opt.disabled,
+                  }))}
+                  value={splitStage}
+                  onChange={(value) => {
+                    if (!value) return;
+                    setSplitStage(value);
+                  }}
+                  allowDeselect={false}
+                  withinPortal
+                  size="xs"
+                />
+                {showDevDetails && disabledStageNotes.length ? (
+                  <Collapse in={splitDetailsOpen}>
+                    <Tooltip
+                      label={disabledStageNotes.join("\n")}
+                      withArrow
+                      multiline
+                    >
+                      <Text size="xs" c="dimmed">
+                        Some stages are unavailable.
+                      </Text>
+                    </Tooltip>
+                  </Collapse>
+                ) : null}
+              </Stack>
+              {!children.length ? (
+                <Stack gap="xs">
+                  <Text size="sm" c="dimmed">
+                    No split children yet. Add a child to allocate quantities.
+                  </Text>
+                  {splitAllocationMode === "create" ? (
+                    <Group>
+                      <Button
+                        size="xs"
+                        variant="default"
+                        onClick={() => {
+                          const nextKey = `draft-${splitDraftCounter.current + 1}`;
+                          splitDraftCounter.current += 1;
+                          setSplitDraftChildren((prev) => [...prev, { key: nextKey }]);
+                        }}
+                      >
+                        Add child
+                      </Button>
+                    </Group>
+                  ) : null}
+                </Stack>
+              ) : null}
+              {splitAllocationMode === "create" && children.length ? (
+                <Group justify="flex-end">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    onClick={() => {
+                      const nextKey = `draft-${splitDraftCounter.current + 1}`;
+                      splitDraftCounter.current += 1;
+                      setSplitDraftChildren((prev) => [...prev, { key: nextKey }]);
+                    }}
+                  >
+                    Add child
+                  </Button>
+                </Group>
+              ) : null}
+              {allocationRows.map(({ child, childKey, breakdown }) => {
+                const childAssembly =
+                  splitAllocationMode === "edit"
+                    ? (assemblies || []).find((a) => Number(a.id) === Number(child.childAssemblyId))
+                    : null;
+                const name =
+                  splitAllocationMode === "edit"
+                    ? childAssembly?.name
+                      ? `A${child.childAssemblyId} · ${childAssembly.name}`
+                      : `A${child.childAssemblyId}`
+                    : child?.name || "New child";
+                return (
+                  <Stack key={`split-child-${childKey}`} gap="xs">
+                    <Text fw={600} size="sm">{name}</Text>
+                    <Stack gap="xs">
+                      <Text size="xs" c="dimmed">
+                        {stageLabel} allocation
+                      </Text>
+                      <Table withColumnBorders withTableBorder>
+                        <Table.Thead>
+                          <Table.Tr>
+                            {variantLabels.map((label, idx) => (
+                              <Table.Th ta="center" key={`split-head-${child.childAssemblyId}-${idx}`} py={2}>
+                                {label || idx + 1}
+                              </Table.Th>
+                            ))}
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          <Table.Tr>
+                            {variantLabels.map((_label, idx) => {
+                              const currentVal = Number.isFinite(breakdown[idx]) ? Number(breakdown[idx]) : 0;
+                              const displayVal = currentVal ? String(currentVal) : "";
+                              return (
+                                <Table.Td p={0} ta="center" key={`split-cell-${child.childAssemblyId}-${idx}`}>
+                              <TextInput
+                                type="number"
+                                variant="unstyled"
+                                inputMode="numeric"
+                                value={displayVal}
+                                onChange={(e) => {
+                                  const rawVal = Number(e.currentTarget.value);
+                                  const val = Number.isFinite(rawVal) ? Math.max(0, rawVal) : 0;
+                                  const existing = getStageAllocationForChild(
+                                    splitStage,
+                                    childKey
+                                  );
+                                  const next = Array.isArray(existing) ? [...existing] : [];
+                                  next[idx] = val;
+                                  setStageAllocationForChild(
+                                    splitStage,
+                                    childKey,
+                                    next
+                                  );
+                                }}
+                                styles={{ input: { textAlign: "center", padding: "8px 4px" } }}
+                              />
+                                </Table.Td>
+                              );
+                            })}
+                          </Table.Tr>
+                        </Table.Tbody>
+                      </Table>
+                    </Stack>
+                  </Stack>
+                );
+              })}
+              <Stack gap="xs">
+                <Text fw={600} size="sm">
+                  Parent remainder at {stageLabel}
+                </Text>
+                <Table withColumnBorders withTableBorder>
+                  <Table.Thead>
+                    <Table.Tr>
+                      {variantLabels.map((label, idx) => (
+                        <Table.Th ta="center" key={`split-rem-head-${idx}`} py={2}>
+                          {label || idx + 1}
+                        </Table.Th>
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    <Table.Tr>
+                      {variantLabels.map((_label, idx) => (
+                        <Table.Td p={0} ta="center" key={`split-rem-cell-${idx}`}>
+                          <TextInput
+                            variant="unstyled"
+                            readOnly
+                            value={Number(remainder[idx] ?? 0) || 0}
+                            styles={{
+                              input: {
+                                textAlign: "center",
+                                padding: "8px 4px",
+                              },
+                            }}
+                          />
+                        </Table.Td>
+                      ))}
+                    </Table.Tr>
+                  </Table.Tbody>
+                </Table>
+              </Stack>
+              {showDevDetails ? (
+                <Collapse in={splitDetailsOpen}>
+                  <Stack gap={4}>
+                    <Text size="xs" c="dimmed">
+                      Cap at {stageLabel}: {capTotal}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Committed downstream: {minKeepTotal}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Max allocatable now: {slackTotal}
+                    </Text>
+                    {disabledStageNotes.length ? (
+                      <Text size="xs" c="dimmed">
+                        {disabledStageNotes.join(" · ")}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Collapse>
+              ) : null}
+              <Group justify="flex-end" gap="xs">
+                <Button variant="default" onClick={closeSplitAllocationModal}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={!children.length || splitAllocationFetcher.state !== "idle"}
+                  onClick={() => {
+                    if (!parentId) return;
+                    const payload = allocationRows.map((row) => {
+                      const stageBreakdown = row.breakdown;
+                      const externalType = splitStage.startsWith("external:")
+                        ? splitStage.split(":")[1] || ""
+                        : "";
+                      return {
+                        childKey: row.childKey,
+                        childAssemblyId:
+                          splitAllocationMode === "edit"
+                            ? Number(row.child.childAssemblyId)
+                            : null,
+                        breakdown: stageBreakdown,
+                        finishBreakdown:
+                          splitStage === "finish" ? stageBreakdown : [],
+                        externalAllocations: externalType
+                          ? {
+                              [externalType]: {
+                                sent: stageBreakdown,
+                                received: stageBreakdown,
+                              },
+                            }
+                          : {},
+                      };
+                    });
+                    const fd = new FormData();
+                    fd.set(
+                      "_intent",
+                      splitAllocationMode === "create"
+                        ? "assembly.split.commit"
+                        : "assembly.split.update"
+                    );
+                    if (splitAllocationMode === "edit" && group) {
+                      fd.set("splitGroupId", String(group.id));
+                    }
+                    fd.set("parentAssemblyId", String(parentId));
+                    fd.set("splitStage", splitStage);
+                    fd.set("allocations", JSON.stringify(payload));
+                    setSplitAllocationSubmitted(true);
+                    splitAllocationFetcher.submit(fd, { method: "post" });
+                  }}
+                >
+                  {splitAllocationMode === "create" ? "Save split" : "Save allocations"}
+                </Button>
+              </Group>
+            </Stack>
           );
         })()}
       </Modal>
