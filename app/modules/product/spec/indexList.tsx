@@ -6,7 +6,11 @@ import { formatUSD } from "~/utils/format";
 import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
 import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
 import { debugEnabled } from "~/utils/debugFlags";
-import { makePricedValue } from "~/utils/pricingValueMeta";
+import {
+  isPricingValueDifferent,
+  makePricedValue,
+} from "~/utils/pricingValueMeta";
+import { DEFAULT_PRICING_QTY } from "../components/PricingPreviewWidget";
 
 export type ProductPricingPrefs = {
   customerId: string | null;
@@ -28,6 +32,7 @@ function PriceCell({
   prefs: {
     qty: number;
     priceMultiplier: number;
+    customerId?: string | null;
     margins?: {
       marginOverride?: number | null;
       vendorDefaultMargin?: number | null;
@@ -37,6 +42,8 @@ function PriceCell({
 }) {
   const qty = Number(prefs.qty || 60) || 60;
   const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
+  const previewActive =
+    Boolean(prefs.customerId) || qty !== DEFAULT_PRICING_QTY;
   const manual = row?.manualSalePrice;
   const manualMargin = row?.manualMargin;
   const baseCost = Number(row?.costPrice ?? 0) || 0;
@@ -94,9 +101,41 @@ function PriceCell({
     debug: debugEnabled("pricing"),
     debugLabel: row?.id ? `product:${row.id}:index` : "product:index",
   });
+  const baselineOut = previewActive
+    ? getProductDisplayPrice({
+        qty: DEFAULT_PRICING_QTY,
+        priceMultiplier: prefs.customerId ? 1 : priceMultiplier,
+        marginDefaults: prefs.customerId ? null : prefs.margins ?? null,
+        baseCost,
+        manualSalePrice:
+          manual != null && manual !== "" ? Number(manual) : undefined,
+        manualMargin:
+          manualMargin != null && manualMargin !== "" ? Number(manualMargin) : null,
+        taxRate,
+        pricingModel: row?.pricingModel ?? null,
+        baselinePriceAtMoq:
+          row?.baselinePriceAtMoq != null ? Number(row.baselinePriceAtMoq) : null,
+        transferPercent:
+          row?.transferPercent != null ? Number(row.transferPercent) : null,
+        pricingSpecRanges: (row?.pricingSpec?.ranges || []).map((range: any) => ({
+          rangeFrom: range.rangeFrom ?? null,
+          rangeTo: range.rangeTo ?? null,
+          multiplier: Number(range.multiplier),
+        })),
+        costTiers: costRanges,
+        saleTiers,
+      })
+    : null;
+  const previewValue = Number(out.unitSellPrice || 0);
+  const baselineValue = Number(baselineOut?.unitSellPrice ?? previewValue);
+  const contextAffected =
+    previewActive && isPricingValueDifferent(previewValue, baselineValue);
   const manualOverride = manual != null && manual !== "";
   const priced = makePricedValue(Number(out.unitSellPrice || 0), {
     isOverridden: manualOverride,
+    contextAffected: !manualOverride && contextAffected,
+    context: contextAffected ? { qty } : undefined,
+    baseline: contextAffected ? baselineValue : undefined,
   });
   return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
 }
@@ -109,6 +148,7 @@ function CostCell({
   prefs: {
     qty: number;
     priceMultiplier: number;
+    customerId?: string | null;
     margins?: {
       marginOverride?: number | null;
       vendorDefaultMargin?: number | null;
@@ -121,11 +161,13 @@ function CostCell({
   const isTiered =
     pricingModel === "TIERED_COST_PLUS_MARGIN" ||
     pricingModel === "TIERED_COST_PLUS_FIXED_SELL";
+  const qty = Number(prefs.qty || 60) || 60;
+  const previewActive =
+    Boolean(prefs.customerId) || qty !== DEFAULT_PRICING_QTY;
   if (!isCurve && !isTiered) {
     const priced = makePricedValue(Number(row?.costPrice ?? 0) || 0);
     return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
   }
-  const qty = Number(prefs.qty || 60) || 60;
   const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
   const taxRate = Number(row?.purchaseTax?.value ?? 0) || 0;
   const out = getProductDisplayPrice({
@@ -152,6 +194,32 @@ function CostCell({
       }))
       .sort((a: any, b: any) => a.minQty - b.minQty),
   });
+  const baselineOut = previewActive
+    ? getProductDisplayPrice({
+        qty: DEFAULT_PRICING_QTY,
+        priceMultiplier: prefs.customerId ? 1 : priceMultiplier,
+        taxRate,
+        baseCost: Number(row?.costPrice ?? 0) || 0,
+        pricingModel: row?.pricingModel ?? null,
+        baselinePriceAtMoq:
+          row?.baselinePriceAtMoq != null ? Number(row.baselinePriceAtMoq) : null,
+        transferPercent:
+          row?.transferPercent != null ? Number(row.transferPercent) : null,
+        pricingSpecRanges: (row?.pricingSpec?.ranges || []).map((range: any) => ({
+          rangeFrom: range.rangeFrom ?? null,
+          rangeTo: range.rangeTo ?? null,
+          multiplier: Number(range.multiplier),
+        })),
+        marginDefaults: prefs.customerId ? null : prefs.margins ?? null,
+        costTiers: (row?.costGroup?.costRanges || [])
+          .filter((r: any) => r && r.rangeFrom != null && r.costPrice != null)
+          .map((r: any) => ({
+            minQty: Number(r.rangeFrom) || 0,
+            priceCost: Number(r.costPrice) || 0,
+          }))
+          .sort((a: any, b: any) => a.minQty - b.minQty),
+      })
+    : null;
   let derived = Number(row?.costPrice ?? 0) || 0;
   if (isCurve) {
     const tp = Number(row?.transferPercent ?? 0);
@@ -166,7 +234,30 @@ function CostCell({
       derived = baseUnit;
     }
   }
-  const priced = makePricedValue(Number(derived || 0));
+  let baselineDerived = derived;
+  if (baselineOut) {
+    if (isCurve) {
+      const tp = Number(row?.transferPercent ?? 0);
+      const withTax =
+        Number((baselineOut as any)?.breakdown?.withTax ?? 0) || 0;
+      baselineDerived =
+        Number.isFinite(tp) && tp > 0 && Number.isFinite(withTax)
+          ? withTax * tp
+          : Number(row?.costPrice ?? 0) || 0;
+    } else if (isTiered) {
+      const baseUnit = Number((baselineOut as any)?.breakdown?.baseUnit ?? 0);
+      if (Number.isFinite(baseUnit) && baseUnit > 0) {
+        baselineDerived = baseUnit;
+      }
+    }
+  }
+  const contextAffected =
+    previewActive && isPricingValueDifferent(derived, baselineDerived);
+  const priced = makePricedValue(Number(derived || 0), {
+    contextAffected,
+    context: contextAffected ? { qty } : undefined,
+    baseline: contextAffected ? baselineDerived : undefined,
+  });
   return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
 }
 
@@ -321,6 +412,7 @@ export const buildProductIndexColumns = (
             prefs={{
               qty: pricing.qty,
               priceMultiplier: pricing.priceMultiplier,
+              customerId: pricing.customerId,
               margins: pricing.margins ?? null,
             }}
           />
@@ -336,6 +428,7 @@ export const buildProductIndexColumns = (
             prefs={{
               qty: pricing.qty,
               priceMultiplier: pricing.priceMultiplier,
+              customerId: pricing.customerId,
               margins: pricing.margins ?? null,
             }}
           />

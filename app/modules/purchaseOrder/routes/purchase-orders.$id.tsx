@@ -1962,10 +1962,8 @@ export function PurchaseOrderDetailView() {
     if (isDirty) return;
     if (newProductId == null) return;
     // Fetch enriched product to initialize pricing and flags
-    console.log("Fetching product details for", newProductId);
     const resp = await fetch(`/api/products/by-ids?ids=${newProductId}`);
     const data = await resp.json();
-    console.log("Fetched product details:", data);
     const prod = data?.items?.[0];
     if (prod?.id)
       setProductMap((prev) => ({ ...prev, [Number(prod.id)]: prod }));
@@ -1984,9 +1982,9 @@ export function PurchaseOrderDetailView() {
       },
       quantityOrdered: 0,
       quantity: 0,
-      // Seed pricing: prefer manualSalePrice; else compute on server already provided as c_sellPrice
-      priceCost: prod?.costPrice ?? 0,
-      priceSell: prod?.manualSalePrice ?? prod?.c_sellPrice ?? 0,
+      // Do not prefill stored price fields; draft should use live computed pricing.
+      priceCost: null,
+      priceSell: null,
       manualCost: null,
       manualSell: null,
       etaDate: null,

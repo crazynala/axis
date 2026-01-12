@@ -9,6 +9,12 @@ export type DriftInfo = {
 export type PricingValueMeta = {
   state: ValueState;
   reason?: string;
+  contextAffected?: boolean;
+  context?: {
+    customerName?: string;
+    qty?: number;
+  };
+  baseline?: number;
   drift?: DriftInfo;
 };
 
@@ -18,6 +24,15 @@ export type PricedValue = {
 };
 
 export const PRICING_DRIFT_TOLERANCE_ABS = 0.01;
+
+export function isPricingValueDifferent(
+  a: number | null | undefined,
+  b: number | null | undefined,
+  tolerance = PRICING_DRIFT_TOLERANCE_ABS
+) {
+  if (!Number.isFinite(Number(a)) || !Number.isFinite(Number(b))) return false;
+  return Math.abs(Number(a) - Number(b)) > tolerance;
+}
 
 export function computePricingDrift(
   lockedValue: number,
@@ -42,11 +57,18 @@ export function resolvePricingMeta({
   isOverridden,
   lockedValue,
   currentValue,
+  contextAffected,
+  context,
 }: {
   isLocked?: boolean;
   isOverridden?: boolean;
   lockedValue?: number | null;
   currentValue?: number | null;
+  contextAffected?: boolean;
+  context?: {
+    customerName?: string;
+    qty?: number;
+  };
 }): PricingValueMeta {
   if (isLocked) {
     const drift =
@@ -56,20 +78,28 @@ export function resolvePricingMeta({
     if (drift) {
       return {
         state: "drifted",
+        contextAffected,
+        context,
         drift,
       };
     }
     return {
       state: "locked",
+      contextAffected,
+      context,
     };
   }
   if (isOverridden) {
     return {
       state: "overridden",
+      contextAffected,
+      context,
     };
   }
   return {
     state: "calculated",
+    contextAffected,
+    context,
   };
 }
 
@@ -80,6 +110,11 @@ export function makePricedValue(
     isOverridden?: boolean;
     lockedValue?: number | null;
     currentValue?: number | null;
+    contextAffected?: boolean;
+    context?: {
+      customerName?: string;
+      qty?: number;
+    };
   } = {}
 ): PricedValue {
   return {

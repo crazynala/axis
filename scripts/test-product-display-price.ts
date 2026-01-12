@@ -80,6 +80,20 @@ function main() {
     "tiered fixed sell should derive cost from tier range"
   );
 
+  const curve = getProductDisplayPrice({
+    qty: 60,
+    baseCost: 0,
+    taxRate: 0.1,
+    pricingModel: "CURVE_SELL_AT_MOQ",
+    baselinePriceAtMoq: 5,
+    pricingSpecRanges: [{ rangeFrom: 1, rangeTo: null, multiplier: 1 }],
+    transferPercent: 0.5,
+  });
+  assert.ok(
+    (curve.unitSellPrice ?? 0) > 0,
+    "curve pricing should derive sell even when cost is 0"
+  );
+
   // eslint-disable-next-line no-console
   console.log("product display price tests: ok");
 }

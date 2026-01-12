@@ -94,6 +94,7 @@ export function PurchaseOrderLinesTable({
   const isComplete = status === "COMPLETE" || status === "CANCELED";
   const showStatus = viewMode === "status";
   const showExtended = viewMode === "extended";
+  const contextAffected = false;
 
   const getReservedQty = useCallback((line: any) => {
     if (!line) return 0;
@@ -204,12 +205,14 @@ export function PurchaseOrderLinesTable({
         isOverridden: manualCost != null,
         lockedValue: effectiveCost,
         currentValue: computed.cost,
+        contextAffected: !isLocked && manualCost == null && contextAffected,
       });
       const pricedSell = makePricedValue(effectiveSell, {
         isLocked,
         isOverridden: manualSell != null,
         lockedValue: effectiveSell,
         currentValue: computed.sell,
+        contextAffected: !isLocked && manualSell == null && contextAffected,
       });
       return {
         computedCost: computed.cost,

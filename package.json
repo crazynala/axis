@@ -40,6 +40,7 @@
     "test": "npm run spec:verify && tsx ./scripts/test-buildWhere.ts",
     "test:addresses": "tsx ./scripts/test-addresses.ts",
     "test:pricing-spec-tiers": "tsx ./scripts/test-pricing-spec-tiers.ts",
+    "test:pricing-spec-ranges": "tsx ./scripts/test-pricing-spec-ranges.ts",
     "test:production-attention": "tsx ./scripts/test-production-attention.ts",
     "test:target-overrides": "tsx ./scripts/test-target-overrides.ts",
     "test:product-pricing": "tsx ./scripts/test-product-display-price.ts",

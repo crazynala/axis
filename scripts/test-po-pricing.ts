@@ -55,6 +55,11 @@ function main() {
   });
   assert.equal(round2(curveBase.sell), 11, "curve base sell includes tax");
   assert.equal(round2(curveBoost.sell), 13.2, "curve sell includes multiplier");
+  assert.equal(
+    round2(curveBase.cost),
+    8.25,
+    "curve cost uses transferPercent on tax-included sell"
+  );
 
   // Tax rounding: unit sell should round to 2dp
   const taxProduct = {
@@ -68,6 +73,33 @@ function main() {
     pricingPrefs: { globalDefaultMargin: 0.1 },
   });
   assert.equal(round2(tax.sell), 4.84, "cost 4 + 10% margin + 10% tax");
+
+  // Draft line: stored prices null should use computed values
+  const draftLine = {
+    manualCost: null,
+    manualSell: null,
+    priceCost: null,
+    priceSell: null,
+  };
+  const draftComputed = computeLinePricing({
+    product: taxProduct,
+    qtyOrdered: 1,
+    pricingPrefs: { globalDefaultMargin: 0.1 },
+  });
+  const effectiveCost =
+    draftLine.manualCost ?? draftLine.priceCost ?? draftComputed.cost;
+  const effectiveSell =
+    draftLine.manualSell ?? draftLine.priceSell ?? draftComputed.sell;
+  assert.equal(
+    round2(effectiveCost),
+    round2(draftComputed.cost),
+    "draft line should use computed cost when stored values are null"
+  );
+  assert.equal(
+    round2(effectiveSell),
+    round2(draftComputed.sell),
+    "draft line should use computed sell when stored values are null"
+  );
 
   // eslint-disable-next-line no-console
   console.log("po pricing tests: ok");

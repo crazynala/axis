@@ -14,6 +14,7 @@ import {
   Drawer,
   Select,
 } from "@mantine/core";
+import { Link } from "@remix-run/react";
 import { modals } from "@mantine/modals";
 import type { UseFormReturn } from "react-hook-form";
 import {
@@ -37,11 +38,15 @@ import { buildProductMetadataFields } from "~/modules/productMetadata/utils/prod
 import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 import { ProductCostTiersModal } from "../components/ProductCostTiersModal";
 import {
+  DEFAULT_PRICING_QTY,
   PricingPreviewWidget,
   usePricingPrefsFromWidget,
 } from "./PricingPreviewWidget";
 import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
-import { makePricedValue } from "~/utils/pricingValueMeta";
+import {
+  isPricingValueDifferent,
+  makePricedValue,
+} from "~/utils/pricingValueMeta";
 import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
 import { debugEnabled } from "~/utils/debugFlags";
 import type { ProductValidationResult } from "../validation/computeProductValidation";
@@ -948,7 +953,11 @@ export function ProductDetailForm({
   }, [watchedCostGroupId, costGroupRangesById, product]);
   const derivedPricing = React.useMemo(() => {
     const cost = Number(costPriceValue ?? product?.costPrice ?? 0) || 0;
-    if (!Number.isFinite(cost) || cost <= 0) return null;
+    const pricingModelUpper = String(resolvedPricingModel || "").toUpperCase();
+    const requiresCost =
+      pricingModelUpper === "COST_PLUS_MARGIN" ||
+      pricingModelUpper === "COST_PLUS_FIXED_SELL";
+    if (!Number.isFinite(cost) || (requiresCost && cost <= 0)) return null;
     let taxRate = 0;
     const taxId = purchaseTaxId ?? product?.purchaseTaxId ?? null;
     const rates = optionsCtx?.taxRateById || {};
@@ -1006,11 +1015,87 @@ export function ProductDetailForm({
   ]);
   const derivedSell =
     derivedPricing?.unitSellPrice != null ? derivedPricing.unitSellPrice : null;
+  const previewActive =
+    Boolean(pricingPrefs.customerId) ||
+    pricingPrefs.qty !== DEFAULT_PRICING_QTY;
+  const baselinePricing = React.useMemo(() => {
+    if (!previewActive) return null;
+    const cost = Number(costPriceValue ?? product?.costPrice ?? 0) || 0;
+    if (!Number.isFinite(cost) || cost <= 0) return null;
+    let taxRate = 0;
+    const taxId = purchaseTaxId ?? product?.purchaseTaxId ?? null;
+    const rates = optionsCtx?.taxRateById || {};
+    if (taxId != null && rates) {
+      const key = String(taxId);
+      const n = Number(rates[key] ?? 0);
+      taxRate = Number.isFinite(n) ? n : 0;
+    } else if (product?.purchaseTax?.value != null) {
+      const n = Number(product.purchaseTax.value);
+      taxRate = Number.isFinite(n) ? n : 0;
+    }
+    const specRanges =
+      pricingSpecId != null
+        ? pricingSpecRangesById[String(pricingSpecId)] || []
+        : (product?.pricingSpec?.ranges || []);
+    return getProductDisplayPrice({
+      qty: DEFAULT_PRICING_QTY,
+      priceMultiplier: pricingPrefs.customerId ? 1 : pricingPrefs.priceMultiplier,
+      marginDefaults: pricingPrefs.customerId ? null : pricingPrefs.margins,
+      baseCost: cost,
+      manualSalePrice: form.getValues("manualSalePrice"),
+      manualMargin: form.getValues("manualMargin"),
+      taxRate,
+      pricingModel: resolvedPricingModel,
+      baselinePriceAtMoq:
+        baselinePriceAtMoq != null ? Number(baselinePriceAtMoq) : null,
+      transferPercent:
+        transferPercent != null ? Number(transferPercent) : null,
+      pricingSpecRanges: (specRanges || []).map((range: any) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
+      costTiers: resolvedCostTiers,
+      saleTiers: resolvedSaleTiers,
+    });
+  }, [
+    previewActive,
+    costPriceValue,
+    product,
+    purchaseTaxId,
+    optionsCtx,
+    pricingSpecId,
+    pricingSpecRangesById,
+    resolvedPricingModel,
+    baselinePriceAtMoq,
+    transferPercent,
+    form,
+    resolvedCostTiers,
+    resolvedSaleTiers,
+    pricingPrefs.customerId,
+    pricingPrefs.priceMultiplier,
+    pricingPrefs.margins,
+  ]);
   const derivedSellValue = React.useMemo(() => {
     if (derivedSell == null) return null;
     const manualOverride = manualSalePrice != null && manualSalePrice !== "";
-    return makePricedValue(derivedSell, { isOverridden: manualOverride });
-  }, [derivedSell, manualSalePrice]);
+    const baselineSell = Number(baselinePricing?.unitSellPrice ?? derivedSell);
+    const contextAffected =
+      previewActive &&
+      isPricingValueDifferent(derivedSell, baselineSell);
+    return makePricedValue(derivedSell, {
+      isOverridden: manualOverride,
+      contextAffected: !manualOverride && contextAffected,
+      context: contextAffected ? { qty: pricingPrefs.qty } : undefined,
+      baseline: contextAffected ? baselineSell : undefined,
+    });
+  }, [
+    derivedSell,
+    manualSalePrice,
+    previewActive,
+    baselinePricing,
+    pricingPrefs.qty,
+  ]);
   const derivedCurveCost = React.useMemo(() => {
     if (!derivedPricing) return null;
     const tpRaw = transferPercent != null ? Number(transferPercent) : null;
@@ -1027,12 +1112,42 @@ export function ProductDetailForm({
   }, [derivedPricing]);
   const derivedTierCostValue = React.useMemo(() => {
     if (derivedTierCost == null) return null;
-    return makePricedValue(derivedTierCost);
-  }, [derivedTierCost]);
+    const baselineTier = Number(
+      (baselinePricing as any)?.breakdown?.baseUnit ?? derivedTierCost
+    );
+    const contextAffected =
+      previewActive &&
+      isPricingValueDifferent(derivedTierCost, baselineTier);
+    return makePricedValue(derivedTierCost, {
+      contextAffected,
+      context: contextAffected ? { qty: pricingPrefs.qty } : undefined,
+      baseline: contextAffected ? baselineTier : undefined,
+    });
+  }, [derivedTierCost, baselinePricing, previewActive, pricingPrefs.qty]);
   const derivedCurveCostValue = React.useMemo(() => {
     if (derivedCurveCost == null) return null;
-    return makePricedValue(derivedCurveCost);
-  }, [derivedCurveCost]);
+    const tpRaw = transferPercent != null ? Number(transferPercent) : null;
+    const withTax =
+      Number((baselinePricing as any)?.breakdown?.withTax ?? 0) || 0;
+    const baselineCurve =
+      tpRaw != null && Number.isFinite(tpRaw) && Number.isFinite(withTax)
+        ? withTax * tpRaw
+        : derivedCurveCost;
+    const contextAffected =
+      previewActive &&
+      isPricingValueDifferent(derivedCurveCost, baselineCurve);
+    return makePricedValue(derivedCurveCost, {
+      contextAffected,
+      context: contextAffected ? { qty: pricingPrefs.qty } : undefined,
+      baseline: contextAffected ? baselineCurve : undefined,
+    });
+  }, [
+    derivedCurveCost,
+    baselinePricing,
+    transferPercent,
+    previewActive,
+    pricingPrefs.qty,
+  ]);
   const costTierSummary = React.useMemo(() => {
     const groupTiers = (product?.costGroup?.costRanges || []).length;
     if (groupTiers) return `Group cost tiers: ${groupTiers}`;
@@ -1453,16 +1568,38 @@ export function ProductDetailForm({
           ) : null}
           {resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
             <>
-              <Select
-                label="Curve Spec"
-                data={pricingSpecOptions}
-                value={pricingSpecId != null ? String(pricingSpecId) : ""}
-                placeholder="Select curve spec"
-                onChange={(val) => {
-                  const next = val ? Number(val) : null;
-                  form.setValue("pricingSpecId", next, { shouldDirty: true });
-                }}
-              />
+              <Stack gap={4}>
+                <Select
+                  label="Curve Spec"
+                  data={pricingSpecOptions}
+                  value={pricingSpecId != null ? String(pricingSpecId) : ""}
+                  placeholder="Select curve spec"
+                  onChange={(val) => {
+                    const next = val ? Number(val) : null;
+                    form.setValue("pricingSpecId", next, { shouldDirty: true });
+                  }}
+                />
+                <Group justify="space-between">
+                  <Button
+                    component={Link}
+                    to="/admin/pricing-specs"
+                    size="xs"
+                    variant="subtle"
+                  >
+                    View specs
+                  </Button>
+                  {pricingSpecId != null ? (
+                    <Button
+                      component={Link}
+                      to={`/admin/pricing-specs/${pricingSpecId}/sheet`}
+                      size="xs"
+                      variant="light"
+                    >
+                      Edit spec
+                    </Button>
+                  ) : null}
+                </Group>
+              </Stack>
               {renderFieldByName("baselinePriceAtMoq", { ctx: drawerCtx })}
               {renderFieldByName("transferPercent", { ctx: drawerCtx })}
               {curvePreviewRows.length ? (

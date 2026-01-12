@@ -115,7 +115,14 @@ export function computeLinePricing({
     })),
     saleTiers,
   });
-  const unitCost = Number((out as any)?.breakdown?.baseUnit ?? cost ?? 0);
+  let unitCost = Number((out as any)?.breakdown?.baseUnit ?? cost ?? 0);
+  if (pricingModel === "CURVE_SELL_AT_MOQ") {
+    const tp = Number(product.transferPercent ?? 0);
+    const withTax = Number((out as any)?.breakdown?.withTax ?? 0);
+    if (Number.isFinite(tp) && tp > 0 && Number.isFinite(withTax)) {
+      unitCost = withTax * tp;
+    }
+  }
   const unitSell = Number(out.unitSellPrice || 0);
   return {
     cost: unitCost,

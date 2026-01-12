@@ -11,10 +11,12 @@ import {
 import { useFetcher } from "@remix-run/react";
 import { useOptions } from "~/base/options/OptionsContext";
 
+export const DEFAULT_PRICING_QTY = 60;
+
 export function useProductPricingPrefs() {
   // Initialize with SSR-safe defaults; hydrate from sessionStorage after mount
   const [customerId, setCustomerId] = React.useState<string | null>(null);
-  const [qty, setQty] = React.useState<number>(60);
+  const [qty, setQty] = React.useState<number>(DEFAULT_PRICING_QTY);
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const cid = window.sessionStorage.getItem("pricing.customerId");
@@ -22,7 +24,7 @@ export function useProductPricingPrefs() {
     const rawQty = window.sessionStorage.getItem("pricing.qty");
     if (rawQty != null) {
       const n = Number(rawQty);
-      setQty(Number.isFinite(n) ? n : 60);
+      setQty(Number.isFinite(n) ? n : DEFAULT_PRICING_QTY);
     }
   }, []);
   React.useEffect(() => {
@@ -59,10 +61,10 @@ export function useProductPricingPrefs() {
 
 export function usePricingPrefsFromWidget() {
   const [qty, setQty] = React.useState<number>(() => {
-    if (typeof window === "undefined") return 60;
+    if (typeof window === "undefined") return DEFAULT_PRICING_QTY;
     const raw = window.sessionStorage.getItem("pricing.qty");
-    const n = raw ? Number(raw) : 60;
-    return Number.isFinite(n) ? n : 60;
+    const n = raw ? Number(raw) : DEFAULT_PRICING_QTY;
+    return Number.isFinite(n) ? n : DEFAULT_PRICING_QTY;
   });
   const [customerId, setCustomerId] = React.useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -100,7 +102,7 @@ export function usePricingPrefsFromWidget() {
       const det = e?.detail || {};
       if (det.qty != null) {
         const q = Number(det.qty);
-        setQty(Number.isFinite(q) ? q : 60);
+        setQty(Number.isFinite(q) ? q : DEFAULT_PRICING_QTY);
       }
       if (det.customerId != null) {
         setCustomerId(String(det.customerId));

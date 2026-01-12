@@ -1,5 +1,5 @@
 import { Text, Tooltip, Stack } from "@mantine/core";
-import { IconLock, IconLockBolt, IconPin } from "@tabler/icons-react";
+import { IconLock, IconLockBolt, IconPin, IconTarget } from "@tabler/icons-react";
 import { formatMoney } from "~/utils/format";
 import type { PricingValueMeta, PricedValue } from "~/utils/pricingValueMeta";
 
@@ -50,6 +50,30 @@ const tooltipContent = (meta: PricingValueMeta) => {
       </Stack>
     );
   }
+  if (meta.contextAffected) {
+    const hasContext =
+      Boolean(meta.context?.customerName) || meta.context?.qty != null;
+    return (
+      <Stack gap={2}>
+        <Text size="xs" fw={600}>
+          Preview-affected value
+        </Text>
+        {hasContext ? (
+          <>
+            <Text size="xs">Calculated using preview context:</Text>
+            {meta.context?.customerName ? (
+              <Text size="xs">• Customer: {meta.context.customerName}</Text>
+            ) : null}
+            {meta.context?.qty != null ? (
+              <Text size="xs">• Qty: {meta.context.qty}</Text>
+            ) : null}
+          </>
+        ) : (
+          <Text size="xs">Calculated using active preview (customer / qty).</Text>
+        )}
+      </Stack>
+    );
+  }
   return null;
 };
 
@@ -57,6 +81,7 @@ const iconForMeta = (meta: PricingValueMeta) => {
   if (meta.state === "locked") return IconLock;
   if (meta.state === "drifted") return IconLockBolt;
   if (meta.state === "overridden") return IconPin;
+  if (meta.contextAffected) return IconTarget;
   return null;
 };
 
