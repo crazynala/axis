@@ -18,7 +18,7 @@ import {
 } from "@mantine/core";
 import { HotkeyAwareModal as Modal } from "~/base/hotkeys/HotkeyAwareModal";
 import { useState, type ReactNode } from "react";
-import { calcPrice } from "~/modules/product/calc/calcPrice";
+import { getProductDisplayPrice } from "~/modules/product/pricing/getProductDisplayPrice";
 import { AccordionTable } from "~/components/AccordionTable";
 import type { Column } from "~/components/AccordionTable";
 import { debugEnabled } from "~/utils/debugFlags";
@@ -165,15 +165,14 @@ export function AssemblyCostingsTable(props: {
     const saleTiers = (c.saleTiers || [])
       .slice()
       .sort((a, b) => a.minQty - b.minQty);
-    const out = calcPrice({
-      baseCost: Number(c.unitCost ?? 0) || 0,
+    const out = getProductDisplayPrice({
       qty,
-      taxRate,
-      saleTiers,
       priceMultiplier,
+      taxRate,
+      baseCost: Number(c.unitCost ?? 0) || 0,
       manualSalePrice:
-        c.manualSalePrice != null ? Number(c.manualSalePrice) : undefined,
-      marginPct: c.marginPct != null ? Number(c.marginPct) : undefined,
+        c.manualSalePrice != null ? Number(c.manualSalePrice) : null,
+      manualMargin: c.marginPct != null ? Number(c.marginPct) : null,
       pricingModel: c.pricingModel ?? null,
       baselinePriceAtMoq:
         c.baselinePriceAtMoq != null ? Number(c.baselinePriceAtMoq) : null,
@@ -184,6 +183,7 @@ export function AssemblyCostingsTable(props: {
         rangeTo: range.rangeTo ?? null,
         multiplier: Number(range.multiplier),
       })),
+      saleTiers,
     });
     return out;
   };

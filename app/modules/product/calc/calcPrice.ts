@@ -59,7 +59,8 @@ export function calcPrice(i: PriceInput): PriceOutput {
           return max - min;
         };
         const picked = matches.sort((a, b) => width(a) - width(b))[0];
-        const unitPreTax = base * toNum(picked.multiplier, 1);
+        const unitPreTax =
+          base * toNum(picked.multiplier, 1) * toNum(i.priceMultiplier, 1);
         const { unitWithTax, discounted } = finalize(unitPreTax);
         const transferPct = toNum(i.transferPercent, null as any);
         const extendedCost =
@@ -81,6 +82,31 @@ export function calcPrice(i: PriceInput): PriceOutput {
         };
       }
     }
+  }
+
+  // 1) Tiered cost + fixed sell: cost from tiers, sell from manualSalePrice (no tax)
+  if (pricingModel === "TIERED_COST_PLUS_FIXED_SELL") {
+    let tierCost: number | undefined;
+    for (const t of tiers) if (qty >= t.minQty) tierCost = t.priceCost;
+    const baseCost =
+      tierCost != null ? toNum(tierCost, 0) : toNum(i.baseCost, 0);
+    const fixedSell =
+      i.manualSalePrice != null && Number.isFinite(toNum(i.manualSalePrice))
+        ? toNum(i.manualSalePrice, 0)
+        : 0;
+    return {
+      unitSellPrice: round(fixedSell),
+      extendedSell: round(fixedSell * qty),
+      extendedCost: round(baseCost * qty),
+      breakdown: {
+        baseUnit: round(baseCost),
+        inTarget: round(baseCost),
+        discounted: round(fixedSell),
+        withTax: round(fixedSell),
+        taxRate,
+      },
+      meta: { mode: "tieredCostFixedSell", multiplier: 1 },
+    };
   }
 
   // 1) Manual sale price override (display "as is" with no tax applied)

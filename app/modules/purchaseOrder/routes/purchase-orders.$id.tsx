@@ -53,7 +53,6 @@ import { useRecordContext } from "../../../base/record/RecordContext";
 import { formatUSD } from "../../../utils/format";
 import { POReceiveModal } from "../../../components/POReceiveModal";
 import { marshallPurchaseOrderToPrisma } from "../helpers/purchaseOrderMarshallers";
-import { ProductPricingService } from "~/modules/product/services/ProductPricingService";
 // calcPrice no longer used in this route; pricing handled in lines table
 import { PurchaseOrderLinesTable } from "~/modules/purchaseOrder/components/PurchaseOrderLinesTable";
 import { trimReservationsToExpected } from "~/modules/materials/services/reservations.server";
@@ -823,6 +822,60 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const prevStatus = String(existing?.status || "");
     const isFinalizing = nextStatus === "FINAL" && prevStatus !== "FINAL";
     if (isFinalizing) {
+      const po = await prisma.purchaseOrder.findUnique({
+        where: { id },
+        select: { companyId: true, consigneeCompanyId: true },
+      });
+      const vendorId = po?.companyId ?? null;
+      const customerId = po?.consigneeCompanyId ?? null;
+      let vendorDefaultMargin: number | null = null;
+      let marginOverride: number | null = null;
+      let globalDefaultMargin: number | null = null;
+      let priceMultiplier: number | null = null;
+      try {
+        const [{ number: defNum, value: defVal } = { number: null, value: null }] =
+          await prisma.setting.findMany({
+            where: { key: "defaultMargin" },
+            take: 1,
+            select: { number: true, value: true },
+          });
+        if (defNum != null) globalDefaultMargin = Number(defNum);
+        else if (defVal != null) globalDefaultMargin = Number(defVal);
+      } catch {}
+      if (vendorId) {
+        try {
+          const vendor = await prisma.company.findUnique({
+            where: { id: vendorId },
+            select: { defaultMarginOverride: true },
+          });
+          if (vendor?.defaultMarginOverride != null)
+            vendorDefaultMargin = Number(vendor.defaultMarginOverride);
+        } catch {}
+      }
+      if (vendorId && customerId) {
+        try {
+          const mapping = await prisma.vendorCustomerPricing.findUnique({
+            where: { vendorId_customerId: { vendorId, customerId } },
+            select: { marginOverride: true },
+          });
+          if (mapping?.marginOverride != null)
+            marginOverride = Number(mapping.marginOverride);
+        } catch {}
+        try {
+          const customer = await prisma.company.findUnique({
+            where: { id: customerId },
+            select: { priceMultiplier: true },
+          });
+          if (customer?.priceMultiplier != null)
+            priceMultiplier = Number(customer.priceMultiplier);
+        } catch {}
+      }
+      const pricingPrefs = {
+        marginOverride,
+        vendorDefaultMargin,
+        globalDefaultMargin,
+        priceMultiplier,
+      };
       const lines = await prisma.purchaseOrderLine.findMany({
         where: { purchaseOrderId: id },
         select: {
@@ -846,18 +899,37 @@ export async function action({ request, params }: ActionFunctionArgs) {
             costPrice: true,
             purchaseTax: { select: { value: true } },
             manualSalePrice: true,
+            manualMargin: true,
+            pricingModel: true,
+            baselinePriceAtMoq: true,
+            transferPercent: true,
+            pricingSpec: {
+              select: {
+                ranges: {
+                  select: { rangeFrom: true, rangeTo: true, multiplier: true },
+                },
+              },
+            },
+            costGroup: {
+              select: {
+                costRanges: { select: { rangeFrom: true, costPrice: true } },
+              },
+            },
+            salePriceGroup: {
+              select: { saleRanges: { select: { rangeFrom: true, price: true } } },
+            },
+            salePriceRanges: { select: { rangeFrom: true, price: true } },
           },
         });
         if (!prod) continue;
         const qty = Number(ln.quantityOrdered || 0) || 1;
-        let sell = 0;
-        if (prod.manualSalePrice != null) {
-          sell = Number(prod.manualSalePrice || 0) || 0;
-        } else {
-          const auto = await ProductPricingService.getAutoSellPrice(pid, qty);
-          sell = Number(auto || 0) || 0;
-        }
-        const cost = Number(prod.costPrice ?? 0) || 0;
+        const computed = computeLinePricing({
+          product: prod,
+          qtyOrdered: qty,
+          pricingPrefs,
+        });
+        const sell = Number(computed.sell || 0) || 0;
+        const cost = Number(computed.cost || 0) || 0;
         const taxRate = Number(prod.purchaseTax?.value ?? 0) || 0;
         const lineData: any = {
           productSkuCopy: prod.sku ?? null,

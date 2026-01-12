@@ -34,7 +34,14 @@ export function resolvePricingModelForImport(
   if (productLike.pricingSpecId != null || productLike.baselinePriceAtMoq != null) {
     return "CURVE_SELL_AT_MOQ";
   }
-  if (productLike.costPriceRanges?.length || productLike.costGroup?.costRanges?.length) {
+  const hasTieredCost =
+    (productLike.costPriceRanges?.length ?? 0) > 0 ||
+    (productLike.costGroup?.costRanges?.length ?? 0) > 0 ||
+    productLike.costGroupId != null;
+  if (hasTieredCost && productLike.manualSalePrice != null) {
+    return "TIERED_COST_PLUS_FIXED_SELL";
+  }
+  if (hasTieredCost) {
     return "TIERED_COST_PLUS_MARGIN";
   }
   if (productLike.manualSalePrice != null) return "COST_PLUS_FIXED_SELL";

@@ -32,7 +32,12 @@ export type PriceOutput = {
   breakdown: Record<string, number>;
   // Additional metadata about how price was derived
   meta?: {
-    mode: "manual" | "saleTier" | "cost+margin" | "curve";
+    mode:
+      | "manual"
+      | "saleTier"
+      | "cost+margin"
+      | "curve"
+      | "tieredCostFixedSell";
     marginUsed?: number; // decimal (0.20)
     multiplier?: number; // e.g., 1.1
     tier?: { minQty: number; unitPrice: number };

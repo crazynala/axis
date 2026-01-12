@@ -36,7 +36,14 @@ import { CardChrome } from "~/base/forms/CardChrome";
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
 import type { ProductAttributeDefinition } from "~/modules/productMetadata/types/productMetadata";
 import { ProductCostTiersModal } from "../components/ProductCostTiersModal";
-import { PricingPreviewWidget } from "./PricingPreviewWidget";
+import {
+  PricingPreviewWidget,
+  usePricingPrefsFromWidget,
+} from "./PricingPreviewWidget";
+import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
+import { makePricedValue } from "~/utils/pricingValueMeta";
+import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
+import { debugEnabled } from "~/utils/debugFlags";
 import type { ProductValidationResult } from "../validation/computeProductValidation";
 import {
   getProductRequirements,
@@ -123,73 +130,6 @@ export function ProductDetailForm({
   const [detailDrawerOpen, setDetailDrawerOpen] = React.useState(false);
   const [pricingDrawerOpen, setPricingDrawerOpen] = React.useState(false);
   const isLoudMode = (fieldCtx as any)?.isLoudMode ?? true;
-  // Live pricing prefs from the PricingPreviewWidget (qty + customer multiplier)
-  function usePricingPrefsFromWidget() {
-    const [qty, setQty] = React.useState<number>(() => {
-      if (typeof window === "undefined") return 60;
-      const raw = window.sessionStorage.getItem("pricing.qty");
-      const n = raw ? Number(raw) : 60;
-      return Number.isFinite(n) ? n : 60;
-    });
-    const [customerId, setCustomerId] = React.useState<string | null>(() => {
-      if (typeof window === "undefined") return null;
-      return window.sessionStorage.getItem("pricing.customerId");
-    });
-    const [priceMultiplier, setPriceMultiplier] = React.useState<number>(() => {
-      if (typeof window === "undefined") return 1;
-      const raw = window.sessionStorage.getItem("pricing.mult");
-      const n = raw ? Number(raw) : 1;
-      return Number.isFinite(n) ? n : 1;
-    });
-    const [preview, setPreview] = React.useState<any>(() => {
-      if (typeof window === "undefined") return null;
-      try {
-        const raw = window.sessionStorage.getItem("pricing.preview");
-        return raw ? JSON.parse(raw) : null;
-      } catch {}
-      return null;
-    });
-    const [margins, setMargins] = React.useState<{
-      marginOverride?: number | null;
-      vendorDefaultMargin?: number | null;
-      globalDefaultMargin?: number | null;
-    } | null>(() => {
-      if (typeof window === "undefined") return null;
-      try {
-        const raw = window.sessionStorage.getItem("pricing.margins");
-        return raw ? JSON.parse(raw) : null;
-      } catch {}
-      return null;
-    });
-    React.useEffect(() => {
-      if (typeof window === "undefined") return;
-      const handler = (e: any) => {
-        const det = e?.detail || {};
-        if (det.qty != null) {
-          const q = Number(det.qty);
-          setQty(Number.isFinite(q) ? q : 60);
-        }
-        if (det.customerId != null) {
-          setCustomerId(String(det.customerId));
-        }
-        if (det.priceMultiplier != null) {
-          const m = Number(det.priceMultiplier);
-          setPriceMultiplier(Number.isFinite(m) ? m : 1);
-        }
-        if (det.margins != null) {
-          setMargins(det.margins);
-        }
-      };
-      window.addEventListener("pricing:prefs", handler as any);
-      const onPreview = (e: any) => setPreview(e?.detail ?? null);
-      window.addEventListener("pricing:preview", onPreview as any);
-      return () => {
-        window.removeEventListener("pricing:prefs", handler as any);
-        window.removeEventListener("pricing:preview", onPreview as any);
-      };
-    }, []);
-    return { qty, customerId, priceMultiplier, preview, margins } as const;
-  }
   // Local caches for on-demand loaded ranges keyed by group id
   const [salePriceGroupRangesById, setSalePriceGroupRangesById] =
     React.useState<
@@ -861,6 +801,8 @@ export function ProductDetailForm({
       ? "Cost + Fixed Sell"
       : resolvedPricingModel === "TIERED_COST_PLUS_MARGIN"
       ? "Tiered Cost + Margin"
+      : resolvedPricingModel === "TIERED_COST_PLUS_FIXED_SELL"
+      ? "Tiered Cost + Fixed Sell"
       : resolvedPricingModel === "CURVE_SELL_AT_MOQ"
       ? "Curve (Sell at MOQ)"
       : "Unspecified");
@@ -869,6 +811,7 @@ export function ProductDetailForm({
       { value: "COST_PLUS_MARGIN", label: "Cost + Margin" },
       { value: "COST_PLUS_FIXED_SELL", label: "Cost + Fixed Sell" },
       { value: "TIERED_COST_PLUS_MARGIN", label: "Tiered Cost + Margin" },
+      { value: "TIERED_COST_PLUS_FIXED_SELL", label: "Tiered Cost + Fixed Sell" },
       { value: "CURVE_SELL_AT_MOQ", label: "Curve (Sell at MOQ)" },
     ],
     []
@@ -890,6 +833,12 @@ export function ProductDetailForm({
         ],
         TIERED_COST_PLUS_MARGIN: [
           "manualSalePrice",
+          "salePriceGroupId",
+          "pricingSpecId",
+          "baselinePriceAtMoq",
+        ],
+        TIERED_COST_PLUS_FIXED_SELL: [
+          "manualMargin",
           "salePriceGroupId",
           "pricingSpecId",
           "baselinePriceAtMoq",
@@ -937,13 +886,153 @@ export function ProductDetailForm({
       return null;
     return (sell - cost) / cost;
   }, [costPriceValue, manualSalePrice, form]);
-  const derivedSell = React.useMemo(() => {
-    const cost = Number(costPriceValue ?? 0);
-    const margin = Number(form.getValues("manualMargin") ?? 0);
-    if (!Number.isFinite(cost) || cost <= 0 || !Number.isFinite(margin))
-      return null;
-    return cost * (1 + margin);
-  }, [costPriceValue, manualMargin, form]);
+  const resolvedSaleTiers = React.useMemo(() => {
+    const selectedSpgId =
+      salePriceGroupId != null && salePriceGroupId !== ""
+        ? String(salePriceGroupId)
+        : null;
+    if (selectedSpgId && salePriceGroupRangesById[selectedSpgId]) {
+      return (salePriceGroupRangesById[selectedSpgId] || [])
+        .map((t) => ({
+          minQty: Number(t.minQty) || 0,
+          unitPrice: Number(t.unitPrice) || 0,
+        }))
+        .sort((a, b) => a.minQty - b.minQty);
+    }
+    const saleGroupOnProduct =
+      (product?.salePriceGroup?.saleRanges || []) as any[];
+    if (saleGroupOnProduct.length) {
+      return saleGroupOnProduct
+        .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+        .map((r: any) => ({
+          minQty: Number(r.rangeFrom) || 0,
+          unitPrice: Number(r.price) || 0,
+        }))
+        .sort((a, b) => a.minQty - b.minQty);
+    }
+    const saleProduct = (product?.salePriceRanges || []) as any[];
+    if (saleProduct.length) {
+      return saleProduct
+        .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+        .map((r: any) => ({
+          minQty: Number(r.rangeFrom) || 0,
+          unitPrice: Number(r.price) || 0,
+        }))
+        .sort((a, b) => a.minQty - b.minQty);
+    }
+    return [];
+  }, [salePriceGroupId, salePriceGroupRangesById, product]);
+  const resolvedCostTiers = React.useMemo(() => {
+    const selectedCgId =
+      watchedCostGroupId != null && watchedCostGroupId !== ""
+        ? String(watchedCostGroupId)
+        : null;
+    const fromSelected = selectedCgId
+      ? costGroupRangesById[selectedCgId] || []
+      : [];
+    if (fromSelected.length) {
+      return fromSelected
+        .map((r) => ({
+          minQty: Number(r.minQty) || 0,
+          priceCost: Number(r.unitCost ?? 0) || 0,
+        }))
+        .sort((a, b) => a.minQty - b.minQty);
+    }
+    const ranges = (product?.costGroup?.costRanges || []) as any[];
+    return ranges
+      .map((r: any) => ({
+        minQty: Number(r.rangeFrom ?? 0) || 0,
+        priceCost: Number(r.costPrice ?? 0) || 0,
+      }))
+      .sort((a, b) => a.minQty - b.minQty);
+  }, [watchedCostGroupId, costGroupRangesById, product]);
+  const derivedPricing = React.useMemo(() => {
+    const cost = Number(costPriceValue ?? product?.costPrice ?? 0) || 0;
+    if (!Number.isFinite(cost) || cost <= 0) return null;
+    let taxRate = 0;
+    const taxId = purchaseTaxId ?? product?.purchaseTaxId ?? null;
+    const rates = optionsCtx?.taxRateById || {};
+    if (taxId != null && rates) {
+      const key = String(taxId);
+      const n = Number(rates[key] ?? 0);
+      taxRate = Number.isFinite(n) ? n : 0;
+    } else if (product?.purchaseTax?.value != null) {
+      const n = Number(product.purchaseTax.value);
+      taxRate = Number.isFinite(n) ? n : 0;
+    }
+    const specRanges =
+      pricingSpecId != null
+        ? pricingSpecRangesById[String(pricingSpecId)] || []
+        : (product?.pricingSpec?.ranges || []);
+    return getProductDisplayPrice({
+      qty: pricingPrefs.qty,
+      priceMultiplier: pricingPrefs.priceMultiplier,
+      marginDefaults: pricingPrefs.margins,
+      baseCost: cost,
+      manualSalePrice: form.getValues("manualSalePrice"),
+      manualMargin: form.getValues("manualMargin"),
+      taxRate,
+      pricingModel: resolvedPricingModel,
+      baselinePriceAtMoq:
+        baselinePriceAtMoq != null ? Number(baselinePriceAtMoq) : null,
+      transferPercent:
+        transferPercent != null ? Number(transferPercent) : null,
+      pricingSpecRanges: (specRanges || []).map((range: any) => ({
+        rangeFrom: range.rangeFrom ?? null,
+        rangeTo: range.rangeTo ?? null,
+        multiplier: Number(range.multiplier),
+      })),
+      costTiers: resolvedCostTiers,
+      saleTiers: resolvedSaleTiers,
+      debug: debugEnabled("pricing"),
+      debugLabel: product?.id ? `product:${product.id}:detail` : "product:detail",
+    });
+  }, [
+    baselinePriceAtMoq,
+    costPriceValue,
+    pricingPrefs,
+    pricingSpecId,
+    pricingSpecRangesById,
+    purchaseTaxId,
+    resolvedPricingModel,
+    resolvedCostTiers,
+    resolvedSaleTiers,
+    form,
+    manualSalePrice,
+    manualMargin,
+    product,
+    optionsCtx,
+    transferPercent,
+  ]);
+  const derivedSell =
+    derivedPricing?.unitSellPrice != null ? derivedPricing.unitSellPrice : null;
+  const derivedSellValue = React.useMemo(() => {
+    if (derivedSell == null) return null;
+    const manualOverride = manualSalePrice != null && manualSalePrice !== "";
+    return makePricedValue(derivedSell, { isOverridden: manualOverride });
+  }, [derivedSell, manualSalePrice]);
+  const derivedCurveCost = React.useMemo(() => {
+    if (!derivedPricing) return null;
+    const tpRaw = transferPercent != null ? Number(transferPercent) : null;
+    if (tpRaw == null || !Number.isFinite(tpRaw)) return null;
+    const withTax = Number((derivedPricing as any)?.breakdown?.withTax ?? 0) || 0;
+    if (!Number.isFinite(withTax)) return null;
+    const unit = withTax * tpRaw;
+    return Number.isFinite(unit) ? unit : null;
+  }, [derivedPricing, transferPercent]);
+  const derivedTierCost = React.useMemo(() => {
+    if (!derivedPricing) return null;
+    const baseUnit = Number((derivedPricing as any)?.breakdown?.baseUnit ?? 0);
+    return Number.isFinite(baseUnit) ? baseUnit : null;
+  }, [derivedPricing]);
+  const derivedTierCostValue = React.useMemo(() => {
+    if (derivedTierCost == null) return null;
+    return makePricedValue(derivedTierCost);
+  }, [derivedTierCost]);
+  const derivedCurveCostValue = React.useMemo(() => {
+    if (derivedCurveCost == null) return null;
+    return makePricedValue(derivedCurveCost);
+  }, [derivedCurveCost]);
   const costTierSummary = React.useMemo(() => {
     const groupTiers = (product?.costGroup?.costRanges || []).length;
     if (groupTiers) return `Group cost tiers: ${groupTiers}`;
@@ -1179,9 +1268,11 @@ export function ProductDetailForm({
                     {renderSurfaceFieldByName("manualMargin")}
                     <Text size="xs" c="dimmed">
                       Sell (derived):{" "}
-                      {derivedSell == null
-                        ? "—"
-                        : (Math.round(derivedSell * 100) / 100).toFixed(2)}
+                      {derivedSellValue ? (
+                        <PricingValueWithMeta priced={derivedSellValue} size="xs" />
+                      ) : (
+                        "—"
+                      )}
                     </Text>
                   </Stack>
                 ) : resolvedPricingModel === "TIERED_COST_PLUS_MARGIN" ? (
@@ -1189,6 +1280,57 @@ export function ProductDetailForm({
                     {renderSurfaceFieldByName("manualMargin")}
                     <Text size="xs" c="dimmed">
                       {costTierSummary}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Cost (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedTierCostValue ? (
+                        <PricingValueWithMeta
+                          priced={derivedTierCostValue}
+                          size="xs"
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Sell (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedSellValue ? (
+                        <PricingValueWithMeta
+                          priced={derivedSellValue}
+                          size="xs"
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </Text>
+                  </Stack>
+                ) : resolvedPricingModel === "TIERED_COST_PLUS_FIXED_SELL" ? (
+                  <Stack gap="xs">
+                    {renderSurfaceFieldByName("manualSalePriceOverride")}
+                    <Text size="xs" c="dimmed">
+                      {costTierSummary}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Cost (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedTierCostValue ? (
+                        <PricingValueWithMeta
+                          priced={derivedTierCostValue}
+                          size="xs"
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Sell (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedSellValue ? (
+                        <PricingValueWithMeta
+                          priced={derivedSellValue}
+                          size="xs"
+                        />
+                      ) : (
+                        "—"
+                      )}
                     </Text>
                   </Stack>
                 ) : resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
@@ -1201,6 +1343,25 @@ export function ProductDetailForm({
                       {baselinePriceAtMoq != null && baselinePriceAtMoq !== ""
                         ? Number(baselinePriceAtMoq).toFixed(2)
                         : "—"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Sell (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedSellValue ? (
+                        <PricingValueWithMeta priced={derivedSellValue} size="xs" />
+                      ) : (
+                        "—"
+                      )}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Cost (derived @ {pricingPrefs.qty}):{" "}
+                      {derivedCurveCostValue ? (
+                        <PricingValueWithMeta priced={derivedCurveCostValue} size="xs" />
+                      ) : (
+                        "—"
+                      )}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Curve pricing ignores cost price; uses MOQ curve + transfer %.
                     </Text>
                   </Stack>
                 ) : (
@@ -1281,9 +1442,15 @@ export function ProductDetailForm({
               </Button>
             </Group>
           )}
-          {resolvedPricingModel !== "CURVE_SELL_AT_MOQ"
-            ? renderFieldByName("costGroupId", { ctx: drawerCtx })
-            : null}
+          {resolvedPricingModel === "TIERED_COST_PLUS_MARGIN" ||
+          resolvedPricingModel === "TIERED_COST_PLUS_FIXED_SELL" ? (
+            <Stack gap={4}>
+              {renderFieldByName("costGroupId", { ctx: drawerCtx })}
+              <Text size="xs" c="dimmed">
+                Selects the cost tier schedule used for tiered pricing.
+              </Text>
+            </Stack>
+          ) : null}
           {resolvedPricingModel === "CURVE_SELL_AT_MOQ" ? (
             <>
               <Select

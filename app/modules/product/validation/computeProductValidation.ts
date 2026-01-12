@@ -100,6 +100,29 @@ export function computeProductValidation(
       }
     }
   }
+  if (
+    pricingModel === "TIERED_COST_PLUS_MARGIN" ||
+    pricingModel === "TIERED_COST_PLUS_FIXED_SELL"
+  ) {
+    const costGroupFilled = isFilled(input.costGroupId);
+    if (!costGroupFilled) {
+      missingRequired.push("Cost Group");
+      bySection.pricing.missingRequired.push("Cost Group");
+      if (!bySection.pricing.firstMissingField) {
+        bySection.pricing.firstMissingField = "costGroupId";
+      }
+    }
+  }
+  if (pricingModel === "TIERED_COST_PLUS_FIXED_SELL") {
+    const fixedSellFilled = isFilled(input.manualSalePrice);
+    if (!fixedSellFilled) {
+      missingRequired.push("Sell Price");
+      bySection.pricing.missingRequired.push("Sell Price");
+      if (!bySection.pricing.firstMissingField) {
+        bySection.pricing.firstMissingField = "manualSalePrice";
+      }
+    }
+  }
 
   return { missingRequired, missingRecommended, bySection };
 }

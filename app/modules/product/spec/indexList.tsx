@@ -1,16 +1,22 @@
 import { useEffect, useState } from "react";
 import { Link } from "@remix-run/react";
-import { Group, Indicator } from "@mantine/core";
-import { IconBaselineDensityMedium } from "@tabler/icons-react";
 import { getDefaultColumnKeys, type ColumnDef } from "~/base/index/columns";
 import { WarningsCell } from "~/components/WarningsCell";
 import { formatUSD } from "~/utils/format";
-import { calcPrice } from "../calc/calcPrice";
+import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
+import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
+import { debugEnabled } from "~/utils/debugFlags";
+import { makePricedValue } from "~/utils/pricingValueMeta";
 
 export type ProductPricingPrefs = {
   customerId: string | null;
   qty: number;
   priceMultiplier: number;
+  margins?: {
+    marginOverride?: number | null;
+    vendorDefaultMargin?: number | null;
+    globalDefaultMargin?: number | null;
+  } | null;
 };
 
 
@@ -19,11 +25,20 @@ function PriceCell({
   prefs,
 }: {
   row: any;
-  prefs: { qty: number; priceMultiplier: number };
+  prefs: {
+    qty: number;
+    priceMultiplier: number;
+    margins?: {
+      marginOverride?: number | null;
+      vendorDefaultMargin?: number | null;
+      globalDefaultMargin?: number | null;
+    } | null;
+  };
 }) {
   const qty = Number(prefs.qty || 60) || 60;
   const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
   const manual = row?.manualSalePrice;
+  const manualMargin = row?.manualMargin;
   const baseCost = Number(row?.costPrice ?? 0) || 0;
   const taxRate = Number(row?.purchaseTax?.value ?? 0) || 0;
   const costRanges = Array.isArray(row?.costGroup?.costRanges)
@@ -35,14 +50,35 @@ function PriceCell({
         }))
         .sort((a: any, b: any) => a.minQty - b.minQty)
     : [];
-  const out = calcPrice({
-    baseCost,
-    tiers: costRanges,
-    taxRate,
-    priceMultiplier,
+  const saleGroup = Array.isArray(row?.salePriceGroup?.saleRanges)
+    ? row.salePriceGroup.saleRanges
+        .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+        .map((r: any) => ({
+          minQty: Number(r.rangeFrom) || 0,
+          unitPrice: Number(r.price) || 0,
+        }))
+        .sort((a: any, b: any) => a.minQty - b.minQty)
+    : [];
+  const saleProduct = Array.isArray(row?.salePriceRanges)
+    ? row.salePriceRanges
+        .filter((r: any) => r && r.rangeFrom != null && r.price != null)
+        .map((r: any) => ({
+          minQty: Number(r.rangeFrom) || 0,
+          unitPrice: Number(r.price) || 0,
+        }))
+        .sort((a: any, b: any) => a.minQty - b.minQty)
+    : [];
+  const saleTiers = saleGroup.length ? saleGroup : saleProduct;
+  const out = getProductDisplayPrice({
     qty,
+    priceMultiplier,
+    marginDefaults: prefs.margins,
+    baseCost,
     manualSalePrice:
       manual != null && manual !== "" ? Number(manual) : undefined,
+    manualMargin:
+      manualMargin != null && manualMargin !== "" ? Number(manualMargin) : null,
+    taxRate,
     pricingModel: row?.pricingModel ?? null,
     baselinePriceAtMoq:
       row?.baselinePriceAtMoq != null ? Number(row.baselinePriceAtMoq) : null,
@@ -53,8 +89,85 @@ function PriceCell({
       rangeTo: range.rangeTo ?? null,
       multiplier: Number(range.multiplier),
     })),
+    costTiers: costRanges,
+    saleTiers,
+    debug: debugEnabled("pricing"),
+    debugLabel: row?.id ? `product:${row.id}:index` : "product:index",
   });
-  return <>{formatUSD(out.unitSellPrice)}</>;
+  const manualOverride = manual != null && manual !== "";
+  const priced = makePricedValue(Number(out.unitSellPrice || 0), {
+    isOverridden: manualOverride,
+  });
+  return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
+}
+
+function CostCell({
+  row,
+  prefs,
+}: {
+  row: any;
+  prefs: {
+    qty: number;
+    priceMultiplier: number;
+    margins?: {
+      marginOverride?: number | null;
+      vendorDefaultMargin?: number | null;
+      globalDefaultMargin?: number | null;
+    } | null;
+  };
+}) {
+  const pricingModel = String(row?.pricingModel || "").toUpperCase();
+  const isCurve = pricingModel === "CURVE_SELL_AT_MOQ";
+  const isTiered =
+    pricingModel === "TIERED_COST_PLUS_MARGIN" ||
+    pricingModel === "TIERED_COST_PLUS_FIXED_SELL";
+  if (!isCurve && !isTiered) {
+    const priced = makePricedValue(Number(row?.costPrice ?? 0) || 0);
+    return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
+  }
+  const qty = Number(prefs.qty || 60) || 60;
+  const priceMultiplier = Number(prefs.priceMultiplier || 1) || 1;
+  const taxRate = Number(row?.purchaseTax?.value ?? 0) || 0;
+  const out = getProductDisplayPrice({
+    qty,
+    priceMultiplier,
+    taxRate,
+    baseCost: Number(row?.costPrice ?? 0) || 0,
+    pricingModel: row?.pricingModel ?? null,
+    baselinePriceAtMoq:
+      row?.baselinePriceAtMoq != null ? Number(row.baselinePriceAtMoq) : null,
+    transferPercent:
+      row?.transferPercent != null ? Number(row.transferPercent) : null,
+    pricingSpecRanges: (row?.pricingSpec?.ranges || []).map((range: any) => ({
+      rangeFrom: range.rangeFrom ?? null,
+      rangeTo: range.rangeTo ?? null,
+      multiplier: Number(range.multiplier),
+    })),
+    marginDefaults: prefs.margins ?? null,
+    costTiers: (row?.costGroup?.costRanges || [])
+      .filter((r: any) => r && r.rangeFrom != null && r.costPrice != null)
+      .map((r: any) => ({
+        minQty: Number(r.rangeFrom) || 0,
+        priceCost: Number(r.costPrice) || 0,
+      }))
+      .sort((a: any, b: any) => a.minQty - b.minQty),
+  });
+  let derived = Number(row?.costPrice ?? 0) || 0;
+  if (isCurve) {
+    const tp = Number(row?.transferPercent ?? 0);
+    const withTax = Number((out as any)?.breakdown?.withTax ?? 0) || 0;
+    derived =
+      Number.isFinite(tp) && tp > 0 && Number.isFinite(withTax)
+        ? withTax * tp
+        : Number(row?.costPrice ?? 0) || 0;
+  } else if (isTiered) {
+    const baseUnit = Number((out as any)?.breakdown?.baseUnit ?? 0);
+    if (Number.isFinite(baseUnit) && baseUnit > 0) {
+      derived = baseUnit;
+    }
+  }
+  const priced = makePricedValue(Number(derived || 0));
+  return <PricingValueWithMeta priced={priced} formatValue={formatUSD} />;
 }
 
 function StockCell({ row }: { row: any }) {
@@ -203,24 +316,29 @@ export const buildProductIndexColumns = (
       return {
         ...col,
         render: (r: any) => (
-          <Group justify="space-between" w="70px">
-            <Indicator
-              color="red"
-              position="middle-start"
-              offset={-5}
-              size="4"
-              disabled={!(r.c_isSellPriceManual ?? !!r.manualSalePrice)}
-            >
-              <PriceCell
-                row={r}
-                prefs={{
-                  qty: pricing.qty,
-                  priceMultiplier: pricing.priceMultiplier,
-                }}
-              />
-            </Indicator>
-            {r.c_hasPriceTiers ? <IconBaselineDensityMedium size={8} /> : ""}
-          </Group>
+          <PriceCell
+            row={r}
+            prefs={{
+              qty: pricing.qty,
+              priceMultiplier: pricing.priceMultiplier,
+              margins: pricing.margins ?? null,
+            }}
+          />
+        ),
+      };
+    }
+    if (col.key === "costPrice") {
+      return {
+        ...col,
+        render: (r: any) => (
+          <CostCell
+            row={r}
+            prefs={{
+              qty: pricing.qty,
+              priceMultiplier: pricing.priceMultiplier,
+              margins: pricing.margins ?? null,
+            }}
+          />
         ),
       };
     }

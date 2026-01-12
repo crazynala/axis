@@ -3,7 +3,6 @@ import { Controller, useWatch } from "react-hook-form";
 import type { UseFormReturn } from "react-hook-form";
 import {
   Group,
-  Indicator,
   NumberInput,
   Table,
   ActionIcon,
@@ -19,8 +18,10 @@ import { notifications } from "@mantine/notifications";
 import { computeLinePricing } from "~/modules/purchaseOrder/helpers/poPricing";
 import { ProductStageIndicator } from "~/modules/product/components/ProductStageIndicator";
 import { JumpLink } from "~/components/JumpLink";
+import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
 import { formatMoney, formatUSD } from "~/utils/format";
 import { resolveLeadTimeDays } from "~/utils/leadTime";
+import { makePricedValue } from "~/utils/pricingValueMeta";
 
 type Props = {
   form: UseFormReturn<any>;
@@ -180,6 +181,7 @@ export function PurchaseOrderLinesTable({
       const manualSell = l.manualSell != null ? Number(l.manualSell) : null;
       const storedCost = l.priceCost != null ? Number(l.priceCost) : null;
       const storedSell = l.priceSell != null ? Number(l.priceSell) : null;
+      const isLocked = !isDraft;
       const effectiveCost =
         manualCost != null
           ? manualCost
@@ -192,24 +194,40 @@ export function PurchaseOrderLinesTable({
           : storedSell != null
           ? storedSell
           : computed.sell;
+      const qty = Number(l.quantityOrdered || 0) || 0;
       const taxRate = normalizeTaxRate(
         l.taxRate ?? l.product?.purchaseTax?.value ?? computed.taxRate ?? 0
       );
       const effectiveCostWithTax = effectiveCost * (1 + taxRate);
+      const pricedCost = makePricedValue(effectiveCost, {
+        isLocked,
+        isOverridden: manualCost != null,
+        lockedValue: effectiveCost,
+        currentValue: computed.cost,
+      });
+      const pricedSell = makePricedValue(effectiveSell, {
+        isLocked,
+        isOverridden: manualSell != null,
+        lockedValue: effectiveSell,
+        currentValue: computed.sell,
+      });
       return {
         computedCost: computed.cost,
         computedSell: computed.sell,
-        extendedCost: effectiveCost * (Number(l.quantityOrdered || 0) || 0),
-        extendedSell: effectiveSell * (Number(l.quantityOrdered || 0) || 0),
+        extendedCost: effectiveCost * qty,
+        extendedSell: effectiveSell * qty,
         effectiveCostWithTax,
-        extendedCostWithTax:
-          effectiveCostWithTax * (Number(l.quantityOrdered || 0) || 0),
+        extendedCostWithTax: effectiveCostWithTax * qty,
         taxRate,
         isManualSell: computed.isManualSell,
         effectiveCost,
         effectiveSell,
         storedCost,
         storedSell,
+        pricedCost,
+        pricedSell,
+        pricedExtCost: { value: effectiveCost * qty, meta: pricedCost.meta },
+        pricedExtSell: { value: effectiveSell * qty, meta: pricedSell.meta },
         priceSourceCost: manualCost != null ? "manual" : "computed",
         priceSourceSell: manualSell != null ? "manual" : "computed",
       };
@@ -531,7 +549,10 @@ export function PurchaseOrderLinesTable({
                   ) : null}
                   <Table.Td>
                     {lp.priceSourceCost === "manual" ? (
-                      formatUnitCost(lp.effectiveCost)
+                      <PricingValueWithMeta
+                        priced={lp.pricedCost}
+                        formatValue={formatUnitCost}
+                      />
                     ) : lp.computedCost > 0 && lp.storedCost == null ? (
                       <Tooltip
                         label={`Suggested from product: ${formatUnitCost(
@@ -539,10 +560,18 @@ export function PurchaseOrderLinesTable({
                         )}`}
                         withArrow
                       >
-                        <span>{formatUnitCost(lp.effectiveCost)}</span>
+                        <span>
+                          <PricingValueWithMeta
+                            priced={lp.pricedCost}
+                            formatValue={formatUnitCost}
+                          />
+                        </span>
                       </Tooltip>
                     ) : (
-                      formatUnitCost(lp.effectiveCost)
+                      <PricingValueWithMeta
+                        priced={lp.pricedCost}
+                        formatValue={formatUnitCost}
+                      />
                     )}
                   </Table.Td>
                   <Table.Td>
@@ -558,36 +587,47 @@ export function PurchaseOrderLinesTable({
                   </Table.Td>
                   <Table.Td>{formatUSD(lp.effectiveCostWithTax)}</Table.Td>
                   {showExtended ? (
-                    <Table.Td>{formatUSD(lp.extendedCostWithTax)}</Table.Td>
+                    <Table.Td>
+                      <PricingValueWithMeta
+                        priced={lp.pricedExtCost}
+                        formatValue={formatUSD}
+                      />
+                    </Table.Td>
                   ) : null}
                   <Table.Td>
-                    <Group gap={6} wrap="nowrap" align="center">
-                      {manualFlag ? (
-                        <Indicator
-                          color="red"
-                          position="middle-start"
-                          offset={-5}
-                          size="4"
-                          processing
-                        >
-                          <span>{formatUSD(lp.effectiveSell)}</span>
-                        </Indicator>
-                      ) : lp.computedSell > 0 && lp.storedSell == null ? (
-                        <Tooltip
-                          label={`Suggested from product: ${formatUSD(
-                            lp.computedSell
-                          )}`}
-                          withArrow
-                        >
-                          <span>{formatUSD(lp.effectiveSell)}</span>
-                        </Tooltip>
-                      ) : (
-                        <span>{formatUSD(lp.effectiveSell)}</span>
-                      )}
-                    </Group>
+                    {manualFlag ? (
+                      <PricingValueWithMeta
+                        priced={lp.pricedSell}
+                        formatValue={formatUSD}
+                      />
+                    ) : lp.computedSell > 0 && lp.storedSell == null ? (
+                      <Tooltip
+                        label={`Suggested from product: ${formatUSD(
+                          lp.computedSell
+                        )}`}
+                        withArrow
+                      >
+                        <span>
+                          <PricingValueWithMeta
+                            priced={lp.pricedSell}
+                            formatValue={formatUSD}
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <PricingValueWithMeta
+                        priced={lp.pricedSell}
+                        formatValue={formatUSD}
+                      />
+                    )}
                   </Table.Td>
                   {showExtended ? (
-                    <Table.Td>{formatUSD(lp.extendedSell)}</Table.Td>
+                    <Table.Td>
+                      <PricingValueWithMeta
+                        priced={lp.pricedExtSell}
+                        formatValue={formatUSD}
+                      />
+                    </Table.Td>
                   ) : null}
                   <Table.Td>
                     <Menu withinPortal position="bottom-end" shadow="md">
@@ -721,7 +761,10 @@ export function PurchaseOrderLinesTable({
                   ) : null}
                   <Table.Td>
                     {lp.priceSourceCost === "manual" ? (
-                      formatUnitCost(lp.effectiveCost)
+                      <PricingValueWithMeta
+                        priced={lp.pricedCost}
+                        formatValue={formatUnitCost}
+                      />
                     ) : lp.computedCost > 0 && lp.storedCost == null ? (
                       <Tooltip
                         label={`Suggested from product: ${formatUnitCost(
@@ -729,10 +772,18 @@ export function PurchaseOrderLinesTable({
                         )}`}
                         withArrow
                       >
-                        <span>{formatUnitCost(lp.effectiveCost)}</span>
+                        <span>
+                          <PricingValueWithMeta
+                            priced={lp.pricedCost}
+                            formatValue={formatUnitCost}
+                          />
+                        </span>
                       </Tooltip>
                     ) : (
-                      formatUnitCost(lp.effectiveCost)
+                      <PricingValueWithMeta
+                        priced={lp.pricedCost}
+                        formatValue={formatUnitCost}
+                      />
                     )}
                   </Table.Td>
                   <Table.Td>
@@ -742,30 +793,47 @@ export function PurchaseOrderLinesTable({
                   </Table.Td>
                   <Table.Td>{formatUSD(lp.effectiveCostWithTax)}</Table.Td>
                   {showExtended ? (
-                    <Table.Td>{formatUSD(lp.extendedCostWithTax)}</Table.Td>
+                    <Table.Td>
+                      <PricingValueWithMeta
+                        priced={lp.pricedExtCost}
+                        formatValue={formatUSD}
+                      />
+                    </Table.Td>
                   ) : null}
                   <Table.Td>
-                    <Group gap={6} wrap="nowrap" align="center">
-                      {manualFlag ? (
-                        <Indicator inline color="red" size={8} processing>
-                          <span>{formatUSD(lp.effectiveSell)}</span>
-                        </Indicator>
-                      ) : lp.computedSell > 0 && lp.storedSell == null ? (
-                        <Tooltip
-                          label={`Suggested from product: ${formatUSD(
-                            lp.computedSell
-                          )}`}
-                          withArrow
-                        >
-                          <span>{formatUSD(lp.effectiveSell)}</span>
-                        </Tooltip>
-                      ) : (
-                        <span>{formatUSD(lp.effectiveSell)}</span>
-                      )}
-                    </Group>
+                    {manualFlag ? (
+                      <PricingValueWithMeta
+                        priced={lp.pricedSell}
+                        formatValue={formatUSD}
+                      />
+                    ) : lp.computedSell > 0 && lp.storedSell == null ? (
+                      <Tooltip
+                        label={`Suggested from product: ${formatUSD(
+                          lp.computedSell
+                        )}`}
+                        withArrow
+                      >
+                        <span>
+                          <PricingValueWithMeta
+                            priced={lp.pricedSell}
+                            formatValue={formatUSD}
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <PricingValueWithMeta
+                        priced={lp.pricedSell}
+                        formatValue={formatUSD}
+                      />
+                    )}
                   </Table.Td>
                   {showExtended ? (
-                    <Table.Td>{formatUSD(lp.extendedSell)}</Table.Td>
+                    <Table.Td>
+                      <PricingValueWithMeta
+                        priced={lp.pricedExtSell}
+                        formatValue={formatUSD}
+                      />
+                    </Table.Td>
                   ) : null}
                   <Table.Td>
                     <Menu withinPortal position="bottom-end" shadow="md">

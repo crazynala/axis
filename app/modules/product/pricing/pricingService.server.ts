@@ -139,6 +139,33 @@ export async function computePrice(
       },
     };
   }
+  if (pricingModel === "TIERED_COST_PLUS_FIXED_SELL") {
+    const withTax = toNum(ctx.product.manualSalePrice, 0);
+    const cTiers = ctx.product.costPriceTiers ?? [];
+    let costBase: number | null = null;
+    if (cTiers.length) {
+      const sorted = [...cTiers].sort((a, b) => a.minQty - b.minQty);
+      for (const t of sorted) {
+        if (qty >= (t.minQty ?? 1)) costBase = toNum(t.unitCost, costBase ?? 0);
+      }
+    }
+    if (costBase == null || !Number.isFinite(costBase)) {
+      const fallback = ctx.product.costPrice ?? ctx.product.groupCostPrice ?? 0;
+      costBase = toNum(fallback, 0);
+    }
+    return {
+      unitSellPrice: round(withTax),
+      extendedSell: round(withTax * qty),
+      extendedCost: round(costBase * qty),
+      applied: {
+        mode: "tieredCostPlusFixedSell",
+        baseUnit: round(costBase),
+        inTarget: round(costBase),
+        discounted: round(withTax),
+        withTax: round(withTax),
+      },
+    };
+  }
 
   // Cost + margin flow. If manualMargin set on product, that overrides hierarchy.
   const margin =
@@ -168,11 +195,11 @@ export async function computePrice(
     unitSellPrice: round(withTax),
     extendedSell: round(withTax * qty),
     extendedCost: round(withTax * qty),
-    applied: {
-      mode:
-        pricingModel === "TIERED_COST_PLUS_MARGIN"
-          ? "tieredCostPlusMargin"
-          : "costPlusMargin",
+      applied: {
+        mode:
+          pricingModel === "TIERED_COST_PLUS_MARGIN"
+            ? "tieredCostPlusMargin"
+            : "costPlusMargin",
       marginUsed: margin,
       tier: null,
       baseUnit: round(cost),

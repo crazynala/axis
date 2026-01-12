@@ -12,6 +12,8 @@ import {
   Modal,
   Code,
 } from "@mantine/core";
+import { PricingValueWithMeta } from "~/components/PricingValueWithMeta";
+import { makePricedValue } from "~/utils/pricingValueMeta";
 import type {
   PendingCostingItem,
   PendingShipmentItem,
@@ -689,7 +691,14 @@ export function InvoiceInvoicingTabs({
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td>Unit Price</Table.Td>
-                  <Table.Td>{poDiag.calcDebug.unitPrice}</Table.Td>
+                  <Table.Td>
+                    <PricingValueWithMeta
+                      priced={makePricedValue(
+                        Number(poDiag.calcDebug.unitPrice) || 0,
+                        { isLocked: true }
+                      )}
+                    />
+                  </Table.Td>
                 </Table.Tr>
                 <Table.Tr>
                   <Table.Td>Pending Amount</Table.Td>
@@ -708,11 +717,28 @@ export function InvoiceInvoicingTabs({
                     </Table.Tr>
                     <Table.Tr>
                       <Table.Td>Price Sell</Table.Td>
-                      <Table.Td>{l.priceSell}</Table.Td>
+                      <Table.Td>
+                        <PricingValueWithMeta
+                          priced={makePricedValue(Number(l.priceSell) || 0, {
+                            isLocked: true,
+                          })}
+                        />
+                      </Table.Td>
                     </Table.Tr>
                     <Table.Tr>
                       <Table.Td>Invoiced Price</Table.Td>
-                      <Table.Td>{l.invoicedPrice ?? "—"}</Table.Td>
+                      <Table.Td>
+                        {l.invoicedPrice != null ? (
+                          <PricingValueWithMeta
+                            priced={makePricedValue(
+                              Number(l.invoicedPrice) || 0,
+                              { isLocked: true }
+                            )}
+                          />
+                        ) : (
+                          "—"
+                        )}
+                      </Table.Td>
                     </Table.Tr>
                     <Table.Tr>
                       <Table.Td>Manual Total</Table.Td>

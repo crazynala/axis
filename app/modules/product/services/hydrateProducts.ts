@@ -1,5 +1,5 @@
 import { prismaBase } from "~/utils/prisma.server";
-import { calcPrice } from "../calc/calcPrice";
+import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
 import { productSpec } from "../spec";
 
 // Minimal shape both routes select for table hydration
@@ -19,6 +19,7 @@ export type ProductRowBase = {
   leadTimeDays: number | null;
   externalStepType: string | null;
   manualSalePrice: any;
+  manualMargin?: any;
   pricingModel: string | null;
   pricingSpecId: number | null;
   baselinePriceAtMoq: any;
@@ -32,6 +33,16 @@ export type ProductRowBase = {
   } | null;
   stockTrackingEnabled: boolean | null;
   batchTrackingEnabled: boolean | null;
+  salePriceGroup?: {
+    saleRanges?: Array<{
+      rangeFrom: number | null;
+      price: any;
+    }>;
+  } | null;
+  salePriceRanges?: Array<{
+    rangeFrom: number | null;
+    price: any;
+  }>;
 };
 
 export async function fetchAndHydrateProductsByIds(ids: number[]) {
@@ -55,6 +66,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
       leadTimeDays: true,
       externalStepType: true,
       manualSalePrice: true,
+      manualMargin: true,
       pricingModel: true,
       pricingSpecId: true,
       baselinePriceAtMoq: true,
@@ -75,6 +87,10 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
         },
       },
       purchaseTax: { select: { value: true, label: true, code: true } },
+      salePriceGroup: {
+        select: { saleRanges: { select: { rangeFrom: true, price: true } } },
+      },
+      salePriceRanges: { select: { rangeFrom: true, price: true } },
     },
   });
   const cmtLines = await prismaBase.productLine.findMany({
@@ -128,9 +144,20 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
         c_isSellPriceManual: true,
       };
     } else {
-      const sellPrice = calcPrice({
+      const saleGroupRanges = (r.salePriceGroup?.saleRanges || []).map(
+        (range: any) => ({
+          minQty: Number(range.rangeFrom ?? 0) || 0,
+          unitPrice: Number(range.price ?? 0) || 0,
+        })
+      );
+      const saleProductRanges = (r.salePriceRanges || []).map((range: any) => ({
+        minQty: Number(range.rangeFrom ?? 0) || 0,
+        unitPrice: Number(range.price ?? 0) || 0,
+      }));
+      const sellPrice = getProductDisplayPrice({
+        qty: 1,
         baseCost: Number(r.costPrice ?? 0) || 0,
-        tiers: priceTiers,
+        costTiers: priceTiers,
         taxRate: Number(r.purchaseTax?.value ?? 0) || 0,
         pricingModel: r.pricingModel ?? null,
         baselinePriceAtMoq:
@@ -142,6 +169,7 @@ export async function fetchAndHydrateProductsByIds(ids: number[]) {
           rangeTo: range.rangeTo ?? null,
           multiplier: Number(range.multiplier),
         })),
+        saleTiers: saleGroupRanges.length ? saleGroupRanges : saleProductRanges,
       });
       enrichedRow = { ...r, c_sellPrice: sellPrice.unitSellPrice };
     }

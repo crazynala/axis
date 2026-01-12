@@ -51,6 +51,7 @@ export type PricingResult = {
       | "costPlusMargin"
       | "costPlusFixedSell"
       | "tieredCostPlusMargin"
+      | "tieredCostPlusFixedSell"
       | "curveSellAtMoq";
     marginUsed?: number | null;
     priceMultiplier?: number | null;

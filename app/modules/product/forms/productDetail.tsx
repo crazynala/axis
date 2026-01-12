@@ -1,5 +1,5 @@
 import type { FieldConfig } from "../../../base/forms/fieldConfigShared";
-import { calcPrice } from "../calc/calcPrice";
+import { getProductDisplayPrice } from "../pricing/getProductDisplayPrice";
 import { Tooltip } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import {
@@ -202,6 +202,13 @@ export const productPricingFields: FieldConfig[] = [
     widget: "select",
     optionsKey: "costGroup",
     hiddenInModes: ["find"],
+    showIf: ({ form }) => {
+      const model = String(form.watch("pricingModel") || "").toUpperCase();
+      return (
+        model === "TIERED_COST_PLUS_MARGIN" ||
+        model === "TIERED_COST_PLUS_FIXED_SELL"
+      );
+    },
   },
   // Manual sale price override with computed default (edit/create only)
   {
@@ -301,32 +308,40 @@ export const productPricingFields: FieldConfig[] = [
         ) || 1;
       // Resolve margin precedence for cost+margin mode when no sale tiers apply
       const manualMarginRaw = (values as any)?.manualMargin;
-      let marginPct: number | undefined = undefined;
-      if (manualMarginRaw != null && String(manualMarginRaw) !== "") {
-        marginPct = Number(manualMarginRaw);
-      } else {
-        const md = (ctx as any)?.pricingMarginDefaults as
-          | {
-              marginOverride?: number | null;
-              vendorDefaultMargin?: number | null;
-              globalDefaultMargin?: number | null;
-            }
-          | undefined;
-        if (md?.marginOverride != null) marginPct = Number(md.marginOverride);
-        else if (md?.vendorDefaultMargin != null)
-          marginPct = Number(md.vendorDefaultMargin);
-        else if (md?.globalDefaultMargin != null)
-          marginPct = Number(md.globalDefaultMargin);
-        else marginPct = undefined; // let calcPrice fall back (e.g., 0.1)
-      }
-      const out = calcPrice({
+      const md = (ctx as any)?.pricingMarginDefaults as
+        | {
+            marginOverride?: number | null;
+            vendorDefaultMargin?: number | null;
+            globalDefaultMargin?: number | null;
+          }
+        | undefined;
+      const out = getProductDisplayPrice({
         baseCost,
         qty,
         taxRate,
         saleTiers,
         tiers,
         priceMultiplier,
-        marginPct,
+        manualMargin:
+          manualMarginRaw != null && String(manualMarginRaw) !== ""
+            ? Number(manualMarginRaw)
+            : null,
+        marginDefaults: md ?? null,
+        pricingModel: (values as any)?.pricingModel ?? null,
+        baselinePriceAtMoq:
+          (values as any)?.baselinePriceAtMoq != null
+            ? Number((values as any)?.baselinePriceAtMoq)
+            : null,
+        transferPercent:
+          (values as any)?.transferPercent != null
+            ? Number((values as any)?.transferPercent)
+            : null,
+        pricingSpecRanges:
+          (values as any)?.pricingSpec?.ranges?.map((range: any) => ({
+            rangeFrom: range.rangeFrom ?? null,
+            rangeTo: range.rangeTo ?? null,
+            multiplier: Number(range.multiplier),
+          })) || [],
       });
       // console.log("!! Computed manualSalePriceOverride default:", out);
       return out.unitSellPrice;

@@ -18,6 +18,7 @@
     "seed:product-metadata": "tsx scripts/seed-product-metadata.ts",
     "seed:pricing-specs": "tsx scripts/seed-pricing-specs.ts",
     "backfill:assembly-actions": "tsx scripts/backfill-assembly-actions.ts",
+    "backfill:product-pricing-models": "tsx scripts/backfill-product-pricing-models.ts",
     "debug": "node --inspect-brk server.mjs",
     "predev": "prisma generate",
     "dev": "remix vite:dev",
@@ -41,6 +42,9 @@
     "test:pricing-spec-tiers": "tsx ./scripts/test-pricing-spec-tiers.ts",
     "test:production-attention": "tsx ./scripts/test-production-attention.ts",
     "test:target-overrides": "tsx ./scripts/test-target-overrides.ts",
+    "test:product-pricing": "tsx ./scripts/test-product-display-price.ts",
+    "test:pricing-meta": "tsx ./scripts/test-pricing-meta.ts",
+    "test:po-pricing": "tsx ./scripts/test-po-pricing.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

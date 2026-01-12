@@ -24,7 +24,10 @@ import {
   textColumn,
   type Column,
 } from "react-datasheet-grid";
-import { PricingPreviewWidget } from "../components/PricingPreviewWidget";
+import {
+  PricingPreviewWidget,
+  usePricingPrefsFromWidget,
+} from "../components/PricingPreviewWidget";
 import {
   getSavedNavLocation,
   usePersistIndexSearch,
@@ -34,48 +37,6 @@ import { buildProductMetadataFields } from "~/modules/productMetadata/utils/prod
 import { getGlobalOptions } from "~/base/options/OptionsClient";
 import { productSpec } from "../spec";
 
-function usePricingPrefsFromWidget() {
-  const [customerId, setCustomerId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return window.sessionStorage.getItem("pricing.customerId");
-  });
-  const [qty, setQty] = useState<number>(() => {
-    if (typeof window === "undefined") return 60;
-    const raw = window.sessionStorage.getItem("pricing.qty");
-    const n = raw ? Number(raw) : 60;
-    return Number.isFinite(n) ? n : 60;
-  });
-  const [priceMultiplier, setPriceMultiplier] = useState<number>(() => {
-    if (typeof window === "undefined") return 1;
-    const raw = window.sessionStorage.getItem("pricing.mult");
-    const n = raw ? Number(raw) : 1;
-    return Number.isFinite(n) ? n : 1;
-  });
-  useEffect(() => {
-    const handler = (e: any) => {
-      if (!e?.detail) return;
-      const {
-        customerId: cid,
-        qty: q,
-        priceMultiplier: mult,
-      } = e.detail as {
-        customerId: string | null;
-        qty: number;
-        priceMultiplier?: number;
-      };
-      setCustomerId(cid ?? null);
-      const n = Number(q);
-      setQty(Number.isFinite(n) ? n : 60);
-      if (mult != null) {
-        const m = Number(mult);
-        setPriceMultiplier(Number.isFinite(m) ? m : 1);
-      }
-    };
-    window.addEventListener("pricing:prefs", handler as any);
-    return () => window.removeEventListener("pricing:prefs", handler as any);
-  }, []);
-  return { customerId, qty, priceMultiplier } as const;
-}
 export default function ProductsIndexRoute() {
   // Register product index navigation (persist search/filter state via existing logic + path)
   useRegisterNavLocation({ includeSearch: true, moduleKey: "products" });
@@ -305,6 +266,11 @@ export default function ProductsIndexRoute() {
     return () => window.removeEventListener("focus", handleFocus);
   }, [currentId, addRows]);
 
+  const currentRow = useMemo(
+    () => (currentId ? records.find((r: any) => r?.id === currentId) : null),
+    [currentId, records]
+  );
+
   async function saveSheet() {
     setSaving(true);
     try {
@@ -361,7 +327,10 @@ export default function ProductsIndexRoute() {
           columnsConfig={columnDefs}
         />
         <Card withBorder padding={5}>
-          <PricingPreviewWidget productId={Number(currentId) || undefined} />
+          <PricingPreviewWidget
+            productId={Number(currentId) || undefined}
+            vendorId={currentRow?.supplierId ?? null}
+          />
         </Card>
       </Group>
       <section>

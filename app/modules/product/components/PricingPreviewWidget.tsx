@@ -27,8 +27,12 @@ export function useProductPricingPrefs() {
   }, []);
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-    if (customerId == null || customerId === "") {
+    const cleared = customerId == null || customerId === "";
+    if (cleared) {
       window.sessionStorage.removeItem("pricing.customerId");
+      window.sessionStorage.removeItem("pricing.mult");
+      window.sessionStorage.removeItem("pricing.margins");
+      window.sessionStorage.removeItem("pricing.preview");
     } else {
       window.sessionStorage.setItem("pricing.customerId", customerId);
     }
@@ -36,12 +40,88 @@ export function useProductPricingPrefs() {
     try {
       // Notify other components (e.g., index list) that prefs changed
       const ev = new CustomEvent("pricing:prefs", {
-        detail: { customerId, qty },
+        detail: {
+          customerId: cleared ? null : customerId,
+          qty,
+          priceMultiplier: cleared ? 1 : undefined,
+          margins: cleared ? null : undefined,
+        },
       });
       window.dispatchEvent(ev);
+      if (cleared) {
+        const previewEv = new CustomEvent("pricing:preview", { detail: null });
+        window.dispatchEvent(previewEv);
+      }
     } catch {}
   }, [customerId, qty]);
   return { customerId, setCustomerId, qty, setQty } as const;
+}
+
+export function usePricingPrefsFromWidget() {
+  const [qty, setQty] = React.useState<number>(() => {
+    if (typeof window === "undefined") return 60;
+    const raw = window.sessionStorage.getItem("pricing.qty");
+    const n = raw ? Number(raw) : 60;
+    return Number.isFinite(n) ? n : 60;
+  });
+  const [customerId, setCustomerId] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem("pricing.customerId");
+  });
+  const [priceMultiplier, setPriceMultiplier] = React.useState<number>(() => {
+    if (typeof window === "undefined") return 1;
+    const raw = window.sessionStorage.getItem("pricing.mult");
+    const n = raw ? Number(raw) : 1;
+    return Number.isFinite(n) ? n : 1;
+  });
+  const [preview, setPreview] = React.useState<any>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem("pricing.preview");
+      return raw ? JSON.parse(raw) : null;
+    } catch {}
+    return null;
+  });
+  const [margins, setMargins] = React.useState<{
+    marginOverride?: number | null;
+    vendorDefaultMargin?: number | null;
+    globalDefaultMargin?: number | null;
+  } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem("pricing.margins");
+      return raw ? JSON.parse(raw) : null;
+    } catch {}
+    return null;
+  });
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (e: any) => {
+      const det = e?.detail || {};
+      if (det.qty != null) {
+        const q = Number(det.qty);
+        setQty(Number.isFinite(q) ? q : 60);
+      }
+      if (det.customerId != null) {
+        setCustomerId(String(det.customerId));
+      }
+      if (det.priceMultiplier != null) {
+        const m = Number(det.priceMultiplier);
+        setPriceMultiplier(Number.isFinite(m) ? m : 1);
+      }
+      if (det.margins != null) {
+        setMargins(det.margins);
+      }
+    };
+    window.addEventListener("pricing:prefs", handler as any);
+    const onPreview = (e: any) => setPreview(e?.detail ?? null);
+    window.addEventListener("pricing:preview", onPreview as any);
+    return () => {
+      window.removeEventListener("pricing:prefs", handler as any);
+      window.removeEventListener("pricing:preview", onPreview as any);
+    };
+  }, []);
+  return { qty, customerId, priceMultiplier, preview, margins } as const;
 }
 
 export function PricingPreviewWidget({
@@ -91,7 +171,8 @@ export function PricingPreviewWidget({
       try {
         if (!customerId) return;
         const qs = vendorId ? `?vendorId=${vendorId}` : "";
-        const resp = await fetch(`/api/customers/${customerId}/pricing${qs}`, {
+        const url = `/api/customers/${customerId}/pricing${qs}`;
+        const resp = await fetch(url, {
           credentials: "same-origin",
           headers: { Accept: "application/json, */*" },
         });
@@ -128,6 +209,20 @@ export function PricingPreviewWidget({
               detail: { customerId, qty, priceMultiplier: mult, margins },
             });
             window.dispatchEvent(ev);
+          } catch {}
+          try {
+            const debug = (window as any)?.__DEBUG__?.get?.("pricing");
+            if (debug) {
+              // eslint-disable-next-line no-console
+              console.debug("[pricing] customer prefs", {
+                url,
+                customerId,
+                vendorId,
+                response: data,
+                priceMultiplier: mult,
+                margins,
+              });
+            }
           } catch {}
         }
       } catch {}
