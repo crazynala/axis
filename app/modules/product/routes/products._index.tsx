@@ -17,7 +17,8 @@ import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
-import { HotkeyAwareModal } from "~/base/hotkeys/HotkeyAwareModal";
+import { SheetModal } from "~/components/sheets/SheetModal";
+import { SheetGrid } from "~/components/sheets/SheetGrid";
 import {
   DataSheetGrid,
   keyColumn,
@@ -106,6 +107,11 @@ export default function ProductsIndexRoute() {
     created: number;
     errors: Array<{ index: number; message: string }>;
   } | null>(null);
+  const MODAL_TOP_RESERVE = 60;
+  const MODAL_BOTTOM_RESERVE = 120;
+  const MODAL_GRID_HEIGHT = 420;
+  const MODAL_HEIGHT =
+    MODAL_GRID_HEIGHT + MODAL_TOP_RESERVE + MODAL_BOTTOM_RESERVE;
   const sheetColumns = useMemo<Column<NewProd>[]>(() => {
     const col = <K extends keyof NewProd>(
       key: K,
@@ -305,7 +311,7 @@ export default function ProductsIndexRoute() {
             items={[
               {
                 label: "Batch Create",
-                onClick: () => navigate("/products/batch-fullzoom"),
+                onClick: () => navigate("/products/batch/sheet"),
               },
             ]}
             variant="filled"
@@ -343,12 +349,12 @@ export default function ProductsIndexRoute() {
             {
               label: "Batch Edit",
               onClick: (ids) =>
-                navigate(`/products/batch-fullzoom?ids=${ids.join(",")}`),
+                navigate(`/products/batch/sheet?ids=${ids.join(",")}`),
             },
             {
               label: "Batch Edit BOMs",
               onClick: (ids) =>
-                navigate(`/products/boms-fullzoom?ids=${ids.join(",")}`),
+                navigate(`/products/boms/sheet?ids=${ids.join(",")}`),
             },
           ]}
           columns={columns as any}
@@ -373,14 +379,18 @@ export default function ProductsIndexRoute() {
         />
       </section>
 
-      <HotkeyAwareModal
+      <SheetModal
         opened={sheetOpen}
         onClose={() => setSheetOpen(false)}
         title="Batch Create Products"
         size="90vw"
         centered
+        height={MODAL_HEIGHT}
+        topReserve={MODAL_TOP_RESERVE}
+        bottomReserve={MODAL_BOTTOM_RESERVE}
       >
-        <Stack>
+        {(bodyHeight) => (
+          <Stack style={{ height: "100%", minHeight: 0 }}>
           <Text c="dimmed">
             Paste rows from Excel or type directly. Leave a row entirely blank
             to ignore it.
@@ -392,7 +402,7 @@ export default function ProductsIndexRoute() {
               overflow: "hidden",
             }}
           >
-            <DataSheetGrid
+            <SheetGrid
               className="products-batch-sheet"
               value={rows as any}
               onChange={(r) => {
@@ -400,7 +410,7 @@ export default function ProductsIndexRoute() {
                 setDirty(true);
               }}
               columns={sheetColumns}
-              height={420}
+              height={bodyHeight}
               createRow={createRow}
             />
           </div>
@@ -440,7 +450,8 @@ export default function ProductsIndexRoute() {
             </Card>
           )}
         </Stack>
-      </HotkeyAwareModal>
+        )}
+      </SheetModal>
     </Stack>
   );
 }

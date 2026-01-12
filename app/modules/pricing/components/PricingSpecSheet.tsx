@@ -8,10 +8,11 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { useNavigate } from "@remix-run/react";
-import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
+import { SheetShell } from "~/components/sheets/SheetShell";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import {
   padRowsWithDisableControls,
@@ -23,6 +24,9 @@ import {
   SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
+import { SheetFrame } from "~/components/sheets/SheetFrame";
+import { SheetGrid } from "~/components/sheets/SheetGrid";
+import { adaptDataGridController } from "~/components/sheets/SheetController";
 import {
   isPricingSpecRangeMeaningful,
   sanitizePricingSpecRanges,
@@ -58,6 +62,7 @@ const createBlankRow = (): RangeRow => ({
   disableControls: false,
 });
 
+
 export function PricingSpecSheet({
   mode,
   actionPath,
@@ -71,12 +76,15 @@ export function PricingSpecSheet({
   const [saving, setSaving] = useState(false);
   const [rowErrors, setRowErrors] = useState<Record<number, string[]>>({});
   const gridRef = useRef<RDG.DataSheetGridRef>(null as any);
+  const { ref: headerRef, height: headerHeight } = useElementSize();
+  const { ref: footerRef, height: footerHeight } = useElementSize();
 
   const dataGrid = useDataGrid<RangeRow>({
     initialData: initialRows || [],
     getRowId: (row) => row.id ?? row.localKey,
     createRow: createBlankRow,
   });
+  const sheetController = adaptDataGridController(dataGrid);
 
   const dirty = dataGrid.gridState.isDirty || name !== initialName;
   useSheetDirtyPrompt();
@@ -218,50 +226,60 @@ export function PricingSpecSheet({
   }, [dataGrid, dirty]);
 
   return (
-    <FullzoomAppShell
+    <SheetShell
       title={title}
       left={<SheetExitButton to={exitUrl} />}
       right={<SheetSaveButton saving={saving} />}
     >
-      {(gridHeight) => (
-        <Stack gap="sm">
-          <style>{`.sheet-row-error { background-color: var(--mantine-color-red-0); }`}</style>
-          <Group justify="space-between" wrap="wrap">
-            <TextInput
-              label="Spec name"
-              value={name}
-              onChange={(e) => setName(e.currentTarget.value)}
-              w={320}
-            />
-            {Object.keys(rowErrors).length ? (
-              <Text size="sm" c="red">
-                {Object.keys(rowErrors).length} row
-                {Object.keys(rowErrors).length === 1 ? "" : "s"} have errors
-              </Text>
-            ) : null}
-          </Group>
-          <RDG.DataSheetGrid
-            ref={gridRef as any}
-            value={displayRows as any}
-            onChange={dataGrid.onChange as any}
-            columns={sheetColumns}
-            rowClassName={rowClassName as any}
-            height={gridHeight}
-          />
-          <Group justify="space-between">
-            <Text size="xs" c="dimmed">
-              Paste from Excel or edit inline. Empty rows are ignored on save.
-            </Text>
-            <Button
-              variant="subtle"
-              size="xs"
-              onClick={() => dataGrid.setValue([...dataGrid.value, createBlankRow()])}
-            >
-              Add row
-            </Button>
-          </Group>
-        </Stack>
+      {(bodyHeight) => (
+        <SheetFrame gridHeight={bodyHeight}>
+          {(gridHeight) => (
+            <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>
+              <style>{`.sheet-row-error { background-color: var(--mantine-color-red-0); }`}</style>
+              <Group ref={headerRef} justify="space-between" wrap="wrap">
+                <TextInput
+                  label="Spec name"
+                  value={name}
+                  onChange={(e) => setName(e.currentTarget.value)}
+                  w={320}
+                />
+                {Object.keys(rowErrors).length ? (
+                  <Text size="sm" c="red">
+                    {Object.keys(rowErrors).length} row
+                    {Object.keys(rowErrors).length === 1 ? "" : "s"} have errors
+                  </Text>
+                ) : null}
+              </Group>
+              <SheetGrid
+                ref={gridRef as any}
+                controller={sheetController}
+                value={displayRows as any}
+                onChange={dataGrid.onChange as any}
+                columns={sheetColumns}
+                rowClassName={rowClassName as any}
+                height={Math.max(
+                  0,
+                  gridHeight - (headerHeight || 0) - (footerHeight || 0)
+                )}
+              />
+              <Group ref={footerRef} justify="space-between">
+                <Text size="xs" c="dimmed">
+                  Paste from Excel or edit inline. Empty rows are ignored on save.
+                </Text>
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  onClick={() =>
+                    dataGrid.setValue([...dataGrid.value, createBlankRow()])
+                  }
+                >
+                  Add row
+                </Button>
+              </Group>
+            </Stack>
+          )}
+        </SheetFrame>
       )}
-    </FullzoomAppShell>
+    </SheetShell>
   );
 }

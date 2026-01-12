@@ -11,7 +11,7 @@ import type { Column } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { prismaBase } from "../../../utils/prisma.server";
-import { FullzoomAppShell } from "~/components/sheets/FullzoomAppShell";
+import { SheetShell } from "~/components/sheets/SheetShell";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import { padRowsWithDisableControls } from "~/components/sheets/disableControls";
 import {
@@ -19,6 +19,9 @@ import {
   SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
+import { SheetFrame } from "~/components/sheets/SheetFrame";
+import { SheetGrid } from "~/components/sheets/SheetGrid";
+import { adaptRdgController } from "~/components/sheets/SheetController";
 import { withGroupTrailingBlank } from "~/components/sheets/groupRows";
 import { SkuLookupCell } from "~/components/sheets/SkuLookupCell";
 import {
@@ -377,6 +380,7 @@ export default function CostingsSheetRoute() {
     }),
     { sanitize: (list) => list.slice(), historyLimit: 200 }
   );
+  const sheetController = adaptRdgController(controller);
   const rows = controller.value;
   const setRows = controller.setValue;
 
@@ -809,7 +813,7 @@ export default function CostingsSheetRoute() {
 
   return (
     <>
-      <FullzoomAppShell
+      <SheetShell
         title="Batch Edit Costings"
         left={<SheetExitButton to={exitUrl} />}
         right={<SheetSaveButton saving={saving} />}
@@ -836,22 +840,27 @@ export default function CostingsSheetRoute() {
             { extraInteractiveRows: 0 }
           );
           return (
-            <RDG.DataSheetGrid
-              value={displayRows as any}
-              onChange={onChange as any}
-              columns={columns as any}
-              height={gridHeight}
-              getBlockKey={({
-                rowData,
-              }: {
-                rowData: CostingEditRow;
-                rowIndex: number;
-              }) => rowData.assemblyId ?? rowData.id}
-              blockTopClassName="dsg-block-top"
-            />
+            <SheetFrame gridHeight={gridHeight}>
+              {(bodyHeight) => (
+                <SheetGrid
+                  controller={sheetController}
+                  value={displayRows as any}
+                  onChange={onChange as any}
+                  columns={columns as any}
+                  height={bodyHeight}
+                  getBlockKey={({
+                    rowData,
+                  }: {
+                    rowData: CostingEditRow;
+                    rowIndex: number;
+                  }) => rowData.assemblyId ?? rowData.id}
+                  blockTopClassName="dsg-block-top"
+                />
+              )}
+            </SheetFrame>
           );
         }}
-      </FullzoomAppShell>
+      </SheetShell>
       <ProductPickerModal
         opened={pickerOpen}
         onClose={closePicker}

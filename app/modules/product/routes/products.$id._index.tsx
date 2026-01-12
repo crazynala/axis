@@ -1381,7 +1381,7 @@ export default function ProductDetailRoute() {
                   size="xs"
                   variant="light"
                   component={Link}
-                  to={`/products/${product.id}/bom-fullzoom`}
+                  to={`/products/${product.id}/bom/sheet`}
                 >
                   Edit in Sheet
                 </Button>

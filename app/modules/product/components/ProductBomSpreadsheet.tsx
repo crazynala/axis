@@ -1,12 +1,13 @@
 // import { useNavigate } from "@remix-run/react";
 import {
-  DataSheetGrid,
   keyColumn,
   textColumn,
   type Column,
 } from "react-datasheet-grid";
+import { SheetGrid } from "~/components/sheets/SheetGrid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Group, Text } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import {
   guardColumnsWithDisableControls,
@@ -280,15 +281,21 @@ export default function ProductBomSpreadsheet({
     if (!pickerOpen) setPickerLoading(false);
   }, [pickerOpen]);
 
+  const { ref: headerRef, height: headerHeight } = useElementSize();
+  const gridHeight =
+    typeof height === "number"
+      ? Math.max(0, height - (headerHeight || 0))
+      : height;
+
   return (
     <>
-      <Group justify="space-between" align="center" mb={8}>
+      <Group ref={headerRef} justify="space-between" align="center" mb={8}>
         <Text fw={600}>Bill of Materials</Text>
         <Button size="xs" variant="light" onClick={() => setPickerOpen(true)}>
           Add Component
         </Button>
       </Group>
-      <DataSheetGrid
+      <SheetGrid
         value={displayRows}
         onChange={(next) => {
           const typed = ((next as BOMRow[]) || []).map((row) => ({
@@ -323,7 +330,7 @@ export default function ProductBomSpreadsheet({
           onRowsChange?.(normalized.filter((r) => !isBlank(r)));
         }}
         columns={sheetColumns}
-        height={height}
+        height={gridHeight}
         createRow={() => ({ ...blankRow })}
       />
       <ProductPickerModal

@@ -3,6 +3,8 @@ import { useMemo, useRef, useCallback, type ReactNode, useEffect } from "react";
 import * as RDG from "react-datasheet-grid";
 import type { Column } from "react-datasheet-grid";
 import type { CostingRow } from "~/modules/job/components/AssemblyCostingsTable";
+import { SheetGrid } from "~/components/sheets/SheetGrid";
+import { adaptRdgController } from "~/components/sheets/SheetController";
 
 export type CostingGridRow = {
   costingId: number;
@@ -87,6 +89,7 @@ export function CostingsGrid(props: {
       historyLimit: 200,
     }
   );
+  const sheetController = adaptRdgController(controller);
 
   // Keep controller in sync when props.rows change meaningfully
   const prevRowsRef = useRef<CostingGridRow[]>(toGridRows(rows || []));
@@ -238,7 +241,8 @@ export function CostingsGrid(props: {
         </Group>
       </Card.Section>
       <div>
-        <RDG.DataSheetGrid
+        <SheetGrid
+          controller={sheetController}
           value={value as any}
           onChange={onChange as any}
           columns={columns as any}

@@ -402,9 +402,8 @@ export default function App() {
   const location = useLocation();
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
-  const isSuppressAppShell =
-    location.pathname.includes("fullzoom") ||
-    location.pathname.includes("costings-sheet");
+  const isSheetPath = (pathname: string) =>
+    pathname.endsWith("/sheet") || pathname.includes("-sheet");
 
   const navTopItems: NavMenuItem[] = [
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },
@@ -494,22 +493,18 @@ export default function App() {
                 <Outlet />
               ) : (
                 <FindProvider>
-                  <HotkeyProvider disabled={isSuppressAppShell}>
+                  <HotkeyProvider disabled={isSheetPath(location.pathname)}>
                     <RecordProvider>
                       <GlobalFormProvider>
                         <OptionsProvider value={options ?? null}>
                           <GlobalHotkeys />
-                          {isSuppressAppShell ? (
-                            <Outlet />
-                          ) : (
-                            <AppShellLayout
-                              desktopNavOpenedInitial={desktopNavPref}
-                              navTopItems={navTopItems}
-                              navBottomItems={navBottomItems}
-                              accountUser={accountUser}
-                              disabled={isAdmin}
-                            />
-                          )}
+                          <AppShellLayout
+                            desktopNavOpenedInitial={desktopNavPref}
+                            navTopItems={navTopItems}
+                            navBottomItems={navBottomItems}
+                            accountUser={accountUser}
+                            disabled={isAdmin || isSheetPath(location.pathname)}
+                          />
                         </OptionsProvider>
                       </GlobalFormProvider>
                     </RecordProvider>
@@ -744,6 +739,16 @@ function AppShellLayout({
     firstName: accountUser?.firstName ?? undefined,
     lastName: accountUser?.lastName ?? undefined,
   });
+
+  if (disabled) {
+    return (
+      <AppShell disabled padding={0} style={{ height: "100dvh" }}>
+        <AppShell.Main style={{ height: "100%", overflow: "hidden" }}>
+          <Outlet />
+        </AppShell.Main>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell

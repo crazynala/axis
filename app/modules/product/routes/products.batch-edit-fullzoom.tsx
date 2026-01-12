@@ -5,7 +5,7 @@ import { redirect } from "@remix-run/node";
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const ids = url.searchParams.get("ids") || "";
-  return redirect(`/products/batch-fullzoom?ids=${encodeURIComponent(ids)}`, {
+  return redirect(`/products/batch/sheet?ids=${encodeURIComponent(ids)}`, {
     status: 301,
   });
 }
