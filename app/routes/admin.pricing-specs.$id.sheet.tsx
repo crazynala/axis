@@ -9,7 +9,6 @@ import {
   sanitizePricingSpecRanges,
   validatePricingSpecRanges,
 } from "~/modules/pricing/utils/pricingSpecRanges";
-import { normalizePricingSpecName } from "~/modules/pricing/utils/pricingSpecUtils.server";
 import { GlobalFormProvider } from "@aa/timber";
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
@@ -52,10 +51,6 @@ export async function action({ params, request }: ActionFunctionArgs) {
   } catch {}
   if (!payload || payload._intent !== "pricingSpec.save") {
     return json({ error: "Invalid intent." }, { status: 400 });
-  }
-  const name = normalizePricingSpecName(payload.name);
-  if (!name) {
-    return json({ error: "Name is required." }, { status: 400 });
   }
   const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
   const sanitized = sanitizePricingSpecRanges(rawRows);
@@ -109,10 +104,6 @@ export async function action({ params, request }: ActionFunctionArgs) {
   }>;
 
   await prismaBase.$transaction(async (tx) => {
-    await tx.pricingSpec.update({
-      where: { id: specId },
-      data: { name },
-    });
     if (toDelete.length) {
       await tx.pricingSpecRange.deleteMany({ where: { id: { in: toDelete } } });
     }
@@ -153,7 +144,6 @@ export default function PricingSpecEditSheetRoute() {
         title={`Price Spec: ${spec.name}`}
         actionPath={actionPath}
         exitUrl={exitUrl}
-        initialName={spec.name}
         initialRows={rows}
       />
     </GlobalFormProvider>

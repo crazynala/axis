@@ -8,6 +8,7 @@ import {
 } from "@tabler/icons-react";
 import { requireAdminUser } from "~/utils/auth.server";
 import { useEffect, useState } from "react";
+import { isSheetPath } from "~/utils/sheetPath";
 
 type NavLinkItem = { to: string; label: string };
 type NavGroupItem = {
@@ -69,6 +70,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function AdminLayoutRoute() {
   const location = useLocation();
+  const sheet = isSheetPath(location.pathname);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const isGroupActive = (group: NavGroupItem) => {
     const paths = [group.parent.to, ...group.children.map((c) => c.to)];
@@ -92,67 +94,74 @@ export default function AdminLayoutRoute() {
   };
   return (
     <AppShell
-      padding="lg"
-      navbar={{ width: 240, breakpoint: "sm" }}
-      header={{ height: 0 }}
+      disabled={sheet}
+      padding={sheet ? 0 : "lg"}
+      {...(!sheet
+        ? {
+            navbar: { width: 240, breakpoint: "sm" },
+            header: { height: 0 },
+          }
+        : {})}
     >
-      <AppShell.Navbar p="md">
-        <Stack>
-          <Title order={4}>Admin</Title>
-          <Stack gap="xs">
-            <NavLink
-              component={RemixNavLink}
-              to="/"
-              label="Close"
-              leftSection={<IconArrowLeft />}
-            />
-            <Divider />
-            {items.map((it) => {
-              if (isGroupItem(it)) {
-                const active = isGroupActive(it);
-                const open = openGroups[it.key] ?? active;
+      {!sheet ? (
+        <AppShell.Navbar p="md">
+          <Stack>
+            <Title order={4}>Admin</Title>
+            <Stack gap="xs">
+              <NavLink
+                component={RemixNavLink}
+                to="/"
+                label="Close"
+                leftSection={<IconArrowLeft />}
+              />
+              <Divider />
+              {items.map((it) => {
+                if (isGroupItem(it)) {
+                  const active = isGroupActive(it);
+                  const open = openGroups[it.key] ?? active;
+                  return (
+                    <div key={it.key}>
+                      <NavLink
+                        label={it.parent.label}
+                        onClick={() => toggleGroup(it.key)}
+                        rightSection={
+                          open ? (
+                            <IconChevronDown size={14} />
+                          ) : (
+                            <IconChevronRight size={14} />
+                          )
+                        }
+                        fw={open ? 600 : 400}
+                      />
+                      {open ? (
+                        <Stack gap={0} pl="md">
+                          {it.children.map((child) => (
+                            <NavLink
+                              component={RemixNavLink}
+                              to={child.to}
+                              key={child.to}
+                              label={child.label}
+                            />
+                          ))}
+                        </Stack>
+                      ) : null}
+                    </div>
+                  );
+                }
                 return (
-                  <div key={it.key}>
-                    <NavLink
-                      label={it.parent.label}
-                      onClick={() => toggleGroup(it.key)}
-                      rightSection={
-                        open ? (
-                          <IconChevronDown size={14} />
-                        ) : (
-                          <IconChevronRight size={14} />
-                        )
-                      }
-                      fw={open ? 600 : 400}
-                    />
-                    {open ? (
-                      <Stack gap={0} pl="md">
-                        {it.children.map((child) => (
-                          <NavLink
-                            component={RemixNavLink}
-                            to={child.to}
-                            key={child.to}
-                            label={child.label}
-                          />
-                        ))}
-                      </Stack>
-                    ) : null}
-                  </div>
+                  <NavLink
+                    component={RemixNavLink}
+                    to={it.to}
+                    key={it.to}
+                    label={it.label}
+                  />
                 );
-              }
-              return (
-                <NavLink
-                  component={RemixNavLink}
-                  to={it.to}
-                  key={it.to}
-                  label={it.label}
-                />
-              );
-            })}
+              })}
+            </Stack>
           </Stack>
-        </Stack>
-      </AppShell.Navbar>
-      <AppShell.Main>
+        </AppShell.Navbar>
+      ) : null}
+      <AppShell.Main style={sheet ? { padding: 0, margin: 0 } : undefined}>
         <Outlet />
       </AppShell.Main>
     </AppShell>

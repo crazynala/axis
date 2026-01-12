@@ -6,13 +6,36 @@ import {
   Stack,
   Tabs,
   Table,
+  Switch,
   Text,
   Code,
   ScrollArea,
 } from "@mantine/core";
 import type { DebugExplainPayload } from "~/modules/debug/types";
+import {
+  getDebug,
+  listDebug,
+  setDebug,
+  type DebugFlagsMap,
+} from "~/utils/debugFlags";
 
 const TAB_STORAGE_KEY = "debugDrawerTab";
+const DEBUG_FLAG_SPECS: Array<{
+  key: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "DEBUG_SHEET_HISTORY",
+    label: "Sheet history logs",
+    description: "Logs undo/redo transactions, history pushes, and diffs.",
+  },
+  {
+    key: "DEBUG_SHEET_PASTE",
+    label: "Sheet paste logs",
+    description: "Logs paste routing and focus state inside sheets.",
+  },
+];
 
 type DebugDrawerProps = {
   opened: boolean;
@@ -41,6 +64,7 @@ export function DebugDrawer({
   extraTabs,
 }: DebugDrawerProps) {
   const [tab, setTab] = useState<string>("summary");
+  const [flagVersion, setFlagVersion] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -93,6 +117,7 @@ export function DebugDrawer({
     if (tab === "summary") return summaryText;
     if (tab === "numbers") return numbersText;
     if (tab === "json") return jsonText;
+    if (tab === "flags") return JSON.stringify(listDebug(), null, 2);
     if (tab === "formState") return formStateCopyText || "";
     if (extraCopyMap.has(tab)) return extraCopyMap.get(tab) || "";
     return "";
@@ -116,9 +141,9 @@ export function DebugDrawer({
 
   const hasPayload = !!payload;
   const hasFormState = !!formStatePanel;
-  const showTabs = hasPayload || hasFormState || (extraTabs?.length ?? 0) > 0;
+  const showTabs = true;
   const availableTabs = useMemo(() => {
-    const base = ["summary", "numbers", "json"];
+    const base = ["summary", "numbers", "json", "flags"];
     if (hasFormState) base.push("formState");
     (extraTabs || []).forEach((t) => base.push(t.key));
     return new Set(base);
@@ -134,6 +159,28 @@ export function DebugDrawer({
       setTab("summary");
     }
   }, [availableTabs, tab]);
+
+  const storedFlags = useMemo<DebugFlagsMap>(() => {
+    return listDebug();
+  }, [flagVersion, opened]);
+
+  const flagsList = useMemo(() => {
+    const specKeys = new Set(DEBUG_FLAG_SPECS.map((flag) => flag.key));
+    const extras = Object.keys(storedFlags).filter((key) => !specKeys.has(key));
+    return [
+      ...DEBUG_FLAG_SPECS,
+      ...extras.map((key) => ({
+        key,
+        label: key,
+        description: "Custom debug flag.",
+      })),
+    ];
+  }, [storedFlags]);
+
+  const handleFlagToggle = (key: string, value: boolean) => {
+    setDebug(key, value);
+    setFlagVersion((prev) => prev + 1);
+  };
 
   return (
     <Drawer
@@ -164,6 +211,7 @@ export function DebugDrawer({
               <Tabs.Tab value="summary">Summary</Tabs.Tab>
               <Tabs.Tab value="numbers">Numbers</Tabs.Tab>
               <Tabs.Tab value="json">JSON</Tabs.Tab>
+              <Tabs.Tab value="flags">Flags</Tabs.Tab>
             {hasFormState ? (
               <Tabs.Tab value="formState">Form State</Tabs.Tab>
             ) : null}
@@ -230,6 +278,39 @@ export function DebugDrawer({
                   No debug payload loaded.
                 </Text>
               )}
+            </Tabs.Panel>
+            <Tabs.Panel value="flags" pt="sm">
+              <Stack gap="xs">
+                <Text size="xs" c="dimmed">
+                  Flags persist in localStorage. You can also toggle via
+                  window.__DEBUG__.set(name, true).
+                </Text>
+                <Table withColumnBorders={false} withRowBorders>
+                  <Table.Tbody>
+                    {flagsList.map((flag) => (
+                      <Table.Tr key={flag.key}>
+                        <Table.Td>
+                          <Text fw={600} size="sm">
+                            {flag.label}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {flag.description}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td w={80}>
+                          <Switch
+                            aria-label={`Toggle ${flag.label}`}
+                            checked={getDebug(flag.key)}
+                            onChange={(e) =>
+                              handleFlagToggle(flag.key, e.currentTarget.checked)
+                            }
+                          />
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Stack>
             </Tabs.Panel>
             {hasFormState ? (
               <Tabs.Panel value="formState" pt="sm">

@@ -3,7 +3,7 @@ import { NativeSelect } from "@mantine/core";
 import { SheetShell } from "~/components/sheets/SheetShell";
 import { notifications } from "@mantine/notifications";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Column, CellProps } from "react-datasheet-grid";
 import * as RDG from "react-datasheet-grid";
 import { useLoaderData, useNavigate } from "@remix-run/react";
@@ -15,8 +15,6 @@ import {
 } from "~/components/sheets/disableControls";
 import { useDataGrid } from "~/components/sheets/useDataGrid";
 import {
-  SheetExitButton,
-  SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
@@ -119,6 +117,9 @@ export default function ProductsBatchCreateFullzoom() {
     lockRows: true, // prevent accidental add/delete in batch edit flow
   });
   const sheetController = adaptDataGridController(dataGrid);
+  useEffect(() => {
+    sheetController.state = { isDirty: dirty };
+  }, [sheetController, dirty]);
 
   // Derived rows used for rendering (padded to minimum rows)
   const displayRows = useMemo(
@@ -374,8 +375,9 @@ export default function ProductsBatchCreateFullzoom() {
   return (
     <SheetShell
       title={mode === "edit" ? "Batch Edit Products" : "Batch Create Products"}
-      left={<SheetExitButton to={exitUrl} />}
-      right={<SheetSaveButton saving={saving} />}
+      controller={sheetController}
+      backTo={exitUrl}
+      saveState={saving ? "saving" : "idle"}
     >
       {(gridHeight) => {
         return (

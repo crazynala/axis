@@ -1,3 +1,5 @@
+import { debugEnabled } from "~/utils/debugFlags";
+
 export type SheetRowId = string | number;
 
 export type SheetUiState = {
@@ -73,6 +75,8 @@ export function createSheetHistory<T>() {
   const pushUndo = (tx: SheetTransaction<T>) => undoStack.push(tx);
   const popRedo = () => redoStack.pop() || null;
   const pushRedo = (tx: SheetTransaction<T>) => redoStack.push(tx);
+  const getUndoLength = () => undoStack.length;
+  const getRedoLength = () => redoStack.length;
 
   return {
     begin,
@@ -81,9 +85,31 @@ export function createSheetHistory<T>() {
     clear,
     canUndo,
     canRedo,
-    popUndo,
+    popUndo: () => {
+      const tx = popUndo();
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+        // eslint-disable-next-line no-console
+        console.info("[history] popUndo", {
+          undoStack: undoStack.length,
+          redoStack: redoStack.length,
+        });
+      }
+      return tx;
+    },
     pushUndo,
-    popRedo,
+    popRedo: () => {
+      const tx = popRedo();
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+        // eslint-disable-next-line no-console
+        console.info("[history] popRedo", {
+          undoStack: undoStack.length,
+          redoStack: redoStack.length,
+        });
+      }
+      return tx;
+    },
     pushRedo,
+    getUndoLength,
+    getRedoLength,
   };
 }

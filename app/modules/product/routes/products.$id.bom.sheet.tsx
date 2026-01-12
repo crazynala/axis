@@ -9,11 +9,7 @@ import { notifications } from "@mantine/notifications";
 // import { useNavigate } from "@remix-run/react";
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useInitGlobalFormContext } from "@aa/timber";
-import {
-  SheetExitButton,
-  SheetSaveButton,
-  useSheetDirtyPrompt,
-} from "~/components/sheets/SheetControls";
+import { useSheetDirtyPrompt } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
 
 export async function loader({ params }: any) {
@@ -247,8 +243,8 @@ export default function ProductBomRoute() {
   return (
     <SheetShell
       title="Bill of Materials Spreadsheet"
-      left={<SheetExitButton to={exitUrl} />}
-      right={<SheetSaveButton saving={saving} />}
+      backTo={exitUrl}
+      saveState={saving ? "saving" : "idle"}
     >
       {(bodyHeight) => (
         <SheetFrame gridHeight={bodyHeight}>

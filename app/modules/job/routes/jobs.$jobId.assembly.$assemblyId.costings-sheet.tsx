@@ -15,8 +15,6 @@ import { SheetShell } from "~/components/sheets/SheetShell";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import { padRowsWithDisableControls } from "~/components/sheets/disableControls";
 import {
-  SheetExitButton,
-  SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
@@ -815,8 +813,9 @@ export default function CostingsSheetRoute() {
     <>
       <SheetShell
         title="Batch Edit Costings"
-        left={<SheetExitButton to={exitUrl} />}
-        right={<SheetSaveButton saving={saving} />}
+        controller={sheetController}
+        backTo={exitUrl}
+        saveState={saving ? "saving" : "idle"}
       >
         {(gridHeight) => {
           const groupedRows = withGroupTrailingBlank(

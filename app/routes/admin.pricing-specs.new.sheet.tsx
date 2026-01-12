@@ -18,7 +18,6 @@ import { GlobalFormProvider } from "@aa/timber";
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAdminUser(request);
   return json({
-    name: "New Price Spec",
     rows: [],
     actionPath: "/admin/pricing-specs/new/sheet",
     exitUrl: "/admin/pricing-specs",
@@ -35,10 +34,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!payload || payload._intent !== "pricingSpec.save") {
     return json({ error: "Invalid intent." }, { status: 400 });
   }
-  const name = normalizePricingSpecName(payload.name);
-  if (!name) {
-    return json({ error: "Name is required." }, { status: 400 });
-  }
+  const name = normalizePricingSpecName(payload.name || "New Price Spec");
   const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
   const sanitized = sanitizePricingSpecRanges(rawRows);
   const validation = validatePricingSpecRanges(sanitized);
@@ -76,7 +72,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function PricingSpecNewSheetRoute() {
-  const { name, rows, actionPath, exitUrl } = useLoaderData<typeof loader>();
+  const { rows, actionPath, exitUrl } = useLoaderData<typeof loader>();
   return (
     <GlobalFormProvider>
       <PricingSpecSheet
@@ -84,7 +80,6 @@ export default function PricingSpecNewSheetRoute() {
         title="New Price Spec"
         actionPath={actionPath}
         exitUrl={exitUrl}
-        initialName={name}
         initialRows={rows}
       />
     </GlobalFormProvider>

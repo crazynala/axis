@@ -6,7 +6,6 @@ import {
   Group,
   Stack,
   Text,
-  TextInput,
 } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -20,8 +19,6 @@ import {
 } from "~/components/sheets/disableControls";
 import { useDataGrid } from "~/components/sheets/useDataGrid";
 import {
-  SheetExitButton,
-  SheetSaveButton,
   useSheetDirtyPrompt,
 } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
@@ -43,7 +40,6 @@ type PricingSpecSheetProps = {
   mode: "new" | "edit";
   actionPath: string;
   exitUrl: string;
-  initialName: string;
   initialRows: RangeRow[];
   title: string;
 };
@@ -67,16 +63,13 @@ export function PricingSpecSheet({
   mode,
   actionPath,
   exitUrl,
-  initialName,
   initialRows,
   title,
 }: PricingSpecSheetProps) {
   const navigate = useNavigate();
-  const [name, setName] = useState(initialName || "");
   const [saving, setSaving] = useState(false);
   const [rowErrors, setRowErrors] = useState<Record<number, string[]>>({});
   const gridRef = useRef<RDG.DataSheetGridRef>(null as any);
-  const { ref: headerRef, height: headerHeight } = useElementSize();
   const { ref: footerRef, height: footerHeight } = useElementSize();
 
   const dataGrid = useDataGrid<RangeRow>({
@@ -86,7 +79,7 @@ export function PricingSpecSheet({
   });
   const sheetController = adaptDataGridController(dataGrid);
 
-  const dirty = dataGrid.gridState.isDirty || name !== initialName;
+  const dirty = dataGrid.gridState.isDirty;
   useSheetDirtyPrompt();
 
   const displayRows = useMemo(
@@ -168,10 +161,8 @@ export function PricingSpecSheet({
         return;
       }
       setRowErrors({});
-      const meaningfulRows = sanitized.filter(isPricingSpecRangeMeaningful);
       const payload = {
         _intent: "pricingSpec.save",
-        name,
         rows,
       };
       const resp = await fetch(actionPath, {
@@ -201,13 +192,12 @@ export function PricingSpecSheet({
     } finally {
       setSaving(false);
     }
-  }, [actionPath, dataGrid, mode, name, navigate]);
+  }, [actionPath, dataGrid, mode, navigate]);
 
   const reset = useCallback(() => {
     dataGrid.reset();
-    setName(initialName || "");
     setRowErrors({});
-  }, [dataGrid, initialName]);
+  }, [dataGrid]);
 
   const formHandlers = useMemo(
     () => ({
@@ -228,28 +218,15 @@ export function PricingSpecSheet({
   return (
     <SheetShell
       title={title}
-      left={<SheetExitButton to={exitUrl} />}
-      right={<SheetSaveButton saving={saving} />}
+      controller={sheetController}
+      backTo={exitUrl}
+      saveState={saving ? "saving" : "idle"}
     >
       {(bodyHeight) => (
         <SheetFrame gridHeight={bodyHeight}>
           {(gridHeight) => (
             <Stack gap="sm" style={{ height: "100%", minHeight: 0 }}>
               <style>{`.sheet-row-error { background-color: var(--mantine-color-red-0); }`}</style>
-              <Group ref={headerRef} justify="space-between" wrap="wrap">
-                <TextInput
-                  label="Spec name"
-                  value={name}
-                  onChange={(e) => setName(e.currentTarget.value)}
-                  w={320}
-                />
-                {Object.keys(rowErrors).length ? (
-                  <Text size="sm" c="red">
-                    {Object.keys(rowErrors).length} row
-                    {Object.keys(rowErrors).length === 1 ? "" : "s"} have errors
-                  </Text>
-                ) : null}
-              </Group>
               <SheetGrid
                 ref={gridRef as any}
                 controller={sheetController}
@@ -259,13 +236,19 @@ export function PricingSpecSheet({
                 rowClassName={rowClassName as any}
                 height={Math.max(
                   0,
-                  gridHeight - (headerHeight || 0) - (footerHeight || 0)
+                  gridHeight - (footerHeight || 0)
                 )}
               />
               <Group ref={footerRef} justify="space-between">
                 <Text size="xs" c="dimmed">
                   Paste from Excel or edit inline. Empty rows are ignored on save.
                 </Text>
+                {Object.keys(rowErrors).length ? (
+                  <Text size="xs" c="red">
+                    {Object.keys(rowErrors).length} row
+                    {Object.keys(rowErrors).length === 1 ? "" : "s"} have errors
+                  </Text>
+                ) : null}
                 <Button
                   variant="subtle"
                   size="xs"

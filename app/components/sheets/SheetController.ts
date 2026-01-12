@@ -14,6 +14,11 @@ export type SheetController<T> = {
   beginTransaction?: (label?: string, uiBefore?: any) => void;
   commitTransaction?: (uiAfter?: any) => void;
   clearHistory?: () => void;
+  applyDerivedPatch?: (updater: T[] | ((rows: T[]) => T[])) => void;
+  replaceData?: (next: T[]) => void;
+  triggerUndo?: () => void;
+  triggerRedo?: () => void;
+  onUndoRedo?: (kind: "undo" | "redo", source: "hotkey" | "button") => void;
   canUndo?: boolean;
   canRedo?: boolean;
   historyVersion?: number;

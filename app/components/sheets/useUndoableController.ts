@@ -7,6 +7,7 @@ import {
   type SheetUiState,
 } from "./SheetHistory";
 import type { SheetController } from "./SheetController";
+import { debugEnabled } from "~/utils/debugFlags";
 
 type UndoableOptions<T> = {
   getRowId?: (row: T) => SheetRowId | null | undefined;
@@ -68,10 +69,6 @@ const cloneRowsDeep = <T,>(rows: T[]) => {
     return cloneRows(rows);
   }
 };
-
-const DEBUG_SHEET_HISTORY =
-  typeof window !== "undefined" &&
-  (window as any).__DEBUG_SHEET_HISTORY__ === true;
 
 const defaultGetRowId = (row: any): SheetRowId | undefined => {
   if (!row) return undefined;
@@ -372,6 +369,20 @@ export function useUndoableController<T>(
 
   const applyRows = useCallback(
     (next: T[], operations?: DataGridOperation<T>[]) => {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+        const prevSnapshot = lastSnapshotRef.current || [];
+        const sameArray = next === lastValueRef.current;
+        const maxLen = Math.max(prevSnapshot.length, next.length);
+        let changedRowsCount = 0;
+        for (let i = 0; i < maxLen; i++) {
+          if (prevSnapshot[i] !== next[i]) changedRowsCount += 1;
+        }
+        // eslint-disable-next-line no-console
+        console.info("[UNDO] setRows called", {
+          sameArray,
+          changedRowsCount,
+        });
+      }
       applyingRef.current = true;
       if (base.onChange) base.onChange(next, operations);
       else base.setValue?.(next);
@@ -402,14 +413,14 @@ export function useUndoableController<T>(
       );
       historyRef.current.begin(label, uiBefore ?? null);
       transactionOpenRef.current = true;
-      if (DEBUG_SHEET_HISTORY) {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
         // eslint-disable-next-line no-console
         console.info("[sheet-history] begin", label, {
           rows: transactionSnapshotRef.current.length,
         });
       }
     },
-    [DEBUG_SHEET_HISTORY]
+    []
   );
 
   const commitTransaction = useCallback(
@@ -425,15 +436,23 @@ export function useUndoableController<T>(
         isRowBlank
       );
       if (!diff.usesIds && diff.orderChanged) {
-        historyRef.current.clear();
+        clearHistory("orderChanged:transaction");
       } else {
         diff.ops.forEach((op) => historyRef.current.push(op));
       }
       historyRef.current.commit(uiAfter ?? null);
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+        // eslint-disable-next-line no-console
+        console.info("[history] push", {
+          reason: "transaction",
+          ops: diff.ops.length,
+          undoStack: historyRef.current.getUndoLength?.() ?? 0,
+        });
+      }
       transactionOpenRef.current = false;
       transactionSnapshotRef.current = null;
       setHistoryVersion((v) => v + 1);
-      if (DEBUG_SHEET_HISTORY) {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
         // eslint-disable-next-line no-console
         console.info("[sheet-history] commit", {
           ops: diff.ops.length,
@@ -442,10 +461,17 @@ export function useUndoableController<T>(
         });
       }
     },
-    [getRowId, isRowBlank, DEBUG_SHEET_HISTORY]
+    [getRowId, isRowBlank]
   );
 
-  const clearHistory = useCallback(() => {
+  const clearHistory = useCallback((reason?: string) => {
+    if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+      // eslint-disable-next-line no-console
+      console.info("[history] clear", {
+        reason: reason || "unknown",
+        undoStack: historyRef.current.getUndoLength?.() ?? 0,
+      });
+    }
     historyRef.current.clear();
     setHistoryVersion((v) => v + 1);
   }, []);
@@ -456,7 +482,7 @@ export function useUndoableController<T>(
         applyRows(next, operations);
         return;
       }
-      if (DEBUG_SHEET_HISTORY) {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
         const prevSnapshot = lastSnapshotRef.current || [];
         const sameArray = next === lastValueRef.current;
         const sameRowRefs = Math.min(
@@ -484,18 +510,26 @@ export function useUndoableController<T>(
           isRowBlank
         );
         if (!diff.usesIds && diff.orderChanged) {
-          clearHistory();
+          clearHistory("orderChanged");
           applyRows(next, operations);
           return;
         }
         historyRef.current.begin();
         diff.ops.forEach((op) => historyRef.current.push(op));
         historyRef.current.commit();
+        if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+          // eslint-disable-next-line no-console
+          console.info("[history] push", {
+            reason: "onChange",
+            ops: diff.ops.length,
+            undoStack: historyRef.current.getUndoLength?.() ?? 0,
+          });
+        }
       }
       applyRows(next, operations);
       setHistoryVersion((v) => v + 1);
     },
-    [applyRows, enabled, getRowId, isRowBlank, clearHistory, DEBUG_SHEET_HISTORY]
+    [applyRows, enabled, getRowId, isRowBlank, clearHistory]
   );
 
   const setValue = useCallback(
@@ -508,6 +542,12 @@ export function useUndoableController<T>(
   const undo = useCallback(() => {
     const tx = historyRef.current.popUndo();
     if (!tx) return;
+    if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+      // eslint-disable-next-line no-console
+      console.info("[history] undo", {
+        undoStack: historyRef.current.getUndoLength?.() ?? 0,
+      });
+    }
     const prev = lastSnapshotRef.current || [];
     const usesIds = tx.ops.some((op) => op.type === "reorder");
     const next = applyOps(
@@ -526,6 +566,12 @@ export function useUndoableController<T>(
   const redo = useCallback(() => {
     const tx = historyRef.current.popRedo();
     if (!tx) return;
+    if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+      // eslint-disable-next-line no-console
+      console.info("[history] redo", {
+        redoStack: historyRef.current.getRedoLength?.() ?? 0,
+      });
+    }
     const prev = lastSnapshotRef.current || [];
     const usesIds = tx.ops.some((op) => op.type === "reorder");
     const next = applyOps(
@@ -545,15 +591,36 @@ export function useUndoableController<T>(
     (next?: T[]) => {
       if (base.reset) base.reset(next);
       else if (next) applyRows(next);
-      clearHistory();
+      clearHistory("reset");
     },
     [applyRows, base, clearHistory]
   );
 
   const commit = useCallback(() => {
     base.commit?.();
-    clearHistory();
+    clearHistory("commit");
   }, [base, clearHistory]);
+
+  const replaceData = useCallback(
+    (next: T[]) => {
+      applyRows(next);
+      clearHistory("replaceData");
+    },
+    [applyRows, clearHistory]
+  );
+
+  const applyDerivedPatch = useCallback(
+    (updater: T[] | ((rows: T[]) => T[])) => {
+      const current = lastSnapshotRef.current || [];
+      const next =
+        typeof updater === "function"
+          ? (updater as (rows: T[]) => T[])(cloneRowsDeep(current))
+          : updater;
+      if (!Array.isArray(next)) return;
+      applyRows(next);
+    },
+    [applyRows]
+  );
 
   return useMemo(
     () => ({
@@ -568,6 +635,8 @@ export function useUndoableController<T>(
       beginTransaction,
       commitTransaction,
       clearHistory,
+      applyDerivedPatch,
+      replaceData,
       canUndo: historyRef.current.canUndo(),
       canRedo: historyRef.current.canRedo(),
       historyVersion,
@@ -583,6 +652,8 @@ export function useUndoableController<T>(
       beginTransaction,
       commitTransaction,
       clearHistory,
+      applyDerivedPatch,
+      replaceData,
       historyVersion,
     ]
   );

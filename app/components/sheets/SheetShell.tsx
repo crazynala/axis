@@ -1,20 +1,29 @@
-import { Group, Text } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import type { ReactNode } from "react";
+import type { SheetController } from "./SheetController";
+import { SheetHeader } from "./SheetHeader";
 
 export function SheetShell({
   title,
-  left,
-  right,
+  subtitle,
+  controller,
+  backTo,
+  onDone,
+  saveState = "idle",
+  showStatus = true,
+  rightExtra,
   children,
-  headerHeight = 64,
   footer,
 }: {
-  title: string;
-  left?: ReactNode;
-  right?: ReactNode;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  controller?: SheetController<any>;
+  backTo?: string;
+  onDone?: () => void;
+  saveState?: "idle" | "saving" | "error";
+  showStatus?: boolean;
+  rightExtra?: ReactNode;
   children: (bodyHeight: number) => ReactNode;
-  headerHeight?: number;
   footer?: ReactNode;
 }) {
   const { ref: bodyRef, height: bodyHeight } = useElementSize();
@@ -29,18 +38,17 @@ export function SheetShell({
         flexDirection: "column",
       }}
     >
-      <div style={{ flex: "0 0 auto", height: headerHeight }}>
-        <Group
-          justify="space-between"
-          align="center"
-          px={24}
-          // keep vertical height fixed to headerHeight (no extra vertical padding)
-          style={{ height: "100%" }}
-        >
-          <div>{left}</div>
-          <Text size="xl">{title}</Text>
-          <div>{right}</div>
-        </Group>
+      <div style={{ flex: "0 0 auto" }}>
+        <SheetHeader
+          title={title}
+          subtitle={subtitle}
+          controller={controller}
+          backTo={backTo}
+          onDone={onDone}
+          saveState={saveState}
+          showStatus={showStatus}
+          rightExtra={rightExtra}
+        />
       </div>
       <div
         ref={bodyRef}

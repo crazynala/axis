@@ -1,25 +1,21 @@
 import { json } from "@remix-run/node";
 import { SheetShell } from "~/components/sheets/SheetShell";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
+import { useLoaderData, useNavigate } from "@remix-run/react";
 import * as RDG from "react-datasheet-grid";
-import { useDataSheetController } from "react-datasheet-grid";
 import type { Column } from "react-datasheet-grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { debugEnabled } from "~/utils/debugFlags";
 import { lookupProductsBySkus } from "~/modules/product/utils/productLookup.client";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import {
   guardColumnsWithDisableControls,
   padRowsWithDisableControls,
 } from "~/components/sheets/disableControls";
-import {
-  SheetExitButton,
-  SheetSaveButton,
-  useSheetDirtyPrompt,
-} from "~/components/sheets/SheetControls";
+import { useSheetDirtyPrompt } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
 import { SheetGrid } from "~/components/sheets/SheetGrid";
-import { adaptRdgController } from "~/components/sheets/SheetController";
+import { useUndoableController } from "~/components/sheets/useUndoableController";
 import {
   UsageSelectCell,
   normalizeUsageValue,
@@ -211,7 +207,14 @@ export async function action({ request }: any) {
 }
 
 export default function ProductsBomsFullzoom() {
-  console.log("** ProductsBomsFullzoom mount");
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.info("[boms-sheet] mount");
+    return () => {
+      // eslint-disable-next-line no-console
+      console.info("[boms-sheet] unmount");
+    };
+  }, []);
   const { rows: initialRows } = useLoaderData<typeof loader>();
   const normalizedInitialRows = useMemo(
     () =>
@@ -223,8 +226,6 @@ export default function ProductsBomsFullzoom() {
     [initialRows]
   );
   const navigate = useNavigate();
-  const nav = useNavigation();
-  const busy = nav.state !== "idle";
   const [saving, setSaving] = useState(false);
   useSheetDirtyPrompt();
   const exitUrl = "/products";
@@ -247,20 +248,77 @@ export default function ProductsBomsFullzoom() {
     }));
   }, []);
 
-  const controller = useDataSheetController<MultiBOMRow>(
-    normalizedInitialRows || [],
-    {
-      sanitize,
-      historyLimit: 200,
-    }
+  const isBlankRow = useCallback((row?: MultiBOMRow | null) => {
+    if (!row) return true;
+    return (
+      !row.childSku &&
+      !row.childName &&
+      !row.activityUsed &&
+      (row.quantity === "" || row.quantity == null)
+    );
+  }, []);
+
+  const stripTrailingBlanksByProduct = useCallback(
+    (list: MultiBOMRow[]) => {
+      const out: MultiBOMRow[] = [];
+      let i = 0;
+      while (i < list.length) {
+        const pid = list[i].productId;
+        const chunk: MultiBOMRow[] = [];
+        while (i < list.length && list[i].productId === pid) {
+          chunk.push(list[i]);
+          i++;
+        }
+        let end = chunk.length;
+        while (end > 1 && isBlankRow(chunk[end - 1])) end -= 1;
+        const trimmed = chunk.slice(0, end);
+        if (trimmed.length) trimmed[0] = { ...trimmed[0], groupStart: true };
+        for (let j = 1; j < trimmed.length; j++) {
+          trimmed[j] = { ...trimmed[j], groupStart: false };
+        }
+        out.push(...trimmed);
+      }
+      return out;
+    },
+    [isBlankRow]
   );
-  const sheetController = adaptRdgController(controller);
-  const rows = controller.value;
-  const setRows = controller.setValue;
+
+  const normalizeEditableRows = useCallback(
+    (list: MultiBOMRow[]) => {
+      const normalized = (list || [])
+        .filter((row) => !row.disableControls)
+        .map((row) => ({
+          ...row,
+          activityUsed: normalizeUsageValue(row.activityUsed),
+          disableControls: false,
+        }));
+      return stripTrailingBlanksByProduct(normalized);
+    },
+    [stripTrailingBlanksByProduct]
+  );
+
+  const [editableRows, setEditableRows] = useState<MultiBOMRow[]>(
+    () => normalizeEditableRows(normalizedInitialRows || [])
+  );
+  const baseControllerRef = useRef<{ value: MultiBOMRow[]; setValue: (rows: MultiBOMRow[]) => void }>({
+    value: [],
+    setValue: setEditableRows,
+  });
+  baseControllerRef.current.value = editableRows;
+  baseControllerRef.current.setValue = setEditableRows;
+  const undoableController = useUndoableController(baseControllerRef.current, {
+    enabled: true,
+    isRowBlank: isBlankRow,
+  });
+  const sheetController = undoableController;
+  const rows = editableRows;
+  const controllerRef = useRef(undoableController);
+  useEffect(() => {
+    controllerRef.current = undoableController;
+  }, [undoableController]);
 
   // Helpers for trailing blanks and padding must be defined before use
   const ensureProductTrailingBlank = useCallback((list: MultiBOMRow[]) => {
-    console.log("** ensureTrailingBlank in", { len: list.length });
     // For each contiguous group of same productId, keep one trailing blank and mark first row as groupStart
     const out: MultiBOMRow[] = [];
     let i = 0;
@@ -328,12 +386,10 @@ export default function ProductsBomsFullzoom() {
         filtered[j] = { ...filtered[j], groupStart: false };
       out.push(...filtered);
     }
-    console.log("** ensureTrailingBlank out", { len: out.length });
     return out;
   }, []);
 
-  // Minimum row padding to keep grid visually full (shared util)
-  const normalizeRows = useCallback(
+  const normalizeDisplayRows = useCallback(
     (list: MultiBOMRow[]) => {
       const normalizedUsage = (list || []).map((row) => ({
         ...row,
@@ -364,35 +420,26 @@ export default function ProductsBomsFullzoom() {
   );
 
   useEffect(() => {
-    console.log(
-      "** useEffect initialRows",
-      Array.isArray(normalizedInitialRows) ? normalizedInitialRows.length : -1
-    );
-    const base = normalizedInitialRows as MultiBOMRow[];
-    const next = normalizeRows(base);
-    // Guard: only reset if the normalized loader rows differ from current state
+    const base = normalizeEditableRows(normalizedInitialRows || []);
     try {
-      const curr = controller.getValue();
-      const same = JSON.stringify(curr) === JSON.stringify(next);
+      const same = JSON.stringify(rows) === JSON.stringify(base);
       if (!same) {
-        console.log("** normalize and reset on loader change", {
-          before: curr?.length ?? 0,
-          after: next.length,
-        });
-        controller.reset(next);
+        controllerRef.current.replaceData?.(base);
       }
     } catch {
-      controller.reset(next);
+      controllerRef.current.replaceData?.(base);
     }
-  }, [normalizedInitialRows, normalizeRows]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalizedInitialRows, normalizeEditableRows]);
 
   // Helpers for batched SKU lookup and trailing blank per product
   const pendingSkusRef = useRef<Set<string>>(new Set());
   const lookupTimerRef = useRef<any>(null);
-  const prevRowsRef = useRef<MultiBOMRow[]>(normalizedInitialRows || []);
+  const prevRowsRef = useRef<MultiBOMRow[]>(rows || []);
+  const lookupEpochRef = useRef(0);
   useEffect(() => {
-    prevRowsRef.current = normalizedInitialRows || [];
-  }, [normalizedInitialRows]);
+    prevRowsRef.current = rows || [];
+  }, [rows]);
   // We fully own paste; no DSG prePaste or overflow trackers needed
   const normalizeSkuKey = useCallback(
     (value: string) => value.trim().toLowerCase(),
@@ -407,6 +454,7 @@ export default function ProductsBomsFullzoom() {
         .forEach((s) => pendingSkusRef.current.add(s));
       if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
       lookupTimerRef.current = setTimeout(async () => {
+        const epoch = lookupEpochRef.current;
         const toFetch = Array.from(pendingSkusRef.current);
         pendingSkusRef.current.clear();
         if (!toFetch.length) return;
@@ -414,7 +462,7 @@ export default function ProductsBomsFullzoom() {
           console.log("** lookup start", { skus: toFetch.length });
           const map = await lookupProductsBySkus(toFetch);
           console.log("** lookup done", { hits: map.size });
-          const curr = controller.getValue();
+          const curr = prevRowsRef.current || [];
           const next = curr.map((r: MultiBOMRow) => {
             const key = normalizeSkuKey(String(r.childSku || ""));
             const info = key ? map.get(key) || map.get(r.childSku || "") : null;
@@ -426,16 +474,23 @@ export default function ProductsBomsFullzoom() {
               supplier: (info?.supplierName as string) || "",
             } as MultiBOMRow;
           });
-          const norm = normalizeRows(next);
-          console.log("** lookup patch", {
-            before: next.length,
-            after: norm.length,
-          });
-          controller.setValue(norm);
+          if (epoch !== lookupEpochRef.current) {
+            if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+              // eslint-disable-next-line no-console
+              console.info("[lookup] skip", { epoch, current: lookupEpochRef.current });
+            }
+            return;
+          }
+          const norm = normalizeEditableRows(next);
+          if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+            // eslint-disable-next-line no-console
+            console.info("[lookup] apply", { epoch });
+          }
+          undoableController.applyDerivedPatch?.(norm);
         } catch {}
       }, 120);
     },
-    [controller, normalizeRows, normalizeSkuKey]
+    [normalizeEditableRows, normalizeSkuKey, undoableController]
   );
 
   // Removed app-level paste interception. Rely on forked grid block paste.
@@ -521,26 +576,49 @@ export default function ProductsBomsFullzoom() {
     return guardColumnsWithDisableControls(cols);
   }, [col, enqueueLookup]);
 
+  const displayRows = useMemo(
+    () => normalizeDisplayRows(rows),
+    [normalizeDisplayRows, rows]
+  );
+
+  const initialSanitized = useMemo(
+    () => JSON.stringify(sanitize(normalizeEditableRows(normalizedInitialRows || []))),
+    [sanitize, normalizeEditableRows, normalizedInitialRows]
+  );
+  const isDirty = useMemo(
+    () => JSON.stringify(sanitize(rows)) !== initialSanitized,
+    [rows, sanitize, initialSanitized]
+  );
+  const handleUndoRedo = useCallback(() => {
+    lookupEpochRef.current += 1;
+    pendingSkusRef.current.clear();
+    if (lookupTimerRef.current) {
+      clearTimeout(lookupTimerRef.current);
+      lookupTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => {
+    sheetController.state = { isDirty };
+    sheetController.onUndoRedo = handleUndoRedo;
+  }, [sheetController, isDirty, handleUndoRedo]);
+
   const onChange = useCallback(
     (next: MultiBOMRow[]) => {
-      console.log("** onChange", {
-        nextLen: Array.isArray(next) ? next.length : -1,
-      });
+      const normalized = normalizeEditableRows(next || []);
       // Diff childSku to trigger lookups for newly set/changed SKUs
       const prev = prevRowsRef.current || [];
       const toLookup: string[] = [];
-      const max = next.length;
+      const max = normalized.length;
       for (let i = 0; i < max; i++) {
-        const currSku = (next[i]?.childSku || "").trim();
+        const currSku = (normalized[i]?.childSku || "").trim();
         const prevSku = (prev[i]?.childSku || "").trim();
         if (currSku && currSku !== prevSku) toLookup.push(currSku);
       }
       if (toLookup.length) {
-        console.log("** onChange lookup skus", { count: toLookup.length });
         enqueueLookup(toLookup);
       }
       // Clear dependent fields when SKU is blank or has just changed (until lookup fills it)
-      const cleared = (next as MultiBOMRow[]).map((r, i) => {
+      const cleared = (normalized as MultiBOMRow[]).map((r, i) => {
         const sku = String(r.childSku || "").trim();
         const prevSku = String(prev[i]?.childSku || "").trim();
         if (!sku || sku !== prevSku) {
@@ -553,18 +631,19 @@ export default function ProductsBomsFullzoom() {
         }
         return r;
       });
-      const norm = normalizeRows(cleared || []);
-      console.log("** onChange normalized", { after: norm.length });
-      prevRowsRef.current = norm;
-      controller.setValue(norm);
+      prevRowsRef.current = cleared;
+      undoableController.onChange?.(cleared);
     },
-    [controller, normalizeRows, enqueueLookup]
+    [normalizeEditableRows, enqueueLookup, undoableController]
   );
 
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const payload = { _intent: "products.boms.batchSave", rows };
+      const payload = {
+        _intent: "products.boms.batchSave",
+        rows: normalizeEditableRows(rows),
+      };
       const resp = await fetch("/products/boms/sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -579,37 +658,39 @@ export default function ProductsBomsFullzoom() {
     } finally {
       setSaving(false);
     }
-  }, [rows, navigate]);
+  }, [rows, navigate, normalizeEditableRows]);
 
   const formHandlers = useMemo(
     () => ({
       handleSubmit: (onSubmit: (data: any) => void) => () => onSubmit({}),
-      reset: () => controller.reset(normalizeRows(initialRows || [])),
-      formState: { isDirty: controller.state.isDirty },
+      reset: () => setEditableRows(normalizeEditableRows(initialRows || [])),
+      formState: { isDirty },
     }),
-    [controller.state.isDirty, initialRows, normalizeRows]
+    [isDirty, initialRows, normalizeEditableRows]
   );
   useInitGlobalFormContext(
     formHandlers as any,
     () => save(),
-    () => controller.reset(normalizeRows(initialRows || []))
+    () => undoableController.replaceData?.(normalizeEditableRows(initialRows || []))
   );
 
   return (
     <SheetShell
       title="Batch Edit BOMs"
-      left={<SheetExitButton to={exitUrl} />}
-      right={<SheetSaveButton saving={saving} />}
+      controller={sheetController}
+      backTo={exitUrl}
+      saveState={saving ? "saving" : "idle"}
     >
       {(gridHeight) => (
         <SheetFrame gridHeight={gridHeight}>
           {(bodyHeight) => (
             <SheetGrid
               controller={sheetController}
-              value={rows as any}
+              value={displayRows as any}
               onChange={onChange as any}
               columns={columns as any}
               height={bodyHeight}
+              undoable={false}
               // Enable block semantics in the grid (no extra debug UI)
               getBlockKey={({
                 rowData,
@@ -630,9 +711,11 @@ export default function ProductsBomsFullzoom() {
                   typeof blockKey === "number"
                     ? blockKey
                     : Number(blockKey ?? 0);
-                const idx = rows.findIndex((r) => r.productId === keyNum);
+                const idx = displayRows.findIndex((r) => r.productId === keyNum);
                 const base =
-                  idx >= 0 ? rows[idx] : (rows[rows.length - 1] as MultiBOMRow);
+                  idx >= 0
+                    ? displayRows[idx]
+                    : (displayRows[displayRows.length - 1] as MultiBOMRow);
                 return {
                   productId: base?.productId ?? keyNum ?? 0,
                   productSku: base?.productSku ?? "",
@@ -648,9 +731,15 @@ export default function ProductsBomsFullzoom() {
                 } as MultiBOMRow;
               }}
               createRow={() => ({
-                productId: rows.length ? rows[rows.length - 1].productId : 0,
-                productSku: rows.length ? rows[rows.length - 1].productSku : "",
-                productName: rows.length ? rows[rows.length - 1].productName : "",
+                productId: displayRows.length
+                  ? displayRows[displayRows.length - 1].productId
+                  : 0,
+                productSku: displayRows.length
+                  ? displayRows[displayRows.length - 1].productSku
+                  : "",
+                productName: displayRows.length
+                  ? displayRows[displayRows.length - 1].productName
+                  : "",
                 id: null,
                 childSku: "",
                 childName: "",

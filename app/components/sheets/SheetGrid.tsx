@@ -12,6 +12,7 @@ import {
 } from "react";
 import * as RDG from "react-datasheet-grid";
 import type { SheetController } from "./SheetController";
+import { debugEnabled } from "~/utils/debugFlags";
 import { useUndoableController } from "./useUndoableController";
 import type { SheetRowId, SheetUiState } from "./SheetHistory";
 
@@ -22,6 +23,8 @@ type SheetGridProps<T> = Omit<RDG.DataSheetGridProps<T>, "value" | "onChange"> &
   undoable?: boolean;
   getRowId?: (row: T) => SheetRowId | null | undefined;
   isRowBlank?: (row: T) => boolean;
+  onUndoRedo?: (action: "undo" | "redo") => void;
+  hotkeysEnabled?: boolean;
   renderUndoRedo?: (args: {
     undo?: () => void;
     redo?: () => void;
@@ -39,7 +42,9 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
     undoable = true,
     getRowId,
     isRowBlank,
+    onUndoRedo,
     renderUndoRedo,
+    hotkeysEnabled = true,
     ...rest
   }: SheetGridProps<T>,
   ref: ForwardedRef<RDG.DataSheetGridRef>
@@ -47,19 +52,26 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
   const baseController = controller
     ? { ...controller, ...(onChange ? { onChange } : {}) }
     : ({ value: value ?? [] } as any);
+  const useInternalUndo = undoable && !!controller;
   const undoableController = useUndoableController(baseController, {
-    enabled: undoable && !!controller,
+    enabled: useInternalUndo,
     getRowId,
     isRowBlank,
   });
-  const activeController = controller ? undoableController : undefined;
+  const activeController = controller
+    ? useInternalUndo
+      ? undoableController
+      : controller
+    : undefined;
   const resolvedValue = value ?? (activeController ? activeController.value : []);
-  const resolvedOnChange = activeController
-    ? activeController.onChange ||
-      (activeController.setValue
-        ? (next: T[]) => activeController.setValue?.(next)
-        : undefined)
-    : onChange;
+  const resolvedOnChange =
+    onChange ||
+    (activeController
+      ? activeController.onChange ||
+        (activeController.setValue
+          ? (next: T[]) => activeController.setValue?.(next)
+          : undefined)
+      : onChange);
   const resolvedRowClassName = rowClassName || activeController?.rowClassName;
 
   const {
@@ -71,9 +83,6 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
     onEditEnd,
     ...gridProps
   } = rest as RDG.DataSheetGridProps<T>;
-  const DEBUG_SHEET_HISTORY =
-    typeof window !== "undefined" &&
-    (window as any).__DEBUG_SHEET_HISTORY__ === true;
   const wrapperStyle: CSSProperties = {
     minHeight: 0,
     overflow: "hidden",
@@ -122,10 +131,40 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
     ]
   );
 
+  const triggerUndo = useCallback(
+    (source: "hotkey" | "button") => {
+      if (!activeController?.undo || !activeController?.canUndo) return;
+      const ui = activeController.undo();
+      activeController.onUndoRedo?.("undo", source);
+      onUndoRedo?.("undo");
+      requestAnimationFrame(() => restoreUiState(ui));
+    },
+    [activeController, onUndoRedo, restoreUiState]
+  );
+
+  const triggerRedo = useCallback(
+    (source: "hotkey" | "button") => {
+      if (!activeController?.redo || !activeController?.canRedo) return;
+      const ui = activeController.redo();
+      activeController.onUndoRedo?.("redo", source);
+      onUndoRedo?.("redo");
+      requestAnimationFrame(() => restoreUiState(ui));
+    },
+    [activeController, onUndoRedo, restoreUiState]
+  );
+
+  useEffect(() => {
+    if (!controller) return;
+    controller.triggerUndo = () => triggerUndo("button");
+    controller.triggerRedo = () => triggerRedo("button");
+  }, [controller, triggerUndo, triggerRedo]);
+
   useEffect(() => {
     if (!activeController?.undo && !activeController?.redo) return;
-      const handler = (e: KeyboardEvent) => {
-        if (!isFocused) return;
+    if (!hotkeysEnabled) return;
+    const handler = (e: KeyboardEvent) => {
+      if (!hotkeysEnabled) return;
+      if (!wrapperRef.current?.closest("[data-sheet-shell]")) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -138,35 +177,54 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+        // eslint-disable-next-line no-console
+        console.info("[sheet-grid] keydown", {
+          key,
+          meta: e.metaKey,
+          ctrl: e.ctrlKey,
+          shift: e.shiftKey,
+        });
+      }
       if (key === "z" && e.shiftKey) {
-        if (activeController?.redo && activeController?.canRedo) {
-          e.preventDefault();
-          const ui = activeController.redo();
-          requestAnimationFrame(() => restoreUiState(ui));
+        if (!activeController?.canRedo) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+          // eslint-disable-next-line no-console
+          console.info("[sheet-grid] REDO trigger");
         }
+        triggerRedo("hotkey");
       } else if (key === "z") {
-        if (activeController?.undo && activeController?.canUndo) {
-          e.preventDefault();
-          const ui = activeController.undo();
-          requestAnimationFrame(() => restoreUiState(ui));
+        if (!activeController?.canUndo) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+          // eslint-disable-next-line no-console
+          console.info("[sheet-grid] UNDO trigger");
         }
+        triggerUndo("hotkey");
       } else if (key === "y") {
-        if (activeController?.redo && activeController?.canRedo) {
-          e.preventDefault();
-          const ui = activeController.redo();
-          requestAnimationFrame(() => restoreUiState(ui));
+        if (!activeController?.canRedo) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (debugEnabled("DEBUG_SHEET_HISTORY")) {
+          // eslint-disable-next-line no-console
+          console.info("[sheet-grid] REDO trigger");
         }
+        triggerRedo("hotkey");
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, [
     activeController?.undo,
     activeController?.redo,
     activeController?.canUndo,
     activeController?.canRedo,
-    isFocused,
-    restoreUiState,
+    hotkeysEnabled,
+    triggerUndo,
+    triggerRedo,
   ]);
 
   const handleActiveCellChange = useCallback(
@@ -188,13 +246,13 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
   const handleEditStart = useCallback(
     (args: { reason: "typing" | "paste" | "delete" | "fill" }) => {
       activeController?.beginTransaction?.(args?.reason, getUiState());
-      if (DEBUG_SHEET_HISTORY) {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
         // eslint-disable-next-line no-console
-        console.info("[sheet-grid] onEditStart", args?.reason);
+        console.info("[RDG] editStart", args?.reason);
       }
       onEditStart?.(args as any);
     },
-    [activeController, getUiState, onEditStart, DEBUG_SHEET_HISTORY]
+    [activeController, getUiState, onEditStart]
   );
 
   const handleEditEnd = useCallback(
@@ -204,18 +262,53 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
           activeController.commitTransaction?.(getUiState());
         });
       }
-      if (DEBUG_SHEET_HISTORY) {
+      if (debugEnabled("DEBUG_SHEET_HISTORY")) {
         // eslint-disable-next-line no-console
-        console.info("[sheet-grid] onEditEnd", args?.reason);
+        console.info("[RDG] editEnd", args?.reason);
       }
       onEditEnd?.(args as any);
     },
-    [activeController, getUiState, onEditEnd, DEBUG_SHEET_HISTORY]
+    [activeController, getUiState, onEditEnd]
+  );
+
+  const handlePasteCapture = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement | null;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const insideGrid =
+        !!wrapperRef.current &&
+        (!!target && wrapperRef.current.contains(target));
+      if (debugEnabled("DEBUG_SHEET_PASTE")) {
+        const tag = activeEl?.tagName || "UNKNOWN";
+        const type =
+          activeEl && "type" in activeEl ? String((activeEl as any).type || "") : "";
+        // eslint-disable-next-line no-console
+        console.info("[PASTE] activeElement", {
+          tag,
+          type,
+          insideGrid,
+        });
+      }
+      if (!insideGrid || !activeEl) return;
+      if (!["INPUT", "TEXTAREA"].includes(activeEl.tagName)) return;
+      const hasHtml = event.clipboardData?.types?.includes("text/html");
+      const text = hasHtml
+        ? event.clipboardData?.getData("text/html") ?? ""
+        : event.clipboardData?.getData("text/plain") ??
+          event.clipboardData?.getData("text") ??
+          "";
+      if (!text) return;
+      const grid = gridRef.current as any;
+      if (typeof grid?.pasteFromText !== "function") return;
+      event.preventDefault();
+      grid.pasteFromText(text, hasHtml ? "html" : "text");
+    },
+    []
   );
 
   const handleChange = useMemo(() => {
     if (!resolvedOnChange) return undefined;
-    if (!DEBUG_SHEET_HISTORY) return resolvedOnChange;
+    if (!debugEnabled("DEBUG_SHEET_HISTORY")) return resolvedOnChange;
     return (next: T[], operations?: any) => {
       // eslint-disable-next-line no-console
       console.info("[sheet-grid] onChange", {
@@ -224,12 +317,13 @@ export const SheetGrid = forwardRef(function SheetGridInner<T>(
       });
       resolvedOnChange(next, operations as any);
     };
-  }, [resolvedOnChange, DEBUG_SHEET_HISTORY]);
+  }, [resolvedOnChange]);
 
   return (
     <div
       ref={wrapperRef}
       style={wrapperStyle}
+      onPasteCapture={handlePasteCapture}
       onFocusCapture={() => setIsFocused(true)}
       onBlurCapture={(e) => {
         const nextTarget = e.relatedTarget as Node | null;
