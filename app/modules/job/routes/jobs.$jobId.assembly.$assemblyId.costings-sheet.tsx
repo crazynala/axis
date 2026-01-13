@@ -1,34 +1,37 @@
-import {
-  json,
-  redirect,
-  type ActionFunctionArgs,
-  type LoaderFunctionArgs,
-} from "@remix-run/node";
-import type { Prisma } from "@prisma/client";
+export { loader, action } from "./jobs.$jobId.assembly.$assemblyId.costings-sheet-dsg";
+
 import { useLoaderData, useNavigate } from "@remix-run/react";
-import * as RDG from "react-datasheet-grid";
-import type { Column } from "react-datasheet-grid";
+import type {
+  CellChange,
+  Column,
+  Id,
+  MenuOption,
+  ReactGridProps,
+  Row,
+} from "@silevis/reactgrid";
+import { useElementSize } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInitGlobalFormContext } from "@aa/timber";
-import { prismaBase } from "../../../utils/prisma.server";
 import { SheetShell } from "~/components/sheets/SheetShell";
+import { SheetFrame } from "~/components/sheets/SheetFrame";
 import { DEFAULT_MIN_ROWS } from "~/components/sheets/rowPadding";
 import { padRowsWithDisableControls } from "~/components/sheets/disableControls";
-import {
-  useSheetDirtyPrompt,
-} from "~/components/sheets/SheetControls";
-import { SheetFrame } from "~/components/sheets/SheetFrame";
-import { SheetGrid } from "~/components/sheets/SheetGrid";
+import { useSheetDirtyPrompt } from "~/components/sheets/SheetControls";
 import { adaptRdgController } from "~/components/sheets/SheetController";
-import { withGroupTrailingBlank } from "~/components/sheets/groupRows";
-import { SkuLookupCell } from "~/components/sheets/SkuLookupCell";
 import {
-  UsageSelectCell,
-  normalizeUsageValue,
-  type UsageValue,
-} from "~/components/sheets/UsageSelectCell";
+  axisHeaderCellTemplate,
+  axisSelectCellTemplate,
+  axisSkuCellTemplate,
+  axisTextCellTemplate,
+  type AxisSelectCell,
+  type AxisSkuCell,
+  type AxisTextCell,
+} from "~/components/sheets/reactGridCells";
+import { computeSheetColumnWidths } from "~/components/sheets/computeSheetColumnWidths";
 import { useSheetColumnSelection } from "~/base/sheets/useSheetColumns";
 import { jobSpec } from "~/modules/job/spec";
+import { normalizeUsageValue, type UsageValue } from "~/components/sheets/UsageSelectCell";
+import { withGroupTrailingBlank } from "~/components/sheets/groupRows";
 import {
   ProductPickerModal,
   type ProductPickerItem,
@@ -37,7 +40,9 @@ import {
   lookupProductsBySkus,
   type ProductLookupInfo,
 } from "~/modules/product/utils/productLookup.client";
-import { mapExternalStepTypeToActivityUsed } from "~/modules/job/services/externalStepActivity";
+import { useReactGridHover } from "~/components/sheets/useReactGridHover";
+import { collectSelectedCellLocations } from "~/components/sheets/reactGridSelection";
+import * as RDG from "react-datasheet-grid";
 
 export type CostingEditRow = {
   id: number | null; // costing id
@@ -86,289 +91,45 @@ const toNumberOrNull = (value: unknown): number | null => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
+
 type LoaderData = {
   rows: CostingEditRow[];
   exitUrl: string;
   actionPath: string;
 };
 
-export async function loader({ params }: LoaderFunctionArgs) {
-  const jobId = Number(params.jobId);
-  const rawAssemblyParam = String(params.assemblyId || "");
-  const assemblyIds = rawAssemblyParam
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
+const usageOptions: { label: string; value: UsageValue }[] = [
+  { label: "", value: "" },
+  { label: "Cut", value: "cut" },
+  { label: "Sew", value: "sew" },
+  { label: "Finish", value: "finish" },
+  { label: "Make", value: "make" },
+  { label: "Wash", value: "wash" },
+  { label: "Embroidery", value: "embroidery" },
+  { label: "Dye", value: "dye" },
+];
 
-  if (!Number.isFinite(jobId) || jobId <= 0 || assemblyIds.length === 0) {
-    return redirect("/jobs");
-  }
-
-  const assemblies = await prismaBase.assembly.findMany({
-    where: { jobId, id: { in: assemblyIds } },
-    select: { id: true, qtyOrderedBreakdown: true, name: true },
-  });
-
-  if (!assemblies.length) {
-    return redirect(`/jobs/${jobId}`);
-  }
-
-  const validIdSet = new Set(assemblies.map((a) => a.id));
-  const normalizedIds = assemblyIds.filter((id) => validIdSet.has(id));
-  if (!normalizedIds.length) {
-    return redirect(`/jobs/${jobId}`);
-  }
-
-  const normalizedParam = normalizedIds.join(",");
-  if (normalizedParam !== rawAssemblyParam) {
-    throw redirect(`/jobs/${jobId}/assembly/${normalizedParam}/costings-sheet`);
-  }
-
-  const orderedByAsm = new Map<number, number>();
-  const nameByAsm = new Map<number, string>();
-  for (const asm of assemblies) {
-    const arr = (asm as any).qtyOrderedBreakdown as number[] | null;
-    const ordered = Array.isArray(arr)
-      ? arr.reduce((total, value) => total + (Number(value) || 0), 0)
-      : 0;
-    orderedByAsm.set(asm.id, ordered);
-    nameByAsm.set(asm.id, asm.name || "");
-  }
-
-  const costings = await prismaBase.costing.findMany({
-    where: { assemblyId: { in: normalizedIds } },
-    orderBy: [{ assemblyId: "asc" }, { productId: "asc" }, { id: "asc" }],
-    select: {
-      id: true,
-      assemblyId: true,
-      productId: true,
-      quantityPerUnit: true,
-      unitCost: true,
-      activityUsed: true,
-      externalStepType: true,
-      product: { select: { sku: true, name: true } },
-    },
-  });
-
-  const rows: CostingEditRow[] = costings.map((c) => {
-    const qpu = Number(c.quantityPerUnit || 0) || 0;
-    const ordered = orderedByAsm.get(c.assemblyId || 0) || 0;
-    const required = ordered * qpu;
-    return {
-      id: c.id,
-      assemblyId: c.assemblyId ?? null,
-      assemblyName: nameByAsm.get(c.assemblyId ?? 0) || "",
-      productId: c.productId ?? null,
-      productSku: c.product?.sku || "",
-      productName: c.product?.name || "",
-      activityUsed: String(c.activityUsed || ""),
-      externalStepType: c.externalStepType ?? null,
-      quantityPerUnit: qpu,
-      unitCost: Number(c.unitCost || 0) || 0,
-      required,
-      localKey: nextLocalKey(),
-      disableControls: false,
-    } as CostingEditRow;
-  });
-
-  return json<LoaderData>({
-    rows,
-    exitUrl: `/jobs/${jobId}/assembly/${normalizedParam}`,
-    actionPath: `/jobs/${jobId}/assembly/${normalizedParam}/costings-sheet`,
-  });
-}
-
-export async function action({ request }: ActionFunctionArgs) {
-  const bodyText = await request.text();
-  let payload: any = null;
-  try {
-    payload = JSON.parse(bodyText || "{}");
-  } catch {}
-  if (!payload || payload._intent !== "costings.batchSave") {
-    return json({ error: "Invalid intent" }, { status: 400 });
-  }
-  const rows: CostingEditRow[] = Array.isArray(payload.rows)
-    ? payload.rows
-    : [];
-
-  type SanitizedRow = {
-    id: number | null;
-    assemblyId: number | null;
-    productId: number | null;
-    productSku: string;
-    quantityPerUnit: number | null;
-    activityUsed: "cut" | "sew" | "finish" | "make" | null;
-  };
-
-  const sanitizeQuantity = (value: unknown): number | null => {
-    if (value === "" || value === null || value === undefined) return null;
-    const num = Number(value);
-    return Number.isFinite(num) ? num : null;
-  };
-
-  const sanitizeActivity = (
-    value: unknown
-  ): "cut" | "sew" | "finish" | "make" | null => {
-    const str = typeof value === "string" ? value.trim().toLowerCase() : "";
-    return str === "cut" || str === "sew" || str === "finish" || str === "make"
-      ? (str as "cut" | "sew" | "finish" | "make")
-      : null;
-  };
-
-  const sanitizedRows: SanitizedRow[] = rows
-    .map((row) => {
-      const sku =
-        typeof row?.productSku === "string" ? row.productSku.trim() : "";
-      return {
-        id: toNumberOrNull(row?.id),
-        assemblyId: toNumberOrNull(row?.assemblyId),
-        productId: toNumberOrNull(row?.productId),
-        productSku: sku,
-        quantityPerUnit: sanitizeQuantity(row?.quantityPerUnit),
-        activityUsed: sanitizeActivity(row?.activityUsed),
-      };
-    })
-    .filter(
-      (row) =>
-        (row.assemblyId != null || row.id != null) &&
-        (row.id != null ||
-          row.productSku ||
-          row.quantityPerUnit !== null ||
-          row.activityUsed)
-    );
-
-  const requestedSkus = Array.from(
-    new Set(sanitizedRows.map((r) => r.productSku).filter(Boolean))
-  );
-  const productBySku = new Map<string, number>();
-  const productExternalStepById = new Map<number, string | null>();
-  if (requestedSkus.length) {
-    const products = await prismaBase.product.findMany({
-      where: {
-        OR: requestedSkus.map((sku) => ({
-          sku: { equals: sku, mode: "insensitive" as const },
-        })),
-      },
-      select: { id: true, sku: true, externalStepType: true },
-    });
-    for (const product of products) {
-      if (!product.sku) continue;
-      productBySku.set(product.sku.toLowerCase(), product.id);
-      productExternalStepById.set(product.id, product.externalStepType ?? null);
-    }
-  }
-  const requestedProductIds = Array.from(
-    new Set(
-      sanitizedRows
-        .map((r) => r.productId)
-        .filter((id): id is number => Number.isFinite(Number(id)))
-        .map((id) => Number(id))
-    )
-  );
-  if (requestedProductIds.length) {
-    const products = await prismaBase.product.findMany({
-      where: { id: { in: requestedProductIds } },
-      select: { id: true, externalStepType: true },
-    });
-    for (const product of products) {
-      if (!productExternalStepById.has(product.id)) {
-        productExternalStepById.set(product.id, product.externalStepType ?? null);
-      }
-    }
-  }
-
-  const updateOps: Prisma.PrismaPromise<unknown>[] = [];
-  const createOps: Prisma.PrismaPromise<unknown>[] = [];
-  const unknownSkus = new Set<string>();
-
-  for (const row of sanitizedRows) {
-    const skuKey = row.productSku ? row.productSku.toLowerCase() : "";
-    const resolvedProductId = skuKey
-      ? productBySku.get(skuKey) ?? row.productId
-      : row.productId;
-
-    if (row.id) {
-      const data: any = {};
-      if (row.quantityPerUnit !== null)
-        data.quantityPerUnit = row.quantityPerUnit;
-      const externalStepType = resolvedProductId
-        ? productExternalStepById.get(resolvedProductId) ?? null
-        : null;
-      const externalActivity = externalStepType
-        ? mapExternalStepTypeToActivityUsed(externalStepType)
-        : null;
-      if (externalStepType) {
-        if (row.activityUsed && row.activityUsed !== externalActivity) {
-          return json(
-            {
-              error:
-                "External-step costings must use their external activity.",
-            },
-            { status: 400 }
-          );
-        }
-        data.activityUsed = externalActivity;
-        data.externalStepType = externalStepType;
-      } else if (row.activityUsed) {
-        const normalized =
-          row.activityUsed === "make" ? "finish" : row.activityUsed;
-        data.activityUsed = normalized;
-      }
-      if (row.productSku && !resolvedProductId) {
-        unknownSkus.add(row.productSku);
-      } else if (resolvedProductId && resolvedProductId !== row.productId) {
-        data.productId = resolvedProductId;
-      }
-      if (Object.keys(data).length) {
-        updateOps.push(
-          prismaBase.costing.update({ where: { id: row.id }, data })
-        );
-      }
-    } else if (row.productSku) {
-      if (!row.assemblyId) continue;
-      if (!resolvedProductId) {
-        unknownSkus.add(row.productSku);
-        continue;
-      }
-      const externalStepType =
-        productExternalStepById.get(resolvedProductId) ?? null;
-      const externalActivity = externalStepType
-        ? mapExternalStepTypeToActivityUsed(externalStepType)
-        : null;
-      createOps.push(
-        prismaBase.costing.create({
-          data: {
-            assemblyId: row.assemblyId,
-            productId: resolvedProductId,
-            quantityPerUnit: row.quantityPerUnit ?? 0,
-            activityUsed: externalStepType ? externalActivity : row.activityUsed,
-            externalStepType,
-          },
-        })
-      );
-    }
-  }
-
-  if (updateOps.length || createOps.length) {
-    await prismaBase.$transaction([...updateOps, ...createOps]);
-  }
-
-  return json({
-    ok: true,
-    created: createOps.length,
-    updated: updateOps.length,
-    unknownSkus: Array.from(unknownSkus),
-  });
-}
+const customCellTemplates = {
+  axisHeader: axisHeaderCellTemplate,
+  axisText: axisTextCellTemplate,
+  axisSelect: axisSelectCellTemplate,
+  axisSku: axisSkuCellTemplate,
+};
 
 export default function CostingsSheetRoute() {
-  const {
-    rows: initialRows,
-    exitUrl,
-    actionPath,
-  } = useLoaderData<typeof loader>();
+  const { rows: initialRows, exitUrl, actionPath } =
+    useLoaderData<LoaderData>();
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
+  const [ReactGridComponent, setReactGridComponent] =
+    useState<React.ComponentType<ReactGridProps> | null>(null);
+  const { ref: gridContainerRef, width: gridContainerWidth } =
+    useElementSize();
+  const {
+    gridRef: hoverGridRef,
+    handlePointerMove,
+    handlePointerLeave,
+  } = useReactGridHover();
 
   const controller = RDG.useDataSheetController<CostingEditRow>(
     (initialRows || []).slice().sort((a, b) => {
@@ -396,6 +157,17 @@ export default function CostingsSheetRoute() {
 
   useSheetDirtyPrompt();
   const prevRowsRef = useRef<CostingEditRow[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    import("@silevis/reactgrid").then((mod) => {
+      if (!active) return;
+      setReactGridComponent(() => mod.ReactGrid);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const isRowMeaningful = useCallback(
     (row: CostingEditRow | null | undefined) => {
@@ -623,18 +395,14 @@ export default function CostingsSheetRoute() {
   );
 
   useEffect(() => {
-    if (!pickerOpen) {
-      setPickerLoading(false);
-      setPickerResults([]);
-      return;
-    }
-    const q = pickerSearch.trim();
-    if (!q) {
-      setPickerLoading(false);
-      setPickerResults([]);
-      return;
-    }
     let active = true;
+    const q = pickerSearch.trim();
+    if (!pickerOpen) return;
+    if (!q) {
+      setPickerResults([]);
+      setPickerLoading(false);
+      return;
+    }
     setPickerLoading(true);
     const timer = window.setTimeout(async () => {
       try {
@@ -667,120 +435,402 @@ export default function CostingsSheetRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const col = useCallback(
-    (
-      key: keyof CostingEditRow,
-      title: string,
-      grow = 1,
-      disabled = false
-    ): Column<CostingEditRow> =>
-      ({
-        ...((RDG.keyColumn as any)(key as any, RDG.textColumn) as any),
-        id: key as string,
-        title,
-        grow,
-        disabled,
-      } as any),
-    []
+  const columnMeta = useMemo(() => {
+    const byKey = new Map(
+      [
+        { key: "assemblyName", label: "Assembly", width: 180, resizable: true },
+        { key: "productSku", label: "SKU", width: 150, resizable: true },
+        { key: "productName", label: "Name", width: 220, resizable: true },
+        { key: "activityUsed", label: "Usage", width: 130, resizable: true },
+        { key: "quantityPerUnit", label: "Qty/Unit", width: 120, resizable: true },
+        { key: "unitCost", label: "Unit Cost", width: 120, resizable: true },
+      ].map((col) => [col.key, col] as const)
+    );
+    const selectedKeys = columnSelection.selectedKeys?.length
+      ? columnSelection.selectedKeys
+      : [
+          "assemblyName",
+          "productSku",
+          "productName",
+          "activityUsed",
+          "quantityPerUnit",
+          "unitCost",
+        ];
+    return selectedKeys
+      .map((key) => byKey.get(String(key)))
+      .filter(Boolean) as Array<{
+      key: string;
+      label: string;
+      width: number;
+      resizable: boolean;
+    }>;
+  }, [columnSelection.selectedKeys]);
+
+  const widthByKey = useMemo(
+    () =>
+      computeSheetColumnWidths({
+        columns: columnSelection.selectedColumns,
+        widthPresetByKey: columnSelection.widthPresetByKey,
+        containerWidthPx: gridContainerWidth || 0,
+      }),
+    [
+      columnSelection.selectedColumns,
+      columnSelection.widthPresetByKey,
+      gridContainerWidth,
+    ]
   );
 
-  const columns = useMemo<Column<CostingEditRow>[]>(() => {
-    const assemblyCol: Column<CostingEditRow> = {
-      ...((RDG.keyColumn as any)("assemblyName" as any, RDG.textColumn) as any),
-      id: "assemblyName",
-      title: "Assembly",
-      grow: 1.2,
-      component: ({ rowData }: any) =>
-        rowData.groupStart ? rowData.assemblyName || rowData.assemblyId : "",
-      disabled: true,
-    } as any;
-    const skuCol: Column<CostingEditRow> = {
-      ...((RDG.keyColumn as any)("productSku" as any, RDG.textColumn) as any),
-      id: "productSku",
-      title: "SKU",
-      grow: 1.1,
-      disabled: false,
-      component: ({ rowData, setRowData, focus, stopEditing }: any) => {
-        const rowDisabled = Boolean(rowData?.disableControls);
-        return (
-          <SkuLookupCell
-            value={rowData.productSku || ""}
-            focus={focus}
-            readOnly={rowDisabled}
-            showLookup={!rowData.productId && !rowDisabled}
-            onLookup={() => openPickerForRow(rowData)}
-            onChange={(value) => {
-              setRowData({
-                ...rowData,
-                productSku: value,
-                productId: null,
-                productName: "",
-              });
-              enqueueLookup([value]);
-            }}
-            onPaste={(text) => {
-              const first = text.split("\t")[0]?.split("\n")[0]?.trim() || "";
-              if (!first) return;
-              setRowData({
-                ...rowData,
-                productSku: first,
-                productId: null,
-                productName: "",
-              });
-              enqueueLookup([first]);
-            }}
-            onBlur={() => stopEditing?.({ nextRow: false })}
-          />
-        );
-      },
-    } as any;
-    const nameCol = col("productName", "Name", 1.6, true);
-    const usageCol: Column<CostingEditRow> = {
-      ...((RDG.keyColumn as any)("activityUsed" as any, RDG.textColumn) as any),
-      id: "activityUsed",
-      title: "Usage",
-      grow: 0.9,
-      disabled: false,
-      component: ({ rowData, setRowData, focus, stopEditing }: any) => {
-        const rowDisabled = Boolean(rowData?.disableControls);
-        return (
-          <UsageSelectCell
-            value={(rowData.activityUsed || "") as UsageValue}
-            focus={focus}
-            readOnly={rowDisabled || Boolean(rowData.externalStepType)}
-            onBlur={() => stopEditing?.({ nextRow: false })}
-            onChange={(value) =>
-              setRowData({
-                ...rowData,
-                activityUsed: value,
-              })
-            }
-          />
-        );
-      },
-    } as any;
-    const qpuCol = col("quantityPerUnit", "Qty/Unit", 0.9, false);
-    const unitCostCol = col("unitCost", "Unit Cost", 1, true);
-    const allColumns = [
-      assemblyCol,
-      skuCol,
-      nameCol,
-      usageCol,
-      qpuCol,
-      unitCostCol,
-    ];
-    const byKey = new Map(allColumns.map((column) => [String(column.id), column]));
-    return columnSelection.selectedKeys
-      .map((key) => byKey.get(key))
-      .filter(Boolean) as Column<CostingEditRow>[];
-  }, [col, columnSelection.selectedKeys, enqueueLookup, openPickerForRow]);
+  const [columnWidthOverrides, setColumnWidthOverrides] = useState<
+    Record<string, number>
+  >({});
 
-  const onChange = useCallback(
-    (next: CostingEditRow[]) => {
-      const normalized = normalizeEditableRows(next || []);
+  const widthStorageKey = useMemo(
+    () => `axis:sheet-columns-widths:v1:jobs:${viewSpec.id}:assembly`,
+    [viewSpec.id]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(widthStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, number> | null;
+      if (parsed && typeof parsed === "object") {
+        setColumnWidthOverrides(parsed);
+      }
+    } catch {
+      // ignore
+    }
+  }, [widthStorageKey]);
+
+  const columns = useMemo<Column[]>(() => {
+    const rowHeader: Column = {
+      columnId: "__rownum",
+      width: 52,
+      resizable: false,
+    };
+    return [
+      rowHeader,
+      ...columnMeta.map((def) => ({
+        columnId: def.key,
+        width: columnWidthOverrides[def.key] ?? widthByKey[def.key] ?? def.width,
+        resizable: def.resizable,
+      })),
+    ];
+  }, [columnMeta, columnWidthOverrides, widthByKey]);
+
+  const groupedRows = useMemo(() => {
+    return withGroupTrailingBlank(
+      rows,
+      (row) => row.assemblyId ?? row.id,
+      ({ template }) => {
+        if (!template?.assemblyId) return null;
+        return {
+          ...blankCostingRow(),
+          assemblyId: template.assemblyId,
+          assemblyName: template.assemblyName,
+          isGroupPad: true,
+        };
+      }
+    );
+  }, [rows]);
+
+  const displayRows = useMemo(() => {
+    return padRowsWithDisableControls(
+      groupedRows,
+      DEFAULT_MIN_ROWS,
+      () => ({ ...blankCostingRow() }),
+      { extraInteractiveRows: 0 }
+    );
+  }, [groupedRows]);
+
+  const rowsForGrid = useMemo<Row[]>(() => {
+    const header: Row = {
+      rowId: "header",
+      height: 34,
+      cells: [
+        {
+          type: "axisHeader",
+          text: "#",
+          className: "rg-header-cell rg-rownum-cell",
+        },
+        ...columnMeta.map((col) => ({
+          type: "axisHeader",
+          text: col.label,
+          className: "rg-header-cell",
+        })),
+      ],
+    };
+
+    const dataRows: Row[] = displayRows.map((row, rowIndex) => {
+      const rowId = row.localKey || row.id || `row:${rowIndex}`;
+      const rowDisabled = Boolean(row.disableControls || row.isGroupPad);
+      const cells = [
+        {
+          type: "axisText",
+          text: String(rowIndex + 1),
+          nonEditable: true,
+          className: "rg-rownum-cell rg-non-editable",
+        } as AxisTextCell,
+        ...columnMeta.map((col) => {
+          const key = col.key;
+          const isReadOnly =
+            key === "assemblyName" ||
+            key === "productName" ||
+            key === "unitCost";
+          const isExternal =
+            key === "activityUsed" && Boolean(row.externalStepType);
+          const nonEditable = rowDisabled || isReadOnly || isExternal;
+          if (key === "productSku") {
+            return {
+              type: "axisSku",
+              text: row.productSku || "",
+              nonEditable,
+              showLookup: !row.productId && !rowDisabled,
+              onLookup: () => openPickerForRow(row),
+              className: nonEditable ? "rg-non-editable" : undefined,
+            } as AxisSkuCell;
+          }
+          if (key === "activityUsed") {
+            return {
+              type: "axisSelect",
+              selectedValue: normalizeUsageValue(row.activityUsed),
+              values: usageOptions,
+              nonEditable,
+              className: nonEditable ? "rg-non-editable" : undefined,
+            } as AxisSelectCell;
+          }
+          let value: string | number = "";
+          if (key === "assemblyName") {
+            value = row.groupStart ? row.assemblyName || row.assemblyId || "" : "";
+          } else {
+            value = (row as any)[key] ?? "";
+          }
+          return {
+            type: "axisText",
+            text: String(value ?? ""),
+            nonEditable,
+            className: nonEditable ? "rg-non-editable" : undefined,
+          } as AxisTextCell;
+        }),
+      ];
+      return { rowId, height: 34, cells };
+    });
+
+    return [header, ...dataRows];
+  }, [columnMeta, displayRows, openPickerForRow]);
+
+  const rowIndexById = useMemo(() => {
+    const map = new Map<Id, number>();
+    displayRows.forEach((row, idx) => {
+      const rowId = row.localKey || row.id || `row:${idx}`;
+      map.set(rowId, idx);
+    });
+    return map;
+  }, [displayRows]);
+
+  const onCellsChanged = useCallback(
+    (changes: CellChange[]) => {
+      if (!changes?.length) return;
+      const nextRows = displayRows.map((row) => ({ ...row }));
+      const ignored: Array<{ rowId: Id; columnId: Id; reason: string }> = [];
+      for (const change of changes) {
+        if (change.rowId === "header") continue;
+        const rowIndex = rowIndexById.get(change.rowId);
+        if (rowIndex == null) continue;
+        const row = { ...nextRows[rowIndex] };
+        const key = String(change.columnId);
+        if (key === "__rownum") {
+          ignored.push({
+            rowId: change.rowId,
+            columnId: change.columnId,
+            reason: "Read-only column",
+          });
+          continue;
+        }
+        const readOnly =
+          key === "assemblyName" || key === "productName" || key === "unitCost";
+        const isExternal =
+          key === "activityUsed" && Boolean(row.externalStepType);
+        const rowDisabled = Boolean(row.disableControls || row.isGroupPad);
+        if (rowDisabled || readOnly || isExternal) {
+          ignored.push({
+            rowId: change.rowId,
+            columnId: change.columnId,
+            reason: readOnly
+              ? "Read-only column"
+              : rowDisabled
+              ? "Non-editable row"
+              : "External-step costings are locked",
+          });
+          continue;
+        }
+        const newCell = change.newCell as any;
+        const nextValue =
+          newCell?.type === "axisSelect"
+            ? newCell.selectedValue ?? ""
+            : newCell?.type === "axisSku"
+            ? newCell.text ?? ""
+            : newCell?.type === "axisText"
+            ? newCell.text ?? ""
+            : newCell?.text ?? "";
+        (row as any)[key] = nextValue;
+        nextRows[rowIndex] = row;
+      }
+      if (ignored.length && process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.info("[reactgrid] ignored cell changes", ignored);
+      }
+      const normalized = normalizeEditableRows(nextRows as CostingEditRow[]);
       processNormalizedRows(normalized);
     },
-    [normalizeEditableRows, processNormalizedRows]
+    [displayRows, normalizeEditableRows, processNormalizedRows, rowIndexById]
+  );
+
+  const handleColumnResized = useCallback(
+    (columnId: Id, width: number) => {
+      setColumnWidthOverrides((prev) => {
+        const next = { ...prev, [String(columnId)]: width };
+        if (typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(widthStorageKey, JSON.stringify(next));
+          } catch {
+            // ignore
+          }
+        }
+        return next;
+      });
+    },
+    [widthStorageKey]
+  );
+
+  const buildClearChanges = useCallback(
+    (selectedRanges: any[]) => {
+      const locations = collectSelectedCellLocations(selectedRanges);
+      const changes: CellChange[] = [];
+      for (const location of locations) {
+        if (location.rowId === "header") continue;
+        if (String(location.columnId) === "__rownum") continue;
+        const row = rowsForGrid[location.rowIdx];
+        const previousCell = row?.cells?.[location.colIdx] as any;
+        if (!previousCell) continue;
+        let newCell = previousCell;
+        if (previousCell.type === "axisSelect") {
+          newCell = { ...previousCell, selectedValue: "", displayText: "" };
+        } else if (
+          previousCell.type === "axisText" ||
+          previousCell.type === "axisSku"
+        ) {
+          newCell = { ...previousCell, text: "" };
+        }
+        changes.push({
+          rowId: location.rowId,
+          columnId: location.columnId,
+          type: newCell.type,
+          previousCell,
+          newCell,
+        });
+      }
+      return changes;
+    },
+    [rowsForGrid]
+  );
+
+  const buildFillDownChanges = useCallback(
+    (selectedRanges: any[]) => {
+      const changes: CellChange[] = [];
+      for (const range of selectedRanges || []) {
+        const rangeRows = Array.isArray(range?.rows) ? range.rows : [];
+        const rangeColumns = Array.isArray(range?.columns) ? range.columns : [];
+        if (rangeRows.length < 2 || !rangeColumns.length) continue;
+        const sortedRows = [...rangeRows].sort(
+          (a, b) => (a?.idx ?? 0) - (b?.idx ?? 0)
+        );
+        const sourceRow = sortedRows[0];
+        if (!sourceRow || sourceRow.idx <= 0) continue;
+        for (const column of rangeColumns) {
+          if (column?.idx == null || column.idx <= 0) continue;
+          const sourceCell = rowsForGrid[sourceRow.idx]?.cells?.[column.idx] as any;
+          if (!sourceCell) continue;
+          for (const row of sortedRows.slice(1)) {
+            if (!row || row.idx <= 0) continue;
+            const targetCell = rowsForGrid[row.idx]?.cells?.[column.idx] as any;
+            if (!targetCell) continue;
+            let newCell = targetCell;
+            if (sourceCell.type === "axisSelect") {
+              newCell = {
+                ...targetCell,
+                selectedValue: sourceCell.selectedValue ?? "",
+                displayText: sourceCell.displayText ?? "",
+              };
+            } else if (
+              sourceCell.type === "axisText" ||
+              sourceCell.type === "axisSku"
+            ) {
+              newCell = { ...targetCell, text: sourceCell.text ?? "" };
+            }
+            changes.push({
+              rowId: row.rowId,
+              columnId: column.columnId,
+              type: newCell.type,
+              previousCell: targetCell,
+              newCell,
+            });
+          }
+        }
+      }
+      return changes;
+    },
+    [rowsForGrid]
+  );
+
+  const handleContextMenu = useCallback(
+    (
+      _selectedRowIds: Id[],
+      _selectedColIds: Id[],
+      _selectionMode: string,
+      menuOptions: MenuOption[],
+      selectedRanges: any[]
+    ) => {
+      const options = menuOptions ? [...menuOptions] : [];
+      options.push({
+        id: "clear-contents",
+        label: "Clear contents",
+        handler: () => {
+          const changes = buildClearChanges(selectedRanges);
+          if (changes.length) onCellsChanged(changes);
+        },
+      });
+      options.push({
+        id: "fill-down",
+        label: "Fill down",
+        handler: () => {
+          const changes = buildFillDownChanges(selectedRanges);
+          if (changes.length) onCellsChanged(changes);
+        },
+      });
+      options.push({
+        id: "reset-column-widths",
+        label: "Reset column widths",
+        handler: () => {
+          setColumnWidthOverrides({});
+          if (typeof window !== "undefined") {
+            try {
+              window.localStorage.removeItem(widthStorageKey);
+            } catch {
+              // ignore
+            }
+          }
+        },
+      });
+      return options;
+    },
+    [
+      buildClearChanges,
+      buildFillDownChanges,
+      onCellsChanged,
+      widthStorageKey,
+    ]
   );
 
   const save = useCallback(async () => {
@@ -847,50 +897,55 @@ export default function CostingsSheetRoute() {
           rowsForRelevance: rows,
           selection: columnSelection,
         }}
+        dsgLink={actionPath.replace(
+          "/costings-sheet",
+          "/costings-sheet-dsg"
+        )}
       >
-        {(gridHeight) => {
-          const groupedRows = withGroupTrailingBlank(
-            rows,
-            (row) => row.assemblyId ?? row.id,
-            ({ template }) => {
-              if (!template?.assemblyId) return null;
-              return {
-                ...blankCostingRow(),
-                assemblyId: template.assemblyId,
-                assemblyName: template.assemblyName,
-                isGroupPad: true,
-              };
-            }
-          );
-          const baseLength = groupedRows.length;
-          const displayRows = padRowsWithDisableControls(
-            groupedRows,
-            DEFAULT_MIN_ROWS,
-            () => ({ ...blankCostingRow() }),
-            { extraInteractiveRows: 0 }
-          );
-          return (
-            <SheetFrame gridHeight={gridHeight}>
-              {(bodyHeight) => (
-                <SheetGrid
-                  key={`cols:${columnSelection.selectedKeys.join("|")}`}
-                  controller={sheetController}
-                  value={displayRows as any}
-                  onChange={onChange as any}
-                  columns={columns as any}
-                  height={bodyHeight}
-                  getBlockKey={({
-                    rowData,
-                  }: {
-                    rowData: CostingEditRow;
-                    rowIndex: number;
-                  }) => rowData.assemblyId ?? rowData.id}
-                  blockTopClassName="dsg-block-top"
-                />
-              )}
-            </SheetFrame>
-          );
-        }}
+        {(gridHeight) => (
+          <SheetFrame gridHeight={gridHeight}>
+            {(bodyHeight) => (
+              <div
+                ref={gridContainerRef}
+                style={{
+                  flex: "1 1 auto",
+                  minHeight: 0,
+                  height: bodyHeight,
+                  overflow: "hidden",
+                }}
+              >
+                <div className="axisReactGridScroller">
+                  <div
+                    className="axisReactGrid"
+                    ref={hoverGridRef}
+                    onPointerMove={handlePointerMove}
+                    onPointerLeave={handlePointerLeave}
+                  >
+                    {ReactGridComponent ? (
+                      <ReactGridComponent
+                        rows={rowsForGrid}
+                        columns={columns}
+                        customCellTemplates={customCellTemplates}
+                        onCellsChanged={onCellsChanged}
+                        enableColumnResizeOnAllHeaders
+                        stickyTopRows={1}
+                        stickyLeftColumns={1}
+                        onColumnResized={handleColumnResized}
+                        enableRangeSelection
+                        enableRowSelection
+                        enableColumnSelection
+                        enableFillHandle
+                        onContextMenu={handleContextMenu}
+                      />
+                    ) : (
+                      <div style={{ padding: 12 }}>Loading grid…</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </SheetFrame>
+        )}
       </SheetShell>
       <ProductPickerModal
         opened={pickerOpen}

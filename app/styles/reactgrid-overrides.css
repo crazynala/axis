@@ -1,10 +1,30 @@
-.axisReactGrid,
-.axisReactGrid .reactgrid-content {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.axisReactGrid {
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   background: var(--mantine-color-body);
   color: var(--mantine-color-text);
+  font-size: 14px;
+  --axis-rg-gridline: rgba(255, 255, 255, 0.06);
+  --axis-rg-gridline-strong: rgba(255, 255, 255, 0.1);
+  --axis-rg-header-bg: rgba(255, 255, 255, 0.03);
+  --axis-rg-gutter-bg: rgba(255, 255, 255, 0.06);
+  --axis-rg-hover: rgba(255, 255, 255, 0.03);
+  --axis-rg-selection-bg: color-mix(
+    in oklab,
+    var(--mantine-primary-color-filled) 16%,
+    transparent
+  );
+  --axis-rg-focus: color-mix(
+    in oklab,
+    var(--mantine-primary-color-filled) 42%,
+    transparent
+  );
+}
+
+.axisReactGrid .reactgrid-content {
+  border: none;
+  border-radius: 0;
 }
 
 .axisReactGrid .reactgrid-content,
@@ -16,65 +36,108 @@
   color: var(--mantine-color-text);
 }
 
-.axisReactGrid .rg-cell,
-.axisReactGrid .rg-header-cell {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.axisReactGrid .reactgrid-content .rg-pane .rg-cell,
+.axisReactGrid .reactgrid-content .rg-pane .rg-header-cell {
+  border-color: var(--axis-rg-gridline) !important;
   color: var(--mantine-color-text);
+  font-size: inherit;
 }
 
-.axisReactGrid .rg-header-cell {
-  background: rgba(255, 255, 255, 0.04);
+.axisReactGrid .reactgrid-content .rg-pane .rg-header-cell {
+  background: var(--axis-rg-header-bg);
   font-weight: 600;
+  border-bottom-color: var(--axis-rg-gridline-strong) !important;
 }
 
-.axisReactGrid .rg-header-row .rg-header-cell {
-  border-top: none;
-  border-bottom-color: rgba(255, 255, 255, 0.14);
+.axisReactGrid .reactgrid-content .rg-header-row .rg-header-cell {
+  border-top-color: transparent !important;
+  border-bottom-color: var(--axis-rg-gridline-strong) !important;
 }
 
-.axisReactGrid .rg-cell,
-.axisReactGrid .rg-header-cell {
-  padding: 5px 8px;
+.axisReactGrid .reactgrid-content .rg-pane .rg-cell,
+.axisReactGrid .reactgrid-content .rg-pane .rg-header-cell {
+  padding: 0;
+}
+
+.axisReactGrid .reactgrid-content .rg-pane .rg-cell:not(.rg-header-cell) {
+  border-top-color: transparent !important;
 }
 
 .axisReactGrid .rg-cell.rg-selected {
-  background: color-mix(
-    in oklab,
-    var(--mantine-primary-color-filled) 16%,
-    transparent
-  );
+  background: var(--axis-rg-selection-bg);
 }
 
 .axisReactGrid .rg-cell.rg-focused {
-  outline: 2px solid
-    color-mix(in oklab, var(--mantine-primary-color-filled) 45%, transparent);
+  outline: 2px solid var(--axis-rg-focus);
   outline-offset: -2px;
 }
 
-.axisReactGrid .rg-cell.rg-non-editable {
+.axisReactGrid
+  .rg-cell.rg-row-error:not(.rg-selected):not(.rg-focused):not(
+    .rg-header-cell
+  ) {
+  background: rgba(255, 99, 99, 0.08);
+}
+
+.axisReactGrid
+  .rg-cell.rg-hover-row:not(.rg-selected):not(.rg-focused):not(
+    .rg-header-cell
+  ):not(.rg-rownum-cell),
+.axisReactGrid
+  .rg-cell.rg-hover-col:not(.rg-selected):not(.rg-focused):not(
+    .rg-header-cell
+  ):not(.rg-rownum-cell) {
+  background: var(--axis-rg-hover);
+}
+
+.axisReactGrid
+  .rg-cell.rg-header-cell.rg-hover-col:not(.rg-selected):not(.rg-focused) {
   background: color-mix(
     in oklab,
-    var(--mantine-color-text) 3%,
-    transparent
+    var(--axis-rg-header-bg) 70%,
+    var(--axis-rg-hover)
   );
+}
+
+.axisReactGrid
+  .rg-cell.rg-non-editable:not(.rg-header-cell):not(.rg-rownum-cell):not(
+    .rg-selected
+  ):not(.rg-focused),
+.axisReactGrid
+  .rg-cell.rg-cell-nonEditable:not(.rg-header-cell):not(
+    .rg-rownum-cell
+  ):not(.rg-selected):not(.rg-focused) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.axisReactGrid
+  .rg-cell.rg-non-editable:not(.rg-header-cell):not(.rg-rownum-cell),
+.axisReactGrid
+  .rg-cell.rg-cell-nonEditable:not(.rg-header-cell):not(.rg-rownum-cell) {
   color: color-mix(
     in oklab,
-    var(--mantine-color-text) 70%,
+    var(--mantine-color-text) 80%,
     transparent
   );
   cursor: not-allowed;
+}
+
+.axisReactGrid
+  .rg-cell.rg-inapplicable:not(.rg-header-cell):not(.rg-rownum-cell):not(
+    .rg-selected
+  ):not(.rg-focused) {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .axisReactGrid .rg-rownum-cell {
   text-align: right;
   justify-content: flex-end;
   font-size: 0.85em;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--axis-rg-gutter-bg);
 }
 
 .axisReactGrid .rg-rownum-cell {
-  border-right-color: rgba(255, 255, 255, 0.14);
+  border-right-color: var(--axis-rg-gridline-strong) !important;
 }
 
 .axisReactGrid .rg-celleditor,
@@ -106,6 +169,45 @@
   background: transparent;
 }
 
+.axisReactGridScroller {
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.axisReactGrid .reactgrid-content {
+  overflow: visible;
+}
+
 .axisReactGrid .reactgrid-content .rg-header-cell * {
   color: var(--mantine-color-text) !important;
+}
+
+.axisRgCellInner {
+  padding: 6px 10px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.axisRgHeaderInner {
+  padding: 7px 10px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  font-weight: 600;
+}
+
+.axisRgRowNumInner {
+  padding: 6px 8px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }

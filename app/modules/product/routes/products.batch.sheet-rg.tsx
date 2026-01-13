@@ -4,6 +4,7 @@ import type {
   CellChange,
   Column,
   Id,
+  MenuOption,
   ReactGridProps,
   Row,
 } from "@silevis/reactgrid";
@@ -22,10 +23,18 @@ import { useSheetColumnSelection } from "~/base/sheets/useSheetColumns";
 import { computeSheetColumnWidths } from "~/components/sheets/computeSheetColumnWidths";
 import {
   axisSelectCellTemplate,
+  axisHeaderCellTemplate,
   axisTextCellTemplate,
   type AxisSelectCell,
   type AxisTextCell,
 } from "~/components/sheets/reactGridCells";
+import { collectSelectedCellLocations } from "~/components/sheets/reactGridSelection";
+import { useReactGridHover } from "~/components/sheets/useReactGridHover";
+import {
+  ensureRowsForCellChanges,
+  parseRowIndexFromId,
+} from "~/modules/sheets/reactgrid/autoRows";
+import { useReactGridUndoRedo } from "~/modules/sheets/reactgrid/useReactGridUndoRedo";
 import { productSpec } from "~/modules/product/spec";
 import {
   buildProductBatchSheetViewSpec,
@@ -36,11 +45,13 @@ import { normalizeEnumOptions } from "~/modules/productMetadata/utils/productMet
 import { rulesForType } from "~/modules/product/rules/productTypeRules";
 
 export async function loader(args: LoaderFunctionArgs) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Response("Not Found", { status: 404 });
-  }
-  const { loader: batchLoader } = await import("./products.batch.sheet");
+  const { loader: batchLoader } = await import("./products.batch.sheet-dsg");
   return batchLoader(args as any);
+}
+
+export async function action(args: any) {
+  const { action: batchAction } = await import("./products.batch.sheet-dsg");
+  return batchAction(args);
 }
 
 type Choice = { label: string; value: string };
@@ -67,6 +78,7 @@ type SheetRow = {
 };
 
 const customCellTemplates = {
+  axisHeader: axisHeaderCellTemplate,
   axisText: axisTextCellTemplate,
   axisSelect: axisSelectCellTemplate,
 };
@@ -89,6 +101,8 @@ export default function ProductsBatchSheetReactGrid() {
   const [columnWidthOverrides, setColumnWidthOverrides] = useState<
     Record<string, number>
   >({});
+  const [gridActive, setGridActive] = useState(false);
+  const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
   const loaderData = useLoaderData<{
     mode: "create" | "edit";
@@ -101,6 +115,18 @@ export default function ProductsBatchSheetReactGrid() {
   const originalRef = useRef<SheetRow[]>([]);
   const { ref: gridContainerRef, width: gridContainerWidth } =
     useElementSize();
+  const {
+    gridRef: hoverGridRef,
+    handlePointerMove,
+    handlePointerLeave,
+  } = useReactGridHover();
+  const setGridRefs = useCallback(
+    (node: HTMLDivElement | null) => {
+      hoverGridRef.current = node;
+      gridWrapperRef.current = node;
+    },
+    [hoverGridRef]
+  );
   const options = useOptions();
   useSheetDirtyPrompt();
   const exitUrl = "/products";
@@ -114,6 +140,33 @@ export default function ProductsBatchSheetReactGrid() {
     () => buildProductBatchSheetViewSpec(metadataDefinitions),
     [metadataDefinitions]
   );
+  const createRow = useCallback(() => {
+    const metaFields: Record<string, any> = {};
+    for (const def of metadataDefinitions) {
+      metaFields[buildProductMetadataColumnKey(def.key)] =
+        def.dataType === "BOOLEAN" ? null : "";
+    }
+    return {
+      sku: "",
+      name: "",
+      type: "",
+      supplierId: "",
+      categoryId: "",
+      subCategoryId: "",
+      purchaseTaxId: "",
+      costPrice: "",
+      manualSalePrice: "",
+      pricingModel: "",
+      pricingSpecId: "",
+      moqPrice: "",
+      margin: "",
+      transferPct: "",
+      stockTrackingEnabled: false,
+      batchTrackingEnabled: false,
+      disableControls: false,
+      ...metaFields,
+    } as SheetRow;
+  }, [metadataDefinitions]);
   const columnSelection = useSheetColumnSelection({
     moduleKey: "products",
     viewId: viewSpec.id,
@@ -287,18 +340,155 @@ export default function ProductsBatchSheetReactGrid() {
     return new Map(viewSpec.columns.map((col) => [col.key, col] as const));
   }, [viewSpec.columns]);
 
+  const notifySkippedUndoRedo = useCallback(
+    (info: { kind: "undo" | "redo"; skippedCount: number }) => {
+      notifications.show({
+        color: "yellow",
+        title:
+          info.kind === "undo"
+            ? "Undo partially applied"
+            : "Redo partially applied",
+        message: "Some cells could not be changed due to rules.",
+      });
+    },
+    []
+  );
+
+  const applyValueChanges = useCallback(
+    (
+      valueChanges: Array<{ rowId: Id; columnId: Id; nextValue: any }>,
+      options?: {
+        rows?: SheetRow[];
+        rowIndexById?: Map<Id, number>;
+        source?: "edit" | "undo" | "redo";
+      }
+    ) => {
+      const baseRows = options?.rows ?? dataGrid.value;
+      const rowIndexByIdLocal =
+        options?.rowIndexById ??
+        new Map(
+          baseRows.map((row, idx) => [
+            row?.id ? `product:${row.id}` : `row:${idx}`,
+            idx,
+          ])
+        );
+      const workingRows = baseRows.slice();
+      const updatedIndexes = new Set<number>();
+      const applied: Array<{
+        rowId: string;
+        colId: string;
+        prevValue: any;
+        nextValue: any;
+      }> = [];
+      let skippedCount = 0;
+      for (const change of valueChanges) {
+        const rowIndex =
+          rowIndexByIdLocal.get(change.rowId) ??
+          parseRowIndexFromId(change.rowId);
+        if (rowIndex == null || rowIndex >= workingRows.length) {
+          skippedCount += 1;
+          continue;
+        }
+        const row = { ...workingRows[rowIndex] };
+        const key = String(change.columnId);
+        if (key === "__rownum") {
+          skippedCount += 1;
+          continue;
+        }
+        const def = columnDefsByKey.get(key);
+        const applicable = def?.isApplicable ? def.isApplicable(row) : true;
+        const readOnly = def?.editable === false || def?.key === "id";
+        if (!applicable || readOnly) {
+          skippedCount += 1;
+          continue;
+        }
+        const prevValue = (row as any)[key] ?? "";
+        (row as any)[key] = change.nextValue;
+        workingRows[rowIndex] = row;
+        applied.push({
+          rowId: String(change.rowId),
+          colId: String(change.columnId),
+          prevValue,
+          nextValue: change.nextValue,
+        });
+        updatedIndexes.add(rowIndex);
+      }
+      if (!updatedIndexes.size) {
+        return { applied, skippedCount };
+      }
+      const ops = Array.from(updatedIndexes).map((idx) => ({
+        type: "UPDATE" as const,
+        fromRowIndex: idx,
+        toRowIndex: idx + 1,
+      }));
+      dataGrid.onChange(workingRows, ops);
+      setDirty(true);
+      return { applied, skippedCount };
+    },
+    [columnDefsByKey, dataGrid]
+  );
+
+  const undoRedo = useReactGridUndoRedo({
+    applyCellChanges: (changes, opts) => {
+      const result = applyValueChanges(
+        changes.map((change) => ({
+          rowId: change.rowId,
+          columnId: change.colId,
+          nextValue: change.value,
+        })),
+        { source: opts?.source }
+      );
+      return {
+        appliedCount: result.applied.length,
+        skippedCount: result.skippedCount,
+      };
+    },
+    onSkipped: notifySkippedUndoRedo,
+  });
+
+  useEffect(() => {
+    sheetController.triggerUndo = () => undoRedo.undo("button");
+    sheetController.triggerRedo = () => undoRedo.redo("button");
+    sheetController.canUndo = undoRedo.canUndo;
+    sheetController.canRedo = undoRedo.canRedo;
+    sheetController.historyVersion = undoRedo.historyVersion;
+  }, [sheetController, undoRedo]);
+
+  useEffect(() => {
+    if (!gridActive) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+      const metaKey = isMac ? event.metaKey : event.ctrlKey;
+      if (!metaKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          undoRedo.redo("hotkey");
+        } else {
+          undoRedo.undo("hotkey");
+        }
+      } else if (!isMac && key === "y") {
+        event.preventDefault();
+        undoRedo.redo("hotkey");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gridActive, undoRedo]);
+
   const rows = useMemo<Row[]>(() => {
     const header: Row = {
       rowId: "header",
       height: 34,
       cells: [
         {
-          type: "header",
+          type: "axisHeader",
           text: "#",
           className: "rg-header-cell rg-rownum-cell",
         },
         ...columnSelection.selectedColumns.map((def) => ({
-          type: "header",
+          type: "axisHeader",
           text: def.label,
           className: "rg-header-cell",
         })),
@@ -321,6 +511,9 @@ export default function ProductsBatchSheetReactGrid() {
           ? def.getInapplicableReason?.(row) || "Not applicable"
           : undefined;
         const nonEditable = !isApplicable || isReadOnly;
+        const cellClassName = nonEditable
+          ? `rg-non-editable${!isApplicable ? " rg-inapplicable" : ""}`
+          : undefined;
         const showNa = nonEditable && isEmptyValue(rawValue);
         const groupId =
           groupByProduct && row?.id && !nonEditable
@@ -342,7 +535,7 @@ export default function ProductsBatchSheetReactGrid() {
             showNa,
             displayText: label,
             groupId,
-            className: nonEditable ? "rg-non-editable" : undefined,
+            className: cellClassName,
           } as AxisSelectCell;
         }
         if (def.key === "categoryId") {
@@ -362,7 +555,7 @@ export default function ProductsBatchSheetReactGrid() {
             showNa,
             displayText: label,
             groupId,
-            className: nonEditable ? "rg-non-editable" : undefined,
+            className: cellClassName,
           } as AxisSelectCell;
         }
         if (def.key === "purchaseTaxId") {
@@ -380,7 +573,7 @@ export default function ProductsBatchSheetReactGrid() {
             showNa,
             displayText: label,
             groupId,
-            className: nonEditable ? "rg-non-editable" : undefined,
+            className: cellClassName,
           } as AxisSelectCell;
         }
         if (def.key === "pricingModel") {
@@ -399,7 +592,7 @@ export default function ProductsBatchSheetReactGrid() {
             showNa,
             displayText: label,
             groupId,
-            className: nonEditable ? "rg-non-editable" : undefined,
+            className: cellClassName,
           } as AxisSelectCell;
         }
         if (def.key === "pricingSpecId") {
@@ -438,7 +631,7 @@ export default function ProductsBatchSheetReactGrid() {
             showNa,
             displayText: label,
             groupId,
-            className: nonEditable ? "rg-non-editable" : undefined,
+            className: cellClassName,
           } as AxisSelectCell;
         }
         return {
@@ -448,7 +641,7 @@ export default function ProductsBatchSheetReactGrid() {
           tooltip: inapplicableReason,
           showNa,
           groupId,
-          className: nonEditable ? "rg-non-editable" : undefined,
+          className: cellClassName,
         } as AxisTextCell;
       }),
       ];
@@ -479,78 +672,217 @@ export default function ProductsBatchSheetReactGrid() {
   const onCellsChanged = useCallback(
     (changes: CellChange[]) => {
       if (!changes?.length) return;
-      const nextRows = dataGrid.value.slice();
-      const updatedIndexes = new Set<number>();
-      const ignored: Array<{
-        rowId: Id;
-        columnId: Id;
-        reason: string;
-      }> = [];
-      for (const change of changes) {
-        if (change.rowId === "header") continue;
-        const rowIndex = rowIndexById.get(change.rowId);
-        if (rowIndex == null) continue;
-        const row = { ...nextRows[rowIndex] };
+      const shouldApplyChange = (
+        change: CellChange,
+        rowIndex: number | null,
+        row: SheetRow | null
+      ) => {
+        if (rowIndex == null) return false;
         const key = String(change.columnId);
-        if (key === "__rownum") {
-          ignored.push({
-            rowId: change.rowId,
-            columnId: change.columnId,
-            reason: "Read-only column",
-          });
-          continue;
-        }
+        if (key === "__rownum") return false;
         const def = columnDefsByKey.get(key);
-        const applicable = def?.isApplicable ? def.isApplicable(row) : true;
+        const targetRow = row ?? createRow();
+        const applicable = def?.isApplicable ? def.isApplicable(targetRow) : true;
         const readOnly = def?.editable === false || def?.key === "id";
-        if (!applicable) {
-          ignored.push({
-            rowId: change.rowId,
-            columnId: change.columnId,
-            reason: def?.getInapplicableReason?.(row) || "Not applicable",
-          });
-          continue;
-        }
         const newCell = change.newCell as any;
-        if (newCell?.nonEditable || readOnly) {
-          ignored.push({
+        if (!applicable || readOnly || newCell?.nonEditable) return false;
+        return true;
+      };
+
+      const growth = ensureRowsForCellChanges<SheetRow>({
+        changes,
+        rows: dataGrid.value,
+        rowIndexById,
+        resolveRowIndexFromId: parseRowIndexFromId,
+        shouldGrowForChange: (change, rowIndex, row) =>
+          shouldApplyChange(change, rowIndex, row),
+        appendRows: (count) =>
+          Array.from({ length: count }, () => createRow()),
+      });
+      const workingRows = growth.nextRows.slice();
+      if (growth.didGrow && process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.info("[reactgrid] auto rows appended", growth.addedCount);
+      }
+
+      const rowIndexByIdLocal = growth.didGrow
+        ? new Map<Id, number>(
+            workingRows.map((row, idx) => [
+              row?.id ? `product:${row.id}` : `row:${idx}`,
+              idx,
+            ])
+          )
+        : rowIndexById;
+      const valueChanges = changes
+        .filter((change) => change.rowId !== "header")
+        .map((change) => {
+          const newCell = change.newCell as any;
+          const nextValue =
+            newCell?.type === "axisSelect"
+              ? newCell.selectedValue ?? ""
+              : newCell?.type === "axisText"
+              ? newCell.text ?? ""
+              : newCell?.text ?? "";
+          return {
             rowId: change.rowId,
             columnId: change.columnId,
-            reason: readOnly ? "Read-only column" : "Non-editable cell",
-          });
-          continue;
-        }
-        const nextValue =
-          newCell?.type === "axisSelect"
-            ? newCell.selectedValue ?? ""
-            : newCell?.type === "axisText"
-            ? newCell.text ?? ""
-            : newCell?.text ?? "";
-        (row as any)[key] = nextValue;
-        nextRows[rowIndex] = row;
-        updatedIndexes.add(rowIndex);
-      }
-      if (ignored.length) {
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.info("[reactgrid] ignored cell changes", ignored);
-        }
-      }
+            nextValue,
+          };
+        });
+      const result = applyValueChanges(valueChanges, {
+        rows: workingRows,
+        rowIndexById: rowIndexByIdLocal,
+        source: "edit",
+      });
       setChangeStats({
         total: changes.length,
-        applied: updatedIndexes.size,
-        ignored: ignored.length,
+        applied: result.applied.length,
+        ignored: changes.length - result.applied.length,
       });
-      if (!updatedIndexes.size) return;
-      const ops = Array.from(updatedIndexes).map((idx) => ({
-        type: "UPDATE" as const,
-        fromRowIndex: idx,
-        toRowIndex: idx + 1,
-      }));
-      dataGrid.onChange(nextRows, ops);
-      setDirty(true);
+      if (result.applied.length) {
+        undoRedo.recordAppliedBatch(result.applied, {
+          kind: changes.length > 1 ? "paste" : "edit",
+        });
+      }
     },
-    [columnDefsByKey, dataGrid, rowIndexById]
+    [
+      applyValueChanges,
+      columnDefsByKey,
+      createRow,
+      dataGrid,
+      rowIndexById,
+      undoRedo,
+    ]
+  );
+
+  const buildClearChanges = useCallback(
+    (selectedRanges: any[]) => {
+      const locations = collectSelectedCellLocations(selectedRanges);
+      const changes: CellChange[] = [];
+      for (const location of locations) {
+        if (location.rowId === "header") continue;
+        if (String(location.columnId) === "__rownum") continue;
+        const row = rows[location.rowIdx];
+        const previousCell = row?.cells?.[location.colIdx] as any;
+        if (!previousCell) continue;
+        let newCell = previousCell;
+        if (previousCell.type === "axisSelect") {
+          newCell = {
+            ...previousCell,
+            selectedValue: "",
+            displayText: "",
+          };
+        } else if (previousCell.type === "axisText") {
+          newCell = { ...previousCell, text: "" };
+        }
+        changes.push({
+          rowId: location.rowId,
+          columnId: location.columnId,
+          type: newCell.type,
+          previousCell,
+          newCell,
+        });
+      }
+      return changes;
+    },
+    [rows]
+  );
+
+  const buildFillDownChanges = useCallback(
+    (selectedRanges: any[]) => {
+      const changes: CellChange[] = [];
+      for (const range of selectedRanges || []) {
+        const rangeRows = Array.isArray(range?.rows) ? range.rows : [];
+        const rangeColumns = Array.isArray(range?.columns) ? range.columns : [];
+        if (rangeRows.length < 2 || !rangeColumns.length) continue;
+        const sortedRows = [...rangeRows].sort(
+          (a, b) => (a?.idx ?? 0) - (b?.idx ?? 0)
+        );
+        const sourceRow = sortedRows[0];
+        if (!sourceRow || sourceRow.idx <= 0) continue;
+        for (const column of rangeColumns) {
+          if (column?.idx == null || column.idx <= 0) continue;
+          const sourceCell = rows[sourceRow.idx]?.cells?.[column.idx] as any;
+          if (!sourceCell) continue;
+          for (const row of sortedRows.slice(1)) {
+            if (!row || row.idx <= 0) continue;
+            const targetCell = rows[row.idx]?.cells?.[column.idx] as any;
+            if (!targetCell) continue;
+            let newCell = targetCell;
+            if (sourceCell.type === "axisSelect") {
+              newCell = {
+                ...targetCell,
+                selectedValue: sourceCell.selectedValue ?? "",
+                displayText: sourceCell.displayText ?? "",
+              };
+            } else if (sourceCell.type === "axisText") {
+              newCell = {
+                ...targetCell,
+                text: sourceCell.text ?? "",
+              };
+            }
+            changes.push({
+              rowId: row.rowId,
+              columnId: column.columnId,
+              type: newCell.type,
+              previousCell: targetCell,
+              newCell,
+            });
+          }
+        }
+      }
+      return changes;
+    },
+    [rows]
+  );
+
+  const handleContextMenu = useCallback(
+    (
+      _selectedRowIds: Id[],
+      _selectedColIds: Id[],
+      _selectionMode: string,
+      menuOptions: MenuOption[],
+      selectedRanges: any[]
+    ) => {
+      const options = menuOptions ? [...menuOptions] : [];
+      options.push({
+        id: "clear-contents",
+        label: "Clear contents",
+        handler: () => {
+          const changes = buildClearChanges(selectedRanges);
+          if (changes.length) onCellsChanged(changes);
+        },
+      });
+      options.push({
+        id: "fill-down",
+        label: "Fill down",
+        handler: () => {
+          const changes = buildFillDownChanges(selectedRanges);
+          if (changes.length) onCellsChanged(changes);
+        },
+      });
+      options.push({
+        id: "reset-column-widths",
+        label: "Reset column widths",
+        handler: () => {
+          setColumnWidthOverrides({});
+          if (typeof window !== "undefined") {
+            try {
+              window.localStorage.removeItem(widthStorageKey);
+            } catch {
+              // ignore
+            }
+          }
+        },
+      });
+      return options;
+    },
+    [
+      buildClearChanges,
+      buildFillDownChanges,
+      onCellsChanged,
+      widthStorageKey,
+    ]
   );
 
   const handleColumnResized = useCallback(
@@ -600,7 +932,8 @@ export default function ProductsBatchSheetReactGrid() {
     dataGrid.reset();
     setDirty(false);
     originalRef.current = [];
-  }, [dataGrid]);
+    undoRedo.clearHistory();
+  }, [dataGrid, undoRedo]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -676,10 +1009,11 @@ export default function ProductsBatchSheetReactGrid() {
 
   return (
     <SheetShell
-      title="Batch Edit Products (ReactGrid)"
+      title="Batch Edit Products"
       controller={sheetController}
       backTo={exitUrl}
       saveState={saving ? "saving" : "idle"}
+      dsgLink="/products/batch/sheet-dsg"
       columnPicker={{
         moduleKey: "products",
         viewId: viewSpec.id,
@@ -728,26 +1062,43 @@ export default function ProductsBatchSheetReactGrid() {
                 height: bodyHeight,
                 overflow: "hidden",
               }}
-              className="axisReactGrid"
             >
-              {/* Note: to achieve single-click edit for select cells, this spike renders Mantine Select inline. */}
-              {ReactGridComponent ? (
-                <ReactGridComponent
-                  rows={rows}
-                  columns={columns}
-                  customCellTemplates={customCellTemplates}
-                  onCellsChanged={onCellsChanged}
-                  enableColumnResizeOnAllHeaders
-                  stickyTopRows={1}
-                  onColumnResized={handleColumnResized}
-                  enableRangeSelection
-                  enableRowSelection
-                  enableColumnSelection
-                  enableFillHandle
-                />
-              ) : (
-                <div style={{ padding: 12 }}>Loading grid…</div>
-              )}
+              <div className="axisReactGridScroller">
+                <div
+                  className="axisReactGrid"
+                  ref={setGridRefs}
+                  onPointerMove={handlePointerMove}
+                  onPointerLeave={handlePointerLeave}
+                  onPointerDown={() => {
+                    setGridActive(true);
+                    gridWrapperRef.current?.focus();
+                  }}
+                  onFocus={() => setGridActive(true)}
+                  onBlur={() => setGridActive(false)}
+                  tabIndex={0}
+                >
+                  {/* Note: to achieve single-click edit for select cells, this spike renders Mantine Select inline. */}
+                  {ReactGridComponent ? (
+                    <ReactGridComponent
+                      rows={rows}
+                      columns={columns}
+                      customCellTemplates={customCellTemplates}
+                      onCellsChanged={onCellsChanged}
+                      enableColumnResizeOnAllHeaders
+                      stickyTopRows={1}
+                      stickyLeftColumns={1}
+                      onColumnResized={handleColumnResized}
+                      enableRangeSelection
+                      enableRowSelection
+                      enableColumnSelection
+                      enableFillHandle
+                      onContextMenu={handleContextMenu}
+                    />
+                  ) : (
+                    <div style={{ padding: 12 }}>Loading grid…</div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </SheetFrame>

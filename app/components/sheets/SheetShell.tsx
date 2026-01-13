@@ -21,6 +21,7 @@ export function SheetShell({
   showStatus = true,
   rightExtra,
   columnPicker,
+  dsgLink,
   children,
   footer,
 }: {
@@ -32,6 +33,7 @@ export function SheetShell({
   saveState?: "idle" | "saving" | "error";
   showStatus?: boolean;
   rightExtra?: ReactNode;
+  dsgLink?: string;
   columnPicker?: {
     moduleKey: string;
     viewId: string;
@@ -75,6 +77,7 @@ export function SheetShell({
           saveState={saveState}
           showStatus={showStatus}
           rightExtra={headerExtra}
+          dsgLink={dsgLink}
         />
       </div>
       <div

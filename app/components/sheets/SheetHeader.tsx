@@ -2,15 +2,18 @@ import {
   ActionIcon,
   Button,
   Group,
+  Menu,
   Stack,
   Text,
   Tooltip,
+  useMantineColorScheme,
 } from "@mantine/core";
 import {
   IconChevronLeft,
   IconArrowBackUp,
   IconArrowForwardUp,
   IconBug,
+  IconDotsVertical,
 } from "@tabler/icons-react";
 import { useNavigate, useRouteLoaderData } from "@remix-run/react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -29,6 +32,7 @@ type SheetHeaderProps = {
   saveState?: "idle" | "saving" | "error";
   showStatus?: boolean;
   rightExtra?: ReactNode;
+  dsgLink?: string;
 };
 
 export function SheetHeader({
@@ -40,10 +44,12 @@ export function SheetHeader({
   saveState = "idle",
   showStatus = true,
   rightExtra,
+  dsgLink,
 }: SheetHeaderProps) {
   const navigate = useNavigate();
   const rootData = useRouteLoaderData<typeof rootLoader>("root");
   const [debugOpen, setDebugOpen] = useState(false);
+  const { colorScheme } = useMantineColorScheme();
   const { isDirty, cancelHandlerRef, forceNavigate } = useGlobalFormContext();
   const canUndo = Boolean(controller?.canUndo);
   const canRedo = Boolean(controller?.canRedo);
@@ -55,6 +61,7 @@ export function SheetHeader({
   const isAdminUser =
     !rootData?.userLevel || rootData?.userLevel === "Admin";
   const canDebug = Boolean(isDev && isAdminUser);
+  const canShowDsgLink = Boolean(isDev && dsgLink);
   const statusLabel = useMemo(() => {
     if (!showStatus) return null;
     if (saveState === "saving") return "Saving...";
@@ -98,16 +105,19 @@ export function SheetHeader({
     <div
       data-sheet-header
       style={{
-        height: 52,
-        padding: "0 14px",
+        height: 56,
+        padding: "0 18px",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        borderBottom: "1px solid var(--mantine-color-gray-3)",
+        borderBottom:
+          colorScheme === "dark"
+            ? "1px solid rgba(255, 255, 255, 0.08)"
+            : "1px solid var(--mantine-color-gray-3)",
         gap: 12,
       }}
     >
-      <Group gap={10} wrap="nowrap" style={{ minWidth: 0 }}>
+      <Group gap={12} wrap="nowrap" style={{ minWidth: 0 }}>
         <Tooltip label="Back" withArrow>
           <ActionIcon
             variant="subtle"
@@ -129,7 +139,7 @@ export function SheetHeader({
         </Stack>
       </Group>
 
-      <Group gap={8} wrap="nowrap">
+      <Group gap={10} wrap="nowrap">
         {showStatus ? (
           <Text size="xs" c={saveState === "error" ? "red" : "dimmed"}>
             {statusLabel}
@@ -165,6 +175,20 @@ export function SheetHeader({
               <IconBug size={16} />
             </ActionIcon>
           </Tooltip>
+        ) : null}
+        {canShowDsgLink ? (
+          <Menu withinPortal>
+            <Menu.Target>
+              <ActionIcon variant="subtle" aria-label="More">
+                <IconDotsVertical size={16} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => navigate(dsgLink!)}>
+                Open DSG version
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         ) : null}
         <Button size="xs" onClick={handleExit}>
           Done

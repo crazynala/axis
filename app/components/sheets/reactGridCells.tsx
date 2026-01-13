@@ -7,6 +7,7 @@ import type {
   Uncertain,
   UncertainCompatible,
 } from "@silevis/reactgrid";
+import { SkuLookupCell } from "./SkuLookupCell";
 
 export type AxisTextCell = Cell & {
   type: "axisText";
@@ -14,6 +15,12 @@ export type AxisTextCell = Cell & {
   placeholder?: string;
   tooltip?: string;
   showNa?: boolean;
+};
+
+export type AxisHeaderCell = Cell & {
+  type: "axisHeader";
+  text: string;
+  tooltip?: string;
 };
 
 export type AxisSelectCell = Cell & {
@@ -28,6 +35,15 @@ export type AxisSelectCell = Cell & {
   displayText?: string;
 };
 
+export type AxisSkuCell = Cell & {
+  type: "axisSku";
+  text: string;
+  tooltip?: string;
+  showLookup?: boolean;
+  onLookup?: () => void;
+  onPaste?: (value: string) => void;
+};
+
 const normalizeText = (value: unknown) => {
   if (value == null) return "";
   return String(value);
@@ -40,6 +56,13 @@ const renderWithTooltip = (node: React.ReactNode, tooltip?: string) => {
       <span>{node}</span>
     </Tooltip>
   );
+};
+
+const getInnerClassName = (cell: { className?: string }) => {
+  const className = cell.className || "";
+  if (className.includes("rg-rownum-cell")) return "axisRgRowNumInner";
+  if (className.includes("rg-header-cell")) return "axisRgHeaderInner";
+  return "axisRgCellInner";
 };
 
 export class AxisTextCellTemplate implements CellTemplate<AxisTextCell> {
@@ -112,7 +135,42 @@ export class AxisTextCellTemplate implements CellTemplate<AxisTextCell> {
       ) : (
         text
       );
-    return renderWithTooltip(display, cell.tooltip);
+    return renderWithTooltip(
+      <div className={getInnerClassName(cell)}>{display}</div>,
+      cell.tooltip
+    );
+  }
+}
+
+export class AxisHeaderCellTemplate implements CellTemplate<AxisHeaderCell> {
+  getCompatibleCell(uncertainCell: Uncertain<AxisHeaderCell>) {
+    return {
+      ...uncertainCell,
+      type: "axisHeader",
+      text: normalizeText(uncertainCell.text),
+      nonEditable: true,
+      tooltip: uncertainCell.tooltip,
+      className: uncertainCell.className || "rg-header-cell",
+      style: uncertainCell.style,
+    } as Compatible<AxisHeaderCell>;
+  }
+
+  update(
+    cell: Compatible<AxisHeaderCell>,
+    cellToMerge: UncertainCompatible<AxisHeaderCell>
+  ) {
+    return this.getCompatibleCell({ ...cell, ...cellToMerge });
+  }
+
+  getClassName(cell: Compatible<AxisHeaderCell>) {
+    return cell.className || "rg-header-cell";
+  }
+
+  render(cell: Compatible<AxisHeaderCell>) {
+    return renderWithTooltip(
+      <div className={getInnerClassName(cell)}>{cell.text}</div>,
+      cell.tooltip
+    );
   }
 }
 
@@ -168,7 +226,10 @@ export class AxisSelectCellTemplate implements CellTemplate<AxisSelectCell> {
         ) : (
           label
         );
-      return renderWithTooltip(display, cell.tooltip);
+      return renderWithTooltip(
+        <div className={getInnerClassName(cell)}>{display}</div>,
+        cell.tooltip
+      );
     }
     const data = (cell.values || []).map((opt) => ({
       value: opt.value,
@@ -210,5 +271,63 @@ export class AxisSelectCellTemplate implements CellTemplate<AxisSelectCell> {
   }
 }
 
+export class AxisSkuCellTemplate implements CellTemplate<AxisSkuCell> {
+  getCompatibleCell(uncertainCell: Uncertain<AxisSkuCell>) {
+    return {
+      ...uncertainCell,
+      type: "axisSku",
+      text: normalizeText(uncertainCell.text),
+      nonEditable: !!uncertainCell.nonEditable,
+      tooltip: uncertainCell.tooltip,
+      showLookup: uncertainCell.showLookup,
+      onLookup: uncertainCell.onLookup,
+      onPaste: uncertainCell.onPaste,
+      className: uncertainCell.className,
+      style: uncertainCell.style,
+    } as Compatible<AxisSkuCell>;
+  }
+
+  update(
+    cell: Compatible<AxisSkuCell>,
+    cellToMerge: UncertainCompatible<AxisSkuCell>
+  ) {
+    return this.getCompatibleCell({ ...cell, ...cellToMerge });
+  }
+
+  getClassName(cell: Compatible<AxisSkuCell>, isInEditMode: boolean) {
+    if (isInEditMode) return "rg-axis-sku-cell editing";
+    return "rg-axis-sku-cell";
+  }
+
+  render(
+    cell: Compatible<AxisSkuCell>,
+    isInEditMode: boolean,
+    onCellChanged: (cell: Compatible<AxisSkuCell>, commit: boolean) => void
+  ) {
+    if (cell.nonEditable || !isInEditMode) {
+      return renderWithTooltip(
+        <div className={getInnerClassName(cell)}>{cell.text}</div>,
+        cell.tooltip
+      );
+    }
+    return (
+      <SkuLookupCell
+        value={cell.text}
+        focus={isInEditMode}
+        readOnly={cell.nonEditable}
+        showLookup={cell.showLookup}
+        onLookup={cell.onLookup}
+        onPaste={cell.onPaste}
+        onChange={(value) =>
+          onCellChanged({ ...cell, text: value }, false)
+        }
+        onBlur={() => onCellChanged(cell, true)}
+      />
+    );
+  }
+}
+
 export const axisTextCellTemplate = new AxisTextCellTemplate();
+export const axisHeaderCellTemplate = new AxisHeaderCellTemplate();
 export const axisSelectCellTemplate = new AxisSelectCellTemplate();
+export const axisSkuCellTemplate = new AxisSkuCellTemplate();
