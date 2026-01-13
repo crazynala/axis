@@ -1,4 +1,5 @@
 import type { ColumnDef } from "~/base/index/columns";
+import type { ModuleSheetSpec } from "~/base/sheets/sheetSpec";
 import type { ProductWarning } from "./warnings";
 
 export type ProductFieldSpec = {
@@ -32,6 +33,7 @@ export type ProductSpec = {
     };
     presentationKeys: string[];
   };
+  sheet?: ModuleSheetSpec<any>;
   warnings: {
     buildProductWarnings: (...args: any[]) => ProductWarning[];
     shouldWarnMissingCmtLine: (

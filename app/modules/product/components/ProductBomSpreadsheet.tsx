@@ -37,6 +37,7 @@ export default function ProductBomSpreadsheet({
   loading,
   dirty,
   onRowsChange,
+  selectedColumnKeys,
   height,
   minRows = DEFAULT_MIN_ROWS,
 }: {
@@ -45,6 +46,7 @@ export default function ProductBomSpreadsheet({
   loading: boolean;
   dirty: boolean;
   onRowsChange?: (rows: BOMRow[]) => void;
+  selectedColumnKeys?: string[];
   height?: number;
   minRows?: number;
 }) {
@@ -235,8 +237,13 @@ export default function ProductBomSpreadsheet({
       supplierCol,
       qtyCol,
     ];
-    return guardColumnsWithDisableControls(columns);
-  }, []);
+    const guarded = guardColumnsWithDisableControls(columns);
+    if (!selectedColumnKeys || !selectedColumnKeys.length) return guarded;
+    const byKey = new Map(guarded.map((column) => [String(column.id), column]));
+    return selectedColumnKeys
+      .map((key) => byKey.get(key))
+      .filter(Boolean) as Column<BOMRow>[];
+  }, [enqueueLookup, selectedColumnKeys]);
 
   // Picker modal state
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -296,6 +303,7 @@ export default function ProductBomSpreadsheet({
         </Button>
       </Group>
       <SheetGrid
+        key={`cols:${(selectedColumnKeys || []).join("|")}`}
         value={displayRows}
         onChange={(next) => {
           const typed = ((next as BOMRow[]) || []).map((row) => ({

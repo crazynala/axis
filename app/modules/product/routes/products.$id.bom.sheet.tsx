@@ -11,6 +11,8 @@ import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useInitGlobalFormContext } from "@aa/timber";
 import { useSheetDirtyPrompt } from "~/components/sheets/SheetControls";
 import { SheetFrame } from "~/components/sheets/SheetFrame";
+import { useSheetColumnSelection } from "~/base/sheets/useSheetColumns";
+import { productSpec } from "~/modules/product/spec";
 
 export async function loader({ params }: any) {
   const id = Number(params.id);
@@ -82,6 +84,16 @@ export default function ProductBomRoute() {
     ? `/products/${productId}`
     : "/products";
   const originalRef = useRef<BOMRow[]>(rows);
+  const viewSpec = productSpec.sheet?.views["detail-bom"];
+  if (!viewSpec) {
+    throw new Error("Missing product sheet spec: detail-bom");
+  }
+  const columnSelection = useSheetColumnSelection({
+    moduleKey: "products",
+    viewId: viewSpec.id,
+    scope: "detail",
+    viewSpec,
+  });
 
   useEffect(() => {
     if (!refreshOnNextRows) return;
@@ -245,6 +257,14 @@ export default function ProductBomRoute() {
       title="Bill of Materials Spreadsheet"
       backTo={exitUrl}
       saveState={saving ? "saving" : "idle"}
+      columnPicker={{
+        moduleKey: "products",
+        viewId: viewSpec.id,
+        scope: "detail",
+        viewSpec,
+        rowsForRelevance: editedRows,
+        selection: columnSelection,
+      }}
     >
       {(bodyHeight) => (
         <SheetFrame gridHeight={bodyHeight}>
@@ -255,6 +275,7 @@ export default function ProductBomRoute() {
               loading={false}
               dirty={dirty}
               onRowsChange={setEditedRows}
+              selectedColumnKeys={columnSelection.selectedKeys}
               height={gridHeight}
             />
           )}

@@ -55,7 +55,9 @@ import { Notifications } from "@mantine/notifications";
 
 import "./styles/css-layers.css";
 import "react-datasheet-grid/dist/style.layer.css";
+import "@silevis/reactgrid/styles.css";
 import "@mantine/core/styles.layer.css";
+import "./styles/reactgrid-overrides.css";
 import "@mantine/dates/styles.layer.css";
 import "@mantine/notifications/styles.layer.css";
 import "mantine-datatable/styles.layer.css";
@@ -403,7 +405,9 @@ export default function App() {
   const isLogin = location.pathname === "/login";
   const isAdmin = location.pathname.startsWith("/admin");
   const isSheetPath = (pathname: string) =>
-    pathname.endsWith("/sheet") || pathname.includes("-sheet");
+    pathname.endsWith("/sheet") ||
+    pathname.includes("-sheet") ||
+    pathname.includes("/sheet-");
 
   const navTopItems: NavMenuItem[] = [
     { to: "/products", icon: <IconBrandDatabricks />, label: "Products" },

@@ -21,6 +21,8 @@ import {
   normalizeUsageValue,
   type UsageValue,
 } from "~/components/sheets/UsageSelectCell";
+import { useSheetColumnSelection } from "~/base/sheets/useSheetColumns";
+import { productSpec } from "~/modules/product/spec";
 
 type MultiBOMRow = {
   productId: number;
@@ -312,6 +314,16 @@ export default function ProductsBomsFullzoom() {
   });
   const sheetController = undoableController;
   const rows = editableRows;
+  const viewSpec = productSpec.sheet?.views["boms"];
+  if (!viewSpec) {
+    throw new Error("Missing product sheet spec: boms");
+  }
+  const columnSelection = useSheetColumnSelection({
+    moduleKey: "products",
+    viewId: viewSpec.id,
+    scope: "index",
+    viewSpec,
+  });
   const controllerRef = useRef(undoableController);
   useEffect(() => {
     controllerRef.current = undoableController;
@@ -573,8 +585,12 @@ export default function ProductsBomsFullzoom() {
       typeCol,
       supplierCol,
     ];
-    return guardColumnsWithDisableControls(cols);
-  }, [col, enqueueLookup]);
+    const guarded = guardColumnsWithDisableControls(cols);
+    const byKey = new Map(guarded.map((column) => [String(column.id), column]));
+    return columnSelection.selectedKeys
+      .map((key) => byKey.get(key))
+      .filter(Boolean) as Column<MultiBOMRow>[];
+  }, [col, columnSelection.selectedKeys, enqueueLookup]);
 
   const displayRows = useMemo(
     () => normalizeDisplayRows(rows),
@@ -680,11 +696,20 @@ export default function ProductsBomsFullzoom() {
       controller={sheetController}
       backTo={exitUrl}
       saveState={saving ? "saving" : "idle"}
+      columnPicker={{
+        moduleKey: "products",
+        viewId: viewSpec.id,
+        scope: "index",
+        viewSpec,
+        rowsForRelevance: rows,
+        selection: columnSelection,
+      }}
     >
       {(gridHeight) => (
         <SheetFrame gridHeight={gridHeight}>
           {(bodyHeight) => (
             <SheetGrid
+              key={`cols:${columnSelection.selectedKeys.join("|")}`}
               controller={sheetController}
               value={displayRows as any}
               onChange={onChange as any}

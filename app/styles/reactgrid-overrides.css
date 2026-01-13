@@ -1,0 +1,77 @@
+.axisReactGrid {
+  border: 1px solid
+    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+}
+
+.axisReactGrid .reactgrid-content,
+.axisReactGrid .reactgrid-content .rg-pane.rg-pane-top,
+.axisReactGrid .reactgrid-content .rg-pane.rg-pane-bottom,
+.axisReactGrid .reactgrid-content .rg-pane.rg-pane-left,
+.axisReactGrid .reactgrid-content .rg-pane.rg-pane-right {
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+}
+
+.axisReactGrid .rg-cell,
+.axisReactGrid .rg-header-cell {
+  border-right: 1px solid
+    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
+  border-bottom: 1px solid
+    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
+  color: var(--mantine-color-text);
+}
+
+.axisReactGrid .rg-header-cell {
+  background: color-mix(
+    in oklab,
+    var(--mantine-color-text) 4%,
+    transparent
+  );
+  font-weight: 600;
+}
+
+.axisReactGrid .rg-header-row .rg-header-cell {
+  border-top: none;
+}
+
+.axisReactGrid .rg-cell,
+.axisReactGrid .rg-header-cell {
+  padding: 6px 10px;
+}
+
+.axisReactGrid .rg-cell.rg-selected {
+  background: color-mix(
+    in oklab,
+    var(--mantine-primary-color-filled) 14%,
+    transparent
+  );
+}
+
+.axisReactGrid .rg-cell.rg-focused {
+  outline: 2px solid
+    color-mix(in oklab, var(--mantine-primary-color-filled) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.axisReactGrid .rg-cell.rg-non-editable {
+  background: color-mix(
+    in oklab,
+    var(--mantine-color-text) 3%,
+    transparent
+  );
+  color: color-mix(
+    in oklab,
+    var(--mantine-color-text) 70%,
+    transparent
+  );
+  cursor: not-allowed;
+}
+
+.axisReactGrid .rg-rownum-cell {
+  text-align: right;
+  justify-content: flex-end;
+}

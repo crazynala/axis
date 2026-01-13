@@ -27,6 +27,8 @@ import {
   normalizeUsageValue,
   type UsageValue,
 } from "~/components/sheets/UsageSelectCell";
+import { useSheetColumnSelection } from "~/base/sheets/useSheetColumns";
+import { jobSpec } from "~/modules/job/spec";
 import {
   ProductPickerModal,
   type ProductPickerItem,
@@ -381,6 +383,16 @@ export default function CostingsSheetRoute() {
   const sheetController = adaptRdgController(controller);
   const rows = controller.value;
   const setRows = controller.setValue;
+  const viewSpec = jobSpec.sheet?.views["assembly-costings"];
+  if (!viewSpec) {
+    throw new Error("Missing job sheet spec: assembly-costings");
+  }
+  const columnSelection = useSheetColumnSelection({
+    moduleKey: "jobs",
+    viewId: viewSpec.id,
+    scope: "assembly",
+    viewSpec,
+  });
 
   useSheetDirtyPrompt();
   const prevRowsRef = useRef<CostingEditRow[]>([]);
@@ -749,8 +761,19 @@ export default function CostingsSheetRoute() {
     } as any;
     const qpuCol = col("quantityPerUnit", "Qty/Unit", 0.9, false);
     const unitCostCol = col("unitCost", "Unit Cost", 1, true);
-    return [assemblyCol, skuCol, nameCol, usageCol, qpuCol, unitCostCol];
-  }, [col, enqueueLookup, openPickerForRow]);
+    const allColumns = [
+      assemblyCol,
+      skuCol,
+      nameCol,
+      usageCol,
+      qpuCol,
+      unitCostCol,
+    ];
+    const byKey = new Map(allColumns.map((column) => [String(column.id), column]));
+    return columnSelection.selectedKeys
+      .map((key) => byKey.get(key))
+      .filter(Boolean) as Column<CostingEditRow>[];
+  }, [col, columnSelection.selectedKeys, enqueueLookup, openPickerForRow]);
 
   const onChange = useCallback(
     (next: CostingEditRow[]) => {
@@ -816,6 +839,14 @@ export default function CostingsSheetRoute() {
         controller={sheetController}
         backTo={exitUrl}
         saveState={saving ? "saving" : "idle"}
+        columnPicker={{
+          moduleKey: "jobs",
+          viewId: viewSpec.id,
+          scope: "assembly",
+          viewSpec,
+          rowsForRelevance: rows,
+          selection: columnSelection,
+        }}
       >
         {(gridHeight) => {
           const groupedRows = withGroupTrailingBlank(
@@ -842,6 +873,7 @@ export default function CostingsSheetRoute() {
             <SheetFrame gridHeight={gridHeight}>
               {(bodyHeight) => (
                 <SheetGrid
+                  key={`cols:${columnSelection.selectedKeys.join("|")}`}
                   controller={sheetController}
                   value={displayRows as any}
                   onChange={onChange as any}
