@@ -1,6 +1,6 @@
-.axisReactGrid {
-  border: 1px solid
-    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
+.axisReactGrid,
+.axisReactGrid .reactgrid-content {
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
   background: var(--mantine-color-body);
@@ -18,42 +18,37 @@
 
 .axisReactGrid .rg-cell,
 .axisReactGrid .rg-header-cell {
-  border-right: 1px solid
-    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
-  border-bottom: 1px solid
-    color-mix(in oklab, var(--mantine-color-text) 10%, transparent);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--mantine-color-text);
 }
 
 .axisReactGrid .rg-header-cell {
-  background: color-mix(
-    in oklab,
-    var(--mantine-color-text) 4%,
-    transparent
-  );
+  background: rgba(255, 255, 255, 0.04);
   font-weight: 600;
 }
 
 .axisReactGrid .rg-header-row .rg-header-cell {
   border-top: none;
+  border-bottom-color: rgba(255, 255, 255, 0.14);
 }
 
 .axisReactGrid .rg-cell,
 .axisReactGrid .rg-header-cell {
-  padding: 6px 10px;
+  padding: 5px 8px;
 }
 
 .axisReactGrid .rg-cell.rg-selected {
   background: color-mix(
     in oklab,
-    var(--mantine-primary-color-filled) 14%,
+    var(--mantine-primary-color-filled) 16%,
     transparent
   );
 }
 
 .axisReactGrid .rg-cell.rg-focused {
   outline: 2px solid
-    color-mix(in oklab, var(--mantine-primary-color-filled) 55%, transparent);
+    color-mix(in oklab, var(--mantine-primary-color-filled) 45%, transparent);
   outline-offset: -2px;
 }
 
@@ -74,4 +69,43 @@
 .axisReactGrid .rg-rownum-cell {
   text-align: right;
   justify-content: flex-end;
+  font-size: 0.85em;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.axisReactGrid .rg-rownum-cell {
+  border-right-color: rgba(255, 255, 255, 0.14);
+}
+
+.axisReactGrid .rg-celleditor,
+.axisReactGrid .rg-celleditor-input {
+  color: var(--mantine-color-text);
+}
+
+.axisReactGrid .rg-cell *,
+.axisReactGrid .rg-header-cell * {
+  color: inherit;
+}
+
+.axisReactGrid input,
+.axisReactGrid textarea,
+.axisReactGrid select {
+  color: var(--mantine-color-text);
+  background: transparent;
+}
+
+.axisReactGrid .reactgrid-content,
+.axisReactGrid .reactgrid-content * {
+  color: var(--mantine-color-text) !important;
+}
+
+.axisReactGrid .reactgrid-content input,
+.axisReactGrid .reactgrid-content textarea,
+.axisReactGrid .reactgrid-content select {
+  color: var(--mantine-color-text) !important;
+  background: transparent;
+}
+
+.axisReactGrid .reactgrid-content .rg-header-cell * {
+  color: var(--mantine-color-text) !important;
 }
