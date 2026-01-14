@@ -22,6 +22,7 @@ import type { SheetController } from "./SheetController";
 import { useGlobalFormContext } from "@aa/timber";
 import type { loader as rootLoader } from "~/root";
 import { DebugDrawer } from "~/modules/debug/components/DebugDrawer";
+import type { DebugExplainPayload } from "~/modules/debug/types";
 
 type SheetHeaderProps = {
   title: ReactNode;
@@ -33,6 +34,7 @@ type SheetHeaderProps = {
   showStatus?: boolean;
   rightExtra?: ReactNode;
   dsgLink?: string;
+  debugPayload?: DebugExplainPayload | null;
 };
 
 export function SheetHeader({
@@ -45,6 +47,7 @@ export function SheetHeader({
   showStatus = true,
   rightExtra,
   dsgLink,
+  debugPayload,
 }: SheetHeaderProps) {
   const navigate = useNavigate();
   const rootData = useRouteLoaderData<typeof rootLoader>("root");
@@ -200,6 +203,7 @@ export function SheetHeader({
           opened={debugOpen}
           onClose={() => setDebugOpen(false)}
           title="Debug - Sheet"
+          payload={debugPayload}
         />
       ) : null}
     </div>

@@ -5,6 +5,7 @@ import type { SheetController } from "./SheetController";
 import { SheetHeader } from "./SheetHeader";
 import type { SheetViewSpec } from "~/base/sheets/sheetSpec";
 import { SheetColumnPicker } from "~/base/sheets/SheetColumnPicker";
+import type { DebugExplainPayload } from "~/modules/debug/types";
 import {
   type SheetColumnSelectionState,
   type SheetColumnRelevanceMap,
@@ -24,6 +25,7 @@ export function SheetShell({
   dsgLink,
   children,
   footer,
+  debugPayload,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -44,6 +46,7 @@ export function SheetShell({
   };
   children: (bodyHeight: number) => ReactNode;
   footer?: ReactNode;
+  debugPayload?: DebugExplainPayload | null;
 }) {
   const { ref: bodyRef, height: bodyHeight } = useElementSize();
   const pickerNode = columnPicker ? (
@@ -78,6 +81,7 @@ export function SheetShell({
           showStatus={showStatus}
           rightExtra={headerExtra}
           dsgLink={dsgLink}
+          debugPayload={debugPayload}
         />
       </div>
       <div

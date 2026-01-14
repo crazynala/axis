@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "@remix-run/react";
 
 const STORAGE_PREFIX = "axis:nl:v1:"; // namespace for nav-location
 const INDEX_SEARCH_SUFFIX = ":indexSearch"; // suffix for storing index search per module
+const SHEET_PATH_MARKERS = ["/sheet", "-sheet"];
 
 export type RegisterOptions = {
   includeSearch?: boolean; // default true
@@ -102,6 +103,7 @@ export function useRegisterNavLocation(opts?: RegisterOptions) {
     if (typeof window === "undefined") return;
     if (!moduleKey) return;
     if (opts?.exclude?.(location.pathname)) return;
+    if (isSheetPath(location.pathname)) return;
 
     const url = new URL(window.location.origin);
     url.pathname = location.pathname;
@@ -191,4 +193,9 @@ export function usePersistIndexSearch(moduleBasePath: string) {
       window.sessionStorage.setItem(lastPathKey, location.pathname);
     } catch {}
   }, [location.pathname, location.search, moduleBasePath, modKey, navigate]);
+}
+
+function isSheetPath(pathname: string) {
+  if (!pathname) return false;
+  return SHEET_PATH_MARKERS.some((marker) => pathname.includes(marker));
 }

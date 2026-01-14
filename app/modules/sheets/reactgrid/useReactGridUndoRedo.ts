@@ -11,6 +11,7 @@ type HistoryBatch = {
   changes: HistoryChange[];
   timestamp: number;
   kind: "edit" | "paste" | "fill" | "unknown";
+  meta?: Record<string, any> | null;
 };
 
 type ApplyResult = { appliedCount: number; skippedCount: number };
@@ -42,7 +43,10 @@ export function useReactGridUndoRedo({
   const recordAppliedBatch = useCallback(
     (
       applied: HistoryChange[],
-      meta?: { kind?: "edit" | "paste" | "fill" | "unknown" }
+      meta?: { kind?: "edit" | "paste" | "fill" | "unknown" } & Record<
+        string,
+        any
+      >
     ) => {
       if (!applied?.length) return;
       const now = Date.now();
@@ -60,6 +64,9 @@ export function useReactGridUndoRedo({
       ) {
         last.changes[0].nextValue = applied[0].nextValue;
         last.timestamp = now;
+        if (meta) {
+          last.meta = { ...(last.meta ?? {}), ...meta };
+        }
         redoStackRef.current = [];
         bump();
         return;
@@ -68,6 +75,7 @@ export function useReactGridUndoRedo({
         changes: applied,
         timestamp: now,
         kind,
+        meta: meta ?? null,
       });
       if (undoStackRef.current.length > maxHistory) {
         undoStackRef.current.splice(
@@ -98,6 +106,7 @@ export function useReactGridUndoRedo({
         onSkipped?.({ kind: "undo", skippedCount });
       }
       bump();
+      return batch;
     },
     [applyCellChanges, bump, onSkipped]
   );
@@ -119,6 +128,7 @@ export function useReactGridUndoRedo({
         onSkipped?.({ kind: "redo", skippedCount });
       }
       bump();
+      return batch;
     },
     [applyCellChanges, bump, onSkipped]
   );

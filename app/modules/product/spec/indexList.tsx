@@ -262,10 +262,10 @@ function CostCell({
 }
 
 function StockCell({ row }: { row: any }) {
-  if (!row?.stockTrackingEnabled) return <></>;
+  const enabled = Boolean(row?.stockTrackingEnabled);
   const [extra, setExtra] = useState<any | null>(null);
   useEffect(() => {
-    if (!row?.stockTrackingEnabled) return;
+    if (!enabled) return;
     const hasData =
       (Array.isArray(row?.c_byLocation) && row.c_byLocation.length > 0) ||
       row?.c_stockQty != null;
@@ -286,7 +286,8 @@ function StockCell({ row }: { row: any }) {
     return () => {
       abort = true;
     };
-  }, [row]);
+  }, [enabled, row]);
+  if (!enabled) return <></>;
   const qty =
     row?.c_stockQty ??
     extra?.c_stockQty ??
