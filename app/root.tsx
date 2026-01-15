@@ -54,10 +54,8 @@ import {
 import { Notifications } from "@mantine/notifications";
 
 import "./styles/css-layers.css";
-import "react-datasheet-grid/dist/style.layer.css";
-import "@silevis/reactgrid/styles.css";
+import "@glideapps/glide-data-grid/dist/index.css";
 import "@mantine/core/styles.layer.css";
-import "./styles/reactgrid-overrides.css";
 import "@mantine/dates/styles.layer.css";
 import "@mantine/notifications/styles.layer.css";
 import "mantine-datatable/styles.layer.css";
@@ -276,12 +274,6 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
     "--mantine-font-size-xxs": rem(10),
     "--overlay-z-index": "1000",
     "--modal-size-xxl": "60rem",
-    "--dsg-selection-border-radius": "2px",
-    "--dsg-selection-border-width": "2px",
-    "--dsg-transition-duration": "0.1s",
-    "--dsg-corner-indicator-width": "10px",
-    "--dsg-expand-rows-indicator-width": "10px",
-    "--dsg-scroll-shadow-width": "7px",
 
     // Axis semantic chip tokens (used for Status chips)
     "--axis-chip-warning-bg": "transparent",
@@ -304,18 +296,6 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
   },
   light: {
     "--aa-card-bg": t.colors.gray[0],
-    "--dsg-border-color": t.colors.gray[3],
-    "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
-    "--dsg-selection-background-color":
-      "color-mix(in oklab, var(--mantine-primary-color-filled) 6%, transparent)",
-    "--dsg-selection-disabled-border-color": t.colors.gray[5],
-    "--dsg-selection-disabled-background-color": "rgba(0,0,0,.04)",
-    "--dsg-header-text-color": t.colors.gray[6],
-    "--dsg-header-active-text-color": "black",
-    "--dsg-cell-background-color": t.white,
-    "--dsg-cell-disabled-background-color": t.colors.gray[0],
-    "--dsg-scroll-shadow-color": "rgba(0,0,0,.2)",
-
     "--axis-chip-warning-bg": t.colors.yellow[1],
     "--axis-chip-warning-fg": t.colors.yellow[9],
     "--axis-chip-warning-bd": t.colors.yellow[3],
@@ -338,18 +318,6 @@ const cssVariablesResolver: CSSVariablesResolver = (t) => ({
   dark: {
     "--aa-card-bg": t.colors.dark[8],
     "--mantine-color-body": t.colors.dark[9],
-    "--dsg-border-color": t.colors.dark[5],
-    "--dsg-selection-border-color": `var(--mantine-primary-color-filled)`,
-    "--dsg-selection-background-color":
-      "color-mix(in oklab, var(--mantine-primary-color-filled) 10%, transparent)",
-    "--dsg-selection-disabled-border-color": t.colors.dark[3],
-    "--dsg-selection-disabled-background-color": "rgba(255,255,255,.04)",
-    "--dsg-header-text-color": t.colors.dark[2],
-    "--dsg-header-active-text-color": t.white,
-    "--dsg-cell-background-color": t.colors.dark[7],
-    "--dsg-cell-disabled-background-color": t.colors.dark[6],
-    "--dsg-scroll-shadow-color": "rgba(0,0,0,.5)",
-
     "--axis-chip-warning-bg": `color-mix(in oklab, ${t.colors.yellow[6]} 22%, transparent)`,
     "--axis-chip-warning-fg": t.colors.yellow[2],
     "--axis-chip-warning-bd": `color-mix(in oklab, ${t.colors.yellow[6]} 55%, transparent)`,
@@ -518,6 +486,7 @@ export default function App() {
             </ModalsProvider>
             <Scripts />
           </MantineProvider>
+          <div id="portal" />
         </body>
       </html>
     </>
@@ -901,10 +870,10 @@ function AppShellLayout({
           </Stack>
         </Stack>
       </AppShell.Navbar>
-      <AppShell.Main>
-        <Outlet />
-      </AppShell.Main>
-    </AppShell>
+        <AppShell.Main>
+          <Outlet />
+        </AppShell.Main>
+      </AppShell>
   );
 }
 

@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Button,
   Group,
-  Menu,
   Stack,
   Text,
   Tooltip,
@@ -13,7 +12,6 @@ import {
   IconArrowBackUp,
   IconArrowForwardUp,
   IconBug,
-  IconDotsVertical,
 } from "@tabler/icons-react";
 import { useNavigate, useRouteLoaderData } from "@remix-run/react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -33,7 +31,6 @@ type SheetHeaderProps = {
   saveState?: "idle" | "saving" | "error";
   showStatus?: boolean;
   rightExtra?: ReactNode;
-  dsgLink?: string;
   debugPayload?: DebugExplainPayload | null;
 };
 
@@ -46,7 +43,6 @@ export function SheetHeader({
   saveState = "idle",
   showStatus = true,
   rightExtra,
-  dsgLink,
   debugPayload,
 }: SheetHeaderProps) {
   const navigate = useNavigate();
@@ -64,7 +60,6 @@ export function SheetHeader({
   const isAdminUser =
     !rootData?.userLevel || rootData?.userLevel === "Admin";
   const canDebug = Boolean(isDev && isAdminUser);
-  const canShowDsgLink = Boolean(isDev && dsgLink);
   const statusLabel = useMemo(() => {
     if (!showStatus) return null;
     if (saveState === "saving") return "Saving...";
@@ -88,6 +83,10 @@ export function SheetHeader({
   );
 
   const handleExit = () => {
+    if (onDone) {
+      onDone();
+      return;
+    }
     if (!dirty) {
       doExit();
       return;
@@ -178,20 +177,6 @@ export function SheetHeader({
               <IconBug size={16} />
             </ActionIcon>
           </Tooltip>
-        ) : null}
-        {canShowDsgLink ? (
-          <Menu withinPortal>
-            <Menu.Target>
-              <ActionIcon variant="subtle" aria-label="More">
-                <IconDotsVertical size={16} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item onClick={() => navigate(dsgLink!)}>
-                Open DSG version
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
         ) : null}
         <Button size="xs" onClick={handleExit}>
           Done

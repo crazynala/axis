@@ -1,1 +1,1 @@
-export { loader, action, default } from "./products.batch.sheet-rg";
+export { loader, action, default } from "./products.batch.sheet-glide";

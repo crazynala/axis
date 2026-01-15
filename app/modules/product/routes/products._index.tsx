@@ -14,17 +14,16 @@ import {
 import { BreadcrumbSet } from "packages/timber";
 import { useFindHrefAppender } from "~/base/find/sessionFindState";
 import { VirtualizedNavDataTable } from "~/components/VirtualizedNavDataTable";
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecords } from "~/base/record/RecordContext";
 import { useHybridIndexTable } from "~/base/index/useHybridIndexTable";
 import { SheetModal } from "~/components/sheets/SheetModal";
-import { SheetGrid } from "~/components/sheets/SheetGrid";
 import {
-  DataSheetGrid,
-  keyColumn,
-  textColumn,
-  type Column,
-} from "react-datasheet-grid";
+  DataEditor,
+  GridCellKind,
+  type GridCell,
+  type GridColumn,
+} from "@glideapps/glide-data-grid";
 import {
   PricingPreviewWidget,
   usePricingPrefsFromWidget,
@@ -37,6 +36,8 @@ import {
 import { buildProductMetadataFields } from "~/modules/productMetadata/utils/productMetadataFields";
 import { getGlobalOptions } from "~/base/options/OptionsClient";
 import { productSpec } from "../spec";
+import { useElementSize } from "@mantine/hooks";
+import { useMantineColorScheme, useMantineTheme } from "@mantine/core";
 
 export default function ProductsIndexRoute() {
   // Register product index navigation (persist search/filter state via existing logic + path)
@@ -107,36 +108,50 @@ export default function ProductsIndexRoute() {
     created: number;
     errors: Array<{ index: number; message: string }>;
   } | null>(null);
+  const historyRef = useRef<{
+    past: Array<{ before: NewProd[]; after: NewProd[] }>;
+    future: Array<{ before: NewProd[]; after: NewProd[] }>;
+  }>({ past: [], future: [] });
+  const historyLimit = 50;
+  const widthStorageKey = "axis:glide:productsIndexBatchModal:colWidths:v1";
+  const [widthsByKey, setWidthsByKey] = useState<Record<string, number>>({});
+  const persistWidthsTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const portal =
+      typeof document !== "undefined" ? document.getElementById("portal") : null;
+    if (portal) {
+      portal.dataset.axisGlidePortal = "true";
+    }
+    return () => {
+      if (portal?.dataset.axisGlidePortal) {
+        delete portal.dataset.axisGlidePortal;
+      }
+    };
+  }, [sheetOpen]);
+  const { ref: batchGridRef, width: batchGridWidth } = useElementSize();
+  const { colorScheme } = useMantineColorScheme();
+  const mantineTheme = useMantineTheme();
   const MODAL_TOP_RESERVE = 60;
   const MODAL_BOTTOM_RESERVE = 120;
   const MODAL_GRID_HEIGHT = 420;
   const MODAL_HEIGHT =
     MODAL_GRID_HEIGHT + MODAL_TOP_RESERVE + MODAL_BOTTOM_RESERVE;
-  const sheetColumns = useMemo<Column<NewProd>[]>(() => {
-    const col = <K extends keyof NewProd>(
-      key: K,
-      title: string,
-      disabled = false
-    ): Column<NewProd> => ({
-      ...(keyColumn<NewProd, any>(key as any, textColumn) as any),
-      id: key as string,
-      title,
-      disabled,
-    });
+  const gridColumns = useMemo<GridColumn[]>(() => {
     return [
-      col("sku", "SKU"),
-      col("name", "Name"),
-      col("type", "Type"),
-      col("supplierId", "SupplierId"),
-      col("categoryId", "CategoryId"),
-      col("purchaseTaxId", "PurchaseTaxId"),
-      col("costPrice", "CostPrice"),
-      col("manualSalePrice", "ManualSalePrice"),
-      col("stockTrackingEnabled", "Stock?"),
-      col("batchTrackingEnabled", "Batch?"),
+      { id: "sku", title: "SKU", width: widthsByKey.sku ?? 180 },
+      { id: "name", title: "Name", width: widthsByKey.name ?? 220 },
+      { id: "type", title: "Type", width: widthsByKey.type ?? 140 },
+      { id: "supplierId", title: "SupplierId", width: widthsByKey.supplierId ?? 140 },
+      { id: "categoryId", title: "CategoryId", width: widthsByKey.categoryId ?? 140 },
+      { id: "purchaseTaxId", title: "PurchaseTaxId", width: widthsByKey.purchaseTaxId ?? 140 },
+      { id: "costPrice", title: "CostPrice", width: widthsByKey.costPrice ?? 140 },
+      { id: "manualSalePrice", title: "ManualSalePrice", width: widthsByKey.manualSalePrice ?? 160 },
+      { id: "stockTrackingEnabled", title: "Stock?", width: widthsByKey.stockTrackingEnabled ?? 120 },
+      { id: "batchTrackingEnabled", title: "Batch?", width: widthsByKey.batchTrackingEnabled ?? 120 },
     ];
-  }, []);
-  const createRow = (): NewProd => ({
+  }, [widthsByKey]);
+  const createRow = useCallback((): NewProd => ({
     sku: "",
     name: "",
     type: "",
@@ -147,7 +162,265 @@ export default function ProductsIndexRoute() {
     manualSalePrice: "",
     stockTrackingEnabled: "",
     batchTrackingEnabled: "",
-  });
+  }), []);
+  const isBlankRow = useCallback((row: NewProd) => {
+    return Object.values(row).every((value) => {
+      if (value === null || value === undefined) return true;
+      if (typeof value === "string") return value.trim() === "";
+      return false;
+    });
+  }, []);
+  const normalizeRows = useCallback(
+    (next: NewProd[]) => {
+      const normalized = next.slice();
+      while (normalized.length > 1 && isBlankRow(normalized[normalized.length - 1]) && isBlankRow(normalized[normalized.length - 2])) {
+        normalized.pop();
+      }
+      if (!normalized.length || !isBlankRow(normalized[normalized.length - 1])) {
+        normalized.push(createRow());
+      }
+      return normalized;
+    },
+    [createRow, isBlankRow]
+  );
+  useEffect(() => {
+    setRows((prev) => normalizeRows(prev));
+  }, [normalizeRows, sheetOpen]);
+  const snapshotRows = useCallback(
+    (rowsToCopy: NewProd[]) => rowsToCopy.map((row) => ({ ...row })),
+    []
+  );
+  const pushHistory = useCallback(
+    (beforeRows: NewProd[], afterRows: NewProd[]) => {
+      historyRef.current.past.push({
+        before: snapshotRows(beforeRows),
+        after: snapshotRows(afterRows),
+      });
+      if (historyRef.current.past.length > historyLimit) {
+        historyRef.current.past.shift();
+      }
+      historyRef.current.future = [];
+    },
+    [snapshotRows]
+  );
+  const applyRowUpdates = useCallback(
+    (updater: (prev: NewProd[]) => NewProd[]) => {
+      setRows((prev) => {
+        const next = normalizeRows(updater(prev));
+        pushHistory(prev, next);
+        return next;
+      });
+      setDirty(true);
+    },
+    [normalizeRows, pushHistory]
+  );
+  const handleUndo = useCallback(() => {
+    const history = historyRef.current;
+    const batch = history.past.pop();
+    if (!batch) return;
+    history.future.push(batch);
+    setRows(normalizeRows(batch.before));
+    setDirty(true);
+  }, [normalizeRows]);
+  const handleRedo = useCallback(() => {
+    const history = historyRef.current;
+    const batch = history.future.pop();
+    if (!batch) return;
+    history.past.push(batch);
+    setRows(normalizeRows(batch.after));
+    setDirty(true);
+  }, [normalizeRows]);
+  const parseCellValue = useCallback((key: string, rawValue: string) => {
+    const raw = String(rawValue ?? "").trim();
+    if (!raw) return "";
+    if (key === "stockTrackingEnabled" || key === "batchTrackingEnabled") {
+      const lowered = raw.toLowerCase();
+      if (["true", "yes", "1", "y"].includes(lowered)) return true;
+      if (["false", "no", "0", "n"].includes(lowered)) return false;
+      return raw;
+    }
+    if (
+      key === "supplierId" ||
+      key === "categoryId" ||
+      key === "purchaseTaxId" ||
+      key === "costPrice" ||
+      key === "manualSalePrice"
+    ) {
+      const num = Number(raw);
+      return Number.isFinite(num) ? num : raw;
+    }
+    return raw;
+  }, []);
+  const getBatchCellContent = useCallback(
+    ([col, row]: readonly [number, number]): GridCell => {
+      const column = gridColumns[col];
+      const rowData = rows[row];
+      if (!column || !rowData) {
+        return {
+          kind: GridCellKind.Text,
+          data: "",
+          displayData: "",
+          allowOverlay: false,
+          readonly: true,
+        };
+      }
+      const key = String(column.id);
+      const value = rowData[key as keyof NewProd];
+      const display = value == null ? "" : String(value);
+      return {
+        kind: GridCellKind.Text,
+        data: display,
+        displayData: display,
+        allowOverlay: true,
+        readonly: false,
+      };
+    },
+    [gridColumns, rows]
+  );
+  const onBatchCellEdited = useCallback(
+    ([col, row]: readonly [number, number], newValue: any) => {
+      const column = gridColumns[col];
+      if (!column) return;
+      const key = String(column.id);
+      const raw = String(newValue?.data ?? newValue?.value ?? "");
+      const value = parseCellValue(key, raw);
+      applyRowUpdates((prev) => {
+        const next = prev.slice();
+        while (next.length <= row) {
+          next.push(createRow());
+        }
+        const prevRow = next[row] ?? createRow();
+        next[row] = { ...prevRow, [key]: value } as NewProd;
+        return next;
+      });
+    },
+    [applyRowUpdates, createRow, gridColumns, parseCellValue]
+  );
+  const getBatchCellsForSelection = useCallback(
+    (selection: any) => {
+      if (!selection || selection === true) return [];
+      const { x, y, width, height } = selection;
+      const cells: GridCell[][] = [];
+      for (let rowIdx = y; rowIdx < y + height; rowIdx += 1) {
+        const rowCells: GridCell[] = [];
+        for (let colIdx = x; colIdx < x + width; colIdx += 1) {
+          rowCells.push(getBatchCellContent([colIdx, rowIdx] as const));
+        }
+        cells.push(rowCells);
+      }
+      return cells;
+    },
+    [getBatchCellContent]
+  );
+  const onBatchPaste = useCallback(
+    (target: any, values: readonly (readonly string[])[]) => {
+      const cell = target?.cell ?? target;
+      if (!cell || !Array.isArray(cell)) return false;
+      const [startCol, startRow] = cell as [number, number];
+      if (!values.length) return false;
+      applyRowUpdates((prev) => {
+        const next = prev.slice();
+        for (let rowOffset = 0; rowOffset < values.length; rowOffset += 1) {
+          const rowIdx = startRow + rowOffset;
+          while (next.length <= rowIdx) next.push(createRow());
+          const rowData = next[rowIdx] ?? createRow();
+          const updated = { ...rowData } as NewProd;
+          for (let colOffset = 0; colOffset < values[rowOffset].length; colOffset += 1) {
+            const colIdx = startCol + colOffset;
+            const column = gridColumns[colIdx];
+            if (!column) continue;
+            const key = String(column.id);
+            const raw = String(values[rowOffset][colOffset] ?? "");
+            (updated as any)[key] = parseCellValue(key, raw);
+          }
+          next[rowIdx] = updated;
+        }
+        return next;
+      });
+      return true;
+    },
+    [applyRowUpdates, createRow, gridColumns, parseCellValue]
+  );
+  useEffect(() => {
+    if (!sheetOpen) return;
+    try {
+      const stored = window.localStorage.getItem(widthStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === "object") {
+          setWidthsByKey(parsed);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [sheetOpen, widthStorageKey]);
+  useEffect(() => {
+    if (!sheetOpen) return;
+    if (persistWidthsTimerRef.current) {
+      window.clearTimeout(persistWidthsTimerRef.current);
+    }
+    persistWidthsTimerRef.current = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          widthStorageKey,
+          JSON.stringify(widthsByKey)
+        );
+      } catch {
+        // ignore storage errors
+      }
+    }, 200);
+    return () => {
+      if (persistWidthsTimerRef.current) {
+        window.clearTimeout(persistWidthsTimerRef.current);
+      }
+    };
+  }, [sheetOpen, widthStorageKey, widthsByKey]);
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const isUndo =
+        (event.metaKey && key === "z" && !event.shiftKey) ||
+        (event.ctrlKey && key === "z" && !event.shiftKey);
+      const isRedo =
+        (event.metaKey && key === "z" && event.shiftKey) ||
+        (event.ctrlKey && (key === "y" || (key === "z" && event.shiftKey)));
+      if (!isUndo && !isRedo) return;
+      const target = event.target;
+      const targetEl = target instanceof HTMLElement ? target : null;
+      const inside =
+        targetEl?.closest?.('[data-axis-sheet="glide"]') ||
+        document.activeElement?.closest?.('[data-axis-sheet="glide"]');
+      if (!inside) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (isRedo) handleRedo();
+      else handleUndo();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [handleRedo, handleUndo, sheetOpen]);
+  const batchTheme = useMemo(() => {
+    const dark = colorScheme === "dark";
+    const accent = mantineTheme.colors.blue?.[6] || "#4dabf7";
+    return {
+      bgCanvas: dark ? "#0b0d10" : "#f1f3f5",
+      bgCell: dark ? "#14171a" : "#ffffff",
+      bgCellMedium: dark ? "#1a1e22" : "#ffffff",
+      bgHeader: dark ? "#0f1114" : "#f1f3f5",
+      bgHeaderHasFocus: dark ? "#0f1114" : "#f1f3f5",
+      textDark: dark ? "rgba(255,255,255,0.92)" : "#000000",
+      textMedium: dark ? "rgba(255,255,255,0.7)" : "#495057",
+      textLight: dark ? "rgba(255,255,255,0.55)" : "#868e96",
+      accentColor: accent,
+      accentLight: dark ? "rgba(70,140,255,0.22)" : "rgba(70,140,255,0.12)",
+      borderColor: dark ? "rgba(255,255,255,0.06)" : "#dee2e6",
+      headerFontStyle: "600 14px system-ui",
+      baseFontStyle: "500 14px system-ui",
+      markerFontStyle: "500 14px system-ui",
+    };
+  }, [colorScheme, mantineTheme.colors.blue]);
   const navigate = useNavigate();
   const { state, currentId, setCurrentId, addRows } = useRecords();
   // Removed per-route height calculation; table now auto-sizes within viewport
@@ -353,8 +626,14 @@ export default function ProductsIndexRoute() {
             },
             {
               label: "Batch Edit BOMs",
-              onClick: (ids) =>
-                navigate(`/products/boms/sheet?ids=${ids.join(",")}`),
+              onClick: (ids) => {
+                const returnTo = encodeURIComponent(
+                  `${location.pathname}${location.search}`
+                );
+                navigate(
+                  `/products/boms/sheet?ids=${ids.join(",")}&returnTo=${returnTo}`
+                );
+              },
             },
           ]}
           columns={columns as any}
@@ -402,17 +681,31 @@ export default function ProductsIndexRoute() {
               overflow: "hidden",
             }}
           >
-            <SheetGrid
-              className="products-batch-sheet"
-              value={rows as any}
-              onChange={(r) => {
-                setRows(r as any);
-                setDirty(true);
-              }}
-              columns={sheetColumns}
-              height={bodyHeight}
-              createRow={createRow}
-            />
+            <div
+              ref={batchGridRef}
+              data-axis-sheet="glide"
+              style={{ height: bodyHeight, width: "100%" }}
+            >
+              {batchGridWidth > 0 ? (
+                <DataEditor
+                  columns={gridColumns}
+                  rows={rows.length}
+                  getCellContent={getBatchCellContent}
+                  onCellEdited={onBatchCellEdited}
+                  getCellsForSelection={getBatchCellsForSelection}
+                  onPaste={onBatchPaste as any}
+                  onColumnResize={(col, width) => {
+                    setWidthsByKey((prev) => ({
+                      ...prev,
+                      [String(col.id)]: Math.max(60, Math.floor(width)),
+                    }));
+                  }}
+                  width={batchGridWidth}
+                  height={bodyHeight}
+                  theme={batchTheme}
+                />
+              ) : null}
+            </div>
           </div>
           <Group justify="flex-end">
             <Button

@@ -52,8 +52,6 @@ export default defineConfig({
     noExternal: [
       "packages/timber",
       "@aa/timber",
-      // Bundle the datasheet grid so Vite handles its CSS subpath imports in SSR
-      "react-datasheet-grid",
     ],
   },
 });

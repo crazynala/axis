@@ -273,14 +273,41 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
     [state]
   );
 
+  const isInsideGlideSheet = useCallback((event: Event) => {
+    const target = event.target;
+    const targetEl = target instanceof HTMLElement ? target : null;
+    if (targetEl?.closest?.('[data-axis-sheet="glide"]')) return true;
+    const activeEl =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+    if (activeEl?.closest?.('[data-axis-sheet="glide"]')) return true;
+    const portal =
+      typeof document !== "undefined" ? document.getElementById("portal") : null;
+    if (
+      portal?.dataset.axisGlidePortal === "true" &&
+      activeEl &&
+      portal.contains(activeEl)
+    ) {
+      return true;
+    }
+    const path =
+      typeof (event as any).composedPath === "function"
+        ? ((event as any).composedPath() as EventTarget[])
+        : [];
+    return path.some(
+      (node) =>
+        node instanceof HTMLElement &&
+        node.getAttribute("data-axis-sheet") === "glide"
+    );
+  }, []);
+
   // Centralized keyboard navigation via Hotkey stack
   useHotkeyScope(
     state
       ? (e) => {
           // If key event originated inside a sheet/grid editor, ignore
-          const t = e.target as HTMLElement | null;
-          if (t && t.closest && t.closest("[data-rdg-root], .dsg-container"))
-            return false;
+          if (isInsideGlideSheet(e)) return false;
           const el = document.activeElement as HTMLElement | null;
           if (
             el &&
@@ -369,6 +396,7 @@ const RecordProviderWithRouter: React.FC<React.PropsWithChildren> = ({
       prevId,
       getPathForId,
       navigate,
+      isInsideGlideSheet,
     ]
   );
 

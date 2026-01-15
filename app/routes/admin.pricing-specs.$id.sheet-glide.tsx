@@ -1,6 +1,6 @@
 import { useLoaderData } from "@remix-run/react";
 import { GlobalFormProvider } from "@aa/timber";
-import { PricingSpecSheetRg } from "~/modules/pricing/components/PricingSpecSheetRg";
+import { PricingSpecSheetGlide } from "~/modules/pricing/components/PricingSpecSheetGlide";
 import {
   loadPricingSpecEdit,
   savePricingSpecEdit,
@@ -9,17 +9,17 @@ import {
 export const loader = loadPricingSpecEdit;
 export const action = savePricingSpecEdit;
 
-export default function PricingSpecEditSheetRgRoute() {
+export default function PricingSpecEditSheetGlideRoute() {
   const { spec, rows, actionPath, exitUrl } = useLoaderData<typeof loader>();
   return (
     <GlobalFormProvider>
-      <PricingSpecSheetRg
+      <PricingSpecSheetGlide
         mode="edit"
         title={`Price Spec: ${spec.name}`}
         actionPath={actionPath}
         exitUrl={exitUrl}
         initialRows={rows}
-        dsgLink={`/admin/pricing-specs/${spec.id}/sheet-dsg`}
+        storageKey="axis:glide:cols:v1:pricing-specs"
       />
     </GlobalFormProvider>
   );

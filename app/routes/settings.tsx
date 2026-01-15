@@ -21,6 +21,7 @@ import {
   Text,
   TextInput,
   PasswordInput,
+  useMantineColorScheme,
 } from "@mantine/core";
 import { requireUserId } from "../utils/auth.server";
 import { prisma } from "../utils/prisma.server";
@@ -106,13 +107,14 @@ export default function Settings() {
   const busy = nav.state !== "idle";
   const [profileName, setProfileName] = useState(name);
   const profileDirty = profileName.trim() !== name.trim();
-  const [colorScheme, setColorScheme] = useState<"light" | "dark">(
-    (rootData?.colorScheme as "light" | "dark" | undefined) || "light"
-  );
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const [schemeError, setSchemeError] = useState<string | null>(null);
   const [schemeSaving, setSchemeSaving] = useState(false);
 
   const handleSchemeChange = async (next: "light" | "dark") => {
+    const previous =
+      (colorScheme as "light" | "dark" | undefined) ||
+      ((rootData?.colorScheme as "light" | "dark" | undefined) || "light");
     setColorScheme(next);
     setSchemeSaving(true);
     setSchemeError(null);
@@ -133,9 +135,7 @@ export default function Settings() {
           ? err.message
           : "Unable to update theme.";
       setSchemeError(message);
-      setColorScheme(
-        (rootData?.colorScheme as "light" | "dark" | undefined) || "light"
-      );
+      setColorScheme(previous);
     } finally {
       setSchemeSaving(false);
     }

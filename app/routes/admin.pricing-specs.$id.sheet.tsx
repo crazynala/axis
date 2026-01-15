@@ -1,1 +1,5 @@
-export { loader, action, default } from "./admin.pricing-specs.$id.sheet-rg.tsx";
+export {
+  loader,
+  action,
+  default,
+} from "./admin.pricing-specs.$id.sheet-glide.tsx";

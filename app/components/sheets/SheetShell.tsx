@@ -1,6 +1,6 @@
 import { Group } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { SheetController } from "./SheetController";
 import { SheetHeader } from "./SheetHeader";
 import type { SheetViewSpec } from "~/base/sheets/sheetSpec";
@@ -22,7 +22,6 @@ export function SheetShell({
   showStatus = true,
   rightExtra,
   columnPicker,
-  dsgLink,
   children,
   footer,
   debugPayload,
@@ -35,7 +34,6 @@ export function SheetShell({
   saveState?: "idle" | "saving" | "error";
   showStatus?: boolean;
   rightExtra?: ReactNode;
-  dsgLink?: string;
   columnPicker?: {
     moduleKey: string;
     viewId: string;
@@ -49,6 +47,19 @@ export function SheetShell({
   debugPayload?: DebugExplainPayload | null;
 }) {
   const { ref: bodyRef, height: bodyHeight } = useElementSize();
+  useEffect(() => {
+    const portal = typeof document !== "undefined"
+      ? document.getElementById("portal")
+      : null;
+    if (portal) {
+      portal.dataset.axisGlidePortal = "true";
+    }
+    return () => {
+      if (portal?.dataset.axisGlidePortal) {
+        delete portal.dataset.axisGlidePortal;
+      }
+    };
+  }, []);
   const pickerNode = columnPicker ? (
     <SheetColumnPickerSlot columnPicker={columnPicker} />
   ) : null;
@@ -62,6 +73,7 @@ export function SheetShell({
   return (
     <div
       data-sheet-shell
+      data-axis-sheet="glide"
       style={{
         position: "fixed",
         inset: 0,
@@ -80,7 +92,6 @@ export function SheetShell({
           saveState={saveState}
           showStatus={showStatus}
           rightExtra={headerExtra}
-          dsgLink={dsgLink}
           debugPayload={debugPayload}
         />
       </div>
