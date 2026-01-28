@@ -159,6 +159,16 @@ export function AssembliesEditor(props: {
     openBoxes: PackBoxSummary[];
     stockLocation?: { id: number; name: string | null } | null;
   } | null;
+  shipToAddresses?: Array<{
+    id: number;
+    name: string | null;
+    addressLine1: string | null;
+    addressTownCity: string | null;
+    addressCountyState: string | null;
+    addressZipPostCode: string | null;
+    addressCountry: string | null;
+  }>;
+  locations?: Array<{ id: number; name: string | null; type: string | null }>;
   assemblyTypeOptions?: string[] | null;
   defectReasons?: Array<{ id: number; label: string | null }>;
   splitGroups?: Array<{
@@ -205,6 +215,8 @@ export function AssembliesEditor(props: {
     packActivityReferences,
     assemblyTypeOptions,
     defectReasons,
+    shipToAddresses,
+    locations,
     splitGroups,
     splitAllocations,
     primaryCostingIdByAssembly,
@@ -3382,7 +3394,8 @@ export function AssembliesEditor(props: {
           variantLabels={packModalVariantLabels}
           quantityItem={packModalQuantityItem}
           stockLocationName={packContext?.stockLocation?.name ?? null}
-          openBoxes={packContext?.openBoxes ?? []}
+          shipToAddresses={shipToAddresses || []}
+          locations={locations || []}
         />
       )}
       {retainModalAssembly && (

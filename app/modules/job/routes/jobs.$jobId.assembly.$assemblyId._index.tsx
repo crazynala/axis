@@ -1008,6 +1008,8 @@ export function AssemblyDetailView({
           splitAllocations={data.splitAllocations as any}
           renderStatusBar={renderStatusBar}
           packContext={data.packContext as any}
+          shipToAddresses={data.shipToAddresses as any}
+          locations={data.locations as any}
           primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
           rollupsByAssembly={data.rollupsByAssembly as any}
           vendorOptionsByStep={data.vendorOptionsByStep as any}
@@ -1122,6 +1124,8 @@ export function AssemblyDetailView({
         splitAllocations={data.splitAllocations as any}
         renderStatusBar={renderStatusBar}
         packContext={data.packContext as any}
+        shipToAddresses={data.shipToAddresses as any}
+        locations={data.locations as any}
         primaryCostingIdByAssembly={data.primaryCostingIdByAssembly as any}
         rollupsByAssembly={data.rollupsByAssembly as any}
         vendorOptionsByStep={data.vendorOptionsByStep as any}

@@ -84,13 +84,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Invalid box id" }, { status: 400 });
   }
   if (intent === "update") {
+    const existing = await prismaBase.box.findUnique({
+      where: { id },
+      select: {
+        companyId: true,
+        shipmentId: true,
+        _count: { select: { lines: true } },
+      },
+    });
+    if (!existing) {
+      return json({ error: "Box not found." }, { status: 404 });
+    }
+    const nextCompanyId = toInt(form.get("companyId")) || null;
+    const companyChanged = nextCompanyId !== (existing.companyId ?? null);
+    const hasLines = (existing._count?.lines ?? 0) > 0;
+    if (companyChanged && (existing.shipmentId != null || hasLines)) {
+      return json(
+        {
+          error:
+            "Cannot change box company once lines exist or the box is attached to a shipment.",
+        },
+        { status: 400 }
+      );
+    }
     const data: any = {
       code: emptyToNull(form.get("code")),
       description: emptyToNull(form.get("description")),
       notes: emptyToNull(form.get("notes")),
-      companyId: toInt(form.get("companyId")) || null,
+      companyId: nextCompanyId,
       locationId: toInt(form.get("locationId")) || null,
-      shipmentId: toInt(form.get("shipmentId")) || null,
       warehouseNumber: toInt(form.get("warehouseNumber")),
       shipmentNumber: toInt(form.get("shipmentNumber")),
     };

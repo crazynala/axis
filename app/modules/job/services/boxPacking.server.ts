@@ -5,6 +5,12 @@ import {
   DefectDisposition,
 } from "@prisma/client";
 import { prisma } from "~/utils/prisma.server";
+import {
+  assertBoxDestinationMatches,
+  assertBoxDestinationValid,
+  getBoxDestination,
+} from "~/modules/box/services/boxDestination.server";
+import { resolveEffectiveShipTo } from "~/modules/job/services/shipTo.shared";
 
 function normalizeBreakdown(values: number[] | undefined | null): number[] {
   if (!Array.isArray(values)) return [];
@@ -104,6 +110,8 @@ type PackActivityInput = {
   warehouseNumber?: number | null;
   boxDescription?: string | null;
   boxNotes?: string | null;
+  destinationAddressId?: number | null;
+  destinationLocationId?: number | null;
   allowOverpack?: boolean;
   createShortfall?: boolean;
 };
@@ -136,6 +144,8 @@ export async function createPackActivity(input: PackActivityInput) {
           id: true,
           companyId: true,
           stockLocationId: true,
+          shipToAddressId: true,
+          shipToLocationId: true,
         },
       },
     },
@@ -158,6 +168,14 @@ export async function createPackActivity(input: PackActivityInput) {
 
   const jobCompanyId = assembly.job?.companyId ?? null;
   const jobLocationId = assembly.job?.stockLocationId ?? null;
+  const rawDestination = {
+    destinationAddressId: input.destinationAddressId ?? null,
+    destinationLocationId: input.destinationLocationId ?? null,
+  };
+  assertBoxDestinationValid(rawDestination);
+  const inputDestination = getBoxDestination(rawDestination);
+  const resolvedDestination = resolveEffectiveShipTo(assembly.job, assembly);
+  const desiredDestination = inputDestination ?? resolvedDestination ?? null;
   const currentFinish = normalizeBreakdown(
     (assembly as any).c_qtyFinish_Breakdown
   );
@@ -207,7 +225,18 @@ export async function createPackActivity(input: PackActivityInput) {
       if (!Number.isFinite(existingBoxId)) {
         throw new Error("Select an open box to continue.");
       }
-      const box = await tx.box.findUnique({ where: { id: existingBoxId } });
+      const box = await tx.box.findUnique({
+        where: { id: existingBoxId },
+        select: {
+          id: true,
+          state: true,
+          companyId: true,
+          locationId: true,
+          shipmentId: true,
+          destinationAddressId: true,
+          destinationLocationId: true,
+        },
+      });
       if (!box) {
         throw new Error("Selected box could not be found.");
       }
@@ -220,6 +249,7 @@ export async function createPackActivity(input: PackActivityInput) {
       if (jobLocationId && box.locationId && box.locationId !== jobLocationId) {
         throw new Error("Selected box is stored at a different location.");
       }
+      await assertBoxDestinationMatches(tx, box, desiredDestination);
       boxId = box.id;
     } else {
       if (!jobCompanyId || !jobLocationId) {
@@ -227,10 +257,45 @@ export async function createPackActivity(input: PackActivityInput) {
           "Set a company and stock location on the job before creating a box."
         );
       }
+      if (!desiredDestination) {
+        throw new Error("Destination is required before creating a box.");
+      }
       const warehouseNumber =
         input.warehouseNumber != null && Number.isFinite(input.warehouseNumber)
           ? Number(input.warehouseNumber)
           : null;
+      if (warehouseNumber != null) {
+        const existing = await tx.box.findFirst({
+          where: { companyId: jobCompanyId, warehouseNumber },
+          select: {
+            id: true,
+            state: true,
+            destinationAddressId: true,
+            destinationLocationId: true,
+            location: { select: { id: true, name: true } },
+          },
+        });
+        if (existing) {
+          const state = existing.state ? String(existing.state) : "unknown";
+          const locationLabel = existing.location?.name
+            ? existing.location.name
+            : existing.location?.id != null
+              ? `Location ${existing.location.id}`
+              : "unknown location";
+          const hasDestination =
+            existing.destinationAddressId != null ||
+            existing.destinationLocationId != null;
+          throw new Error(
+            `Box #${warehouseNumber} already exists (state: ${state}, ${locationLabel}, destination ${hasDestination ? "set" : "not set"}).`
+          );
+        }
+      }
+      assertBoxDestinationValid(
+        desiredDestination.kind === "address"
+          ? { destinationAddressId: desiredDestination.id }
+          : { destinationLocationId: desiredDestination.id },
+        { requireDestination: true }
+      );
       const box = await tx.box.create({
         data: {
           companyId: jobCompanyId,
@@ -239,6 +304,10 @@ export async function createPackActivity(input: PackActivityInput) {
           description: fallbackDescription,
           notes: trimmedNotes ?? undefined,
           state: "open",
+          destinationAddressId:
+            desiredDestination.kind === "address" ? desiredDestination.id : undefined,
+          destinationLocationId:
+            desiredDestination.kind === "location" ? desiredDestination.id : undefined,
         },
       });
       boxId = box.id;

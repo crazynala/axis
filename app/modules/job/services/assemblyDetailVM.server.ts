@@ -22,7 +22,10 @@ import { loadAssemblyRollups } from "~/modules/production/services/rollups.serve
 import { loadMaterialCoverage } from "~/modules/production/services/materialCoverage.server";
 import { loadSupplierOptionsByExternalStepTypes } from "~/modules/company/services/companyOptions.server";
 import type { AssemblyDetailVM } from "~/modules/job/types/assemblyDetailVM";
-import { getCompanyAddressOptions } from "~/utils/addressOwnership.server";
+import {
+  getCompanyAddressOptions,
+  getContactAddressOptions,
+} from "~/utils/addressOwnership.server";
 import { getProductStockSnapshots, prisma } from "~/utils/prisma.server";
 import {
   getActivitiesForAssemblies,
@@ -68,6 +71,7 @@ export async function loadAssemblyDetailVM(opts: {
     | (typeof assemblies)[0]["job"]
     | undefined;
   const jobCompanyId = firstAssemblyJob?.company?.id ?? null;
+  const jobContactId = firstAssemblyJob?.endCustomerContactId ?? null;
   const jobStockLocationId = firstAssemblyJob?.stockLocation?.id ?? null;
 
   let packBoxes: PackBoxSummary[] = [];
@@ -82,7 +86,12 @@ export async function loadAssemblyDetailVM(opts: {
       description: box.description ?? null,
       notes: box.notes ?? null,
       locationId: box.locationId ?? null,
+      locationName: box.location?.name ?? null,
       state: box.state ?? null,
+      destinationAddressId: box.destinationAddressId ?? null,
+      destinationLocationId: box.destinationLocationId ?? null,
+      destinationAddress: box.destinationAddress ?? null,
+      destinationLocation: box.destinationLocation ?? null,
       totalQuantity: (box.lines || []).reduce(
         (total, line) => total + (Number(line.quantity) || 0),
         0
@@ -718,12 +727,32 @@ export async function loadAssemblyDetailVM(opts: {
   });
   const vendorOptionsByStep = await loadSupplierOptionsByExternalStepTypes(Array.from(stepTypeSet));
   const locations = await prisma.location.findMany({
-    select: { id: true, name: true },
+    select: { id: true, name: true, type: true },
     orderBy: { name: "asc" },
   });
-  const shipToAddresses = jobCompanyId
-    ? await getCompanyAddressOptions(jobCompanyId)
-    : [];
+  const shipToAddresses = await (async () => {
+    const list: Array<{
+      id: number;
+      name: string | null;
+      addressLine1: string | null;
+      addressTownCity: string | null;
+      addressCountyState: string | null;
+      addressZipPostCode: string | null;
+      addressCountry: string | null;
+    }> = [];
+    if (jobCompanyId) {
+      list.push(...(await getCompanyAddressOptions(jobCompanyId)));
+    }
+    if (jobContactId) {
+      list.push(...(await getContactAddressOptions(jobContactId)));
+    }
+    const seen = new Set<number>();
+    return list.filter((addr) => {
+      if (seen.has(addr.id)) return false;
+      seen.add(addr.id);
+      return true;
+    });
+  })();
   const [defaultLeadDays, bufferDays, escalationBufferDays] = await Promise.all([
     loadDefaultInternalTargetLeadDays(prisma),
     loadDefaultInternalTargetBufferDays(prisma),

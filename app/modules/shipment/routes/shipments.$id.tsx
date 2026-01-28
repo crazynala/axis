@@ -348,7 +348,7 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
   await prisma.$transaction(async (tx) => {
     const shipmentRecord = await tx.shipment.findUnique({
       where: { id: shipmentId },
-      select: { id: true, locationId: true, packMode: true, type: true },
+      select: { id: true, addressIdShip: true, packMode: true, type: true },
     });
     if (!shipmentRecord) {
       throw new Error("Shipment not found");
@@ -359,10 +359,17 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
         "Boxes can only be attached to outbound shipments in box mode"
       );
     }
+    if (!shipmentRecord.addressIdShip) {
+      throw new Error("Set a ship-to address before attaching boxes.");
+    }
     const boxes = await tx.box.findMany({
       where: { id: { in: normalizedIds } },
-      include: {
-        location: { select: { id: true } },
+      select: {
+        id: true,
+        state: true,
+        shipmentId: true,
+        locationId: true,
+        destinationAddressId: true,
         company: { select: { id: true, name: true } },
         lines: {
           select: {
@@ -405,12 +412,12 @@ async function attachBoxesToShipment(shipmentId: number, boxIds: number[]) {
     }
     const invalidBox = boxes.find((box) => {
       const state = String(box.state ?? "").toLowerCase();
-      const wrongLocation =
-        shipmentRecord.locationId != null &&
-        shipmentRecord.locationId !== box.locationId;
+      const wrongDestination =
+        shipmentRecord.addressIdShip != null &&
+        shipmentRecord.addressIdShip !== box.destinationAddressId;
       return (
         box.shipmentId != null ||
-        wrongLocation ||
+        wrongDestination ||
         !ALLOWED_BOX_STATES.has(state)
       );
     });
@@ -630,17 +637,28 @@ export async function loader({ params }: LoaderFunctionArgs) {
         },
       },
     }),
-    shipment.locationId
+    shipment.addressIdShip
       ? prisma.box.findMany({
           where: {
             shipmentId: null,
-            locationId: shipment.locationId,
             state: { in: ["open", "sealed"] },
+            destinationAddressId: shipment.addressIdShip,
           },
           orderBy: [{ warehouseNumber: "asc" }, { id: "asc" }],
           include: {
             company: { select: { id: true, name: true } },
             location: { select: { id: true, name: true } },
+            destinationAddress: {
+              select: {
+                id: true,
+                name: true,
+                addressLine1: true,
+                addressTownCity: true,
+                addressCountyState: true,
+                addressZipPostCode: true,
+                addressCountry: true,
+              },
+            },
             lines: {
               select: {
                 id: true,
@@ -980,15 +998,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const dateReceived = dateReceivedRaw ? new Date(dateReceivedRaw) : null;
     const max = await prisma.shipment.aggregate({ _max: { id: true } });
     const nextId = (max._max.id || 0) + 1;
-    let locationId: number | null = null;
-    if (companyIdReceiver != null) {
-      const company = await prisma.company.findUnique({
-        where: { id: companyIdReceiver },
-        select: { stockLocationId: true },
-      });
-      locationId = company?.stockLocationId ?? null;
-    }
-    if (locationId == null) locationId = 1;
     const created = await prisma.shipment.create({
       data: {
         id: nextId,
@@ -999,7 +1008,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
         packingSlipCode,
         date,
         dateReceived,
-        locationId,
         packMode,
         ...(shippingMethodPatch as any),
         companyIdReceiver: Number.isFinite(Number(companyIdReceiver))
@@ -1471,7 +1479,7 @@ export function ShipmentDetailView() {
   const canAttachBoxes = Boolean(
     showBoxesTab &&
       shipment.status === "DRAFT" &&
-      shipment.locationId &&
+      shipment.addressIdShip &&
       (attachableBoxes?.length ?? 0) > 0
   );
   const hasAnyItems =
@@ -1590,6 +1598,11 @@ export function ShipmentDetailView() {
                   Attach boxes from warehouse…
                 </Button>
               </Group>
+              {!shipment.addressIdShip ? (
+                <Text size="sm" c="dimmed">
+                  Select a ship-to address to see attachable boxes.
+                </Text>
+              ) : null}
               {pendingBoxes.length > 0 && (
                 <Text size="sm" c="yellow.7">
                   {pendingBoxes.length} box
@@ -1900,7 +1913,6 @@ export function ShipmentDetailView() {
         opened={attachOpen}
         onClose={closeAttach}
         shipmentId={shipment.id}
-        shipmentLocationId={shipment.locationId ?? null}
         shipmentCustomerId={shipment.companyIdReceiver ?? null}
         boxes={attachableBoxes as any}
         onConfirm={(ids) => {

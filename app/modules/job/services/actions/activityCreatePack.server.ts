@@ -35,6 +35,18 @@ export async function handleActivityCreatePack(opts: {
     const value = Number(String(warehouseNumberStr).trim());
     return Number.isFinite(value) ? value : null;
   })();
+  const destinationAddressId = (() => {
+    const raw = opts.form.get("destinationAddressId");
+    if (raw == null || raw === "") return null;
+    const value = Number(String(raw).trim());
+    return Number.isFinite(value) ? value : null;
+  })();
+  const destinationLocationId = (() => {
+    const raw = opts.form.get("destinationLocationId");
+    if (raw == null || raw === "") return null;
+    const value = Number(String(raw).trim());
+    return Number.isFinite(value) ? value : null;
+  })();
   const boxDescription = (opts.form.get("boxDescription") as string) || null;
   const boxNotes = (opts.form.get("boxNotes") as string) || null;
   const allowOverpack = String(opts.form.get("allowOverpack") || "") === "1";
@@ -77,6 +89,8 @@ export async function handleActivityCreatePack(opts: {
       warehouseNumber: parsedWarehouse,
       boxDescription,
       boxNotes,
+      destinationAddressId,
+      destinationLocationId,
       allowOverpack,
       createShortfall,
     });

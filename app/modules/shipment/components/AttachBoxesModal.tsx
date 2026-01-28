@@ -30,8 +30,6 @@ export type ShipmentBox = {
   warehouseNumber: number | null;
   companyId: number | null;
   company?: { id: number; name: string | null } | null;
-  locationId: number | null;
-  location?: { id: number; name: string | null } | null;
   state: string | null;
   lines: ShipmentBoxLine[];
 };
@@ -40,7 +38,6 @@ export type AttachBoxesModalProps = {
   opened: boolean;
   onClose: () => void;
   shipmentId: number;
-  shipmentLocationId?: number | null;
   shipmentCustomerId?: number | null;
   boxes: ShipmentBox[];
   onConfirm: (boxIds: number[]) => void;
@@ -69,12 +66,10 @@ export function AttachBoxesModal({
   opened,
   onClose,
   shipmentId,
-  shipmentLocationId,
   shipmentCustomerId,
   boxes,
   onConfirm,
 }: AttachBoxesModalProps) {
-  const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [customerFilter, setCustomerFilter] = useState<string | null>(null);
   const [jobFilter, setJobFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -82,29 +77,11 @@ export function AttachBoxesModal({
   useEffect(() => {
     if (!opened) return;
     setSelected(new Set());
-    setLocationFilter(
-      shipmentLocationId != null ? String(shipmentLocationId) : null
-    );
     setCustomerFilter(
       shipmentCustomerId != null ? String(shipmentCustomerId) : null
     );
     setJobFilter(null);
-  }, [opened, shipmentLocationId, shipmentCustomerId]);
-
-  const locationOptions = useMemo(() => {
-    const set = new Map<string, string>();
-    boxes.forEach((box) => {
-      if (box.locationId == null) return;
-      const key = String(box.locationId);
-      if (!set.has(key)) {
-        set.set(key, box.location?.name || `Location ${box.locationId}`);
-      }
-    });
-    return Array.from(set.entries()).map(([value, label]) => ({
-      value,
-      label,
-    }));
-  }, [boxes]);
+  }, [opened, shipmentCustomerId]);
 
   const customerOptions = useMemo(() => {
     const set = new Map<string, string>();
@@ -140,9 +117,6 @@ export function AttachBoxesModal({
   }, [boxes]);
 
   const filteredBoxes = boxes.filter((box) => {
-    if (locationFilter && String(box.locationId ?? "") !== locationFilter) {
-      return false;
-    }
     if (customerFilter && String(box.companyId ?? "") !== customerFilter) {
       return false;
     }
@@ -210,14 +184,6 @@ export function AttachBoxesModal({
     >
       <Stack gap="md">
         <Group grow>
-          <Select
-            label="From Location"
-            placeholder="Any location"
-            data={locationOptions}
-            value={locationFilter}
-            onChange={setLocationFilter}
-            clearable
-          />
           <Select
             label="Customer"
             placeholder="Any customer"

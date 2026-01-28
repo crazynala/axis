@@ -531,6 +531,7 @@ model Location {
   assemblyActivitiesOut AssemblyActivity[] @relation("AssemblyActivity_LocationOut")
   batches               Batch[]
   boxes                 Box[]
+  destinationBoxes      Box[]              @relation("BoxDestinationLocation")
   companiesStock        Company[]          @relation("Company_stockLocation")
   jobsStock             Job[]              @relation("Job_stockLocation")
   jobsShipTo            Job[]              @relation("Job_shipToLocation")
@@ -975,6 +976,8 @@ model Box {
   warehouseNumber Int?
   shipmentNumber  Int?
   locationId      Int?
+  destinationAddressId  Int?
+  destinationLocationId Int?
   shipmentId      Int?
   companyId       Int?
   state           BoxState  @default(open)
@@ -985,10 +988,14 @@ model Box {
   updatedAt       DateTime? @updatedAt
   company         Company?  @relation(fields: [companyId], references: [id])
   location        Location? @relation(fields: [locationId], references: [id])
+  destinationAddress  Address?  @relation("BoxDestinationAddress", fields: [destinationAddressId], references: [id], onDelete: SetNull)
+  destinationLocation Location? @relation("BoxDestinationLocation", fields: [destinationLocationId], references: [id], onDelete: SetNull)
   shipment        Shipment? @relation(fields: [shipmentId], references: [id])
   lines           BoxLine[]
 
   @@index([locationId])
+  @@index([destinationAddressId])
+  @@index([destinationLocationId])
   @@index([shipmentId])
   @@index([companyId])
   @@index([warehouseNumber])
@@ -1124,6 +1131,7 @@ model Address {
   jobShipTos         Job[]      @relation("JobShipToAddress")
   assemblyShipTos    Assembly[] @relation("AssemblyShipToAddressOverride")
   shipments          Shipment[] @relation("Address_shipments")
+  destinationBoxes   Box[]      @relation("BoxDestinationAddress")
 }
 
 model Contact {

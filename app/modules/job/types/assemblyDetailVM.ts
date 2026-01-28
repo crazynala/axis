@@ -57,7 +57,7 @@ export type AssemblyDetailVM = {
     externalAllocations: Record<string, { sent?: number[]; received?: number[] }>;
     splitGroup: { id: number; parentAssemblyId: number };
   }>;
-  locations: Array<{ id: number; name: string | null }>;
+  locations: Array<{ id: number; name: string | null; type: string | null }>;
   shipToAddresses: Array<{
     id: number;
     name: string | null;
